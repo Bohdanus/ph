@@ -440,6 +440,30 @@ test.describe('Brush and Pencil options bar', () => {
     // the select would make: this is not a transient state on the way back to the label.
     await smoothingSlider(page).fill('0');
     await expect(preset, 'restoring the field restores the name').toHaveValue(hardRound.label);
+
+    // Direction two again, on the FOURTH field. `matchPaintPreset` compares `blendMode` with
+    // `===` alongside the three numbers, so the Mode counts: a derivation that ignored it would
+    // satisfy every assertion above and this one is what catches that.
+    await modeSelect(page).selectOption({ label: 'Multiply' });
+    await expect(
+      preset,
+      'matchPaintPreset compares blendMode too, so a Mode change alone must also read as Custom'
+    ).toHaveValue(CUSTOM);
+
+    // And Custom is INERT rather than a way to clear the bar. `handlePresetChange` looks the
+    // selection up in `PAINT_PRESETS[toolName]` and returns early when it finds nothing
+    // (`src/components/ToolbarsRight/Paint/Paint.tsx`), and the empty value IS the Custom
+    // option — so choosing it must write nothing at all. `Marker` is the destination because a
+    // preset has to be applied first for there to be something there to refuse to change.
+    await preset.selectOption('Marker');
+    await expect(sizeSlider(page), 'Marker writes its own width').toHaveAccessibleName(
+      `Size ${PAINT_PRESETS.brush[2].lineWidth}px`
+    );
+    await preset.selectOption(CUSTOM);
+    await expect(sizeSlider(page), 'selecting Custom must not move the sliders').toHaveAccessibleName(
+      `Size ${PAINT_PRESETS.brush[2].lineWidth}px`
+    );
+    await expect(preset, 'and it must not rename the bar either').toHaveValue('Marker');
   });
 
   /**
@@ -480,6 +504,14 @@ test.describe('Brush and Pencil options bar', () => {
       `Size ${PAINT_PRESETS.pencil[2].lineWidth}px`
     );
 
+    // The pencil bar's FIRST preset, which the Marker switch above cannot discriminate: brush
+    // Marker and pencil Marker carry identical numbers, so a key-blind lookup writes the same
+    // readout either way. `Hard Pencil` is 3px and exists only on the pencil list.
+    await presetSelect(page).selectOption('Hard Pencil');
+    await expect(sizeSlider(page), 'Hard Pencil writes its own width on the pencil bar').toHaveAccessibleName(
+      `Size ${PAINT_PRESETS.pencil[0].lineWidth}px`
+    );
+
     // Back to the brush THROUGH THE FLYOUT, which is not redundancy but necessity: once the
     // pencil is active its group is the one with the tile, so `tool-button-brush` is gone from
     // the rail and `clickToolButton` has no brush to click. Measured rather than assumed —
@@ -490,6 +522,13 @@ test.describe('Brush and Pencil options bar', () => {
     await presetSelect(page).selectOption('Marker');
     await expect(sizeSlider(page), 'and its own on the brush bar').toHaveAccessibleName(
       `Size ${PAINT_PRESETS.brush[2].lineWidth}px`
+    );
+
+    // The brush bar's first preset, so the pair with `Hard Pencil` above is the real
+    // discriminator between the two lists rather than the label they share.
+    await presetSelect(page).selectOption('Hard Round');
+    await expect(sizeSlider(page), 'and the brush bar must write its own first preset').toHaveAccessibleName(
+      `Size ${PAINT_PRESETS.brush[0].lineWidth}px`
     );
   });
 });

@@ -243,9 +243,9 @@ records as a requirement rather than an omission to be filled by a placeholder.
 the box is resized, can be re-typed in place, and carries an on-canvas caret. Scaling it up is not a
 resample; it re-renders.
 
-**What this app does.** Text is baked to pixels at commit. The renderer writes the string with
-`fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor returns
-that raster as the tool's whole result (the same file's `text` processor):
+**What this app does.** Each committed text presentation is rasterized. The renderer writes the
+string with `fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor
+returns that raster as the tool's whole result (the same file's `text` processor):
 
 ```ts
 export const text =
@@ -275,8 +275,13 @@ that makes this harder than it looks: `HistoryItem[]` is the production replay a
 replayed type entry has to reproduce the same pixels from its args on any host. A live text object is
 not a raster and does not survive that unchanged.
 
-**What the app does instead.** A raster that cannot be edited after the fact. Changing the text
-commits a new layer.
+**What the app does instead.** The production path retains the text source arguments and supports
+Photoshop-style panel re-entry: selecting an existing text row with the Type tool active (`LayersTab.tsx`
+— `selectLayer()`), or double-clicking its row, hydrates those arguments into the contenteditable
+overlay. `Text.tsx` — `applyText()` and the dirty-tool commit arm call `replaceLayerSource()`, so the
+edit is recorded and replayable. Canvas-click re-entry remains open. The runtime renderer still uses
+the committed raster for text, so runtime scaling resamples it. The remaining gaps are canvas entry and
+live vector rendering rather than retention of the text arguments.
 
 ### Free Transform as an interactive bounding box
 
@@ -314,8 +319,8 @@ image behind a stationary crop box.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/straighten-tilted-photos.html>
 
 A **Fill** dropdown on the same bar decides what fills the canvas a crop adds outside the image edge —
-"Go to the Fill dropdown in the Options bar and select Content-Aware Fill" — with Generative Expand the
-cloud value described below.
+"Go to the Fill dropdown in the Options bar and select Content-Aware Fill". Generative Expand is a
+separate action in the Contextual Task Bar, not a value in that dropdown.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/apply-content-aware-fill-while-cropping-images.html>
 
 **The bar carries no Curve, and Adobe does not claim that it does.** Adobe's own enumeration of the
@@ -326,11 +331,11 @@ and the Curve Photoshop documents is the separate Curves adjustment, recorded un
 [Curves — a spline over the tonal range](#curves--a-spline-over-the-tonal-range) below.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html>
 
-**Generative Expand** is the value that flow is built around: "From the Tools panel, select Crop tool
-and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and select
-Generate to let Photoshop extend the image" and "Choose a variation from the Properties panel". The
-model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in the added band
-are computed by a cloud service and arrive on a layer of their own.
+**Generative Expand** is the separate action that flow is built around: "From the Tools panel, select
+Crop tool and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and
+select Generate to let Photoshop extend the image" and "Choose a variation from the Properties
+panel". The model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in
+the added band are computed by a cloud service and arrive on a layer of their own.
 <https://helpx.adobe.com/photoshop/desktop/create-open-import-images/create-images/explore-beyond-the-canvas-with-generative-expand.html>
 
 **What this app does.** The frame grows and nothing is filled. `applyDocumentCrop` takes the gesture
@@ -369,12 +374,12 @@ take.
 image edge: the canvas grows and the added band is transparent. The commit path is honest about what
 it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
 
-**The frame growth is not this entry's capability, so the growth deletes nothing here.** What this
-entry records is Straighten, Content-Aware and Generative Expand. Growing the canvas is a fourth thing,
-and the cheapest of Adobe's Fill values, decided by the operator rather than synthesised. Patch-based
-synthesis and a cloud generative call are not landing, so this entry stays open under the lifecycle
-rule in the preamble, and what survives the growth is Adobe's behaviour, which a transparent band does
-not change.
+**The frame growth is not this entry's missing capability.** The app can grow the document frame and
+leaves the added band transparent; that current behaviour is recorded by OVR-1 in
+`docs/OVERRIDES.md`. Frame growth is not a Photoshop Fill choice. What this entry records is the
+missing Straighten gesture, Content-Aware Fill, and Generative Expand. Patch-based synthesis and a
+cloud generative call are not landing, so this entry stays open under the lifecycle rule in the
+preamble.
 
 ### Black and White as a hue-sextant weighted mix
 
@@ -394,10 +399,10 @@ export function buildColorsFilter({ grayscale, sepia, saturation }: ColorsFilter
 ```
 
 `grayscale()` is a flat luminance average with no hue dependence at all, and `sepia()` is a fixed
-one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Photo Filter`,
+one-directional warm shift. The app's capability is reached at `Image ▸ Adjustments ▸ Desaturate`,
 where **Black and White is a disabled item** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`'s
 `{ label: 'Black and White' }` entry) because nothing computes it — see the operator-decision section
-below for why `Photo Filter` is the name the enabled item carries.
+below for why `Desaturate` is the name the enabled item carries.
 
 **Why it is too hard.** No CSS filter chain can express a per-hue weighting; the filter primitives are
 whole-image and order-dependent, and six independent sextant weights are neither. A faithful
@@ -705,13 +710,13 @@ rule costs a real capability in one case, and what an enabled menu item is allow
 naming decision in another. They are recorded here so they are not re-derived, and so nobody
 implements them as if they were engineering judgements.
 
-### The two enabled `Image ▸ Adjustments` items are named for capabilities the app does not have
+### What an enabled `Image ▸ Adjustments` item may promise
 
 `color`, `levels` and `transform` left the Tools rail on 2026-10-01 — the operator's ruling, recorded
 in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Transform`
 **commands**, and `toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
-rail entry. What is still open is not where they live but **what the two enabled items are called**,
-because both names are a partial match and neither is a match.
+rail entry. **What the two enabled items are called was settled on 2026-10-01 and is implemented:**
+`Brightness/Contrast` and `Desaturate`.
 
 `ADJUSTMENTS_ITEMS` (`DesktopHeader.tsx`) carries Adobe's list in
 a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
@@ -728,16 +733,34 @@ emits one `brightness(…) contrast(…)` filter (`functions.ts` — `buildLevel
 Adobe's Brightness / Contrast. **Adobe's Levels is unbuilt**: three control points, a histogram, a
 channel selector, output levels and Auto. That capability has its own entry below.
 
-**`color` is `Photo Filter`, and `grayscale` is a control Photo Filter does not have.** Its three
-controls are grayscale, sepia and saturation (`functions.ts` — `ColorsFilterArgs`). Adobe's Photo
+**`color` is `Desaturate`, because its leading control is the computation Adobe's Desaturate
+performs.** Its three controls are grayscale, sepia and saturation (`functions.ts` —
+`ColorsFilterArgs`). Adobe's Desaturate "converts a color image to grayscale values, but leaves the
+image in the same color mode", and "assigns equal red, green, and blue values to each pixel in an RGB
+image" (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>) — which is what `grayscale(100%)` does, and `e2e/adjustments.spec.ts` asserts the
+three channels come out **equal** rather than close. Adobe adds that the command "has the same effect as
+setting Saturation to minus (-)100 in the Hue/Saturation adjustment", which is the bar's `saturation`
+slider, so two of the three controls are the command it is named for. **`sepia` is the bounded
+divergence**: it belongs to neither command, and Adobe's Desaturate is a one-shot command with no dialog
+where this bar is three continuous sliders.
+
+**The naming rule, which the operator settled and which now binds every adjustment command.** An item
+takes Adobe's name, and takes it **only if it computes that command**: "use naming that photoshop has",
+2026-10-01. An item whose computation does not match its Adobe name is a falsehood and does not get
+enabled — which is why `Levels` and `Black and White` are `disabled` items rather than relabelled ones,
+and why an app-invented name (`Colors`) is not available as a fallback. Applied to `color` it is what
+moved the item below.
+
+**`Photo Filter` used to be the enabled item and was the falsehood this corrects.** Adobe's Photo
 Filter is a hue adjustment from a preset filter or a custom colour, with a Density slider and
 Preserve Luminosity
-(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — so `sepia` picks
-the kind of colour Adobe's presets pick and `saturation` is the trim Preserve Luminosity performs, but
-**`grayscale` is a conversion to luminance that Photo Filter never performs**. The alternative name is
-worse: the app's `color` is not Adobe's Black and White either (that entry, below), so the honest
-options were a bounded partial match or a wrong name. The open question is whether to drop the
-`grayscale` control or move it to `Desaturate`, which is the operator's to make — `HANDOFF.md` §168.
+(<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html>) — the bar
+reproduced **none** of those three, and `grayscale` is a conversion to luminance that Photo Filter never
+performs, so the enabled item opened a bar its own label did not describe. It is a `disabled` item now,
+which is this menu's rule applied: the capability is unbuilt. The row cannot simply have been dropped,
+because `color` is in `extraTools` and this submenu is the only surface the Colors panel is reachable
+from — and the app's `color` is not Adobe's Black and White either (that entry, below), so `Desaturate`
+is the one Adobe command in this submenu the bar's leading control actually computes.
 
 **The rest of `Image ▸ Adjustments` is disabled, and that is the accurate state of this app.** The app
 has no adjustment-layer machinery at all: `psd-utils.ts` — the `visit()` walk inside

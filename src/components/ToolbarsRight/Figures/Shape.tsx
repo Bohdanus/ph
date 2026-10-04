@@ -19,6 +19,39 @@ import { useStore } from '../../../contexts/StoreContext.tsx';
 const PREVIEW_WIDTH = 96;
 const PREVIEW_HEIGHT = 48;
 
+/**
+ * The tool names this panel is mounted under: `toolsMap` routes all six to it —
+ * `shape` itself plus the five named figure tools — and `defaultSettings` seeds
+ * each of the six with its own entry, so each arrives with its own `toolName`.
+ *
+ * Kept HERE, beside its one consumer, rather than exported from `src/tools/shape.ts`.
+ * A sibling spec mocks that module with an explicit key list, so a shape export
+ * consumed here would break a test file this change does not own, and the list has
+ * exactly one production reader. It is duplicated in `toolsMap`, `Main`'s
+ * interaction-mode dispatch and the two tool-selection surfaces, and folding them
+ * all onto one exported constant is a separate change.
+ *
+ * `figure` and `toolName` are NOT the same vocabulary, and the difference is a
+ * spelling trap rather than a synonym: the Ellipse TOOL is `ellipse` while its
+ * FIGURE is `oval`, so neither list can be derived from the other.
+ */
+const SHAPE_FAMILY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'shape',
+  'rectangle',
+  'ellipse',
+  'triangle',
+  'polygon',
+  'line',
+]);
+
+/**
+ * Whether args naming `toolName` belong to a tool this panel serves. `unknown`
+ * rather than `string` because the args under a panel are whatever the current
+ * tool carries, so a panel can be mounted with a seventh tool's arguments.
+ */
+const isShapeFamilyToolName = (toolName: unknown): toolName is string =>
+  typeof toolName === 'string' && SHAPE_FAMILY_TOOL_NAMES.has(toolName);
+
 const figureLabel = (figure: ShapeToolArgs['figure']) => {
   if (figure === 'oval') return 'Ellipse Tool';
   if (figure === 'triangle') return 'Triangle Tool';
@@ -39,8 +72,25 @@ const Shape: React.FC = () => {
 
   usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
 
+  /**
+   * The store-colour mirror, which every one of the six shape-family tool names
+   * runs — each of the six mounts THIS panel, and each carries its own
+   * `defaultSettings` entry seeded at the hardcoded black. The membership test is
+   * what admits all six rather than the one that opened the panel: a
+   * `toolName === 'shape'` guard returned for the other five, so their args kept
+   * the seeded colour forever and the committed layer was black however the
+   * foreground swatch was set — while the preview, which reads the store colour
+   * directly, showed the right one. Membership rather than "always mirror",
+   * because the args under a panel are the current tool's whatever that tool is,
+   * and a panel mounted with a seventh tool's arguments must not rewrite them.
+   *
+   * Both swatches are mirrored, stroke and background alike, which is what the
+   * `shape` entry has always done and what `setShapeCtx` fills with. A dedicated
+   * Fill swatch is a separate product decision and not this effect's business.
+   */
   useEffect(() => {
-    if (args.toolName !== 'shape' || (args.color === color && args.backgroundColor === backgroundColor)) return;
+    if (!isShapeFamilyToolName(args.toolName)) return;
+    if (args.color === color && args.backgroundColor === backgroundColor) return;
     setToolArgs({ ...args, color, backgroundColor });
   }, [args, backgroundColor, color, setToolArgs]);
 

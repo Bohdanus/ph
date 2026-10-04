@@ -249,17 +249,25 @@ describe('Levels toolbar', () => {
     const changeContrast = (value: string) =>
       fireEvent.change(screen.getByLabelText(/Contrast/), { target: { value } });
 
-    it('exposes both sliders over the full -100..100 range with no step', () => {
+    it('exposes both sliders over Adobe\u2019s documented travels with no step', () => {
       render(<Levels />);
 
       const brightness = screen.getByLabelText(/Brightness/) as HTMLInputElement;
       const contrast = screen.getByLabelText(/Contrast/) as HTMLInputElement;
 
       expect(brightness).toHaveAttribute('type', 'range');
-      expect(brightness).toHaveAttribute('min', '-100');
-      expect(brightness).toHaveAttribute('max', '100');
-      expect(contrast).toHaveAttribute('min', '-100');
+      // Adobe: "Values can range from ‑150 to +150 for Brightness, ‑50 to +100 for Contrast."
+      // The attributes are read off the panel rather than off the module, because the panel
+      // deriving them from `BRIGHTNESS_SLIDER_RANGE` is the claim — a hard-coded `-100..100`
+      // here would leave the curve and the slider describing different travels.
+      expect(brightness).toHaveAttribute('min', '-150');
+      expect(brightness).toHaveAttribute('max', '150');
+      expect(contrast).toHaveAttribute('min', '-50');
       expect(contrast).toHaveAttribute('max', '100');
+      // Asymmetric on purpose: these are not the same control at two sign conventions, and a
+      // symmetric Contrast range is the mistake this asserts against.
+      expect(brightness.getAttribute('min')).not.toBe(contrast.getAttribute('min'));
+      expect(brightness.getAttribute('max')).not.toBe(contrast.getAttribute('max'));
     });
 
     it('publishes a contrast change as the exact layer preview and tool args payload', () => {
@@ -288,24 +296,40 @@ describe('Levels toolbar', () => {
     it('accepts both range boundaries on both sliders', () => {
       render(<Levels />);
 
-      changeBrightness('-100');
+      // Each slider's own endpoints, and they differ: Brightness reaches ‑150 and +150 while
+      // Contrast reaches ‑50 and +100, so a test that published one pair to both sliders
+      // would be asserting a range neither control has.
+      changeBrightness('-150');
       flushFrames();
-      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: -100, contrast: 50 });
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: -150, contrast: 50 });
 
-      changeBrightness('100');
+      changeBrightness('150');
       flushFrames();
-      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 100, contrast: 50 });
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 150, contrast: 50 });
 
       // `toolArgs` is only republished through the mocked store, so a contrast change still
       // spreads the brightness the component last rendered with.
-      changeContrast('-100');
+      changeContrast('-50');
       flushFrames();
-      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 50, contrast: -100 });
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 50, contrast: -50 });
 
       changeContrast('100');
       flushFrames();
       expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 50, contrast: 100 });
       expect(mockSetToolArgs).toHaveBeenCalledTimes(4);
+    });
+
+    it('clamps a value outside a slider\u2019s travel to that slider\u2019s own bound', () => {
+      // The browser owns this: a `range` input cannot hold a value outside its `min`/`max`, so
+      // `-100` on Contrast (reachable under the previous ‑100..100 travel) lands on ‑50 rather
+      // than publishing a number the panel could not show. Without it the thumb pins at its
+      // minimum while the label above it reads the raw value.
+      render(<Levels />);
+
+      changeContrast('-100');
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 50, contrast: -50 });
     });
 
     it('schedules a fresh frame once the previous one has been flushed', () => {
@@ -356,7 +380,7 @@ describe('Levels toolbar', () => {
       expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ id: 'layer-1', toolArgs: expected });
     });
 
-    it('skips publishing entirely when no layer is active (Levels.tsx:23)', () => {
+    it('skips publishing entirely when no layer is active (Levels.tsx — `throttledOnChange`', () => {
       setActiveLayerId(null);
       render(<Levels />);
 

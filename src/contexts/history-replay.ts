@@ -196,10 +196,14 @@ export function replayHistory(
         ...layers,
         [layerId]: {
           ...layer,
+          name: replacement.name,
           pos: { ...replacement.pos },
           source: replacement.source,
           bitmap: replacement.bitmap,
-          tmpCanvas: null,
+          // The creator has already rendered the replacement. Storing `null` here threw that raster
+          // away and left a layer no renderer would draw: `getLayerBitmap` re-runs a creator only for
+          // the vector tools, and a `text` source is excluded, so a redo emptied the layer.
+          tmpCanvas: replacement.tmpCanvas,
           operations: [...layer.operations],
           lastHistoryId: item.id,
         },

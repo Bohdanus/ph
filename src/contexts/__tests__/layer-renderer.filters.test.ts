@@ -40,11 +40,13 @@ describe('getLayerFilter', () => {
     expect(filter).toBe('grayscale(30%) sepia(40%) saturate(311.69%)');
   });
 
-  it('builds a levels filter through the shared exponential mapping', () => {
+  it('builds a Brightness/Contrast filter through the shared proportionate mapping', () => {
     const filter = getLayerFilter([operation({ args: { toolName: 'levels', brightness: 25, contrast: 80 } })]);
 
-    // brightness 25 at k=1.9 -> 1.714884; contrast 80 at k=2.2 -> 6.412117.
-    expect(filter).toBe('brightness(171.49%) contrast(641.21%)');
+    // Spelled out rather than recomputed from the builder: this is the preview half of the
+    // filter contract, and the whole defect was that four copies of it could each drift.
+    // 1 + 25/150 = 1.16666…; 1 + 80/100 = 1.8.
+    expect(filter).toBe('brightness(116.67%) contrast(180%)');
   });
 
   it('joins several enabled operations in insertion order', () => {
@@ -53,18 +55,18 @@ describe('getLayerFilter', () => {
       operation({ id: 'b', args: { toolName: 'levels', brightness: 10, contrast: 10 } }),
     ]);
 
-    // brightness 10 at k=1.9 -> 1.246145; contrast 10 at k=2.2 -> 1.276713.
-    expect(filter).toBe('blur(2px) brightness(124.61%) contrast(127.67%)');
+    // 1 + 10/150 = 1.06666…; 1 + 10/100 = 1.1.
+    expect(filter).toBe('blur(2px) brightness(106.67%) contrast(110%)');
   });
 
-  it('reaches the same 0% endpoints the committing processors do', () => {
+  it('reaches the same 0% brightness endpoint the committing processors do', () => {
     // The preview and the commit are one contract. If the preview ever emitted a
     // dark-grey floor where the processor emits black, a layer would render differently
     // from its own committed bitmap.
     expect(getLayerFilter([operation({ args: { toolName: 'color', grayscale: 0, sepia: 0, saturation: -100 } })])).toBe(
       'grayscale(0%) sepia(0%) saturate(0%)'
     );
-    expect(getLayerFilter([operation({ args: { toolName: 'levels', brightness: -100, contrast: 0 } })])).toBe(
+    expect(getLayerFilter([operation({ args: { toolName: 'levels', brightness: -150, contrast: 0 } })])).toBe(
       'brightness(0%) contrast(100%)'
     );
   });

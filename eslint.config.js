@@ -154,18 +154,6 @@ export default defineConfig([
     },
   },
   {
-    // Selection tools intentionally omit exhaustive-deps for performance; the
-    // React Compiler skip is an optimization concern, not a runtime bug.
-    files: [
-      'src/components/Main/FeatherMagneticLassoToolArea.tsx',
-      'src/components/Main/MagicWandToolArea.tsx',
-      'src/components/Main/PolygonClickToolArea.tsx',
-    ],
-    rules: {
-      'react-compiler/react-compiler': 'warn',
-    },
-  },
-  {
     files: [
       'src/contexts/__tests__/image-load-save-utils.test.ts',
       'src/contexts/__tests__/psd-utils.test.ts',

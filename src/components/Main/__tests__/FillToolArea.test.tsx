@@ -228,7 +228,6 @@ describe('FillToolArea', () => {
       alpha: 1,
       color: '#ff0000',
       pos: { x: 1, y: 1 },
-      size: { width: 4, height: 4 },
     });
   });
 
@@ -463,13 +462,14 @@ describe('FillToolArea', () => {
 
     click(toolArea, 2, 3);
 
-    // `commit: 'raster'` replays from the stored args alone, so the click and the size it was
-    // taken at have to travel in the args. This is the first args type to carry its own size.
+    // `commit: 'raster'` replays from the stored args alone, so the click has to travel in the
+    // args. The geometry does NOT: both fill processors read `size` from the curried
+    // `ProcessorToolParams`, so an args-level `size` was a second, unread source of it.
     const args = committed[0].toolArgs as unknown as FillToolArgs;
     expect(args.pos).toEqual({ x: 2, y: 3 });
-    expect(args.size).toEqual({ width: 4, height: 4 });
+    expect(args).not.toHaveProperty('size');
     const keys = Object.keys(args).sort();
-    expect(keys).toEqual(['alpha', 'color', 'contiguous', 'pos', 'size', 'tolerance', 'toolName']);
+    expect(keys).toEqual(['alpha', 'color', 'contiguous', 'pos', 'tolerance', 'toolName']);
   });
 
   it('edits the active layer rather than creating one', () => {

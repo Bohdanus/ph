@@ -135,22 +135,78 @@ describe('useRect', () => {
       onChange: options.onChange ?? vi.fn(),
       onChangeEnd: options.onChangeEnd ?? vi.fn(),
     };
-    return renderHook(() => useRect(props));
+    // The refs are handed back by identity, so a mocked rect util can be asserted against the
+    // very object the hook measures through rather than against a re-derived `{ current: canvas }`.
+    return { ...renderHook(() => useRect(props)), containerRef: props.containerRef, overlayRef: props.overlayRef };
   }
 
   it('initializes without initial rect', () => {
-    const { result } = renderUseRect();
-    expect(result.current.pointerHandlers.onPointerDown).toBeDefined();
-    expect(result.current.pointerHandlers.onPointerMove).toBeDefined();
-    expect(result.current.pointerHandlers.onPointerUp).toBeDefined();
-    expect(result.current.rectHandles.redraw).toBeDefined();
-    expect(result.current.rectHandles.clearSelection).toBeDefined();
+    const onRepaint = vi.fn();
+    const onChangeEnd = vi.fn();
+    const { result } = renderUseRect({ onRepaint, onChangeEnd });
+    const target = createMockTarget();
+
+    // Nothing to initialise FROM: with no rect the mount effect finds its two refs already equal
+    // and paints nothing, so there is no selection to report either.
+    expect(onRepaint).not.toHaveBeenCalled();
+
+    // A press with no box under it finds no edge, so the gesture is a fresh drag and the press is
+    // recorded as having landed on nothing — `currentEdgeRef` is `null` for exactly this reason.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 150, clientY: 150, target })
+        )
+      ).toBe(false);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
+
+    // The release is the whole gesture: it commits a fresh drag anchored at the press point,
+    // which is the only rect this hook ever had.
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(createPointerEvent({ button: 0, clientX: 300, clientY: 250, target }));
+    });
+    expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 150, y1: 150, x2: 300, y2: 250 });
+
+    // A hover reports the edge it found to its CALLER and records none: `currentEdgeRef` is a
+    // fact about the press, and this hook's only press was erased by its own release. A hover
+    // that stored its edge would hand the next `TextToolArea` placement a stale one, and the
+    // boolean above already shows the hover found the interior of the rect the release committed.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 200, target }))
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
   });
 
   it('initializes with initial rect', () => {
     const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
     const { result } = renderUseRect({ initialRect });
-    expect(result.current.pointerHandlers.onPointerDown).toBeDefined();
+    const target = createMockTarget();
+
+    // The incoming rect IS the box, so a press names the edge it landed on rather than reporting
+    // only that it found one. `TextToolArea` decides a fresh placement from
+    // `pointerState.currentEdgeRef.current === null`, so the NAME is the contract and the boolean
+    // every other suite already reads is not enough to pin it.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        )
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('top-left');
+
+    // Interior press on the same box: a move, not a resize, and a different name for it.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 175, target })
+        )
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('inside');
   });
 
   it('returns false for pointer down on non-left button', () => {
@@ -225,7 +281,7 @@ describe('useRect', () => {
     it('creates rect from layer when clicking on layer', () => {
       const layer = createMockLayer();
       const onRepaint = vi.fn();
-      const { result } = renderUseRect({ onRepaint });
+      const { result, overlayRef } = renderUseRect({ onRepaint });
 
       const event = createPointerEvent({ button: 0, clientX: 150, clientY: 150, target: createMockTarget() });
       act(() => {
@@ -239,8 +295,21 @@ describe('useRect', () => {
       // runs — so this asserts the conversion END TO END instead of that a hand-copy mock was
       // called. The old form (`expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(...)`)
       // could only ever prove the mock was live, never that the conversion was right.
-      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalled();
       expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
+
+      // The paint is clamped by a measurement of the hook's own OVERLAY ref, and the real
+      // `getCanvasSize(canvasRef)` reads `canvasRef.current.width/height` — so the argument is
+      // the REF, by identity, and neither the size it returns nor the `imageSize` prop. A bare
+      // `toHaveBeenCalled()` accepted the container ref, a freshly built ref object, or any size.
+      // Exactly once, because this hook had no rect on mount and the adoption is the one paint.
+      //
+      // That one line also rules out the container ref, so a `not.toHaveBeenCalledWith(containerRef)`
+      // beside it said nothing the call count and identity had not already said. The claim it did
+      // not reach is the one the sibling suite owns: that the measurement is what CLAMPS the paint
+      // rather than `imageSize`, which `useRect.drag.test.ts` pins in
+      // `clamps the painted geometry to the canvas but reports the unclamped rect` with an
+      // `imageSize` deliberately unlike the canvas.
+      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalledExactlyOnceWith(overlayRef);
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {
