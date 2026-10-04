@@ -136,6 +136,24 @@ const finiteDimension = (value: unknown, fallback: number): number => {
 type PixelSourceRaster = { pixels: Uint8ClampedArray; width: number; height: number };
 
 /**
+ * Every `ctx.filter` assignment, on any `PixelContext`, oldest first.
+ *
+ * Per-context `filterAssignments` cannot answer "did this document apply a filter": a renderer that
+ * composites into an internal staging canvas and blits the result puts the assignment on the
+ * STAGING surface, so a reader watching only the final canvas sees none. This record sees the whole
+ * pipeline.
+ */
+const everyFilterAssignment: string[] = [];
+
+/** Every `ctx.filter` assignment the fixture has seen since the last reset. */
+export const filterAssignments = (): readonly string[] => everyFilterAssignment.slice();
+
+/** Clears the filter record. */
+export const resetFilterAssignments = (): void => {
+  everyFilterAssignment.length = 0;
+};
+
+/**
  * Draws whose source carried no pixel buffer, recorded rather than silently skipped.
  *
  * A browser draws nothing for a source it cannot decode, so the skip itself is correct. What is
@@ -298,6 +316,7 @@ export class PixelContext {
   set filter(value: string) {
     this.filterValue = typeof value === 'string' ? value : 'none';
     this.filterAssignments.push(this.filterValue);
+    everyFilterAssignment.push(this.filterValue);
   }
 
   get fillStyle(): string | CanvasGradient | CanvasPattern {
