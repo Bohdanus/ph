@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 191-192, 200, 204 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 175, 191-192, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -497,7 +497,7 @@ the session store instead — every `apply_patch` / `edit` / `write` target in a
 
 Re-derive the table from the entries this file still carries rather than reading it off this entry —
 the entries it was built from have been deleted. Collecting every `src/` path named in the `Files`
-paragraph of a numbered entry and comparing it against the manifest returns **82** the manifest does
+paragraph of a numbered entry and comparing it against the manifest returns **79** the manifest does
 not list — one of them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
 names in that form — and the omissions are exactly where the migration's own boundary lives:
 
@@ -539,15 +539,14 @@ only there.
 ```bash
 awk '/^## [0-9]/{f=0;s=0;next} f&&/^\*\*[A-Z]/{f=0} !s&&/^\*\*Files\.\*\*/{f=1;s=1} f' HANDOFF.md \
   | grep -o '`src/[^`]*`' | tr -d '`' | sort -u > /tmp/handoff_paths.txt
-comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 82
+comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 79
 ```
 
-Those paragraphs name 132 distinct `src/` paths, 50 of them in the manifest. `sort -u` is what makes
+Those paragraphs name 126 distinct `src/` paths, 47 of them in the manifest. `sort -u` is what makes
 the answer a count of paths rather than of entry-path pairs, which is 260. Two `Files` paragraphs in
 the file are deliberately outside the extraction and neither changes the count: §142 carries a second
-one that names no `src/` path at all, and §159's section ends in a `**Problem.**` / `**Files.**` pair
-that no heading opens — its `src/tools/usePaintStroke.ts` is a path that does not exist, the real file
-being `src/hooks/usePaintStroke.ts`.
+one that names no `src/` path at all. The live §159 entry is headed and its `Files` paragraph names
+the real `src/hooks/usePaintStroke.ts` path.
 
 **Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
 re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
@@ -4808,53 +4807,12 @@ the operator's to write.
 dialog is rendered with), `src/components/SaveDialog/SaveDialog.tsx` (its own title),
 `src/contexts/StoreContext.tsx` (`projectPublishedTimeline()`), `docs/FEATURES.md`
 
-## 175. Paste places a layer at a canvas-space position that the layer reader treats as document space
-
-**Problem.** `pasteSelectionClipboard` (the `centerPos` it builds, in
-`src/contexts/useSelectionClipboard.ts`) builds
-
-```ts
-x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2));
-```
-
-`totalSize` is the DOCUMENT size — `documentFrameSize(nextFrame)` at the two
-`totalSize:` assignments in `src/contexts/StoreContext.tsx` — so `(totalSize.width - width) / 2` is
-already the document-space offset that centres
-the pasted layer. Adding `documentFrame.x` converts it to canvas space, and the result is passed
-as `pos` to `createLayerFromBitmap()` (the `await createLayerFromBitmap({ … })` call in the same
-function), which reads
-`pos` as DOCUMENT space. On a cropped document the pasted layer therefore lands `documentFrame.x`
-pixels right and `documentFrame.y` pixels down of centre, by exactly the frame origin.
-
-**This is enshrined as correct by three passing tests**, which is what makes it a trap: the
-`it('clones the clipboard bitmap and centers the new layer inside the document frame')` case in
-`src/contexts/__tests__/useSelectionClipboard.test.tsx` asserts `pos {47, 37}` against a frame
-`{x: 12, y: 7, width: 100, height: 100}`, where the document-space centre is `{35, 30}` — the
-asserted value is `{35, 30}` plus the frame origin. The companions are the
-`it('clamps a clipboard larger than the document to the document frame origin')` and
-`it('prefers the clipboard position size over the bitmap size')` cases. Those
-three assertions must be re-pointed in the same change that fixes the code; they are not evidence
-that the current behaviour is right.
-
-**The sibling path is correct**, which is why this reads as a copy/paste asymmetry rather than a
-shared convention: `layerViaCopy` (the `documentToCanvasPos` call on its way out and the
-`canvasToDocumentPos` call on its way back, both in `src/contexts/useSelectionClipboard.ts`) is
-a proven round-trip identity, pinned by
-`src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx`'s round-trip identity case. The
-pin that used to sit
-there asserted the double-count this entry describes, and was deleted on that evidence — its stated
-mechanism (naming `documentToCanvasPos`) named a call the line does not make.
-
-**Fix.** Drop `documentFrame.x` / `documentFrame.y` from the `centerPos` centring expression, and
-re-point the three assertions above. No conversion is needed in the other direction: the reader
-already treats `pos` as document space.
-
 ## 176. Copy clamps canvas-space points against the document size
 
 **Problem.** `layerViaCopy` converts the selection out of document space
 (`documentToCanvasPos` in `src/contexts/useSelectionClipboard.ts`) and then hands the
 canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` in the
-same call. `totalSize` is the document size (see §175), and the copy path clamps against it —
+same call. `totalSize` is the document size from `documentFrameSize` in `StoreContext.tsx`, and the copy path clamps against it —
 `getSelectionCanvasBounds()` in `src/util/selection.ts` does
 `maxX = Math.min(imageSize.width, maxX)`. Canvas coordinates run as high as
 `frame.x + totalSize.width`, so the rightmost `frame.x` pixels and the bottom `frame.y` pixels of a
