@@ -144,7 +144,8 @@ One worktree per task, under `.kilo/worktrees/`, forked from `main`.
 ```bash
 cd /Users/bkalynovskyi/ph                # a parent dir resolves the wrong package
 git status -sb                          # main is a shared surface; expect it dirty
-git worktree add -b <branch> .kilo/worktrees/<name> main
+MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"   # absolute, per AGENTS.md
+git worktree add -b <branch> "$MAIN/.kilo/worktrees/<name>" main
 ```
 
 For a **visible session**, do not use `git worktree add`: call `agent_manager` with `mode: "worktree"` and one task carrying `branchName` and `prompt` — `task` creates no visible session.

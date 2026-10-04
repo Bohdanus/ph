@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # A merge may not silently delete the other side's committed work.
 # ---------------------------------------------------------------------------
-# This hook closes a gap that four documents and no code had closed. The rule —
+# This hook closes a gap that several documents and no code had closed. The rule —
 # "a merge must not hand `main` back its own older content" — was written down in
 # `docs/ORCHESTRATION.md`, copied verbatim into two `.skills/` files, pointed at from
 # three more, and asserted nowhere. The one automated check it had was a `comm -13`

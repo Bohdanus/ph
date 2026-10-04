@@ -4,7 +4,9 @@
  * WHY NOT `eslint .` AND `prettier --check .`
  * -------------------------------------------
  * Those two take the *filesystem* as their scope. In this repository that
- * includes 121 worktrees under `.kilo/`, plus whatever a previous build, test
+ * includes every worktree under `.kilo/` (there are dozens at any time, and the
+ * number is machine state — `git worktree list | wc -l`), plus whatever a previous
+ * build, test
  * or e2e run left on disk. They were skipped only incidentally: `.gitignore`
  * lists `.kilo` and Prettier 3's default `--ignore-path` is
  * `[.gitignore, .prettierignore]`, so nothing had to say it. That is a
