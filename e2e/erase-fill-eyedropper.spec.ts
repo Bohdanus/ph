@@ -9,6 +9,8 @@ import {
   getWorkspaceCanvas,
   hasDarkPixels,
   hasRedPixels,
+  LINE_END_X as STANDARD_LINE_END_X,
+  LINE_START_X,
   loadImageData,
   scanPixelsForBounds,
 } from './helpers/canvas-helpers';
@@ -74,12 +76,88 @@ const RED = '#cc0000';
 const GREEN = '#00aa00';
 
 const LINE_Y = 200;
-const LINE_START_X = 150;
-const LINE_END_X = 450;
+
+/**
+ * How much further right this spec's line runs than the suite's standard test line.
+ *
+ * The start is the shared `LINE_START_X` and nothing else: the slab begins at the same place
+ * everywhere, so importing it is pure coupling and no test moves. The END is the shared
+ * `STANDARD_LINE_END_X` plus this extension, and that is a real difference rather than a stale
+ * copy — measured, not argued. Setting this spec's end to the shared `LINE_END_X` fails three of
+ * its ten tests immediately and by name:
+ *
+ * - `'the paint bucket fills a contiguous region and not its neighbour'` and `'the magic eraser
+ *   erases the clicked region and leaves a neighbour alone'` both read `farSegment` on the far side
+ *   of the cut, and a 150..350 line leaves that far segment only 50 units long, so the read lands
+ *   on the white base layer and the red assertions see `green` 255 instead of under 100.
+ * - `'the paint bucket tolerance control changes which pixels are filled'` times out on its
+ *   Tolerance 255 wait: the layer is padded by a full lineWidth past the painted end, so a shorter
+ *   line puts the layer's own transparent corner outside the layer, and a flood fill cannot reach
+ *   a pixel the layer does not contain.
+ *
+ * So the end is DERIVED from the shared one rather than declared beside it. Two reasons, and the
+ * second is the load-bearing one:
+ *
+ * 1. A bare private `LINE_END_X = 450` is a second declaration of a name the suite exports with a
+ *    different meaning. A reader, or a later row converting coordinates in another spec, can take
+ *    the name from here and be 100 units out while every test in the file still passes. That is the
+ *    failure this block exists to prevent, and the name is now distinct: `ERASE_LINE_END_X` cannot
+ *    be mistaken for the shared constant, and its value is visibly the shared value plus this.
+ * 2. Deriving keeps the extension the ONE tunable number. Everything below that is a function of
+ *    where the line ends is computed from `ERASE_LINE_END_X` — the clip, the sampling points, the
+ *    layer corner — so the geometry moves as one piece instead of as a set of literals that happen
+ *    to agree today. The end is also deliberately SENSITISED: changing it fails loudly and names
+ *    the tests that depend on it, which is the behaviour a shared constant should have.
+ *
+ * Every value here is CANVAS-BOX-relative CSS pixels (`[BOX]`), matching `drawLine`, which adds the
+ * box with no contain scale. These are not document points; `documentToCanvasOffset` is the forward
+ * statement for a caller that wants the document pixel.
+ */
+const LINE_EXTENSION_X = 100;
+
+/** This spec's own right end. Deliberately NOT named `LINE_END_X`, which the suite also exports. */
+const ERASE_LINE_END_X = STANDARD_LINE_END_X + LINE_EXTENSION_X;
 
 /** Draw-tool Size for a slim line (20 image px tall) and for a slab the eraser can be measured inside. */
 const SLIM = 20;
 const SLAB = 100;
+
+/** Half the slab's rounded cap: how far the stroke reaches PAST a line endpoint. */
+const SLAB_CAP = SLAB / 2;
+
+/** How far `pointsBoundingPos` pads the layer beyond the painted slab: a full lineWidth per side. */
+const LAYER_PAD = SLAB;
+
+/**
+ * The middle of the drawn line, in the units `readPixel` takes.
+ *
+ * Every read that means "the middle of the drawn line" was the bare literal 300, which is this
+ * value and not a coincidence: `LINE_START_X` is 150 and `ERASE_LINE_END_X` is 450. Expressing it
+ * as the midpoint means the eleven sites that use it keep meaning the middle of the slab if either
+ * end ever moves, instead of eleven identical magic numbers that must all be re-derived by hand —
+ * and in the two tests that cut the line in two, it is also where the cut is drawn, so the cut and
+ * the read on it are now visibly the same point rather than two literals that happen to agree.
+ */
+const LINE_CENTRE_X = (LINE_START_X + ERASE_LINE_END_X) / 2;
+
+/**
+ * The transparent corner the Tolerance test uses as its canary: outside the PAINTED slab, inside
+ * the LAYER.
+ *
+ * A round cap of `SLAB_CAP` reaches past the line's endpoint, and `pointsBoundingPos` then pads the
+ * layer by a full `LAYER_PAD` past that painted end. So the band this point must fall inside runs
+ * from `ERASE_LINE_END_X + SLAB_CAP` to `ERASE_LINE_END_X + LAYER_PAD` horizontally, and from
+ * `LINE_Y - LAYER_PAD` to `LINE_Y - SLAB_CAP` vertically, and it sits at that band's midpoint — the
+ * position least sensitive to either edge.
+ *
+ * It was the bare literal `{ x: 530, y: 110 }`, a magic number whose only reason to be correct is
+ * the private 450; derived, the Tolerance 255 wait that depends on it can no longer silently sample
+ * outside the layer when the line's end changes.
+ */
+const TRANSPARENT_CORNER = {
+  x: ERASE_LINE_END_X + (SLAB_CAP + LAYER_PAD) / 2,
+  y: LINE_Y - (SLAB_CAP + LAYER_PAD) / 2,
+};
 
 type Rgb = { red: number; green: number; blue: number };
 type Point = { x: number; y: number };
@@ -108,10 +186,27 @@ async function canvasBox(page: Page): Promise<BoundingBox> {
   return box;
 }
 
-/** The drawn line plus margin, as a page-space clip, measured from the canvas's current box. */
+/**
+ * The drawn line plus margin, as a page-space clip, measured from the canvas's current box.
+ *
+ * Derived from the line's own geometry rather than written as `{ x: 120, y: 130, width: 360,
+ * height: 140 }`, which is what it used to be. Those four numbers happened to bracket the line
+ * exactly, and a clip that stops bracketing it is a clip that has stopped watching the stroke, so
+ * nothing here may be a literal: the horizontal extent follows the line's two ends, and the
+ * vertical follows the slab's painted height plus clearance. `measureErasedWidth` reads inside this
+ * clip, so its windows inherit the same guarantee.
+ */
+const CLIP_MARGIN_X = 30;
+const CLIP_MARGIN_Y = 20;
+
 async function slabClip(page: Page): Promise<Required<ClipOptions>> {
   const box = await canvasBox(page);
-  return { x: box.x + 120, y: box.y + LINE_Y - 70, width: 360, height: 140 };
+  return {
+    x: box.x + LINE_START_X - CLIP_MARGIN_X,
+    y: box.y + LINE_Y - SLAB_CAP - CLIP_MARGIN_Y,
+    width: ERASE_LINE_END_X - LINE_START_X + CLIP_MARGIN_X * 2,
+    height: SLAB + CLIP_MARGIN_Y * 2,
+  };
 }
 
 /** The name the seeded base layer carries in the Layers panel: `layer-utils.ts:160,181`. */
@@ -288,7 +383,7 @@ async function drawSlab(
   await sizeSlider.fill(String(size));
   await expect(sizeSlider).toHaveValue(String(size));
   await page.getByRole('slider', { name: /^Opacity/ }).fill('1');
-  await drawLine(page, await canvasBox(page), LINE_START_X, LINE_Y, LINE_END_X, LINE_Y, { steps: 8 });
+  await drawLine(page, await canvasBox(page), LINE_START_X, LINE_Y, ERASE_LINE_END_X, LINE_Y, { steps: 8 });
 
   // The commit is asserted BEFORE the pixels, and that order is the whole point of it.
   //
@@ -359,12 +454,12 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     await page.getByRole('slider', { name: /^Size/ }).fill('60');
     // A 60px tip straddling a 20px line erases every dark pixel the line owns.
-    await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: LINE_END_X, y: LINE_Y }, 12);
+    await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: ERASE_LINE_END_X, y: LINE_Y }, 12);
     await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
       description: 'no dark pixels left under the eraser stroke',
     });
 
-    const erased = await readPixel(page, { x: 300, y: LINE_Y });
+    const erased = await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y });
     expect(erased, 'nothing readable at the centre of the erased band').not.toBeNull();
     expect(
       Math.min(erased!.red, erased!.green, erased!.blue),
@@ -380,7 +475,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     // 20 interpolated moves, so a commit per pointer event would be 20 entries.
-    await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: LINE_END_X, y: LINE_Y }, 20);
+    await stroke(page, { x: LINE_START_X, y: LINE_Y }, { x: ERASE_LINE_END_X, y: LINE_Y }, 20);
     await waitForCanvasPixels(page, await slabClip(page), async (screenshot) => !(await hasDarkPixels(screenshot)), {
       description: 'the eraser stroke to land',
     });
@@ -393,7 +488,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await waitForCanvasPixels(page, await slabClip(page), hasDarkPixels, {
       description: 'the whole stroke restored by a single undo',
     });
-    const restored = await readPixel(page, { x: 300, y: LINE_Y });
+    const restored = await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y });
     expect(Math.min(restored!.red, restored!.green, restored!.blue), 'the line should be back').toBeLessThan(60);
 
     // And nothing is left to undo, so the stroke wrote exactly one entry on top of the draw's.
@@ -490,23 +585,45 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     const opacity = page.getByRole('slider', { name: /^Opacity/ });
     await expect(opacity).toHaveValue('100');
 
+    // Two bands of the same slab, each stroked end to end and each read at its MIDDLE.
+    //
+    // The bands are named so the reads below are the midpoints rather than the numbers the strokes
+    // happened to be written with. Both reads used to sit on a band's first column — 15px from the
+    // point where the 30px tip's coverage ramps up — which is the least representative pixel of a
+    // band: a defect that erased only the edges, or only the interior, is invisible at the edge and
+    // fatal in the middle. Reading the middle cannot pass while the band is partly wrong.
+    //
+    // The full band's far end is 440, which needs this spec's longer line: with the shared
+    // `LINE_END_X` the slab's painted right end is 400 and the band would run off the slab into the
+    // white base layer, making the strongest assertion here — that 100% removes the colour entirely
+    // — a statement about the background it was supposed to be erasing.
+    const partialBand = { from: 200, to: 260 };
+    const fullBand = { from: 380, to: 440 };
+    const partialMiddle = (partialBand.from + partialBand.to) / 2;
+    const fullMiddle = (fullBand.from + fullBand.to) / 2;
+
     await opacity.fill('15');
     await expect(opacity).toHaveValue('15');
-    await stroke(page, { x: 200, y: LINE_Y }, { x: 260, y: LINE_Y }, 4);
+    await stroke(page, { x: partialBand.from, y: LINE_Y }, { x: partialBand.to, y: LINE_Y }, 4);
     await opacity.fill('100');
     await expect(opacity).toHaveValue('100');
-    await stroke(page, { x: 380, y: LINE_Y }, { x: 440, y: LINE_Y }, 4);
+    await stroke(page, { x: fullBand.from, y: LINE_Y }, { x: fullBand.to, y: LINE_Y }, 4);
 
-    await waitForPixel(page, { x: 380, y: LINE_Y }, isBackground, 'the 100% stroke removing the slab colour');
-    await waitForPixel(page, { x: 200, y: LINE_Y }, (color) => color.green > 15, 'the 15% stroke lightening the slab');
+    await waitForPixel(page, { x: fullMiddle, y: LINE_Y }, isBackground, 'the 100% stroke removing the slab colour');
+    await waitForPixel(
+      page,
+      { x: partialMiddle, y: LINE_Y },
+      (color) => color.green > 15,
+      'the 15% stroke lightening the slab'
+    );
 
     // A layer's own alpha is not readable from a composite — the read resolves it against the
     // opaque white base layer. That is enough here and is the strongest available statement:
     // 15% of a black slab over white leaves ~38/255, so the region is partially visible, while
     // 100% leaves the untouched base layer's 255. What is NOT assertable is the raw alpha byte.
-    const partial = (await readPixel(page, { x: 200, y: LINE_Y }))!;
-    const full = (await readPixel(page, { x: 380, y: LINE_Y }))!;
-    const untouched = (await readPixel(page, { x: 300, y: LINE_Y }))!;
+    const partial = (await readPixel(page, { x: partialMiddle, y: LINE_Y }))!;
+    const full = (await readPixel(page, { x: fullMiddle, y: LINE_Y }))!;
+    const untouched = (await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y }))!;
     expect(untouched.green, 'the slab should still be untouched black between the two strokes').toBeLessThan(20);
     expect(partial.green, '15% opacity must lighten the stroke without removing it').toBeGreaterThan(untouched.green);
     expect(partial.green, '15% opacity must leave the region visible, not erased').toBeLessThan(full.green);
@@ -524,8 +641,8 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // one is what makes Contiguous do real work, because a non-contiguous fill takes it too.
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     await page.getByRole('slider', { name: /^Size/ }).fill('30');
-    await stroke(page, { x: 300, y: LINE_Y - 50 }, { x: 300, y: LINE_Y + 50 });
-    await waitForPixel(page, { x: 300, y: LINE_Y }, isBackground, 'the eraser cutting the line in two');
+    await stroke(page, { x: LINE_CENTRE_X, y: LINE_Y - 50 }, { x: LINE_CENTRE_X, y: LINE_Y + 50 });
+    await waitForPixel(page, { x: LINE_CENTRE_X, y: LINE_Y }, isBackground, 'the eraser cutting the line in two');
 
     await selectBrushFamilyTool(page, 'eraser', 'paint-bucket', 'Paint Bucket Tool');
     await setForegroundColor(page, GREEN, true);
@@ -544,7 +661,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     );
     const filled = (await readPixel(page, { x: 200, y: LINE_Y }))!;
     const farSegment = (await readPixel(page, { x: 400, y: LINE_Y }))!;
-    const acrossTheCut = (await readPixel(page, { x: 300, y: LINE_Y }))!;
+    const acrossTheCut = (await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y }))!;
     const foreground = hexToRgb(GREEN);
     expect(
       Math.max(
@@ -569,8 +686,12 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // A 100px slab: `pointsBoundingPos` pads the layer by a full lineWidth on every side, so the
     // layer's corners stay transparent where the round cap never reached.
     await drawSlab(page, RED, SLAB, hasRedPixels);
-    const corner = { x: 530, y: 110 };
-    const seed = { x: 300, y: LINE_Y };
+    // The canary point is derived, not written: `TRANSPARENT_CORNER` states which two bounds it
+    // has to fall between and why. The literal it replaces was correct only because the line's end
+    // was 450, and a shorter line silently moved this point outside the layer — where no fill can
+    // ever reach it and the Tolerance 255 wait times out instead of failing on its own assertion.
+    const corner = TRANSPARENT_CORNER;
+    const seed = { x: LINE_CENTRE_X, y: LINE_Y };
     const before = (await readPixel(page, corner))!;
     expect(
       Math.min(before.red, before.green, before.blue),
@@ -613,8 +734,8 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
     await page.getByRole('slider', { name: /^Size/ }).fill('30');
-    await stroke(page, { x: 300, y: LINE_Y - 50 }, { x: 300, y: LINE_Y + 50 });
-    await waitForPixel(page, { x: 300, y: LINE_Y }, isBackground, 'the eraser cutting the line in two');
+    await stroke(page, { x: LINE_CENTRE_X, y: LINE_Y - 50 }, { x: LINE_CENTRE_X, y: LINE_Y + 50 });
+    await waitForPixel(page, { x: LINE_CENTRE_X, y: LINE_Y }, isBackground, 'the eraser cutting the line in two');
 
     await selectBrushFamilyTool(page, 'eraser', 'magic-eraser', 'Magic Eraser Tool');
     const tolerance = page.getByRole('slider', { name: /^Tolerance/ });
@@ -653,7 +774,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
       'the eyedropper is the active tool'
     ).toBeVisible();
 
-    const target = (await readPixel(page, { x: 300, y: LINE_Y }))!;
+    const target = (await readPixel(page, { x: LINE_CENTRE_X, y: LINE_Y }))!;
     expect(target.red, 'the sample target must be the red the Draw tool laid down').toBeGreaterThan(180);
     expect(target.green).toBeLessThan(100);
     expect(target.blue).toBeLessThan(100);
@@ -665,7 +786,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     const before = await swatchDelta(page, target);
     expect(before, 'the swatch must not already be showing the colour under the cursor').toBeGreaterThan(50);
 
-    await clickAt(page, { x: 300, y: LINE_Y });
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y });
     await expect
       .poll(async () => swatchDelta(page, target), {
         message: 'the foreground swatch to show the colour under the eyedropper',
