@@ -5674,3 +5674,99 @@ through `replaceLayerSource`. Preserve the existing `replace-layer-source` durab
 create a replacement layer or rasterize the source. Note that `commitDirtyTool`'s in-place arm replaces
 the active layer when the draft's origin equals that layer's, so an entry route must carry the layer id
 rather than relying on the origin match.
+
+## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
+
+**Problem.** `useRect`'s `drawMask` draws each corner and edge handle as a square CENTRED on the edge,
+`ctx.fillRect(x - h2, y - h2, h1, h1)` with `h2 = HANDLE_SIZE / scale / 2`, so six CSS px of every handle
+lies inside the type box — which is exactly the rectangle `TextEditOverlay` occupies, and
+`Main.tsx` mounts the overlay last so it is the topmost child. Every pointerdown in that band belongs to
+the editor. The outer six pixels of a handle still resize; the inner six place a caret instead.
+`edgeAtPoint`'s `'inside'` region is unreachable for the same reason, so `TextToolArea`'s
+`onChangeEnd` classification of an interior press as a move never fires while a draft is open, and the
+cursor feedback stops because `setMouseCursor` writes to an element that is no longer the event target.
+
+**Adobe allows both at once.** "You can adjust the bounding box while you enter type or after you create
+the type layer" (https://helpx.adobe.com/photoshop/using/creating-type.html).
+
+**Affected.** `src/components/Main/TextEditOverlay.tsx` — the element's box; `src/hooks/useRect.ts` —
+the handle size and where it sits.
+
+**What would close it.** Draw the handles OUTSIDE the rect (`x - h1` rather than `x - h2`, and the same
+for the right and bottom edges) and hit-test against `h2`. That removes the whole band from the
+editor's hit area with two constants in one file, and it is also Adobe's arrangement. Shrinking the
+editor instead is the wrong direction: the editor's box has to BE the type box for the caret to land
+where the user clicked.
+
+## 210. `textareaRef` is dead state in the store
+
+**Problem.** The options bar's `<textarea id="text-input">` is gone, so `textareaRef` is written by
+`StoreContext` and read by nothing in `src/` or `e2e/` — a store field, a `useRef` and a default that
+exist to point at an element that no longer exists.
+
+**Affected.** `src/contexts/StoreContext.tsx` — the field on the store's shape, the `useRef` and the
+value returned; `src/__tests__/fixtures/store.ts`; `src/contexts/__tests__/StoreContext.test.tsx` and
+`StoreContext.reducer.test.tsx` (both enumerate the refs, so removing one changes a test about something
+else); `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`.
+
+**What would close it.** Delete the field and the four call sites. It was left rather than removed
+alongside the textarea because a concurrent session was editing `StoreContext.tsx`, and a three-line
+deletion resolved under merge pressure is a worse trade than a week of dead state.
+
+## 211. Layer hydration publishes a layer-local rect, so the in-place edit path opens at the document origin
+
+**Problem.** `createLayerFromTool`'s no-`pos` branch stores `args.rect` REDUCED — `reduceRect(worldRect,
+newPos)` — because the creator builds a `pos`-sized canvas and draws the type at the rect's own
+coordinates. `LayersTab`'s `selectLayer` publishes `source.args` verbatim, so the draft it opens is in
+LAYER-LOCAL space while the editor, `calculateNewRect` and both commit arms read CANVAS space. MEASURED:
+a text layer at document (120, 80) whose `source.args.rect` is (0, 0, 100, 60) opens its editor over the
+document's top-left corner; committing from there measures a rect around (0, 0), which does not match
+the active layer's origin, so the CREATE arm runs and a SECOND text layer appears at (0, 0) carrying the
+edited text while the original is untouched. The comment at the origin-equality guard — "Selection
+hydration preserves the active layer's origin" — describes an invariant the storage format does not
+provide.
+
+**Affected.** `src/components/SidebarRight/LayersTab.tsx` — `selectLayer`; the guard in
+`commitDirtyTool`'s text arm is correct and must keep comparing un-reduced canvas rects.
+
+**What would close it.** Hydrate in the space the commit path measures in: in `selectLayer`, translate
+`rect` by `layer.pos` and the document frame before publishing it, leaving `source.args.rect`
+layer-local as the create arm stores it. This is the same reduction the create arm performs, in the
+other direction.
+
+## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
+
+**Problem.** `domOverlayStyle` emits `textDecorationLine` and `textDecorationColor` and nothing else,
+so the draft's underline and strikethrough take the UA's thickness and offset. `renderTextInto` draws
+them with `decorationThickness(fontSize)` and `UNDERLINE_BELOW_BASELINE_EM`, and the strike at
+`xHeightHalf()`. The DOM rule also spans the line's full advance, while the canvas spans `inkWidth`,
+which subtracts one letter-spacing gap — so with `align: center` or `right` and non-zero tracking the two
+disagree by `spacing / 2` and `spacing` as well. Found independently by two reviews and left unclaimed by
+both.
+
+**Affected.** `src/tools/text.ts` — `DomOverlayStyle` and `domOverlayStyle`; the canvas side is
+`decorationThickness` and `renderTextInto`.
+
+**What would close it.** Emit `textDecorationThickness` and `textUnderlineOffset` from
+`domOverlayStyle`, and anchor the rule to the same extent the canvas measures. The residual after that
+is cosmetic and unmeasured outside the eight cases `domOverlayStyle`'s own comment reports, so treat what
+is left as draft-versus-commit ink that reflows on commit rather than as a defect to close.
+
+## 213. `type-crop.ts`'s `appRef` line numbers are 60–110 lines off and reach a generated document
+
+**Problem.** `docs/TOOLS.md`'s "In this app" column carries five `Text.tsx` line numbers, every one wrong
+by 60–110 lines: the row labelled "Font family" resolves to a comment about tool switching, and the row
+labelled "Commit / Cancel" resolves to the start of a `{/*` comment. They come from the
+`appRef` values in `src/tools/descriptions/type-crop.ts`, so editing `docs/TOOLS.md` is wrong — the data
+is the fix, then `npm run docs:tools`. `tool-descriptions.test.mjs` only fails when a line is PAST EOF,
+which is why a citation that drifted by a hundred lines cannot fail any gate.
+
+**Affected.** `src/tools/descriptions/type-crop.ts` — the seven `appRef` values; the generated
+`docs/TOOLS.md` follows from them.
+
+**What would close it.** Re-derive each `appRef` from the current `Text.tsx`, or relax `appRef` to accept
+a unit citation the way the rest of the documentation rules do. There is a rule conflict behind this and
+it is the operator's to settle: `AGENTS.md` bans `file.ext:‹line›` in every tracked document,
+`tool-descriptions.test.mjs` documents `REF_PATTERN` as the only form `appRef` accepts, and
+`docs/TOOLS.md` is excluded from the citation check because it is generated — so the banned form is
+enforced nowhere the form is mandatory.

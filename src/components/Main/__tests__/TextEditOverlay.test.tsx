@@ -617,6 +617,58 @@ describe('TextEditOverlay', () => {
       expect(h.setToolArgs).not.toHaveBeenCalled();
       expect(el.innerHTML).toBe('<span>候</span>');
     });
+
+    it('ignores a mouse-moved caret instead of rewriting the text from the cached offset', () => {
+      // The cache exists to repair Chromium's caret after a hard break, and it is only ever correct
+      // for a caret the user moved with the KEYBOARD. A click inside the box moves the caret without
+      // a key event, so before `selectionchange` was observed the next keystroke reconciled against
+      // the previous keystroke's offset: MEASURED, typing `X` after clicking between `c` and `d` in
+      // `abcdef` appended the character instead of inserting it, and typing over a double-click
+      // selection brought the selected characters back.
+      //
+      // The model holds `abcdef` because the reconcile branch's whole premise is that the element and
+      // `args.text` agree; a model still holding the placeholder would make every rewrite correct.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 6);
+      // The stale cache has to EXIST for this to be a test: a keyup is what a real keystroke leaves
+      // behind, and it is the only writer that can make the cached offset disagree with the caret.
+      fireEvent.keyUp(el, { key: 'f' });
+      h.setToolArgs.mockClear();
+
+      placeCaret(el, 3);
+      document.dispatchEvent(new Event('selectionchange'));
+      el.textContent = 'abcXdef';
+      fireEvent.input(el, { inputType: 'insertText', data: 'X' });
+
+      expect(el.textContent, 'the reconcile branch overwrote a click-positioned insert').toBe('abcXdef');
+    });
+
+    it('leaves a non-collapsed selection to the browser rather than reconciling against the cache', () => {
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 6);
+      fireEvent.keyUp(el, { key: 'f' });
+      const node = el.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(node, 2);
+      range.setEnd(node, 4);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      // A double-click word select in the browser ends with `selectionchange`, which is what clears
+      // the cache — `readCaretOffset` returns null for a non-collapsed selection, so the reconcile
+      // branch is skipped and the browser's own replace-selection result stands.
+      document.dispatchEvent(new Event('selectionchange'));
+      h.setToolArgs.mockClear();
+
+      el.textContent = 'abXef';
+      fireEvent.input(el, { inputType: 'insertText', data: 'X' });
+
+      expect(el.textContent, 'a replaced selection was resurrected from the cached offset').toBe('abXef');
+    });
   });
 
   describe("keydown — Enter breaks the line and the other three commit, which is Adobe's split", () => {
