@@ -126,7 +126,6 @@ export type StoreData = {
   toolOverlayRef: RefObject<HTMLCanvasElement | null>;
   rectOverlayRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLDivElement | null>;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
 
   currentArgs: React.RefObject<ToolArgs>;
   clearPreviewLayers: () => void;
@@ -346,7 +345,6 @@ const initialState: StoreData = {
   toolOverlayRef: { current: null },
   rectOverlayRef: { current: null },
   containerRef: { current: null },
-  textareaRef: { current: null },
 
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
@@ -939,7 +937,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const toolOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const rectOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
@@ -1474,7 +1471,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     toolOverlayRef,
     rectOverlayRef,
     containerRef,
-    textareaRef,
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     promoteLayerPresentation,

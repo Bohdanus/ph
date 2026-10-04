@@ -271,17 +271,15 @@ const HANDLE_SIZE_DOC_PX = 12;
 /**
  * How far outside the box the draft frame reaches, in CSS px, on every side.
  *
- * Both things that paint it are CENTRED on the box's own edge rather than inside it, so the frame is
- * wider and taller than the box it reports. `useRect`'s `drawMask` strokes with
- * `lineWidth = 2 / scale`, so 1 document px of the stroke lies outside the edge, and it fills four
- * corner squares of side `HANDLE_SIZE / scale` centred on the corners, so `HANDLE_SIZE / 2` document px
- * of each lies outside. The handle dominates, and `HANDLE_SIZE / scale` document px is `HANDLE_SIZE`
- * CSS px on screen whatever the fit is, so the overhang is `HANDLE_SIZE / 2 = 6` CSS px.
+ * The outline is centred on the box edge, but the corner handles are deliberately drawn OUTSIDE the
+ * contenteditable box so their hit area is not covered by the editor. `useRect`'s `drawMask` fills
+ * `HANDLE_SIZE / scale` squares from each corner outward, so the handle contributes `HANDLE_SIZE`
+ * CSS px on screen whatever the fit is and dominates the one-pixel outline overhang.
  *
  * Used only as a DERIVATION of where the box's own edge is from where the blue stops, never as a
  * tolerance, so it does not widen any margin in this file.
  */
-const FRAME_OVERHANG_CSS_PX = HANDLE_SIZE_DOC_PX / 2;
+const FRAME_OVERHANG_CSS_PX = HANDLE_SIZE_DOC_PX;
 
 /**
  * How far two independently measured ink widths may differ and still be the same ink, in CSS px.
@@ -828,6 +826,27 @@ test.describe('Text tool in-place editing', () => {
     await expect(layerRows.nth(0), 'the committed layer is not a tool layer').toHaveText(/^text \d+$/);
   });
 
+  test('a committed text layer can be re-entered from its Layers row', async ({ page }) => {
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, FIRST_BOX_CLICK);
+    await page.keyboard.type('Reenter');
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows).toHaveCount(2);
+
+    // The row is the layer thumbnail/name surface in this app. Double-clicking it must hydrate the
+    // retained source args rather than create a second layer or place a fresh draft at the origin.
+    await layerRows.nth(0).dblclick();
+    await expect(overlay(page), 'double-clicking the committed text row did not reopen the editor').toBeVisible();
+    expect(await overlayText(page), 're-entry did not hydrate the committed characters').toBe('Reenter');
+    await page.keyboard.type('Edited');
+    await page.keyboard.press('Escape');
+    await expect(overlay(page)).toHaveCount(0);
+    await expect(layerRows, 're-entry created a replacement layer').toHaveCount(2);
+  });
+
   test('a click elsewhere on the canvas COMMITS the open draft and then places a new box', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
     const box = await canvasBox(page);
@@ -1187,8 +1206,8 @@ test.describe('Text tool in-place editing', () => {
     edge(bounds.bottom, frameCss.bottom - FRAME_OVERHANG_CSS_PX, 'bottom');
 
     // And the SIZE, which is the half a pure containment check misses: an overlay twice as wide as
-    // its box contains the box perfectly and puts the user's caret in the wrong place. The frame is
-    // `HANDLE_SIZE / 2` outside each edge, so the box is the frame narrowed by twice that.
+    // its box contains the box perfectly and puts the user's caret in the wrong place. The handles
+    // are `HANDLE_SIZE` outside each edge, so the box is the frame narrowed by twice that.
     expect(
       Math.abs(bounds.width - (frameCss.right - frameCss.left - 2 * FRAME_OVERHANG_CSS_PX)),
       'the overlay is not as wide as the box the canvas drew'

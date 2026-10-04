@@ -312,12 +312,14 @@ export function useRect({
 
     // Draw handles
     const h1 = HANDLE_SIZE / scale;
-    const h2 = h1 / 2;
     ctx.fillStyle = '#007bff';
-    ctx.fillRect(x - h2, y - h2, h1, h1);
-    ctx.fillRect(x + width - h2, y - h2, h1, h1);
-    ctx.fillRect(x - h2, y + height - h2, h1, h1);
-    ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
+    // Keep the handles outside the editor's hit area. The contenteditable overlay occupies the
+    // whole type box, so centering a handle on a corner makes its inner half place a caret instead
+    // of resizing. Hit-testing remains centred on the corner so the full visible handle is usable.
+    ctx.fillRect(x - h1, y - h1, h1, h1);
+    ctx.fillRect(x + width, y - h1, h1, h1);
+    ctx.fillRect(x - h1, y + height, h1, h1);
+    ctx.fillRect(x + width, y + height, h1, h1);
 
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
