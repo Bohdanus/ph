@@ -100,7 +100,7 @@ And one boundary, from §10 of `01-photoshop-reference.md` — "No browser was e
 support claim in that corpus derives from caniuse / MDN BCD / the WebKit bug tracker, not from
 runtime measurement.
 
-`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,371-line playbook whose
+`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,686-line playbook whose
 `## Photoshop shape tools` section is a fully worked research digest and the canonical example of
 the expected density. Its `## The tool backlog` and `## Appendix A — the trap list` sections are
 worth reading before writing prose.
@@ -113,7 +113,7 @@ worth reading before writing prose.
   tooltip that wraps to four lines is a defect. `purpose` carries the detail.
 - Describe **Photoshop's** tool in `summary`/`purpose`. The app's divergence goes in `appNotes`
   and in the per-control `status`. Mixing the two produces a description that is true of neither.
-- No file-scope or line-number claims in prose prose that will go stale. `implementationRefs` is
+- No file-scope or line-number claims in prose that will go stale. `implementationRefs` is
   the place for a citation, and the notes file is the place for a sentence about one.
 - Do not add comments to the data files. A citation belongs in `implementationRefs`, which is
   data, not a comment that drifts from it.

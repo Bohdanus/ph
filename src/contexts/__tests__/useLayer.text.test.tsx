@@ -8,7 +8,7 @@ import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { useLayers } from '../useLayer.ts';
 import { documentFrameFromSize } from '../document-frame.ts';
-import { NEW_LAYER_ACTION } from '../../util/constants.ts';
+import { NEW_LAYER_ACTION, REPLACE_LAYER_SOURCE_ACTION } from '../../util/constants.ts';
 import { createLayerSource } from '../layer-utils.ts';
 
 // The cross-hook idempotency boundary is the DRAFT, not a hook-local guard: the
@@ -127,6 +127,22 @@ describe('useLayers text commit idempotency boundary', () => {
     mockLayerId.counter = 0;
   });
 
+  it('discards only an untouched placeholder, not user text with the same words', () => {
+    const result = setupTextTool();
+    const placeholder = makeTextArgs({ text: 'Lorem ipsum', placeholderUntouched: true }) as TextToolArgs;
+    act(() => {
+      result.current.store.currentArgs.current = placeholder;
+      result.current.layers.commitDirtyTool();
+    });
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.store.currentArgs.current = { ...placeholder, placeholderUntouched: false };
+      result.current.layers.commitDirtyTool();
+    });
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+  });
+
   it('creates only one layer when Apply fires after commitDirtyTool on the same args', () => {
     const result = setupTextTool();
     const args = makeTextArgs();
@@ -204,7 +220,7 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
   });
 
-  it('creates distinct layers for distinct text args', () => {
+  it('replaces the selected text layer for distinct text args', () => {
     const result = setupTextTool();
     const argsA = makeTextArgs();
     const argsB = makeTextArgs({ text: 'World', rect: { x1: 0, y1: 0, x2: 200, y2: 60 } });
@@ -223,19 +239,18 @@ describe('useLayers text commit idempotency boundary', () => {
       result.current.layers.commitDirtyTool();
     });
 
-    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
-    expect(Object.keys(result.current.store.layers)).toHaveLength(2);
-    // The exact ids, not just the count, and deliberately NOT in the first test of this file: the
-    // counter is 0 there whether or not the per-test rewind runs, so an id pin there is satisfied
-    // identically with and without it. By the fourth test several layers have already been created
-    // above, so without the rewind these ids carry that history and this fails.
-    expect(Object.values(result.current.store.layers).map((layer) => layer.id)).toEqual([
-      'mock-layer-1',
-      'mock-layer-2',
-    ]);
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+    expect(Object.keys(result.current.store.layers)).toHaveLength(1);
+    expect(Object.values(result.current.store.layers).map((layer) => layer.id)).toEqual(['mock-layer-1']);
+    expect(Object.values(result.current.store.layers)[0]?.source).toMatchObject({
+      kind: 'tool',
+      args: { ...argsB, rect: { ...(argsB as TextToolArgs).rect, y2: 80.4 } },
+    });
+    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 
-  it('repeats the same text verbatim as a new layer, because only the cleared draft suppresses a commit', () => {
+  it('replaces the selected text layer when the same text is applied again', () => {
     const result = setupTextTool();
     const args = makeTextArgs();
 
@@ -246,9 +261,8 @@ describe('useLayers text commit idempotency boundary', () => {
       result.current.layers.commitDirtyTool();
     });
 
-    // The first commit cleared the draft, and re-arming the exact same args is a new
-    // commit, not a duplicate: the boundary is the draft state, not a hook-local
-    // comparison against the last committed args.
+    // The first commit selected the created layer. Re-arming the exact same args edits that
+    // selected source instead of leaving a duplicate layer behind.
     act(() => {
       result.current.store.currentArgs.current = args;
     });
@@ -256,9 +270,10 @@ describe('useLayers text commit idempotency boundary', () => {
       result.current.layers.commitDirtyTool();
     });
 
-    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
-    expect(Object.keys(result.current.store.layers)).toHaveLength(2);
-    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(2);
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
+    expect(Object.keys(result.current.store.layers)).toHaveLength(1);
+    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 
   it('commits nothing while the draft rect is cleared even if the text survives', () => {

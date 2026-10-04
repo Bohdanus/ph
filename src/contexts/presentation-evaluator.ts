@@ -8,6 +8,7 @@ import {
 } from './affine-transform.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import type { BitmapSource, Pos, Size } from './general-types.ts';
+import type { Layer, LayerOperation } from './layer-types.ts';
 import { FilterArgumentUnrenderableError } from '../util/canvas-filter.ts';
 import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
 
@@ -293,4 +294,158 @@ export function drawEvaluatedPresentation(
     evaluation.affine.f
   );
   ctx.drawImage(bitmap as CanvasImageSource, 0, 0, evaluation.sourceSize.width, evaluation.sourceSize.height);
+}
+
+/**
+ * # The processor input boundary
+ *
+ * A pixel processor is handed ONE buffer and its extents and never learns which layer it belongs
+ * to, so everything that decides WHICH buffer and WHERE its pixel (0, 0) sits has to be settled
+ * before the call. Three paths settle it and they must agree: the live pointer move, the legacy
+ * replay of a committed stroke, and the durable materializer. The durable one already sequences it
+ * exactly as stated here — `materialization.ts` — `renderRetainedSegment()` folds the retained
+ * operations into the raster, advances `origin`/`size` to `evaluation.bounds`, and hands the
+ * processor the result — so the two legacy paths are brought to the same rule rather than to a
+ * third one.
+ *
+ * The rule: a layer's PRESENTED operations are baked into its raster exactly once, the raster is
+ * published at `bounds`, and the baked operations are dropped from the list the renderer will
+ * evaluate again. Keeping the list while publishing the baked raster is what let a transform or a
+ * filter be applied twice to one stroke.
+ */
+
+/**
+ * The retained operations that currently PRESENT `layer`, enabled ones only — the evaluator's
+ * own input, so the three paths cannot disagree about what a layer looks like.
+ *
+ * `enabled` is read here and not downstream: a disabled entry contributes to nothing, which is
+ * also what `drawLayerSource()` and `operationsRetainedAfterBake()` below take as their rule.
+ */
+export function retainedPresentationOperations(layer: Layer): PresentationOperation[] {
+  return layer.operations
+    .filter((operation) => operation.enabled)
+    .map((operation) =>
+      operation.kind === 'affine-transform'
+        ? { kind: 'affine-transform', transform: operation.transform }
+        : {
+            kind: 'filter',
+            toolName: operation.args.toolName,
+            args: operation.args as unknown as Readonly<Record<string, unknown>>,
+          }
+    );
+}
+
+/**
+ * The operation list a layer must publish alongside a raster the presented operations were baked
+ * into: exactly the entries that contributed to nothing, because they were disabled.
+ *
+ * The complement of `retainedPresentationOperations`, stated once. Clearing the whole list would
+ * silently DROP a disabled filter, and dropping it is not a cosmetic loss: `toggleDisabled()`
+ * rebuilds the timeline by replaying it, so an entry that no longer exists can never be switched
+ * back on, and the user's disabled adjustment would be unrecoverable rather than merely off.
+ */
+export function operationsRetainedAfterBake(layer: Layer): readonly LayerOperation[] {
+  return layer.operations.filter((operation) => !operation.enabled);
+}
+
+/**
+ * The extent the raster a processor addresses occupies in DOCUMENT space — `layer.pos` itself when
+ * the layer presents nothing, and its evaluated extent when it does.
+ *
+ * This is what a tool area rebases a pointer coordinate through, and it is the same number the
+ * staged surface sits at, so the stroke lands where the layer is drawn. Subtracting `layer.pos`
+ * instead is wrong for every layer with a retained affine that moves its content, which is the
+ * whole of the "wrong layer-local coordinates" half of the double-application defect: the pointer
+ * said a place on the screen and the processor was handed a coordinate for a different place in
+ * the buffer it writes.
+ *
+ * Total rather than refusing, unlike the validating evaluation it mirrors: this runs on every
+ * pointer move, where a throw would escape into a React event handler. The two ways the extent can
+ * be unusable are answered differently on purpose. A degenerate extent (non-finite or non-positive)
+ * is refused by `stageProcessorInput()` too, so the processor never runs and no coordinate computed
+ * here is ever used. An over-cap extent — a legitimately enormous transform — is computable here,
+ * so the origin is reported truthfully; the staging path refuses it and again no write happens.
+ */
+/**
+ * `uncappedAffineBounds` with its single refusal as a value instead of a throw, which is what
+ * `processorPresentationBounds` needs: the origin it reports is read on every pointer move, and a
+ * throw there would escape into a React event handler rather than refuse a stroke.
+ */
+function uncappedAffineExtentOrNull(affine: AffineTransform, sourceSize: Size): Pos | null {
+  try {
+    return uncappedAffineBounds(affine, sourceSize);
+  } catch {
+    return null;
+  }
+}
+
+export function processorPresentationBounds(layer: Layer): Pos {
+  const operations = retainedPresentationOperations(layer);
+  if (operations.length === 0) return { ...layer.pos };
+
+  const localBounds = uncappedAffineExtentOrNull(getPresentationAffine(operations), layer.pos);
+  if (!localBounds) return { ...layer.pos };
+
+  return {
+    x: layer.pos.x + localBounds.x,
+    y: layer.pos.y + localBounds.y,
+    width: localBounds.width,
+    height: localBounds.height,
+  };
+}
+
+export type ProcessorStaging = Readonly<{
+  /** The raster the processor addresses: the layer's own, or its presentation with the retained operations baked in. */
+  bitmap: BitmapSource;
+  /** Where that raster sits in DOCUMENT space. `layer.pos` when nothing was baked. */
+  bounds: Pos;
+  /** The operations baked into `bitmap`; empty means the input raster was handed straight through. */
+  operations: readonly PresentationOperation[];
+}>;
+
+/**
+ * Stages the raster a processor must address for `layer`: its own bitmap, or a private surface
+ * carrying the retained operations already evaluated into it.
+ *
+ * The validating `evaluatePresentation`, not the draw variant, because this DOES allocate a
+ * surface from the extent — which is what the affine raster caps exist to bound. A throw here is
+ * the caller refusing to write pixels, and both callers already contain it rather than letting it
+ * reach a pointer handler or a replay.
+ *
+ * `bounds` is a fresh object rather than the frozen `evaluation.bounds`: it becomes a layer's
+ * `pos`, and nothing that follows treats a published position as immutable.
+ */
+export function stageProcessorInput(layer: Layer, bitmap: BitmapSource): ProcessorStaging {
+  const operations = retainedPresentationOperations(layer);
+  if (operations.length === 0) return { bitmap, bounds: { ...layer.pos }, operations };
+
+  const evaluation = evaluatePresentation({
+    position: layer.pos,
+    sourceSize: { width: layer.pos.width, height: layer.pos.height },
+    operations,
+    mode: 'layer-bounds',
+  });
+  const width = Math.max(1, Math.ceil(evaluation.localBounds.width));
+  const height = Math.max(1, Math.ceil(evaluation.localBounds.height));
+  const surface =
+    typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(width, height)
+      : (() => {
+          if (typeof document === 'undefined') throw new Error('No canvas implementation is available');
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          return canvas;
+        })();
+  const context = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (!context) throw new Error('A 2D canvas context is required to stage a presented raster');
+
+  context.save();
+  try {
+    drawEvaluatedPresentation(context, bitmap, evaluation, { kind: 'bounds' });
+  } finally {
+    context.restore();
+  }
+
+  return { bitmap: surface as BitmapSource, bounds: { ...evaluation.bounds }, operations };
 }

@@ -7,10 +7,11 @@ import {
   deriveRemoveLayerEntry,
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
+  legacyHistoryToDurable,
   type MigrationDiagnostic,
 } from '../history-adapter.ts';
 import { getAssetRegistry } from '../asset-registry.ts';
-import { decideDurableAppend } from '../history-append.ts';
+import { decideDurableAppend, planHistoryAppend } from '../history-append.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
@@ -23,6 +24,7 @@ import {
   RENAME_LAYER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
+  TOOL_ACTION,
 } from '../../util/constants.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
@@ -508,6 +510,50 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
 });
 
 describe('decideDurableAppend is what the store uses', () => {
+  it('publishes the same retained raster operation as full legacy conversion', () => {
+    const { store, dispatch } = openDocument();
+    const before = store();
+    const entry: HistoryItem = {
+      id: 'sponge-1',
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { toolName: 'sponge', mode: 'desaturate', size: 4 },
+    };
+    const planned = planHistoryAppend({
+      item: entry,
+      timeline: {
+        entries: before.history,
+        cursor: before.historyIndex,
+        branchRevision: before.branchRevision,
+      },
+      currentFrame: before.documentFrame,
+      currentLayer: before.layers[layerId],
+      id: entry.id,
+    });
+    expect(planned.diagnostics).toEqual([]);
+    expect(planned.durableEntry?.operation).toMatchObject({
+      kind: 'apply-raster-processor',
+      processorId: 'sponge',
+    });
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: {},
+          historyItem: entry,
+          durableEntry: planned.durableEntry,
+          durableDiagnostics: planned.diagnostics,
+        },
+      });
+    });
+
+    const after = store();
+    const converted = legacyHistoryToDurable([...before.history, entry], { documentId: before.documentId });
+    expect(after.durableDocument?.history).toEqual(converted.document?.history);
+    expect(after.durableDocument?.cursor).toBe(converted.document?.cursor);
+  });
+
   it('agrees with the store decision for the same inputs', () => {
     const { store, dispatch } = openDocument();
     const entry = crop();

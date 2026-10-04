@@ -6,7 +6,7 @@ number below was measured then; re-derive before trusting it. `docs/README.md` n
 
 - Audited at: `main` @ `33f9e960` (2026-10-03, ~17:07 local). `main` moved again while this was
   being written, so treat any count that involves `main`'s position as already stale.
-- Previous audit: [`MIGRATION_NEXT_STEPS_SUNDAY.md`](../MIGRATION_NEXT_STEPS_SUNDAY.md) at
+- Previous audit: [`MIGRATION_NEXT_STEPS_SUNDAY.md`](MIGRATION_NEXT_STEPS_SUNDAY.md) at
   `main` @ `f7757cf` (2026-09-28). **Many commits have landed since**; most of what that document
   said about the durable path has been replaced.
 - Line numbers drift — **re-verify from the sentence that makes the claim, never from an old
@@ -138,10 +138,14 @@ other**, which is why the conflicts are not the interesting part.
 `materializeDocument()` on `main` rethrows only `AbortError` and `console.error`s everything else,
 so an out-of-memory `RangeError`, an unknown or disposed asset, an unregistered processor or a
 degenerate transform each **silently drop a layer**, and with no `omittedLayerIds` a consumer cannot
-tell a refusal from a layer that was never in the replay. I confirmed this in the current tree. It
-is **latent** — `materialization.ts`'s only non-test importer is `durable-compositor.ts`, which
-itself has none — which is exactly why it should be fixed _before_ any authority cutover rather than
-after. Re-derive it on a fresh worktree off `main`; do not carry the branch's design with it.
+tell a refusal from a layer that was never in the replay. I confirmed this in the current tree. **It
+is NOT latent any more** — this paragraph previously called it latent on the ground that
+`materialization.ts`'s only non-test importer is `durable-compositor.ts`, "which itself has none". That
+is no longer true: `StoreContext.tsx` is `durable-compositor.ts`'s non-test importer, and its
+`publishDurableNavigationPresentation()` calls `composeDurableDocument()` on every navigation, so a
+silent drop is reachable in production. The defect itself is unchanged and still needs `omittedLayerIds`
+or an equivalent; what changed is that it is now on a live path, which raises its priority rather than
+lowering it. Re-derive it on a fresh worktree off `main`; do not carry the branch's design with it.
 
 Also worth re-deriving, in the same order: skipping invisible layers before materializing; dropping
 `opacity`/`blendMode`/`visible` from `createMaterializationKey` (the producer renders none of them,

@@ -6,6 +6,7 @@ import { crop } from '../crop.ts';
 import { draw } from '../draw.ts';
 import { featherMagneticLasso } from '../featherMagneticLasso.ts';
 import { levels } from '../levels.ts';
+import { BRIGHTNESS_SLIDER_RANGE, CONTRAST_SLIDER_RANGE } from '../functions.ts';
 import { magicWand } from '../magicWand.ts';
 import { rectangularSelection } from '../rectangularSelection.ts';
 import { reposition } from '../reposition.ts';
@@ -232,15 +233,15 @@ describe('tool image processors', () => {
   });
 
   describe('levels', () => {
-    it('composes brightness and contrast with their own exp curves', () => {
+    it('composes brightness and contrast proportionately from their Adobe travels', () => {
       const [result] = levels(params)({ brightness: 20, contrast: 40, toolName: 'levels' });
 
       const canvas = lastCanvas();
       const [brightness, contrast] = parseFilter(canvas.ctx.filter as string, ['brightness', 'contrast']);
-      // (exp(1.9 * 0.2) - exp(-1.9)) / (1 - exp(-1.9)) = 1.543588.
-      expect(brightness).toBeCloseTo(154.36, 2);
-      // (exp(2.2 * 0.4) - exp(-2.2)) / (1 - exp(-2.2)) = 2.586712.
-      expect(contrast).toBeCloseTo(258.67, 2);
+      // 1 + 20/150 = 1.13333…, emitted as a percentage.
+      expect(brightness).toBeCloseTo(113.33, 2);
+      // 1 + 40/100 = 1.4.
+      expect(contrast).toBeCloseTo(140, 2);
       expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
       expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
@@ -252,38 +253,64 @@ describe('tool image processors', () => {
       expect(result).toBeTruthy();
     });
 
-    it('darkens for negative brightness and contrast', () => {
-      const [result] = levels(params)({ brightness: -100, contrast: -100, toolName: 'levels' });
+    it('darkens and flattens at the negative end of both travels without collapsing either', () => {
+      const [result] = levels(params)({
+        brightness: BRIGHTNESS_SLIDER_RANGE.min,
+        contrast: CONTRAST_SLIDER_RANGE.min,
+        toolName: 'levels',
+      });
 
       const [brightness, contrast] = parseFilter(lastCanvas().ctx.filter as string, ['brightness', 'contrast']);
+      // Brightness reaches a real black; contrast does NOT reach `0%`, which would be
+      // `contrast(0%)` — every pixel the same mid-grey, an image with no information left.
       expect(brightness).toBe(0);
-      expect(contrast).toBe(0);
-      expect(brightness).toBeLessThan(100);
-      expect(contrast).toBeLessThan(100);
+      expect(contrast).toBe(50);
       expect(result).toBeTruthy();
     });
 
-    it('reaches black: the -100 end of the Brightness slider emits brightness(0%)', () => {
-      // The acceptance endpoint. `exp1_1` bottoms out at exp(-1.9) = 14.96%, so the old
-      // contract could only ever produce a dark grey at the far end of the travel — a
-      // Brightness slider labelled -100% that could not reach black. An emitted
-      // `brightness(0%)` is a real black.
-      levels(params)({ brightness: -100, contrast: 0, toolName: 'levels' });
+    it('reaches black: the -150 end of the Brightness slider emits brightness(0%)', () => {
+      // The acceptance endpoint, and it is exact rather than near. A multiply to zero drives
+      // every channel to zero in any colour space and in any evaluation order, so the layer's
+      // own pixels become (0,0,0) whatever the filter does with the rest of the chain.
+      levels(params)({ brightness: BRIGHTNESS_SLIDER_RANGE.min, contrast: 0, toolName: 'levels' });
 
       expect(lastCanvas().ctx.filter).toBe('brightness(0%) contrast(100%)');
       expect(parseFilter(lastCanvas().ctx.filter as string, ['brightness'])[0]).toBe(0);
     });
 
-    it('emits a brightness amount below 100% across the whole negative travel', () => {
-      for (const brightness of [-100, -75, -50, -25, -1]) {
+    it('emits a brightness amount below 100% and a contrast amount at or above 50% across the whole negative travel', () => {
+      for (let brightness = BRIGHTNESS_SLIDER_RANGE.min; brightness < 0; brightness += 25) {
         levels(params)({ brightness, contrast: 0, toolName: 'levels' });
 
         expect(parseFilter(lastCanvas().ctx.filter as string, ['brightness'])[0]).toBeLessThan(100);
       }
+
+      for (let contrast = CONTRAST_SLIDER_RANGE.min; contrast < 0; contrast += 10) {
+        levels(params)({ brightness: 0, contrast, toolName: 'levels' });
+
+        const [amount] = parseFilter(lastCanvas().ctx.filter as string, ['contrast']);
+        expect(amount).toBeGreaterThan(0);
+        expect(amount).toBeLessThanOrEqual(100);
+      }
     });
 
-    it('passes a NaN brightness/contrast straight into the filter string (src/tools/levels.ts:12)', () => {
-      // `expAdjustment` has no guard, so non-finite inputs survive into the composed CSS filter.
+    it('emits no negative operand anywhere on either travel, which would void the whole string', () => {
+      // A browser discards an invalid `ctx.filter` assignment outright rather than applying
+      // its valid part, so one negative operand would drop the OTHER term with it.
+      for (const brightness of [-150, -75, 0, 75, 150]) {
+        levels(params)({ brightness, contrast: -50, toolName: 'levels' });
+
+        const [light, punch] = parseFilter(lastCanvas().ctx.filter as string, ['brightness', 'contrast']);
+        expect(light).toBeGreaterThanOrEqual(0);
+        expect(punch).toBeGreaterThan(0);
+      }
+    });
+
+    it('passes a NaN brightness/contrast straight into the filter string (levels.ts — the levels() processor)', () => {
+      // `proportionateFactor` has no guard, so non-finite inputs survive into the composed CSS
+      // filter. `presentation-evaluator.ts` — `numericFilterArg()` is what refuses them on the
+      // live render path; this processor has no such gate, which is what the tripwire below
+      // records.
       const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
 
       expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
@@ -291,7 +318,7 @@ describe('tool image processors', () => {
     });
 
     it.fails(
-      'sanitizes a non-finite brightness/contrast before it reaches the CSS filter (src/tools/levels.ts:12)',
+      'sanitizes a non-finite brightness/contrast before it reaches the CSS filter (levels.ts — the levels() processor)',
       () => {
         levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
 

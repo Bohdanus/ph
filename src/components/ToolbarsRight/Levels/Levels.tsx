@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { type LevelsToolArgs } from '../../../tools/levels.ts';
 import { defaultSettings } from '../../../tools/settings.ts';
+import { BRIGHTNESS_SLIDER_RANGE, CONTRAST_SLIDER_RANGE } from '../../../tools/functions.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
@@ -109,8 +110,8 @@ const Levels: React.FC<{}> = () => {
         <input
           id="brightness-slider"
           type="range"
-          min={-100}
-          max={100}
+          min={BRIGHTNESS_SLIDER_RANGE.min}
+          max={BRIGHTNESS_SLIDER_RANGE.max}
           value={brightness}
           onChange={handleBrightnessChange}
           className="h-1.5 w-48 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
@@ -127,8 +128,8 @@ const Levels: React.FC<{}> = () => {
         <input
           id="contrast-slider"
           type="range"
-          min={-100}
-          max={100}
+          min={CONTRAST_SLIDER_RANGE.min}
+          max={CONTRAST_SLIDER_RANGE.max}
           value={contrast}
           onChange={handleContrastChange}
           className="h-1.5 w-48 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"

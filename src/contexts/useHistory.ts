@@ -1,5 +1,5 @@
 import { useStore } from './StoreContext.tsx';
-import type { Layer, LayersRecord } from './layer-types.ts';
+import type { LayersRecord } from './layer-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
@@ -10,74 +10,7 @@ import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
-import type { BitmapSource, Pos } from './general-types.ts';
-import {
-  drawEvaluatedPresentation,
-  evaluatePresentation,
-  type PresentationOperation,
-} from './presentation-evaluator.ts';
-
-/** Map retained layer operations to the shared presentation evaluator's input. */
-function presentationOperations(layer: Layer): PresentationOperation[] {
-  return layer.operations
-    .filter((operation) => operation.enabled)
-    .map((operation) =>
-      operation.kind === 'affine-transform'
-        ? { kind: 'affine-transform', transform: operation.transform }
-        : {
-            kind: 'filter',
-            toolName: operation.args.toolName,
-            args: operation.args as unknown as Readonly<Record<string, unknown>>,
-          }
-    );
-}
-
-/**
- * The buffer and size a pixel replay has to hand its processor, evaluated the way the live
- * pointer move evaluates them (`useLayer.ts:730`). A processor is handed ONE buffer and its
- * extents and never learns which layer it belongs to (`src/util/layer-space.ts:14-19`), so a
- * layer carrying a retained affine or filter has to be rasterized at its evaluated extent
- * first. Reading the raw raster with `layer.pos` instead replayed a transformed layer at the
- * untransformed geometry, so undo put pixels somewhere the screen never showed.
- *
- * A copy rather than an import: the live rule is module-private (`useLayer.ts:140`) and
- * `useLayer.ts` is not this file's to edit. It is stated from the same evaluator the renderer
- * and the durable materializer state it from (`layer-renderer.ts:94-99`,
- * `materialization.ts:207-212`), so the arithmetic has one implementation; what is repeated
- * here is the staging surface, which each of the three paths allocates for itself.
- */
-function replayProcessorInput(layer: Layer, bitmap: BitmapSource): { bitmap: BitmapSource; size: Pos } {
-  const operations = presentationOperations(layer);
-  if (operations.length === 0) return { bitmap, size: layer.pos };
-
-  const evaluation = evaluatePresentation({
-    position: layer.pos,
-    sourceSize: { width: layer.pos.width, height: layer.pos.height },
-    operations,
-    mode: 'layer-bounds',
-  });
-  const width = Math.max(1, Math.ceil(evaluation.localBounds.width));
-  const height = Math.max(1, Math.ceil(evaluation.localBounds.height));
-  const surface =
-    typeof OffscreenCanvas !== 'undefined'
-      ? new OffscreenCanvas(width, height)
-      : (() => {
-          if (typeof document === 'undefined') throw new Error('No canvas implementation is available');
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          return canvas;
-        })();
-  const context = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
-  if (!context) throw new Error('A 2D canvas context is required for a transformed replay input');
-  context.save();
-  try {
-    drawEvaluatedPresentation(context, bitmap, evaluation, { kind: 'bounds' });
-  } finally {
-    context.restore();
-  }
-  return { bitmap: surface as BitmapSource, size: evaluation.bounds };
-}
+import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -143,7 +76,6 @@ export const useHistory = () => {
     // Durable replay remains a diagnostic shadow until every pixel consumer
     // uses the same materialization contract. Navigation therefore replays the
     // legacy runtime representation and lets StoreContext rebuild the sidecar.
-    clearPreviewLayers?.();
     try {
       const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
       const replay = replayHistory(
@@ -161,15 +93,23 @@ export const useHistory = () => {
             // left exactly as it was rather than replaced with an empty canvas.
             const processor = findToolProcessor(args.toolName);
             if (!processor) return layer;
-            // Evaluated presentation, not the raw raster. An evaluator throw here fails the
-            // navigation closed through the `catch` below, exactly as one from the
-            // publication does — `drawReplay` runs the same evaluation over the same layer
-            // (`layer-renderer.ts:94`) — so it adds no failure class, only an earlier failure.
-            const input = replayProcessorInput(layer, bitmap);
-            const [canvas, patch] = processor.imageProcessor({ bitmap: input.bitmap, size: input.size })(args);
+            // The presented raster, not the raw one: a layer carrying a retained affine or filter
+            // is staged at its evaluated extent first, so a stroke commits against the geometry
+            // the screen showed. An evaluator throw here fails the navigation closed through the
+            // `catch` below, exactly as one from the publication does — `drawReplay` runs the same
+            // evaluation over the same layer — so it adds no failure class, only an earlier failure.
+            const staged = stageProcessorInput(layer, bitmap);
+            const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.bounds })(args);
+            // Published at the bounds that raster occupies, with the operations baked into it
+            // dropped from the list the renderer evaluates again. Keeping both was the double
+            // application: `getLayerBitmap()` prefers this canvas and `drawLayerSource()` then
+            // re-evaluated a transform and a filter the canvas already carried, at the layer's
+            // original `pos` instead of the evaluated one. The disabled entries survive, so
+            // `toggleDisabled()` still governs them.
             return {
               ...layer,
-              pos: patch ? { ...layer.pos, ...patch } : layer.pos,
+              pos: patch ? { ...staged.bounds, ...patch } : { ...staged.bounds },
+              operations: operationsRetainedAfterBake(layer),
               source: undefined,
               tmpCanvas: canvas,
             };
@@ -201,6 +141,17 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      // Dropped HERE, after the replay has been published and applied, and not
+      // ahead of it. A navigation that throws — a converter refusal, a tool
+      // processor, a refused publication — leaves the visible canvas and the
+      // store exactly as they were, so clearing first would discard an
+      // in-progress tool draft for a navigation that changed nothing. Once a
+      // replay IS on screen the clear is still required, and `drawAllLayers` in
+      // `useLayer` is the only thing that recomposites a preview over the
+      // layers: left standing, the draft would survive in state while its
+      // pixels were gone from the canvas, so the next `commitDirtyTool()` would
+      // apply a stroke the user could no longer see.
+      clearPreviewLayers?.();
       // Reported HERE rather than inside `replayHistory`, which collects instead
       // of logging (see `ReplayDiagnostic`): replay runs on every undo, redo and
       // history-panel click, so a per-item log inside that loop would re-emit the

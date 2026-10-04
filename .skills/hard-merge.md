@@ -1642,15 +1642,11 @@ insertion above it; a line number does not.** A re-verification pass is required
 to a cited document, not only to the code it points into.
 
 **A count is the same defect wearing a different hat.** If a count is load-bearing, derive it in
-the same sentence that uses it. Three files in this repository state a line count for
-`.skills/photoshop-tool-creation.md` and **all three are wrong** — its own gitignored loader says
-4,819, `docs/TOOLS-RESEARCH-BRIEF.md` says 4,371 in its "What already exists" section, and an
-earlier form of this paragraph said
-4,395; `wc -l .skills/photoshop-tool-creation.md` is the only one of the four that can be right.
-That is not a slip in a citation; it is a stale number that reads plausibly, which is the exact
-failure mode this appendix is about. **Verify any count you copy from here, including this one** —
-and note that the paragraph making that demand was itself carrying a wrong count, which is the
-strongest possible argument for deriving rather than copying.
+the same sentence that uses it. Line counts for `.skills/photoshop-tool-creation.md` have drifted
+across the loader, research brief and this appendix before; `wc -l .skills/photoshop-tool-creation.md`
+is the only source that can be right for the current tree. That is not a slip in a citation; it is
+a stale number that reads plausibly, which is the exact failure mode this appendix is about.
+**Verify any count you copy from here** — derive it rather than copying a point-in-time figure.
 
 **Tooling behaviour is the least stable thing here.** A flag that exists in git 2.50.1 may not
 exist in the next one, and a script's behaviour can change without a commit. Mark such a claim

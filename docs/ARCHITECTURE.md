@@ -11,11 +11,16 @@ This page is about how.
 **`store.durableDocument` is a complete, correctly-typed, fully-populated
 document that is not the truth.**
 
-It has eleven operation kinds, a versioned schema, deep-frozen clones, an asset
+It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
-rebuilt on every commit and every navigation. It is read at exactly one place.
-Four separate files say so in comments, and a newcomer who reads
-`src/contexts/history-model.ts` first will conclude the opposite.
+rebuilt on every commit and every navigation. `durableDocument` itself is read at
+exactly one place — `StoreContext.tsx`. Four comments across three files say so,
+and a newcomer who reads `src/contexts/history-model.ts` first will conclude the
+opposite.
+
+`durableStatus` is a second thing and has its own readers: `DevStatusStrip` and
+the crash screen display it, so "read at one place" is a claim about
+`durableDocument`, not about the shadow as a whole.
 
 The corollary is the one that bites: **`store.history` is the only thing that
 rendering, export and undo read, and it stores args, never pixels.** Undo re-runs
@@ -37,8 +42,23 @@ Evidence, all four current:
   by a navigation or rendering path while the legacy runtime stays
   authoritative."_
 
-`src/contexts/materialization.ts` and `src/contexts/replay-coordinator.ts` have no
-importer outside `__tests__/`.
+`src/contexts/materialization.ts` has one production importer,
+`src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
+`StoreContext.tsx`'s `publishDurableNavigationPresentation()` calls
+`composeDurableDocument()` on the navigation path, so the durable document now
+feeds a presentation cache. It does not feed logical state — the composition is
+staged off-tree, every layer is checked by `durablePresentationIsRendererIdentical()`
+against the legacy replay and a mismatch is declined, and the publication goes
+through `PUBLISH_RUNTIME_PRESENTATION`, whose `layersDifferOnlyByPresentation()`
+guard refuses any logical movement. `publishDurableNavigationPresentation()` also
+returns early while any snapshot in the replay carries a `'legacy-tool'` source,
+so the durable presentation is skipped outright for a document still holding a
+legacy tool snapshot.
+`src/contexts/replay-coordinator.ts` still has no importer outside `__tests__`.
+
+The requirements and staged cutover sequence are owned by
+[`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
+implementation boundary and does not duplicate the migration contract.
 
 ## The store
 
@@ -48,12 +68,20 @@ trusting a figure stored here.
 
 - `reducer(state: StoreData, action: Action)`, wired by
   `useReducer(reducer, initialState)`.
-- `Action` is a local union of **31** types, with `StoreDispatch` exported beside
-  it.
-- **29 reducer arms, not 31.** `ADOPT_LAYER_BITMAPS` is deliberately arm-less — the
-  dispatcher registers it and returns without forwarding, in its own
-  `dispatchAction()` branch. `SET_ORIGINAL_IMAGE` falls through to the reducer's
-  `default: return state`.
+- `Action` is a local union of **29** types, with `StoreDispatch` exported beside
+  it. Count them with `sed -n '/^export type Action =$/,/CLEAR_SELECTIONS/p' src/contexts/StoreContext.tsx | grep -cE "^  \| (\{|ReorderLayersAction)"`.
+- **`StoreAction`, not `Action`, is 31.** The union split into `Action` (public),
+  `InternalAction` (`PUBLISH_RUNTIME_PRESENTATION`, `ADOPT_LAYER_BITMAPS`) and
+  `StoreAction = Action | InternalAction`, with `PublicAction` an alias of
+  `Action`; `StoreDispatch` dispatches `PublicAction`, so neither internal type is
+  consumer-dispatchable.
+- **The reducer's 29 arms are not the `Action` 29.** `ADOPT_LAYER_BITMAPS` is
+  deliberately arm-less — the dispatcher registers it and returns without
+  forwarding, in its own `dispatchAction()` branch. `SET_ORIGINAL_IMAGE` falls
+  through to the reducer's `default: return state`. `PUBLISH_RUNTIME_PRESENTATION`
+  is the offset the other way: it is an `InternalAction` and it does have an arm.
+  `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
+  the arm count.
 - **The dispatcher is not the reducer.** `dispatchAction()` intercepts seven
   types, computes `latestStateRef.current = reducer(currentState, action)` _before_
   dispatching, and only then calls `rawDispatch`: `PROMOTE_LAYER_PRESENTATIONS`,
@@ -182,10 +210,19 @@ application. `materialization.ts` assigns none: `materializeLayer()` builds
 presentation descriptors, delegates the draw, and calls `requireCanvasFilter()` on a
 `requiresCanvasFilter` processor on the way. **Every one of the four is behind a
 capability check** — `requireCanvasFilter()` is the first statement of each
-processor, and `requireLayerFilterSupport()` guards the renderer's own assignment in
-`drawLayerSource()` — so an engine that ignores the write raises
+processor, and `requireLayerFilterSupport()` runs in `drawLayerSource()` before it
+delegates the draw — so an engine that ignores the write raises
 `CanvasFilterUnsupportedError` rather than applying the filter as a silent no-op, and
 `drawLayersToCanvas()` catches that per layer and skips it.
+
+**The renderer holds no assignment of its own.** `drawLayerSource()` builds a
+`PresentationOperation[]`, evaluates it with `evaluatePresentationForDraw()`, calls
+`requireLayerFilterSupport()`, and hands the result to `drawEvaluatedPresentation()`,
+which owns the `ctx.filter` write. A claim that `layer-renderer.ts` assigns
+`ctx.filter` no longer resolves: `grep -n "ctx.filter" src/contexts/layer-renderer.ts`
+returns exactly **one** line, and it is the guard's comment, not the guard —
+`requireLayerFilterSupport()` delegates to `requireCanvasFilter()` and never names
+`ctx.filter` in its body.
 
 ### The presentation cache
 
@@ -214,7 +251,9 @@ offending ids from `divergentLayerIds()`, by the dispatcher's
 
 `HistoryItem[]` plus `historyIndex`. Two exported types, `NewHistoryItem` and the
 `HistoryItem` that extends it with an `id` and a `disabled` flag
-(`src/contexts/history-types.ts`): an `actionName` from 12 constants, a
+(`src/contexts/history-types.ts`): an `actionName` from the **13** members of
+`ActionType` in `src/util/constants.ts` (a fourteenth, `UPDATE_LAYER_ACTION`, is
+commented out of the union and must stay that way), a
 `layerId`, optional `layerSource`, optional `documentSource`, and `args` — **the
 tool's args, never pixels.**
 
@@ -232,13 +271,16 @@ counter, not a branch, and `updateHistoryTimeline()` in
 
 ### The durable document — the shadow
 
-Typed in `src/contexts/history-model.ts`: eleven operation kinds
+Typed in `src/contexts/history-model.ts`: twelve operation kinds
 (`create-layer`, `remove-layer`, `set-layer-properties`, `reposition-layer`,
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
-`apply-raster-processor`, `set-document-frame`, `merge-document`,
-`set-selection`), wrapped in a versioned entry, deep-frozen on
+`apply-raster-processor`, `set-document-frame`, `replace-layer-source`,
+`merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
 every write by `freezeDurableDocument()`, one operation at a time by
-`cloneOperation()`.
+`cloneOperation()`. `replace-layer-source` is the lossless source-edit kind:
+`history-adapter.ts` emits it, `durable-replay.ts` replays it, and
+`history-append.ts`'s `replaceLayerSourceProblem()` refuses any shape that is not
+the canonical one.
 
 The boundary is `history-adapter.ts`: `legacyHistoryToDurable()` in,
 `DurableDocument` (also in `history-model.ts`) out, with a whitelist —
@@ -262,26 +304,46 @@ shadow can never close a bitmap the legacy path still owns.
 **Production callers, exhaustively:** `convertLegacyHistorySafely` from
 `StoreContext.tsx`'s `buildDurableDocument()`; `decideDurableAppend` from
 `dispatchAction()`'s `REORDER_LAYERS` and `COMMIT_DOCUMENT_EDIT` branches;
-`replayDurableDocument` from that same `REORDER_LAYERS` branch
-— once, and only to read the shadow's layer
-order as a reorder gate. `materializeLayer`, `materializeDocument` and
-`ReplayCoordinator` have none.
+`replayDurableDocument` from **two** sites, not one — `durableLayersAtCursor()`,
+which feeds `sourceBackedEntryContext()` the shadow's own layer order, and that
+same `REORDER_LAYERS` branch, where the order is read a second time and compared
+as a sequence against the reorder being planned. `publishDurableNavigationPresentation()`
+adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
+production caller, `composeDurableDocument()` in `durable-compositor.ts`;
+`materializeLayer` is reached only from inside `materializeDocument()` and has no
+importer of its own; `ReplayCoordinator` has none.
 
 ## The tool registry
 
 Two registries with different key sets, which is easy to misread as one:
 
-- **`src/tools/toolsMap.ts`** — 41 entries, one per `ToolName`. Each spreads its
-  processor and adds an `icon` and a `toolboxComponent`. This is the whole-tool
-  map, including the `eyedropper` entry, which has _only_ icon and component,
-  and the six pen-family `placeholderTool` entries.
-- **`src/tools/toolProcessors.ts`** — 40 entries, `PixelToolName` derived by
-  `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which is
-  how a tool that needs
-  no raster stays out of this registry. Each entry is curried: `(params) => (args) =>
-pixels`, where `params` carries the layer's raster and size and `args` the stroke
-  — the shape `ToolProcessorDefinition.imageProcessor` declares. `commit` is one of
-  eight kinds, `ToolCommitKind`, and `replay` is a typed
+- **`src/tools/toolsMap.ts`** — **44** entries, and **exactly one per `ToolName`**:
+  `ToolName` is `keyof ToolArgsByName`, which has **44** members, and the two key
+  sets are **identical** — only the declaration order differs. Prove the equality by
+  `diff`-ing two sorted key lists:
+  `awk '/^export type ToolArgsByName = \{/,/^\};/' src/contexts/tool-types.ts | grep -oE "^  '?[a-zA-Z][a-zA-Z0-9-]*'?:" | tr -d " ':" | sort`
+  against the same pipeline over
+  `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts`.
+  **A `[a-zA-Z]+` pattern undercounts**, because it drops the **19** hyphenated keys
+  (`polygonal-lasso`, `feather-magnetic-lasso`, `color-replacement`,
+  `add-anchor-point`, `custom-shape` and fifteen more) — 44 − 19 = 25, which is how a
+  44-entry map came to be documented as 25 members and as "not one per `ToolName`".
+  Each entry spreads its processor and adds an `icon` and a `toolboxComponent`. The
+  whole-tool map therefore includes the `eyedropper` entry, which has _only_ icon and
+  component, and **seven** `placeholderTool` entries — the six-key `pen` group
+  (`pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
+  `delete-anchor-point`, `convert-point`) plus `custom-shape`, which uses its own
+  `custom-shape` group. Count them with
+  `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts | grep -cE "^  '?[a-zA-Z-]+'?:"`;
+  the quoted keys are why the `-` is required in that character class.
+- **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
+  `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
+  is how a tool that needs
+  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper']`, the
+  one member, which is why the two registries differ by exactly one. Each entry is
+  curried: `(params) => (args) => pixels`, where `params` carries the layer's
+  raster and size and `args` the stroke — the shape `ToolProcessorDefinition.imageProcessor` declares.
+  `commit` is one of eight kinds, `ToolCommitKind`, and `replay` is a typed
   descriptor naming a durable operation.
 
 `toolbar-mapping.ts` (repository root) maps toolbar tiles to tools. Each **nested
@@ -359,13 +421,16 @@ dynamically, and its types come from that module's
 branch, and decoded
 `ImageData` → canvas by `psd-utils.ts`'s recursive `visit()` layer reader.
 
-`createImageBitmap` appears in six places. Four are the **immutability
-boundary** rather than the decode path — `immutableRaster()` in `useLayer.ts`,
+`createImageBitmap` appears in **seven** production call sites. Four are the
+**immutability boundary** rather than the decode path — `immutableRaster()` in `useLayer.ts`,
 `immutableRaster()` in `useApp.ts`,
 `materializePresentationBitmap()` in `layer-presentation.ts`,
-`AssetRegistry.registerBaselineAsync()` in `asset-registry.ts` — and two are
-materializations: `mergeAllLayers()` in `useLayer.ts`, and
-`toOwnedBitmap()` in `materialization.ts`. Synchronous paths use
+`AssetRegistry.registerBaselineAsync()` in `asset-registry.ts` — and three are
+materializations: `mergeAllLayers()` in `useLayer.ts` (through its `mergeLayers()`
+helper), and a `toOwnedBitmap()` in **each** of `materialization.ts` and
+`durable-compositor.ts`. That pair is a verbatim private duplicate — the same
+signature and the same `globalThis.createImageBitmap(canvas)` body — and neither is
+exported. Synchronous paths use
 `OffscreenCanvas.transferToImageBitmap()` instead —
 `immutableRasterCopy()`, in `asset-registry.ts`.
 

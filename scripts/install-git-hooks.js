@@ -42,7 +42,7 @@ import path from 'node:path';
  * `scripts/merge-release.mjs`.
  *
  * `pre-merge-commit` is the fourth gate, added because the rule it enforces was written
- * down in six places and enforced in none — see `.husky/pre-merge-commit`. Note the
+ * down in more than one place and enforced in none — see `.husky/pre-merge-commit`. Note the
  * limit that comes with it: git runs NO hook for a fast-forward, so that landing shape
  * is uncovered by design rather than by oversight.
  */
