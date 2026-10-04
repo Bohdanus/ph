@@ -319,10 +319,34 @@ test.describe('File round trip', () => {
 
     await openSaveDialog(page);
     await fillSaveDialog(page, 'roundtrip', PNG_FORMAT.label);
+
+    /**
+     * The locator the absence below is stated with, resolved POSITIVELY first, while the dialog
+     * is still on screen.
+     *
+     * `SaveDialog` renders its title as an `<h2 id="save-dialog-title">`, and that `<h2>` is the
+     * dialog's `aria-labelledby` target, so while the dialog is open this locator names exactly
+     * one visible element. That is the whole reason the absence below is worth reading: it is
+     * the SAME locator in the SAME test, one step earlier, in the state where the element
+     * exists. A bare `toHaveCount(0)` on an unproven locator cannot tell "the dialog closed"
+     * from "this app never mints that name" — reword the title, demote the `<h2>` to a `<div>`,
+     * or drop the heading, and the absence keeps passing forever while the dialog stays on
+     * screen. These two lines go red instead.
+     *
+     * Count before visibility, the way `e2e/accessibility.spec.ts` resolves every scan scope:
+     * one element, and that element visible.
+     */
+    const saveDialogTitle = page.getByRole('heading', { name: 'Save File As...' });
+    await expect(
+      saveDialogTitle,
+      'the open Save dialog is titled by a heading carrying this accessible name'
+    ).toHaveCount(1);
+    await expect(saveDialogTitle, 'and that heading is on screen, not merely in the DOM').toBeVisible();
+
     const download = await submitSaveDialogForDownload(page, PNG_FORMAT);
     const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
     await download.saveAs(savedPath);
-    await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+    await expect(saveDialogTitle, 'the Save dialog unmounted once the download completed').toHaveCount(0);
     const savedBytes = await readFile(savedPath);
     expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
