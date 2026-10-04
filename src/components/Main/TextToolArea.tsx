@@ -16,6 +16,9 @@ import { calculateNewRect } from '../../util/rect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
+import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
+import { isPointInLayer } from '../../contexts/affine-transform.ts';
+import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
 type TextToolAreaProps = {
@@ -24,9 +27,10 @@ type TextToolAreaProps = {
 };
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
+  const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
-  const { commitDirtyTool } = useLayers();
+  const { commitDirtyTool, setActiveLayer } = useLayers();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
   const args = toolArgs as TextToolArgs;
   const argsRef = useRef(args);
@@ -159,6 +163,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
       setToolArgs({ ...seeded, rect: newRect, kind });
     },
   });
+  const getLocalCoords = pointerState.getLocalCoords;
   const redrawRect = rectHandles.redraw;
 
   // The two pointer positions the classification needs, captured around `useRect`'s own handlers.
@@ -168,6 +173,40 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     () => ({
       onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
         pressRef.current = { x: event.clientX, y: event.clientY };
+        // A committed text layer is an entry point, not a fresh placement. Hydrate its source into
+        // canvas space before the rect hook sees this press so the overlay can select the existing
+        // characters and the next commit carries the original layer's position.
+        if (event.button === 0 && !args.rect) {
+          const canvasPoint = getLocalCoords?.(event);
+          if (canvasPoint) {
+            const documentPoint = canvasToDocumentPoint(canvasPoint, documentFrame);
+            const hitLayerId = getLayerIdByPoint(layers, documentPoint);
+            const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+            const activeTextLayer =
+              activeLayer?.source?.kind === 'tool' &&
+              activeLayer.source.args.toolName === 'text' &&
+              isPointInLayer(activeLayer, documentPoint)
+                ? activeLayer
+                : undefined;
+            const layer = activeTextLayer ?? (hitLayerId ? layers[hitLayerId] : undefined);
+            const source = layer?.source;
+            if (layer && source?.kind === 'tool' && source.args.toolName === 'text' && source.args.rect) {
+              setActiveLayer(layer.id);
+              const offsetX = layer.pos.x - documentFrame.x;
+              const offsetY = layer.pos.y - documentFrame.y;
+              setToolArgs({
+                ...source.args,
+                rect: {
+                  x1: source.args.rect.x1 + offsetX,
+                  y1: source.args.rect.y1 + offsetY,
+                  x2: source.args.rect.x2 + offsetX,
+                  y2: source.args.rect.y2 + offsetY,
+                },
+              });
+              return;
+            }
+          }
+        }
         pointerHandlers.onPointerDown(event);
       },
       onPointerMove: pointerHandlers.onPointerMove,
@@ -176,7 +215,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         pointerHandlers.onPointerUp(event);
       },
     }),
-    [pointerHandlers]
+    [activeLayerId, args.rect, documentFrame, getLocalCoords, layers, pointerHandlers, setActiveLayer, setToolArgs]
   );
 
   /**

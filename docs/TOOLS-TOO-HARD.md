@@ -275,14 +275,13 @@ that makes this harder than it looks: `HistoryItem[]` is the production replay a
 replayed type entry has to reproduce the same pixels from its args on any host. A live text object is
 not a raster and does not survive that unchanged.
 
-**What the app does instead.** The production path retains the text source arguments, but it has no
-Photoshop edit mode. Selecting an existing text row with the Type tool active (`LayersTab.tsx` —
-`selectLayer()`) hydrates those arguments, and `Text.tsx` — `applyText()` can call
-`replaceLayerSource()` when the replacement starts at the existing layer's original position.
-There is still no on-canvas caret, character selection, or double-click entry, and a gesture that
-does not start at that position creates a new layer. The runtime renderer also uses the committed
-raster for text, so runtime scaling resamples it. The gap is Photoshop-style in-place editing, not
-retention of the text arguments.
+**What the app does instead.** The production path retains the text source arguments and supports
+Photoshop-style panel re-entry: selecting an existing text row with the Type tool active (`LayersTab.tsx`
+— `selectLayer()`), or double-clicking its row, hydrates those arguments into the contenteditable
+overlay. `Text.tsx` — `applyText()` and the dirty-tool commit arm call `replaceLayerSource()`, so the
+edit is recorded and replayable. Canvas-click re-entry remains open. The runtime renderer still uses
+the committed raster for text, so runtime scaling resamples it. The remaining gaps are canvas entry and
+live vector rendering rather than retention of the text arguments.
 
 ### Free Transform as an interactive bounding box
 
