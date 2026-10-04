@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 48-54, 65, 69-71, 75, 84-85, 88, 89, 100, 104-105, 111, 125, 127, 131, 141, 154, 161, 201 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 48-54, 65, 69-71, 75, 84-85, 88, 89, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -67,8 +67,8 @@ are mounted.
 the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
 reconciling these changes pixel-tool results.
 
-**Fix.** Close the divergence the pixel differential found (§204) and the export axis it cannot see
-(§205), add the history-panel state axis (§206), then make the presentation authority explicit and
+**Fix.** Close the divergence the pixel differential found (§205) and the export axis it cannot see
+(§206), add the history-panel state axis (§207), then make the presentation authority explicit and
 rehydrate the options bar from durable sources. Keep legacy logical state as the authority until those
 projections are staged, lease-safe, and failure-contained; do not mount all remaining consumers at
 once.
@@ -307,9 +307,30 @@ pin the unbounded behaviour as load-bearing:
   case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
-**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline. Any future selection
-authority migration must preserve that rule and keep the two tests above as tripwires; bounding one
-consumer but not the other would reopen the parity divergence this helper exists to close.
+**Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
+they must be re-derived to assert a creation entry that precedes the target, not deleted to make the
+bound pass. The unbounded behaviour was a live feature, so a fix that makes one of them fail without
+re-deriving it has removed a user-visible capability, not corrected a pin.
+
+Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
+cursor argument) and be threaded through `replayHistory` in `history-replay.ts` and
+`legacyHistoryToDurable` in `history-adapter.ts`
+together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
+exists to close.
+
+**Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
+them:**
+
+- The doc comment above `deriveSelectionBaseline` in `selection-baseline.ts`. The claim is in that
+  comment, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
+  record that the selection ever existed", restated there for the durable baseline.
+- The comment above the `deriveSelectionBaseline(legacyHistory)` call in `legacyHistoryToDurable`
+  (`history-adapter.ts`) repeats it in the adapter's own voice: "It cannot be narrowed to the
+  pre-first-entry state
+  **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
+  the only record that the selection existed." Rewriting only the first leaves the rule's owner
+  corrected and its caller still advertising the reason it must not be bounded, so the next reader
+  takes the call site as exempt from the bound being introduced at the signature.
 
 **Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
 `src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
@@ -1224,9 +1245,8 @@ the exact expected order and shape')` title compares a hand-copied
 expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
 `AppKeyboardShortcuts.tsx` — the doc comment above `brushGroup` asserts in prose that its cycle
 groups match the mapping's groups;
-**three of its seven do not** — the Pen tile is six wide and its cycle is three, the shape tile is
-six wide and its `Shift+U` cycle is four, and `Shift+U` from the Triangle or Polygon does not skip
-them but **restarts** at the rectangle. Nothing tests that claim. And `availableTools` /
+**one of its seven does not** — the Pen tile is six wide and its cycle is three. Nothing tests that
+claim. And `availableTools` /
 `extraTools` have **no production consumer at all** — only tests read them — so a silent omission
 there produces three green tests over an incomplete app.
 
@@ -2247,7 +2267,7 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
 **Files.** `src/contexts/history-replay.ts`
 
 The append-boundary test citations are a separate drift cluster, not part of this file's
-`history-replay.ts` arithmetic; they are recorded in §203.
+`history-replay.ts` arithmetic; they are recorded in §204.
 
 ---
 
@@ -2796,7 +2816,9 @@ rail, and must NEVER be hidden"
      carried forward: the rail half is in `docs/PHOTOSHOP-UX.md`'s open-violations bullet, the
      operator's later "will be implemented" signal and the unanswered adjustment-layer question
      are in `docs/TOOLS-TOO-HARD.md` and `docs/PHOTOSHOP-UX.md`, the unanswered
-     adjustment-layer question is §172, and the open label question is §170. -->
+     adjustment-layer question is §172. The label question was §170; it is resolved and
+     implemented, so it is deleted, and the rule it settled now lives in
+     `docs/TOOLS-TOO-HARD.md`'s enabled-items entry. -->
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -4849,58 +4871,6 @@ its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180�
 `#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
 `src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
-## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
-
-**Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
-(the `const ADJUSTMENTS_ITEMS` list in `DesktopHeader.tsx`), and selecting it shows the `color`
-command's options bar, which renders
-three sliders — **Grayscale**, **Sepia**, **Saturation**
-(the three slider rows in `src/components/ToolbarsRight/Colors/Color.tsx`) — wired to
-`buildColorsFilter()`
-(`src/tools/functions.ts`), which emits `grayscale(%) sepia(%) saturate(%)`.
-
-Adobe's Photo Filter is a hue adjustment applied "from a preset filter or a custom color filter", with
-a **Density** slider and a **Preserve Luminosity** option, reachable at `Image > Adjustments > Photo
-Filter`.
-<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html> (200 on 2026-10-01).
-Two of the app's three controls are defensible against that: **`sepia` picks a fixed warm tone**, which
-is what Adobe's colour choice is for — its colour-conversion presets are "Warming Filter (85)" /
-"Cooling Filter (80)" and its light-balancing presets "Warming Filter (81)" / "Cooling Filter (82)"
-(<https://helpx.adobe.com/photoshop-elements/desktop/guided-edits-effects-and-filters/adjustment-filters.html>,
-Adobe's Photo **Elements** page, which is where Adobe still enumerates those preset names) — and
-**`saturation` is the trim that Preserve Luminosity performs**, in a form Adobe does not expose as a
-slider. **`grayscale` has no counterpart in Photo Filter at all**: it is a conversion to luminance, not
-a hue adjustment, and it is the one control on the bar that the menu's own name does not cover. The item
-is enabled under a name that promises a capability its bar does not have, in the one menu a user opens
-precisely to find out what the app can do.
-
-**The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
-is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry in
-`ADJUSTMENTS_ITEMS`) is
-**disabled**, because no second command owns desaturation. `Black and White` is disabled too (the
-`Black and White` entry, which
-carries no `toolName`) —
-it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
-
-**Exactly two honest answers, and this entry does not pick between them:**
-
-- **Drop the `grayscale` control.** The bar becomes Sepia + Saturation, which is Adobe's colour choice
-  plus its Density and Preserve Luminosity behaviour under different names — a defensible
-  `Photo Filter`. The cost is that desaturating a whole image, which the app does today, becomes
-  unreachable from any menu, because nothing else hosts it.
-- **Move it to `Desaturate`.** Enable `Image ▸ Adjustments ▸ Desaturate` on the `color` id and accept
-  that its bar's three controls do not match Adobe's Photo Filter. That is the same bounded divergence
-  already accepted for the `Black and White` naming decision, and `docs/OVERRIDES.md` is where a
-  deliberate Photoshop deviation belongs — **this entry does not add one and does not ask for one.**
-
-**Do not** give `Photo Filter` Adobe's Density and Preserve Luminosity while it computes
-`grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
-thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and
-`ADJUSTMENTS_ITEMS`, and their doc comments), `src/components/ToolbarsRight/Colors/Color.tsx` (the
-three slider rows), `src/tools/functions.ts` (`buildColorsFilter()`), `src/tools/colors.ts`
-
 ## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
 
 **Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
@@ -4937,79 +4907,6 @@ at all, and should be decided rather than deferred.
 and their doc comments, and the five menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
-
-## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
-
-**Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
-(the `const ADJUSTMENTS_ITEMS` list in `src/components/DesktopHeader/DesktopHeader.tsx`), and both
-name a capability the app does
-not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args really are
-`{ brightness, contrast }` and whose processor really does emit `brightness(…) contrast(…)` — so that
-label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
-selects the `color` stand-in and is **a partial match**: sepia IS Photo Filter's Warming preset and
-saturation is nearest its Density slider, but the third control is a `grayscale` slider, and Photo
-Filter performs no luminance conversion. §168 records the narrower version of that.
-
-**This is a question, not a defect, and it is here because two branches implemented opposite answers
-to it.** A branch carried the extraction and enabled both items on the reasoning that a bounded,
-documented partial match beats a wrong name. `main` carries the operator's later signal and argues
-the opposite: "**do not relabel and do not build the stand-in into the menu** — a relabelled stand-in
-is the falsehood, made more permanent by being menu-launched." Both are defensible and **the tree
-cannot settle it**, which is what makes it a question. There is no Adobe page that says which to do,
-because the question is not about Photoshop.
-
-**Evidence, and what it does not settle.** The operator's signal is 2026-10-01, in their words: "some
-tools from photoshop menu will be implemented, like levels, colors, etc (this reqs are very vague yet),
-but letting you know." It is explicitly vague and it does not reopen the rail decision. Read strictly
-it says the real commands are coming and the spec is not written down. Read as direction about the
-interim it also says not to ship a relabelled stand-in from a menu. The first decision's own words
-cut the other way — "the capability is to be restructured, **not dropped**" — and disabling both items
-leaves `color` reachable from nowhere, which is a capability drop. Nothing in the tree decides which
-of those two consequences the operator prefers.
-
-**What was searched before asking.** Adobe's `Image ▸ Adjustments` reference, for an item whose
-definition the three filters satisfy (none exists — this is why `Black and White` and `Desaturate`
-were both rejected); `docs/OVERRIDES.md`, for an entry authorising the divergence (there is none, and
-an agent must not add one); `HANDOFF.md` and the session record, for a later decision superseding
-either (none found — the signal above is the latest). The tree answers every sub-question and is
-silent on this one.
-
-**Needed by:** before the real `Image ▸ Adjustments` work starts, and before anything is built on the
-assumption that these two items are permanent.
-
-**RESOLVED — 2026-10-01. The operator: "use naming that photoshop has."** Both items stay enabled under
-Adobe's own names, which is what the merge had already taken as its default. Read strictly, that answer
-is also a rejection of the one reading `main`'s note offered — that a relabelled stand-in must not be
-menu-launched at all — because `Brightness/Contrast` and `Photo Filter` are both Adobe's names, not
-app-invented ones. The alternative this entry was written to choose between is therefore closed:
-`color` stays reachable.
-
-What the answer does **not** settle, and what the merge is carrying: `Photo Filter` remains a partial
-match (two of three controls fit; `grayscale` is not one of them), and the real `Black and White` and
-real `Levels` remain unbuilt and disabled. Those are the §168 capability question, not this naming
-question, and building the real commands is what dissolves them.
-
-**What the naming rule now binds.** A future adjustment command takes Adobe's name, and takes it only if
-it computes that command. An item whose computation does not match its Adobe name is a new falsehood
-and does not get enabled — which is why `Levels` and `Black and White` are `disabled` items rather
-than relabelled ones. An app-invented name (`Colors`) is not available as a fallback: it is the defect
-the rail removal fixed.
-
-**Answer (operator writes this line and nothing else):** use naming that Photoshop has.
-
-**Default if unanswered — KEEP BOTH ENABLED, and the divergence stays documented in the code.** The
-merge takes this option so the rail removal — which both sides and the operator agree on — is not
-held hostage to a naming question, and because a `disabled`-only menu is a strictly smaller surface
-than a menu that works. It is recorded as an assumption by the merging agent on 2026-10-01 and can be
-overturned by writing one line above. The cost of taking it is that a user can reach a control under
-an Adobe name that Adobe's dialog does not have; the cost of the alternative is that `color` is
-unreachable until real Black and White is built, which is a larger loss than a documented partial.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and `ADJUSTMENTS_ITEMS`),
-`src/components/DesktopHeader/__tests__/DesktopHeader.test.tsx`, `src/tools/colors.ts`,
-`src/tools/functions.ts` (`buildColorsFilter()`), `docs/TOOLS-TOO-HARD.md` (the enabled-items entry
-and Black and
-White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
 
 ## 171. `color`'s and `levels`' `imageProcessor` is unreachable from every production call site, which leaves two files maintained on a path nothing runs
 
@@ -5853,9 +5750,75 @@ guard fix rather than alongside it.
 out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
 establishing that it was dead, the intermediate-value problem became visible.
 
+## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
+
+**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) now drives Adobe's Brightness and Contrast
+proportionately over Adobe's own travels — Brightness ‑150..+150, Contrast ‑50..+100 — and that fixed the
+clipping the old exponential curve caused. It is still not Adobe's curve. Adobe pairs the two words
+itself: "In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments to the image
+layer, as with Levels and Curves adjustments." The **nonlinear** half is absent, and no formula for it is
+published by Adobe or by any reverse-engineering source found. What is measurable is that it is not any
+affine map: a `+20` brightness reads `10→11`, `128→145`, `250→253`, and those three deltas are
+mutually inconsistent with any constant scale and with any constant offset.
+
+Two consequences, both in the positive half of both controls, because the negative half is exact. A CSS
+`brightness(f)` is a clamped pure multiply, so it can never CREATE a white that was not already white, and
+`contrast(f)` clamps, so every `f > 1` clips every input past `0.5 + 0.5/f`. At `Contrast +50` the knee
+is 212.5 and a channel above it loses its tonal separation for good. The app's `e2e/levels.spec.ts` pins
+`244` there specifically because it is a NON-clipped reading; raising the contrast factor turns that pin
+into a saturated `255` that proves only that the channel saturated.
+
+**Affected.** `src/tools/functions.ts` — `buildLevelsFilter()` and `proportionateFactor()`; the boundary
+is stated on `buildLevelsFilter()`'s doc comment and in `src/tools/descriptions/transform.notes.md`, which
+`npm run docs:tools` carries into `docs/TOOLS.md`.
+
+**What would close it.** A per-channel lookup table applied per pixel, which is the same mechanism
+`docs/TOOLS-TOO-HARD.md` records as absent for Adobe's real Levels — a CSS filter string cannot express an
+arbitrary LUT. That is a new raster path, not an edit to this one: `presentation-evaluator.ts` builds the
+string and `layer-renderer.ts` assigns it to `ctx.filter` on an ordinary canvas, so the operation would
+have to carry a table instead of a filter and gain a read-back it does not currently have. Whoever takes
+it should re-derive the curve from Photoshop measurements rather than from this entry, because the entry's
+contribution is the boundary and not the shape.
+
+**Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
+travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
+This entry is only the part that did not.
+
+## 202. `docs/DOCUMENTATION.md` states the presentation-cache rule more strongly than the reducer enforces it
+
+**The problem.** `docs/DOCUMENTATION.md` — the section on a documented constraint beating a
+cleaner design — says that if `docs/` says the presentation cache is published through a typed
+action, then a refactor that promotes a cache outside reducer publication "has not improved
+the code — it has broken a rule that exists for a stated reason". Read literally that makes
+`PROMOTE_LAYER_PRESENTATIONS` the violation it names, because promotion does not go through
+publication.
+
+**What the code actually does.** Two reducer arms write the presentation cache, and each has
+its own guard. `PROMOTE_LAYER_PRESENTATIONS` re-checks `isSamePresentationCanvas` per record
+and rewrites only the records that differ. `PUBLISH_RUNTIME_PRESENTATION` replaces `layers`
+wholesale, and `dispatchAction` refuses that arm unless `layersDifferOnlyByPresentation`
+proves the publication moved no durable layer state. The whole-tree guard is applied on the
+publication path and NOT on the promotion path — so the guarantee "a publication cannot move
+durable state" is enforced, and the guarantee "promotion cannot silently drop durable state"
+is enforced per record by a different, weaker check. Nothing enforces a rule about promoting
+outside the reducer, because `PROMOTE_LAYER_PRESENTATIONS` is itself a reducer action.
+
+`AGENTS.md` carried the correction in its architecture-status section until 2026-10-04, when
+that section was cut for duplication with `docs/ARCHITECTURE.md` and
+`docs/ARCHITECTURE.md` §"The presentation cache". Cutting the paragraph removed the only
+document that said the documented rule was stronger than the code, which is why the finding
+is filed here rather than left to the next reader of `docs/DOCUMENTATION.md`.
+
+**What would close it.** Reword `docs/DOCUMENTATION.md` so the constraint names the guard
+rather than the shape: the rule is that a publication must be refused unless
+`layersDifferOnlyByPresentation` holds, and promotion must re-check
+`isSamePresentationCanvas` per record. Whether that is the intended invariant, or whether
+`PROMOTE_LAYER_PRESENTATIONS` should also carry the whole-tree guard, is an architecture
+judgement and belongs to the operator.
+
 ---
 
-## 202. No browser seam distinguishes durable and legacy presentation authorities
+## 203. No browser seam distinguishes durable and legacy presentation authorities
 
 **Problem.** The only durable Playwright assertion is the status string read by
 `error-boundary.spec.ts` through `error-boundary-durable-status`. No testid or `window` hook exposes
@@ -5869,30 +5832,33 @@ declined composition left the legacy presentation in place.
 state. Add one test for a successful durable navigation publication and one for a declined
 composition falling back to the legacy presentation. Assert the seam, not pixel colours.
 
-**Files.** `src/contexts/StoreContext.tsx`, `src/components/ErrorBoundary/ErrorBoundary.tsx`,
-`e2e/error-boundary.spec.ts`, and the history navigation specs
+**Files.** `src/contexts/StoreContext.tsx`, `e2e/error-boundary.spec.ts`, and the history navigation
+specs
 
 ---
 
-## 203. History-append pin citations drifted outside the history-replay citation inventory
+## 204. History-append pin citations drifted outside the history-replay citation inventory
 
-**Problem.** The `KNOWN GAP 1` block in `history-append.test.ts` — the §87 pin — carries five stale
-source citations, all of them line ranges. They point at moved units in `decideDurableAppend()` (the
-precondition guard list, the legacy-tip refusal, the published cursor and the cursor guard) and at
-the rebuild that maps a legacy cursor in `StoreContext.tsx` — `buildDurableDocument()`. These are not
-the `history-replay.ts` shifts owned by §99, so that entry's arithmetic cannot repair them.
+**Problem.** The `KNOWN GAP 1` and `KNOWN GAP 2` blocks in `history-append.test.ts` carried stale
+source citations for the §87 pin. They pointed at moved units in `decideDurableAppend()`,
+`validatePlannedDurableEntry()`, `translate()` and the related `StoreContext.tsx` builder. These are
+not the `history-replay.ts` shifts owned by §99, so that entry's arithmetic cannot repair them. The
+§88 half of the cluster was re-pointed by the change that closed §88.
 
-**Consequence.** A reader following the append-boundary pin is sent to the wrong code and can miss the
-live defect or misread the guard as already fixed.
+**Consequence.** A reader following the append-boundary pin is sent to the wrong code and can miss
+the live defect.
 
-**Fix.** Re-derive all five stale citations against the current symbols and replace the line ranges
-with unit citations. Do not change the pin to make the citation check green.
+**Fix.** Re-derive every remaining stale citation against the current symbols and replace line ranges
+with unit citations. Keep the §87 pin until its code fix lands. Do not change the pin to make the
+citation check green.
 
-**Files.** `src/contexts/__tests__/history-append.test.ts`,
-`src/contexts/history-append.ts` — `decideDurableAppend()`,
+**Files.** `src/contexts/__tests__/history-append.test.ts`, `src/contexts/history-append.ts` —
+`decideDurableAppend()`, `validatePlannedDurableEntry()`, `translate()`,
 `src/contexts/StoreContext.tsx` — `buildDurableDocument()`
 
-## 204. The durable composition resamples a retained affine twice, and the two authorities disagree on the pixels
+---
+
+## 205. The durable composition resamples a retained affine twice, and the two authorities disagree on the pixels
 
 **Problem.** `materializeLayer()` — `renderRetainedSegment()` draws a layer's retained affine into
 an intermediate surface sized `Math.ceil(localBounds)`, and `composeDurableDocument()` then stamps
@@ -5929,7 +5895,7 @@ a tripwire and starts being a lie.
 
 ---
 
-## 205. The export axis is blind exactly where the runtime axis diverges
+## 206. The export axis is blind exactly where the runtime axis diverges
 
 **Problem.** The pixel differential compares the export surface by mounting durable compositions into
 the legacy records' `tmpCanvas`, which only happens for layers
@@ -5940,7 +5906,7 @@ measured: `reposition and affine transform@2:layer-a`, `filter chain@1,2,3:layer
 `text source@1:text-layer`, `raster processor on a non-flat baseline@1:layer-a` — pinned by the
 `mounts every composed layer …` `it.fails` title in the same file.
 
-**Why it matters more than a coverage gap.** §204's divergence sits on the runtime axis only, and the
+**Why it matters more than a coverage gap.** §205's divergence sits on the runtime axis only, and the
 export axis reports agreement there **because it never compared anything**. A green export assertion
 is therefore not evidence of export parity for any transformed, filtered or text layer — the same
 "simultaneously live and uninformative" shape §1 records about the mount itself.
@@ -5957,7 +5923,7 @@ unproven rather than passing. Remove the pin with the widening that satisfies it
 
 ---
 
-## 206. The history-panel differential cannot be built without a durable title mapping, and none exists
+## 207. The history-panel differential cannot be built without a durable title mapping, and none exists
 
 **Problem.** RQ-4 names history-panel state as one of the surfaces that must agree. `HistoryTab.tsx`
 labels each row with `getHistoryItemTitle()` (`useHistory.ts`) — a pure function of a **legacy**
@@ -5983,5 +5949,3 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 **Files.** `src/contexts/useHistory.ts` — `getHistoryItemTitle()`,
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
-
----

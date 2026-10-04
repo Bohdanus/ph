@@ -156,9 +156,9 @@ variant or an equivalent atomic history action.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity and a pixel/export
    differential both exist; what is still owed is the divergence the differential
-   found (HANDOFF §204), the export axis it cannot yet see (HANDOFF §205),
-   history-panel parity (HANDOFF §206), options-bar rehydration, the browser
-   authority seam (HANDOFF §202), and the pinned `args.enabled` divergence.
+   found (§205), the export axis it cannot yet see (§206), history-panel parity
+   (§207), options-bar rehydration, the browser authority seam (§203), and the
+   pinned `args.enabled` divergence.
    Do not read the landed operation as a closed requirement; the
    operator's ruling was that the operation and its visible consumer land as one
    slice, and the consumer is still legacy-sourced.
