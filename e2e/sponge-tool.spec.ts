@@ -781,8 +781,28 @@ test.describe('Sponge tool', () => {
     }
     await expect(page.getByRole('checkbox', { name: 'Vibrance' })).toBeVisible();
     // `Range` and `Exposure` are the Tonal bar's controls, and the Sponge has neither.
+    //
+    // An absence is only a statement if the thing could have been there, so each locator is
+    // resolved against the bar that DOES carry it first. `Range` is anchored by the reachability
+    // test above, which asserts the Burn's `Range` combobox is visible; `Exposure` had no
+    // positive anywhere in this file, so it gets one here. The Tonal bar is the sibling in the
+    // SAME `O` flyout and `Tonal()` labels its own range input with exactly this word, so these
+    // are the same locator in the two bars rather than two unrelated names. Without the Dodge
+    // round trip below, a build whose Tonal bar stopped minting `Exposure` — or one that
+    // renamed it — would pass the Sponge's absence forever.
+    await selectTonal(page, DODGE_ITEM);
+    await expect(
+      page.getByRole('slider', { name: 'Exposure' }),
+      'the Tonal bar carries an Exposure slider: the positive both absences below are stated against'
+    ).toBeVisible();
+
+    await selectTonal(page, SPONGE_ITEM);
+    await expect(modeSelect(page), "the Sponge's own bar is back up, so the absences are about it").toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Range' })).toHaveCount(0);
-    await expect(page.getByRole('slider', { name: 'Exposure' })).toHaveCount(0);
+    await expect(
+      page.getByRole('slider', { name: 'Exposure' }),
+      'the Sponge has neither Tonal control, and the locator was shown to resolve on the Dodge'
+    ).toHaveCount(0);
 
     const options = await modeSelect(page).locator('option').allTextContents();
     expect
