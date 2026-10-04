@@ -2305,8 +2305,11 @@ export class Board {
     const agentId = this.identity?.agentId;
     if (!agentId) return [];
     // An agent with no worktree has no way to prove it is alive, so it keeps
-    // the manual contract. That is the outside-a-worktree case, and it is the
-    // one where `claim.renew` still means something.
+    // the manual contract, and that is where `claim.renew` still means something.
+    // "Outside a worktree" means outside ANY git repository: `resolveIdentity` fills
+    // `worktree` from `git rev-parse --show-toplevel`, which succeeds in every checkout,
+    // so `main` and a detached HEAD both renew. The only caller that falls out is one
+    // run outside a repository. See `renewOwnLocks` for the measurement.
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = new Date(at + leaseMs).toISOString();
@@ -2367,7 +2370,13 @@ export class Board {
     const agentId = this.identity?.agentId;
     if (!agentId) return [];
     // Same rule as claims: no worktree, no way to prove liveness, so the
-    // manual contract stands. That is the `main`-checkout and detached case.
+    // manual contract stands. NOT the `main`-checkout and detached case, as this comment
+    // used to say for years: `resolveIdentity` fills `worktree` from `git rev-parse
+    // --show-toplevel`, which succeeds in every checkout, so `main` and a detached HEAD
+    // both renew and a detached one is simply `detached@<short-sha>`. The only caller that
+    // falls out is one run outside any git repository. Measured 2026-10-03 across four
+    // working directories, and the wrong version was copied into docs/ORCHESTRATION.md as
+    // fact before anyone checked it against this function.
     const worktree = this.identity?.worktree;
     if (!worktree || !existsDir(worktree)) return [];
     const until = msFromNow(leaseMs, at);
