@@ -519,15 +519,16 @@ describe('useLayers deferred commit ownership', () => {
       });
     });
 
-    // ONE assertion, because the pair is one claim: the loop promoted the cache it OWNS and left
-    // the one it does not exactly where it found it. The owned half is the control — asserting the
+    // ONE claim, two halves. The owned half is the control — asserting the
     // unowned half alone would also pass on a loop that promoted nothing at all, which is the other
     // way this loop can be inert. Removing the scope check promotes the unowned cache instead and
-    // the pair reads `[null, null]`.
-    expect([result.current.store.layers.owned!.tmpCanvas, result.current.store.layers.foreign!.tmpCanvas]).toEqual([
-      null,
-      foreignCache,
-    ]);
+    // the unowned half reads `null`.
+    //
+    // `toBe`, not `toEqual`: two `OffscreenCanvas`es of the same size are `toEqual`, so a
+    // structural comparison proves only "some canvas" and would pass on a loop that swapped in a
+    // fresh one. The claim is that this cache is left exactly where it was found.
+    expect(result.current.store.layers.owned!.tmpCanvas).toBeNull();
+    expect(result.current.store.layers.foreign!.tmpCanvas).toBe(foreignCache);
     processor.mockRestore();
   });
 
