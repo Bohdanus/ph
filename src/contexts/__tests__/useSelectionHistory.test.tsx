@@ -5,7 +5,7 @@ import { useSelectionHistory } from '../useSelectionHistory.ts';
 import type { ClearedSelectionState, Selection } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { DurableHistoryEntry } from '../history-model.ts';
+import type { DurableHistoryEntry, DurableOperation, SelectionSnapshot } from '../history-model.ts';
 import type { AppendBoundaryInput, AppendBoundaryResult } from '../history-append.ts';
 import { SELECTION_ACTION } from '../../util/constants.ts';
 
@@ -135,6 +135,18 @@ function onlyDispatch(): CommittedSelectionEdit {
 function selectionArgs(historyItem: HistoryItem): { previous: unknown; next: unknown } {
   const args = historyItem.args as { previousSelectionState?: unknown; nextSelectionState?: unknown };
   return { previous: args.previousSelectionState, next: args.nextSelectionState };
+}
+
+/**
+ * A one-entry timeline, because `validateTimeline` refuses an append point at or
+ * past the end of the timeline. `seed` leaves `history: []` with
+ * `historyIndex: 0`, so an append planned against it yields `durableEntry: null`
+ * and the durable boundary is never reached at all.
+ */
+function seedWithAppendableTimeline(selections: Selection[], activeSelectionId: string | null) {
+  seed(selections, activeSelectionId);
+  storeStateMock.history = [{ id: 'prior-selection', actionName: SELECTION_ACTION, layerId: 'selection' }];
+  storeStateMock.historyIndex = 0;
 }
 
 beforeEach(() => {
@@ -429,5 +441,89 @@ describe('useSelectionHistory committed selection state', () => {
     const { updates, historyItem } = onlyDispatch().payload;
     const { next } = selectionArgs(historyItem);
     expect(next).toEqual({ selections: updates.selections, activeSelectionId: updates.activeSelectionId });
+  });
+});
+
+/**
+ * The recorded `before` state must be a VALUE, not a reference into the store's
+ * live `selections` array.
+ *
+ * Nothing in production mutates that array in place today — every selection
+ * transition in the reducer replaces it wholesale — so this is the invariant
+ * rather than a reproduction of a live defect: the writers hand the array
+ * straight to `selectionSnapshot`, which deep-copies `points`, `pos` and
+ * `metadata`, and history reads the baseline back much later (undo replays the
+ * whole timeline; the durable conversion reads the same args). An alias would
+ * make the recorded "before" state a function of whatever the store does next.
+ *
+ * The mutation below is therefore simulated rather than observed: it stands for
+ * any future in-place write, and it is what an alias would fail.
+ */
+describe('useSelectionHistory recorded baseline is a value, not a live reference', () => {
+  it('survives an in-place write to the store array after a clear', () => {
+    const existing = makeSelection('existing');
+    const live = [existing];
+    seed(live, existing.id);
+
+    mountWriter().clearSelections();
+
+    const { previous } = selectionArgs(onlyDispatch().payload.historyItem);
+    const recorded = previous as SelectionSnapshot;
+    // Not the store's array, and not the store's `Selection` records either.
+    expect(recorded.selections).not.toBe(live);
+    expect(recorded.selections[0]).not.toBe(existing);
+
+    // The retroactive rewrite an alias would suffer. `live[0]` IS `existing`,
+    // so the expectation below is a freshly built record rather than that
+    // mutated one.
+    live.push(makeSelection('later'));
+    live[0]!.pos.x = 999;
+    live[0]!.points[0]!.x = 999;
+    (live[0]!.metadata as { featherRadius: number }).featherRadius = 999;
+
+    expect(recorded.selections).toHaveLength(1);
+    expect(recorded.selections[0]).toEqual(makeSelection('existing'));
+  });
+
+  it('survives an in-place write to the store array after a create', () => {
+    const existing = makeSelection('existing');
+    const live = [existing];
+    seed(live, existing.id);
+
+    mountWriter().commitSelection(makeGesturePayload('drawn'), 'create');
+
+    const { previous } = selectionArgs(onlyDispatch().payload.historyItem);
+    const recorded = previous as SelectionSnapshot;
+    expect(recorded.selections).not.toBe(live);
+    expect(recorded.selections[0]).not.toBe(existing);
+
+    live.push(makeSelection('later'));
+    live[0]!.pos.x = 999;
+
+    expect(recorded.selections).toHaveLength(1);
+    expect(recorded.selections[0]).toEqual(makeSelection('existing'));
+  });
+
+  it('hands the durable plan a baseline that is not the store array either', () => {
+    // The same object is passed as `currentSelections`, so an alias here would
+    // reach the durable `before` as well as the legacy arg.
+    const existing = makeSelection('existing');
+    const live = [existing];
+    seedWithAppendableTimeline(live, existing.id);
+
+    mountWriter().clearSelections();
+
+    expect(appendControl.calls[0].result?.durableEntry?.operation).toMatchObject({
+      kind: 'set-selection',
+      before: { selections: [existing], activeSelectionId: existing.id },
+    });
+    // `toMatchObject` does not narrow, so the `set-selection` member the assertion
+    // above just proved is the one being read is named here rather than assumed.
+    const before = (
+      appendControl.calls[0].result?.durableEntry?.operation as Extract<DurableOperation, { kind: 'set-selection' }>
+    ).before as SelectionSnapshot;
+    expect(before.selections).not.toBe(live);
+    live.push(makeSelection('later'));
+    expect(before.selections).toHaveLength(1);
   });
 });
