@@ -276,8 +276,11 @@ Typed in `src/contexts/history-model.ts`: twelve operation kinds
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
 `apply-raster-processor`, `set-document-frame`, `replace-layer-source`,
 `merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
-every write by `freezeDurableDocument()`, one operation at a time by
-`cloneOperation()`. `replace-layer-source` is the lossless source-edit kind:
+every write — by `freezeDurableDocument()` when the document is built from a
+legacy timeline, and by `rebindDurableDocument()` when only its positions move,
+which adopts the parts it already froze and copies the entries it has not. Both
+reach one operation at a time through `cloneOperation()`. `replace-layer-source`
+is the lossless source-edit kind:
 `history-adapter.ts` emits it, `durable-replay.ts` replays it, and
 `history-append.ts`'s `replaceLayerSourceProblem()` refuses any shape that is not
 the canonical one.

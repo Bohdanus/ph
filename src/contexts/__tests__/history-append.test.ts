@@ -22,6 +22,7 @@ import {
 } from '../history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
+  freezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerPropertyPatch,
@@ -663,7 +664,10 @@ describe('decideDurableAppend', () => {
     expect(decision.outcome).toBe('published');
     if (decision.outcome !== 'published') return;
     expect(decision.document.history).toHaveLength(2);
-    // The model clones and freezes every entry, so identity is not preserved.
+    // The base above is hand-built rather than frozen, so this decision takes
+    // the full deep clone and identity is not preserved. `adopts the frozen
+    // baseline on the publication path` below drives the same decision over a
+    // document the store really holds, which is the shape that adopts.
     expect(decision.document.history[1]).toEqual(planned);
     expect(decision.document.history[0]).toEqual(base.history[0]);
     expect(decision.document.cursor).toBe(1);
@@ -671,6 +675,34 @@ describe('decideDurableAppend', () => {
     expect(decision.document.documentRevision).toBe(4);
     expect(decision.document.branchRevision).toBe(0);
     expect(decision.document.baseline.frame).toEqual(baselineFrame);
+  });
+
+  it('adopts the frozen baseline on the publication path', () => {
+    // The base the store really holds is the converter's own output, deep-frozen
+    // end to end, and the append changes one position and adds one entry. So the
+    // publication moves the positions and keeps the content: the inherited entry
+    // and the baseline are adopted rather than re-copied, and only the planned
+    // entry — which arrives at the boundary shallow-frozen — is copied. Every
+    // assertion here fails if the publication goes back to copying the document.
+    const frozenBase = freezeDurableDocument(base);
+    const decision = decide({ base: frozenBase });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.baseline).toBe(frozenBase.baseline);
+    expect(decision.document.history[0]).toBe(frozenBase.history[0]);
+    expect(decision.document.history[1]).not.toBe(planned);
+    expect(decision.document.history[1]).toEqual(planned);
+    // The one thing that had to be copied: `deriveSetDocumentFrameEntry` freezes
+    // the operation and leaves `previous` and `next` as plain copies.
+    const published = decision.document.history[1].operation;
+    if (published.kind !== 'set-document-frame') throw new Error(`unexpected operation ${published.kind}`);
+    expect(Object.isFrozen(published.next)).toBe(true);
+    expect(Object.isFrozen(published.previous)).toBe(true);
+    expect(published.next).not.toBe(croppedFrame);
+    expect(published.next).toEqual(croppedFrame);
+    expect(decision.document.cursor).toBe(1);
+    expect(decision.document.durableRevision).toBe(8);
   });
 
   it.each([

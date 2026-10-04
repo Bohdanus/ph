@@ -438,6 +438,50 @@ function cloneOperation(operation: DurableOperation): DurableOperation {
   }
 }
 
+/**
+ * The one copy of an entry into the shape a document holds.
+ *
+ * Exported because an entry arrives at the append boundary only shallow-frozen:
+ * every producer in `history-adapter.ts` and `history-append.ts` freezes the
+ * wrapper and leaves its operation to this module, and several leave parts of
+ * the payload unfrozen besides — `deriveSetDocumentFrameEntry`'s `previous` and
+ * `next`, `selectionSnapshot()`'s `before` and `after` down to the nested
+ * `points` and `metadata` wherever a selection entry is derived, the conversion's
+ * `reorder-layers` map and `merge-document` removal ids, and every
+ * `source.size`. An entry is therefore a `DurableDocument` value the moment it is
+ * placed in one and an ordinary object until then, and this is the boundary where
+ * the second becomes the first.
+ */
+export function cloneDurableHistoryEntry<Op extends DurableOperation>(
+  entry: DurableHistoryEntry<Op>
+): DurableHistoryEntry<Op> {
+  return Object.freeze({
+    id: entry.id,
+    schemaVersion: entry.schemaVersion,
+    enabled: entry.enabled,
+    operation: cloneOperation(entry.operation) as Op,
+  });
+}
+
+/**
+ * Every document this module deep-cloned and froze.
+ *
+ * `rebindDurableDocument` below may reuse a document's frozen parts only if its
+ * WHOLE object graph is frozen, and `Object.isFrozen(document)` cannot show that:
+ * it is one call on the top object, while what a later reader can reach is the
+ * graph beneath it — every layer snapshot, every selection `points` array, every
+ * `args` object. Membership here is a claim of a different kind, and a checkable
+ * one: `freezeDurableDocument` deep-copies from its input, so every object
+ * reachable from its output is frozen AND owned by the document rather than by
+ * whoever handed it over. Recording the output is what lets the next reader of
+ * that claim skip the copy without asserting it a second time.
+ *
+ * A document that did not come from here is absent — hand-built by a test,
+ * structured-cloned out of storage — and takes the full deep clone instead, so
+ * the reuse is an optimization and never a precondition.
+ */
+const deepFrozenDurableDocuments = new WeakSet<DurableDocument>();
+
 export function freezeDurableDocument(document: DurableDocument): DurableDocument {
   const baseline: DurableBaseline = Object.freeze({
     frame: Object.freeze({ ...document.baseline.frame }),
@@ -445,17 +489,8 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
     selections: cloneSelectionSnapshot(document.baseline.selections),
     activeLayerId: document.baseline.activeLayerId,
   });
-  const history = Object.freeze(
-    document.history.map((entry) =>
-      Object.freeze({
-        id: entry.id,
-        schemaVersion: entry.schemaVersion,
-        enabled: entry.enabled,
-        operation: cloneOperation(entry.operation),
-      })
-    )
-  );
-  return Object.freeze({
+  const history = Object.freeze(document.history.map((entry) => cloneDurableHistoryEntry(entry)));
+  const frozen = Object.freeze({
     ...document,
     baseline,
     history,
@@ -467,6 +502,8 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
      */
     cursor: Number.isInteger(document.cursor) ? Math.max(-1, Math.min(document.cursor, history.length - 1)) : -1,
   });
+  deepFrozenDurableDocuments.add(frozen);
+  return frozen;
 }
 
 export function cloneDurableDocument(document: DurableDocument): DurableDocument {
@@ -475,4 +512,93 @@ export function cloneDurableDocument(document: DurableDocument): DurableDocument
     baseline: document.baseline,
     history: document.history,
   });
+}
+
+/**
+ * The positions a document carries. Everything else about it is content.
+ *
+ * `documentId` is deliberately absent: a rebind moves a document's cursor or
+ * grows its timeline, and every caller holds one document id for the life of
+ * the shadow. Changing it is a different document, not a new position of this
+ * one, so leaving the key out of the type makes that a typecheck error rather
+ * than a shadow quietly re-keyed under a stale baseline.
+ */
+export type DurableDocumentPositions = Readonly<{
+  /** Absent means the timeline did not change, which is what a cursor move is. */
+  history?: readonly DurableHistoryEntry[];
+  cursor: number;
+  documentRevision?: number;
+  branchRevision?: number;
+  durableRevision?: number;
+}>;
+
+/**
+ * A durable document whose positions changed and whose content did not.
+ *
+ * `freezeDurableDocument` is the right answer to "this document may share
+ * nothing with its input" — `cloneDurableDocument` and the conversion both want
+ * exactly that. It is the wrong answer to "this document changed one integer",
+ * which is what an incremental append and a cursor move are, and it is the
+ * wrong answer at a cost that grows with the timeline: both were re-copying and
+ * re-freezing every entry and every baseline layer in order to read one field
+ * differently, which is quadratic work over a long edit session.
+ *
+ * So the positions move and the content is adopted, and what makes that sound is
+ * narrow and checkable rather than assumed:
+ *
+ * 1. The document must be one this module froze (the brand above). That is what
+ *    proves its `baseline` and its entries are frozen all the way down, so
+ *    sharing them with the result is unobservable: no reader can write to a
+ *    frozen object, and there is no second writer that could have.
+ * 2. An entry the caller supplies that is NOT already one of this document's is
+ *    deep-copied here. That is the case that actually occurs — a planned entry
+ *    arrives at the append boundary only shallow-frozen — and it is why the
+ *    signature takes a bare entry rather than demanding a pre-cloned one. The
+ *    membership test is on object identity, so it is exact: an entry the caller
+ *    rebuilt, even field for field identical, is treated as new and copied.
+ *
+ * A document outside (1) falls back to the full deep clone, so this is total
+ * over its input type rather than a precondition its callers must satisfy.
+ */
+export function rebindDurableDocument(document: DurableDocument, positions: DurableDocumentPositions): DurableDocument {
+  const documentRevision = positions.documentRevision ?? document.documentRevision;
+  const branchRevision = positions.branchRevision ?? document.branchRevision;
+  const durableRevision = positions.durableRevision ?? document.durableRevision;
+  const requestedHistory = positions.history ?? document.history;
+
+  if (!deepFrozenDurableDocuments.has(document)) {
+    return freezeDurableDocument({
+      ...document,
+      history: requestedHistory,
+      cursor: positions.cursor,
+      documentRevision,
+      branchRevision,
+      durableRevision,
+    });
+  }
+
+  const inherited = new Set(document.history);
+  const history = Object.freeze(
+    requestedHistory.map((entry) => (inherited.has(entry) ? entry : cloneDurableHistoryEntry(entry)))
+  );
+  const rebound = Object.freeze({
+    documentId: document.documentId,
+    documentRevision,
+    branchRevision,
+    durableRevision,
+    baseline: document.baseline,
+    history,
+    /**
+     * The same total clamp `freezeDurableDocument` applies, written out rather
+     * than pulled into a helper. A shared helper would have exactly one other
+     * caller — the freeze two functions above — and a single arithmetic
+     * expression is not worth an indirection whose drift would be invisible.
+     * `history-model.rebind.test.ts` pins the two copies against each other over
+     * every invalid cursor class, alongside the existing drift pin that holds
+     * `freezeDurableDocument` against `durable-replay.ts`'s own copy.
+     */
+    cursor: Number.isInteger(positions.cursor) ? Math.max(-1, Math.min(positions.cursor, history.length - 1)) : -1,
+  });
+  deepFrozenDurableDocuments.add(rebound);
+  return rebound;
 }

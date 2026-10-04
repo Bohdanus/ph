@@ -27,7 +27,7 @@ import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
   collectDurableAssetIds,
-  freezeDurableDocument,
+  rebindDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
@@ -842,7 +842,12 @@ function buildDurableDocument(
         : -1;
     return {
       status: converted.status,
-      document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+      // The conversion above already deep-cloned and froze this document, and
+      // every position except the cursor is the converter's own. So the cursor
+      // moves and the content is adopted, rather than every layer snapshot and
+      // every entry being copied a second time on every undo and redo — work
+      // that grew with the timeline and bought nothing.
+      document: converted.document ? rebindDurableDocument(converted.document, { cursor }) : null,
       diagnostics: converted.diagnostics,
       legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };

@@ -28,7 +28,7 @@ import {
 } from './history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
-  freezeDurableDocument,
+  rebindDurableDocument,
   type AssetId,
   type DurableDocument,
   type DurableHistoryEntry,
@@ -1468,11 +1468,16 @@ export function decideDurableAppend({
 
   return {
     outcome: 'published',
-    document: freezeDurableDocument({
-      ...base,
+    document: rebindDurableDocument(base, {
       documentRevision,
       branchRevision: next.branchRevision,
       durableRevision: base.durableRevision + 1,
+      // `planned` is in flight here: the boundary only shallow-froze it, and its
+      // operation may carry parts the adapter left unfrozen. `rebindDurableDocument`
+      // deep-copies every entry of this array that `base.history` does not already
+      // hold, so the inherited prefix is adopted and this one is brought up to the
+      // shape the document holds — the whole difference between publishing one
+      // entry and re-freezing all of them.
       history: [...base.history, planned],
       cursor,
     }),
