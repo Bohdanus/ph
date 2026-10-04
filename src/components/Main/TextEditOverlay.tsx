@@ -151,7 +151,9 @@ export const TextEditOverlay = () => {
 
   const restoreCaretOffset = useCallback((host: HTMLElement, offset: number) => {
     const node = host.firstChild;
-    if (!node) return;
+    // A CHARACTER offset addresses a text node. Against an element it would be a child index, so
+    // `<span>ab</span>` at offset 1 would land after `ab` in tree order — offset 2, not 1.
+    if (!node || node.nodeType !== Node.TEXT_NODE) return;
     const caret = document.createRange();
     caret.setStart(node, Math.min(node.textContent?.length ?? 0, offset));
     caret.collapse(true);
@@ -221,6 +223,34 @@ export const TextEditOverlay = () => {
   }, [editing]);
 
   /**
+   * Keep the caret offset honest, because `handleInput` TRUSTS it.
+   *
+   * The cached offset exists to repair Chromium's caret canonicalisation after a hard break, and it
+   * is only ever correct for a caret the user positioned with the KEYBOARD. A mouse click inside the
+   * box, a double-click word select and a drag selection all move the caret without firing a single
+   * key event, so a cache written by `handleKeyUp` keeps the offset from the previous keystroke and
+   * `handleInput` then rewrites the element from a position the user never chose: typing `X` after
+   * clicking between `c` and `d` in `abcdef` appended it instead, and typing over a double-click
+   * selection brought the selected characters BACK. The element is the authority on where a
+   * character went; the cache is a repair, and a repair must never be the thing that decides.
+   *
+   * `selectionchange` is the one event that covers every caret move — click, word select, drag,
+   * drop, and the keyboard paths already handled — and it is dispatched as its own task, so it lands
+   * before the `input` of the keystroke that follows it. `readCaretOffset` returns `null` for a
+   * non-collapsed selection, so a mouse selection leaves the cache null and the reconcile branch is
+   * skipped, which is the behaviour Shift+arrow already had.
+   */
+  useEffect(() => {
+    if (!editing) return;
+    const sync = () => {
+      const host = hostRef.current;
+      if (host) caretOffsetRef.current = readCaretOffset(host);
+    };
+    document.addEventListener('selectionchange', sync);
+    return () => document.removeEventListener('selectionchange', sync);
+  }, [editing, readCaretOffset]);
+
+  /**
    * Adopt whatever the browser put in the element, flattened.
    *
    * The element is `contenteditable="true"` and this handler is the only thing standing between the
@@ -248,9 +278,15 @@ export const TextEditOverlay = () => {
         }
       }
       if (host.children.length > 0) {
+        const caret = readCaretOffset(host);
         const flat = host.textContent ?? '';
         host.textContent = flat;
         publish(flat);
+        // Rewriting `textContent` throws the caret to the end of the string, so reading it AFTER the
+        // write would cache the position the user did not ask for and every later keystroke would
+        // land there. MEASURED consequence: a styled drop into the middle of a draft moved the caret
+        // to the end for the rest of the session.
+        if (caret !== null) restoreCaretOffset(host, caret);
         caretOffsetRef.current = readCaretOffset(host);
         return;
       }
@@ -274,8 +310,12 @@ export const TextEditOverlay = () => {
       const plain = event.clipboardData.getData('text/plain');
       if (!plain) return;
       publish(insertPlainTextAtCaret(event.currentTarget, plain));
+      // A keyboard paste is repaired by the `Ctrl/Cmd+V` keyup; a paste from the native context menu
+      // fires no key event at all, so without this the next typed character reconciles against the
+      // offset from before the paste.
+      caretOffsetRef.current = readCaretOffset(event.currentTarget);
     },
-    [publish]
+    [publish, readCaretOffset]
   );
 
   /**
@@ -308,10 +348,15 @@ export const TextEditOverlay = () => {
           return;
         }
         event.preventDefault();
-        const before = caretOffsetRef.current ?? readCaretOffset(event.currentTarget) ?? 0;
-        if (caretOffsetRef.current !== null) restoreCaretOffset(event.currentTarget, before);
+        const before = caretOffsetRef.current ?? readCaretOffset(event.currentTarget);
+        // A non-collapsed selection means there is no cached offset to restore, and restoring one
+        // would clobber the very selection the break is meant to replace.
+        if (before !== null) restoreCaretOffset(event.currentTarget, before);
         publish(insertPlainTextAtCaret(event.currentTarget, '\n'));
-        caretOffsetRef.current = before + 1;
+        // READ the post-insert caret rather than asserting it. With a selection over `cd` in
+        // `abcdef` the break lands at 2 and the caret at 3, while `before + 1` from a null cache
+        // would have claimed 1 and put the next character in the middle of the word.
+        caretOffsetRef.current = readCaretOffset(event.currentTarget);
         return;
       }
       if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey)) || event.key === 'Escape') {
@@ -324,6 +369,11 @@ export const TextEditOverlay = () => {
 
   const handleKeyUp = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      // Mid-composition the model still holds the pre-composition string while the element holds the
+      // candidate, so a cached offset measured here would be measured against text the next `input`
+      // reconciles against something else. `handleKeyDown` already refuses during composition; the
+      // two handlers must agree about it.
+      if (event.nativeEvent.isComposing) return;
       caretOffsetRef.current = readCaretOffset(event.currentTarget);
     },
     [readCaretOffset]

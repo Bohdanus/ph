@@ -7,6 +7,8 @@ import { replayDurableAtCursor, type DurableReplayResult } from '../durable-repl
 import { renderExportCanvas } from '../export-canvas.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { createLayerSource } from '../layer-utils.ts';
+import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
+import type { Size } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord } from '../layer-types.ts';
 import { durablePresentationIsRendererIdentical } from '../StoreContext.tsx';
@@ -15,7 +17,9 @@ import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import {
   installPixelCanvasElement,
   pixelHtmlCanvasContexts,
+  filterAssignments,
   PixelContext as PixelContextClass,
+  resetFilterAssignments,
   readPixelSource,
   resetUnresolvableDraws,
   stubPixelOffscreenCanvas,
@@ -36,8 +40,8 @@ import {
  * `history-replay.parity.test.ts` proves the two replay MODELS agree on ids, orders, names,
  * booleans and kind labels. It cannot see a colour: it normalises both sides away from pixels
  * and it stubs `applyRasterTool` to identity, so the whole raster half of both authorities is
- * outside its reach. This file is the other half — the same twelve scenarios, at the same
- * cursors, compared as BYTES.
+ * outside its reach. This file is the other half — the same twelve scenarios at the same cursors
+ * plus a thirteenth carrying a real raster processor, compared as BYTES.
  *
  * ## WHAT IS COMPARED, PER (SCENARIO, CURSOR)
  *
@@ -46,10 +50,16 @@ import {
  *    from `materializeDocument()`. Both are document-frame sized, so they are compared as one
  *    raster.
  * 2. **Export.** `renderExportCanvas()` on the legacy replay, against `renderExportCanvas()` on
- *    the SAME records with the durable bitmaps mounted into `tmpCanvas` — which is the one
- *    assignment `publishDurableNavigationPresentation()` makes, so export reads them through
- *    `getLayerBitmap()`'s `tmpCanvas`-first precedence exactly as production does. Which layers
- *    the mount accepts is `durablePresentationIsRendererIdentical()`'s decision, not this file's.
+ *    records built from the DURABLE side alone — `pos` from `materialized.bounds`, visibility,
+ *    opacity, blend mode and order from the durable replay layer's own snapshot, `operations`
+ *    empty because the retained presentation is already baked into the bitmap, and size and frame
+ *    from the durable replay. An earlier version mounted durable bitmaps into the LEGACY records
+ *    instead, and that axis could not fail: the only durable input was a `tmpCanvas` swap, every
+ *    other field was the legacy value on both sides, and the accept predicate required
+ *    `isEqual(bounds, existing.pos)` — so the bitmap was byte-identical to the legacy record's own
+ *    and a 7px durable misplacement left this axis at zero differing bytes. `durableExportRecords()`
+ *    is the rewrite, and it no longer depends on which layers
+ *    `durablePresentationIsRendererIdentical()` happens to accept.
  *
  * Byte equality, with NO tolerance anywhere. A per-channel epsilon is how a wrong pixel survives
  * a green suite, and this file's whole purpose is to be the place that cannot be green by
@@ -201,6 +211,62 @@ type RenderedPair = {
   filters: string[];
 };
 
+/**
+ * Builds the export-side layer records FROM THE DURABLE SIDE ALONE.
+ *
+ * The previous version started from the legacy records and swapped only `tmpCanvas`, which made
+ * the export comparison structurally incapable of failing: `renderExportCanvas()` places by
+ * `layer.pos`, reads `visible`/`opacity`/`blendMode` and re-evaluates `layer.operations`, and every
+ * one of those was still the LEGACY value on both sides. Worse, the mount's own accept rule
+ * requires `isEqual(bounds, existing.pos)` and no retained operations, so the bitmap it accepted
+ * was a byte-identical copy of the legacy record's own — 30 accepted mounts, 0 differing bytes, on
+ * every cursor. A 7px durable misplacement turned the runtime axis red and left the export axis at
+ * zero.
+ *
+ * So nothing here is read off the legacy replay. Position, visibility, opacity, blend mode, order,
+ * name and frame all come from the durable composition and the durable replay's own snapshot, and
+ * `operations` is empty because the retained presentation is already baked into the bitmap. Two
+ * authorities that disagree about placement, ordering or frame now disagree HERE.
+ */
+const durableExportRecords = (
+  replay: DurableReplayResult,
+  composite: DurableComposite
+): { layers: LayersRecord; size: Size; frame: DocumentFrame; missing: string[] } => {
+  const layers: LayersRecord = {};
+  const missing: string[] = [];
+  for (const [layerId, materialized] of Object.entries(composite.layers)) {
+    const replayLayer = replay.layers[layerId];
+    if (!replayLayer) {
+      missing.push(layerId);
+      continue;
+    }
+    const snapshot = replayLayer.snapshot;
+    layers[layerId] = {
+      id: layerId,
+      name: snapshot.name,
+      isBedrock: snapshot.isBedrock,
+      // `materialized.bounds` is the DURABLE extent. Using the legacy `pos` here is what made the
+      // axis blind: the accept predicate required the two to be equal, so the one value worth
+      // comparing was equal by precondition.
+      pos: { ...materialized.bounds },
+      bitmap: null,
+      tmpCanvas: materialized.bitmap,
+      visible: snapshot.visible,
+      opacity: snapshot.opacity,
+      locked: snapshot.locked,
+      blendMode: snapshot.blendMode,
+      order: snapshot.order,
+      operations: [],
+    };
+  }
+  return {
+    layers,
+    size: documentFrameSize(replay.frame),
+    frame: replay.frame,
+    missing,
+  };
+};
+
 const mountDurablePresentation = (
   legacyLayers: LayersRecord,
   replay: DurableReplayResult,
@@ -290,16 +356,15 @@ const renderPair = async (rawScenario: ReplayParityScenario, cursor: number): Pr
 
   const durableRuntime = readBitmap(composite.bitmap, `durable composition for ${label}`);
   const mounted = mountDurablePresentation(updates.layers, replay, composite);
-  const durableExportCanvas = renderExportCanvas(mounted.layers, updates.totalSize, updates.documentFrame);
+  const durableRecords = durableExportRecords(replay, composite);
+  const durableExportCanvas = renderExportCanvas(durableRecords.layers, durableRecords.size, durableRecords.frame);
   const durableExport = readElement(durableExportCanvas, `durable export for ${label}`);
 
-  const filters = [
-    ...new Set([
-      ...(pixelHtmlCanvasContexts.get(visibleCanvas)?.filterAssignments ?? []),
-      ...(pixelHtmlCanvasContexts.get(legacyExportCanvas)?.filterAssignments ?? []),
-      ...(pixelHtmlCanvasContexts.get(durableExportCanvas)?.filterAssignments ?? []),
-    ]),
-  ].filter((filter) => filter !== 'none');
+  // Every filter assignment the fixture saw, across EVERY canvas it created — not just the three
+  // surfaces this file reads back. `drawLayersToCanvas()` composites into an internal staging canvas
+  // and blits the result, so the target surfaces never receive a filter assignment themselves; a
+  // collection that read only them was empty and made the pin below fail on its FIRST assertion.
+  const filters = [...new Set(filterAssignments())].filter((filter) => filter !== 'none');
 
   assetRegistry.shutdown();
 
@@ -417,6 +482,7 @@ const hardCursorCases = everyCursorCase.filter((cursorCase) => !declaredDivergen
 
 const assertPixelParity = async (cursorCase: CursorCase, note = ''): Promise<void> => {
   resetUnresolvableDraws();
+  resetFilterAssignments();
   const pair = await renderPair(cursorCase.scenario, cursorCase.cursor);
   const suffix = note ? ` [${note}]` : '';
   const reported = drainRefusals();
@@ -546,9 +612,15 @@ describe('legacy/durable pixel parity', () => {
       const pair = await renderPair(scenario, cursor);
       expect(drainRefusals()).toEqual([]);
 
-      // PASSES today: the filter reached the context on both sides, which is the most this
-      // environment can prove about a filter.
-      expect(pair.filters, 'the filter chain reached a canvas context').toContain('blur(4px)');
+      // PASSES today: the filter reached a canvas context, which is the most this environment can
+      // prove about a filter. It lands on the renderer's INTERNAL staging canvas as the whole
+      // composed chain rather than as the bare `blur(4px)`, because `drawLayersToCanvas()`
+      // composites into staging and blits — so the assertion is that some assignment CONTAINS the
+      // blur, not that the array holds it as an element.
+      expect(
+        pair.filters.some((filter) => filter.includes('blur(4px)')),
+        `the filter chain reached a canvas context: ${JSON.stringify(pair.filters)}`
+      ).toBe(true);
 
       // FAILS today, and is the whole reason this is a pin: `PixelContext` records `ctx.filter`
       // and cannot apply it, so the blurred document is byte-identical to the unfiltered one and
