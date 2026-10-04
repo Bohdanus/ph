@@ -3,7 +3,10 @@
 What this app can do, system-wide, measured against Photoshop.
 
 **This is not a per-tool document.** That is [`TOOLS.md`](TOOLS.md) — generated,
-41 sections, one per tool, with an options-bar table and Adobe citations. This
+44 sections, one per tool or per Adobe command the rail carries, with an options-bar
+table and Adobe citations. Four of the 44 are not Tools-panel tools — the Shape group
+placeholder, Free Transform, Levels and Black & White are named for what Adobe calls
+them. This
 page is the capability level: documents, formats, selection, layers, history,
 panels, menus, view, input, colour. A tool's status is one row of
 [`TOOLS.md`](TOOLS.md), not of this file.
@@ -43,22 +46,22 @@ platform limit.
 
 ## Summary
 
-| Area              | Status      | The gap in one line                                                            |
-| ----------------- | ----------- | ------------------------------------------------------------------------------ |
-| Document model    | `partial`   | One document, no colour mode, no Image Size                                    |
-| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                     |
-| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                       |
-| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels |
-| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only         |
-| History           | `have`      | Linear, unbounded, with a History panel                                        |
-| Panels            | `partial`   | Two panels. Photoshop has seventeen                                            |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                          |
-| View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                          |
-| Keyboard          | `partial`   | 41 bindings against Photoshop's ~200                                           |
-| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                 |
-| Export options    | `partial`   | JPEG quality is the only user-controllable option                              |
-| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all        |
-| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                        |
+| Area              | Status      | The gap in one line                                                                 |
+| ----------------- | ----------- | ----------------------------------------------------------------------------------- |
+| Document model    | `partial`   | One document, no colour mode, no Image Size                                         |
+| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                          |
+| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                            |
+| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels      |
+| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only              |
+| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush |
+| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                 |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                               |
+| View / navigation | `absent`    | No zoom, no pan, no rulers, no guides                                               |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                |
+| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                      |
+| Export options    | `partial`   | JPEG quality is the only user-controllable option                                   |
+| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all             |
+| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                             |
 
 ## Documents
 
@@ -227,8 +230,10 @@ that the obvious writer is discarded by replay.
 
 ## History
 
-**Photoshop:** a linear History States panel with named states, a per-step
-visibility toggle, unlimited states, and History States snapshots.
+**Photoshop:** a History panel with named states, configurable History States (default 50,
+maximum 1,000), snapshots, optional non-linear history, and the History Brush. See
+<https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/history-panel-overview.html>
+and <https://helpx.adobe.com/photoshop/using/performance-preferences.html>.
 
 **This app:** a linear `HistoryItem[]` with a cursor
 (`history-types.ts` — `HistoryItem`, carried in a `HistoryTimeline` whose
@@ -240,7 +245,10 @@ exists
 per-step disabled toggle, plus Undo/Redo in the header
 (`HistoryControls.tsx` — its `undo-button` and `redo-button`).
 
-**Status:** `have`
+**Status:** `partial`
+
+**Gap:** The app has no configurable History States limit, snapshots, non-linear-history option or
+History Brush. Its linear cursor and redo-tail truncation are the portions that match Photoshop.
 
 **Note, because it is the opposite of what the code looks like:** entries store
 _args_, never pixels, and undo re-runs the tool processors from index zero
@@ -265,7 +273,7 @@ plus `PanelGroup.tsx`), and Window has Reset Workspace
 presets, Swatches, Styles, Navigator, Info or Histogram panel. The rail carries
 the foreground/background swatches
 (`SidebarLeft.tsx` — its `color-pickers` cluster); the closest analogues to
-Color and Character are the Photo Filter command's three sliders and the Type options bar,
+Color and Character are the Desaturate command's three sliders and the Type options bar,
 which are options bars, not panels.
 
 ## Menu bar
@@ -276,7 +284,7 @@ Help.
 **This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
 (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
 Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
-Adobe's item list with **two enabled** — `Brightness/Contrast` and `Photo Filter` — and
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
 twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
 records a capability
 the app does not have rather than faking it. Edit holds one item, `Free Transform`,
@@ -327,19 +335,27 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 41. Thirty-three registrations in
-`AppKeyboardShortcuts.tsx` and eight in the two polygon tool areas
+**This app:** 45. Thirty-six registrations in
+`AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
-`useKeyDownShortcut` registrations each).
+`useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
 
 **Status:** `partial`
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`; `[` and `]` for brush size; `0` and `1`
-for opacity.
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
+for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
+Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
+and the Burn, so the Sponge must be the active tool.
 
-**Gap:** `A`, `H`, `Z`, `X` and `D` are unbound — Automatic Select, Hand, Zoom,
-Swap Colours and Default Colours. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
+Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
+only save is Save As, which is what `File > Save` opens
+(`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
+`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
+
+**Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
+Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
+the Sponge is active. `Ctrl+A`, `Ctrl+D`, `Ctrl+I` and
 `Ctrl+Shift+I` — Select All, Deselect, Invert — are unbound, which follows from the
 selection model above rather than from the keyboard layer. `Tab`, `F`,
 `Ctrl++`, `Ctrl+-` and `Ctrl+0` are unbound, and Space does not pan.

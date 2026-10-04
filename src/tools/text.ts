@@ -53,6 +53,31 @@ export const MIN_LINE_HEIGHT = 0.5;
 export const MAX_LINE_HEIGHT = 2.25;
 
 /**
+ * The text a new type layer is born with, and the text that is **selected** when it appears.
+ *
+ * **A RECONSTRUCTION, and Adobe does not document it for the desktop product.** Adobe documents the
+ * placeholder for Photoshop *Elements* — "After clicking with the T tool, placeholder text (Lorem
+ * Ipsum) will appear. This will disappear as soon as you start typing your text. Placeholder text
+ * can be disabled in Preferences > Type"
+ * (https://helpx.adobe.com/photoshop-elements/desktop/adding-shapes-and-text/add-text.html) — and
+ * documents the same string as a menu command you paste into an existing text layer, `Type > Paste
+ * Lorem Ipsum` (https://helpx.adobe.com/photoshop/using/creating-type.html). What **no** Adobe page
+ * states is the part this tool depends on: that the placeholder arrives PRE-SELECTED, so typing
+ * replaces it rather than appending to it. `TEXT_TOOL_REQUIREMENTS.md` §2 records the silence and
+ * §2 also carries the requirement.
+ *
+ * It is seeded PRE-SELECTED here because that is the only behaviour under which "click, then type"
+ * feels like Photoshop: with the placeholder merely placed and the caret at index 0, the user's
+ * first keystroke would produce `aLorem ipsum`, which is not what Adobe does on any account.
+ *
+ * The gate Adobe documents — `Fill new type layers with placeholder text` under the Type
+ * preferences — has no home in this app: there is no preferences store, and inventing one for a
+ * single boolean is a larger change than the feature. It is recorded as an outstanding requirement
+ * rather than silently shipped as always-on.
+ */
+export const PLACEHOLDER_TEXT = 'Lorem ipsum';
+
+/**
  * The size a record with no usable `fontSize` resolves to, and the seed the bar opens at.
  *
  * Sixty-four is what `defaultSettings` seeds and what every screenshot of the tool shows, so a
@@ -128,6 +153,8 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
+  /** True only for a newly placed placeholder that has not received user input yet. */
+  placeholderUntouched?: boolean;
 
   /**
    * Adobe's character attributes that arrived after the first version of this tool. Every one is
@@ -887,6 +914,143 @@ export function withTextStyle<T>(ctx: Ctx2D, style: ResolvedTextStyle, measure: 
   } finally {
     ctx.restore();
   }
+}
+
+/**
+ * The CSS an in-place editor has to carry to be indistinguishable from {@link renderText}.
+ *
+ * **The type is a plain object of CSS strings rather than a React style object on purpose.** This
+ * file is the layout and metric authority and it knows nothing about the DOM overlay that consumes
+ * it; a `React.CSSProperties` here would make the renderer depend on the view layer, and a caller
+ * could then drift from the values below without any test noticing. Every value is derived from the
+ * same {@link ResolvedTextStyle} and the same `measureText` the canvas path uses.
+ */
+export type DomOverlayStyle = {
+  caretColor: string;
+  color: string;
+  fontFamily: string;
+  fontSize: string;
+  fontStyle: string;
+  fontVariantCaps: 'all-small-caps' | 'small-caps' | 'normal';
+  fontWeight: string;
+  letterSpacing: string;
+  lineHeight: string;
+  /**
+   * `pre-line`, and it is the whole reason this is not a `<textarea>`.
+   *
+   * The canvas breaks a paragraph at whitespace RUNS and collapses each run to one space
+   * ({@link wrapLine}), keeps `\n` as a hard break, and never breaks at NBSP. `pre-line` is the one
+   * `white-space` value with exactly that behaviour: sequences of white space collapse, newlines
+   * survive. `pre-wrap` preserves the runs and `normal` folds the newlines.
+   *
+   * MEASURED, headless Chromium 153, at `20px/1.4` Arial, on a string carrying a two-space run, a
+   * three-space run, a tab and an NBSP-joined token: `pre-line` reproduced the canvas rule's line
+   * breaks break-for-break, `pre-wrap` produced four lines where the canvas produced three, and the
+   * blank-column gap widths were byte-identical between `pre-wrap` and `pre-line`, so the two
+   * declarations render the same pixels and differ only from the canvas.
+   */
+  whiteSpace: 'pre-line';
+  /** See {@link DomOverlayStyle.whiteSpace}; the pair of declarations is one decision. */
+  overflowWrap: 'normal';
+  wordBreak: 'normal';
+  textAlign: 'left' | 'center' | 'right';
+  textDecorationLine: string;
+  textDecorationColor: string;
+  paddingTop: string;
+  paddingRight: string;
+  paddingBottom: string;
+  paddingLeft: string;
+};
+
+/**
+ * The vertical correction that puts a DOM line box's first baseline on the canvas's first baseline.
+ *
+ * The canvas puts its first baseline at `TEXT_PADDING + ascent` below the box's top edge, where
+ * `ascent` is the font's own (`fontBoundingBoxAscent`, {@link baselineOffset}). A DOM line box puts
+ * its baseline at `(lineStep - (ascent + descent)) / 2 + ascent` below the CONTENT box's top — the
+ * half-leading, then the ascent — so the content box has to sit at
+ * `TEXT_PADDING - halfLeading` for the two to agree.
+ *
+ * **The correction is signed and that is not incidental.** A leading under the font's own ascent
+ * gives a NEGATIVE half-leading, the content box moves DOWN rather than up, and the first line's ink
+ * then reaches above the box's own top edge — which is precisely the case the box-height policy in
+ * {@link requiredHeightForLines} exists to contain, and precisely why the overlay must not be
+ * `overflow: hidden`.
+ *
+ * MEASURED, headless Chromium 153, `deviceScaleFactor` 2, four families at `line-height` 1.2 and
+ * 0.8: the closed form matched the measured baseline in all eight cases, with a residual of
+ * −0.90625 … 0.00 **CSS** px — which is −1.81 … 0.00 device px at that ratio, so the honest claim is
+ * "within two device pixels", not within one. The residual is not random error: it is exactly
+ * `ascent_css − ascent_canvas`, the same font read through two text engines, and it does not depend
+ * on the leading. At the two ratios the app actually renders at the worst case is under one device
+ * pixel. In the same runs the two text renderings were the SAME PIXELS at the optimum in seven of the
+ * eight (XOR count exactly 0). Horizontal alignment needed no correction at all — the first glyph's
+ * ink left edge was identical in both engines, with and without `letter-spacing`, in all four
+ * families.
+ */
+function overlayPaddingTop(ctx: Ctx2D, style: ResolvedTextStyle): number {
+  const lineStep = style.fontSize * style.lineHeight;
+  // Called from inside `withTextStyle`, so the ascent and descent it needs are the FONT's. An
+  // unstyled context measures whatever face it happens to wear — the trap `layoutText` and
+  // `requiredHeightForLines` are both written around.
+  return TEXT_PADDING - (lineStep - inkHeight(ctx, style)) / 2;
+}
+
+/**
+ * Every CSS declaration the in-place editor needs, derived from the one style record and one
+ * `measureText` on the caller's context.
+ *
+ * `scale` is the workspace's contain fit — CSS px per document px — and it multiplies every LENGTH
+ * and the type size, because the overlay lives in the same client-pixel space the canvases are
+ * displayed in while `style` and `rect` are in document px. It is deliberately NOT a
+ * `devicePixelRatio` factor: `containFit` is DPR-invariant by construction, since a CSS px is a CSS
+ * px at any ratio.
+ *
+ * **A missing context yields a zero correction, not a guessed one.** The correction is derived from
+ * the font's own ascent and descent, and with no context to ask there is nothing to derive it from;
+ * inventing a fraction here would put a plausible-looking number in front of a caller that will
+ * believe it. Tests are the benign caller — there is no rendered baseline to be aligned to — but they
+ * are not the only one: the editor holds its measuring context in state, populated by a layout
+ * effect, so it is `null` on the overlay's first render in every session, and permanently `null` on a
+ * platform whose `getContext('2d')` returns `null` (`Main.tsx` documents that as a supported iOS
+ * Safari state). On that first frame the baseline is out by the half-leading — at most half the
+ * difference between the line step and the ink — and on a canvas-less platform the type bar's own
+ * controls are the thing to look at, not the ink.
+ */
+export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTextStyle, scale = 1): DomOverlayStyle {
+  const lineStep = style.fontSize * style.lineHeight;
+  const padding = TEXT_PADDING * scale;
+  const decoration: string[] = [];
+  if (style.underline) decoration.push('underline');
+  if (style.strikethrough) decoration.push('line-through');
+
+  const shared = {
+    caretColor: style.color,
+    color: style.color,
+    fontFamily: style.fontFamily,
+    fontSize: `${style.fontSize * scale}px`,
+    fontStyle: style.italic ? 'italic' : 'normal',
+    // The same single-valued variant the canvas resolves, and for the same reason: Adobe's two
+    // toggles are independent booleans and the resolved rendering is not. See `applyTextStyle`.
+    fontVariantCaps: style.allCaps ? 'all-small-caps' : style.smallCaps ? 'small-caps' : 'normal',
+    fontWeight: style.bold ? '700' : '400',
+    letterSpacing: `${trackingPx(style) * scale}px`,
+    lineHeight: `${lineStep * scale}px`,
+    overflowWrap: 'normal',
+    paddingBottom: `${padding}px`,
+    paddingLeft: `${padding}px`,
+    paddingRight: `${padding}px`,
+    textAlign: style.align,
+    textDecorationColor: style.color,
+    textDecorationLine: decoration.length > 0 ? decoration.join(' ') : 'none',
+    whiteSpace: 'pre-line',
+    wordBreak: 'normal',
+  } satisfies Omit<DomOverlayStyle, 'paddingTop'>;
+
+  return {
+    ...shared,
+    paddingTop: `${(ctx ? withTextStyle(ctx, style, () => overlayPaddingTop(ctx, style)) : TEXT_PADDING) * scale}px`,
+  };
 }
 
 export const text =

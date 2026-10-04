@@ -605,6 +605,7 @@ it is a different product. See `## Unverified`.
 | Anti-alias                                    | on by default, third-party / Elements                                         | `missing`  | —                                           |
 | Contiguous                                    | on by default, third-party / Elements; off = same colors throughout the image | `present`  | `MagicWand.tsx` — the `Contiguous` checkbox |
 | Sample All Layers                             | reported off by default, CS5-era third-party                                  | `missing`  | —                                           |
+| Feather                                       | 0–250 px feather on the selection edge, as the lasso family's Feathers carry  | `missing`  | —                                           |
 | Select and Mask                               | on every selection tool's bar                                                 | `missing`  | —                                           |
 
 **App fidelity: partial.**

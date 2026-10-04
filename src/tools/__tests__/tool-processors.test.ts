@@ -262,16 +262,26 @@ describe('toolProcessors registry', () => {
     }
   });
 
+  it('keeps every raster processor safe to replay over its input bitmap', () => {
+    for (const toolName of processorNames) {
+      const processor = findToolProcessor(toolName)!;
+      if (processor.commit !== 'raster') continue;
+      expect(processor.compositesOntoInput, toolName).not.toBe(false);
+    }
+  });
+
   it('only labels source-creating tools as creators, and each creator commits as a source', () => {
     const creators = processorNames.filter((toolName) => findToolProcessor(toolName)!.creator);
 
     expect(creators.sort()).toEqual(
       [
+        'brush',
         'draw',
         'ellipse',
         'elliptical-selection',
         'freehand-lasso',
         'line',
+        'pencil',
         'polygon',
         'polygonal-lasso',
         'quick-selection',
@@ -285,7 +295,9 @@ describe('toolProcessors registry', () => {
       ].sort()
     );
     for (const toolName of creators) {
-      expect(['source', 'selection'], `${toolName} creator commit`).toContain(findToolProcessor(toolName)!.commit);
+      expect(['source', 'selection', 'raster'], `${toolName} creator commit`).toContain(
+        findToolProcessor(toolName)!.commit
+      );
     }
   });
 
@@ -1024,6 +1036,20 @@ describe('toolProcessors dispatch for every tool name', () => {
 
     expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(undefined, -2, -3);
+  });
+
+  it.each(['brush', 'pencil'] as const)('composites %s over the supplied input bitmap', (toolName) => {
+    const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
+      ...defaultSettings[toolName],
+      points: [
+        { x: 4, y: 4 },
+        { x: 8, y: 8 },
+      ],
+    } as never);
+    const canvas = result[0] as unknown as RecordingOffscreenCanvas;
+
+    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, size.width, size.height);
+    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });
 

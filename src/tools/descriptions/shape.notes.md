@@ -188,23 +188,24 @@ arrangement, and Additional shape and path options"
 that bar at all and come last, and the Path-mode-only `Operation` row sits with the path rows
 rather than at the end.
 
-| Photoshop control  | Photoshop behaviour                                        | App status | App default                          | App site                                                 |
-| ------------------ | ---------------------------------------------------------- | ---------- | ------------------------------------ | -------------------------------------------------------- |
-| `Mode`             | Shape / Path / Pixels, default Shape                       | partial    | `shape`                              | `Figures/Shape.tsx` — `Shape()`'s "Tool mode" `<select>` |
-| `Fill`             | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff`  | `StoreContext.tsx` — `initialState`                      |
-| `Stroke`           | outline swatch, same four contents                         | partial    | store `color` = `#000000`            | `StoreContext.tsx` — `initialState`                      |
-| `Stroke width`     | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5               | `Figures/Shape.tsx` — `Shape()`'s thickness slider       |
-| `Stroke type`      | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins            | `Figures/Shape.tsx` — `Shape()`'s dash toggle            |
-| `Shape W&H`        | exact W/H, plus From Center; click opens Create <Shape>    | partial    | Create <Figure> dialog, 100×100 seed | `CreateShapeDialog.tsx` — `DIALOG_DEFAULTS`              |
-| `Path Operations`  | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                    | —                                                        |
-| `Path Alignment`   | align and distribute components                            | missing    | —                                    | —                                                        |
-| `Path Arrangement` | bring forward / send back                                  | missing    | —                                    | —                                                        |
-| `Operation`        | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                    | —                                                        |
-| `Weight`           | path thickness — see below; mode-dependent                 | missing    | —                                    | —                                                        |
-| gear               | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                    | —                                                        |
-| `Mode` (blend)     | **Pixel mode only**, layer blend list                      | missing    | —                                    | —                                                        |
-| `Opacity`          | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes             | `Figures/Shape.tsx` — `Shape()`'s `alpha-slider`         |
-| `Anti-alias`       | **Pixel mode only**, applied automatically                 | missing    | —                                    | —                                                        |
+| Photoshop control                       | Photoshop behaviour                                        | App status | App default                          | App site                                                 |
+| --------------------------------------- | ---------------------------------------------------------- | ---------- | ------------------------------------ | -------------------------------------------------------- |
+| `Mode`                                  | Shape / Path / Pixels, default Shape                       | partial    | `shape`                              | `Figures/Shape.tsx` — `Shape()`'s "Tool mode" `<select>` |
+| `Fill`                                  | interior swatch: None / Solid / Gradient / Pattern         | partial    | store `backgroundColor` = `#ffffff`  | `StoreContext.tsx` — `initialState`                      |
+| `Stroke`                                | outline swatch, same four contents                         | partial    | store `color` = `#000000`            | `StoreContext.tsx` — `initialState`                      |
+| `Stroke width`                          | px; 1 px black by default                                  | partial    | 5 px, 0.5–500 step 0.5               | `Figures/Shape.tsx` — `Shape()`'s thickness slider       |
+| `Stroke type`                           | Solid/Dashed/Dotted + Align + Caps + Corners               | partial    | Solid, no Align, no joins            | `Figures/Shape.tsx` — `Shape()`'s dash toggle            |
+| `Shape W&H`                             | exact W/H, plus From Center; click opens Create <Shape>    | partial    | Create <Figure> dialog, 100×100 seed | `CreateShapeDialog.tsx` — `DIALOG_DEFAULTS`              |
+| `Path Operations`                       | New Layer / Combine / Subtract Front / Intersect / Exclude | missing    | —                                    | —                                                        |
+| `Path Alignment`                        | align and distribute components                            | missing    | —                                    | —                                                        |
+| `Path Arrangement`                      | bring forward / send back                                  | missing    | —                                    | —                                                        |
+| `Operation`                             | **Path mode only**: Add / Subtract / Intersect / Exclude   | missing    | —                                    | —                                                        |
+| `Weight`                                | path thickness — see below; mode-dependent                 | missing    | —                                    | —                                                        |
+| `Set additional shape and path options` | Path Options, Live Shapes, Arrowheads, geometry, Import    | missing    | —                                    | —                                                        |
+| `Radius`                                | corner rounding, 0–1000 px, Adobe's figure corner control  | present    | the figure's own dialog field        | `Figures/Shape.tsx` — `Shape()`'s radius input           |
+| `Mode` (blend)                          | **Pixel mode only**, layer blend list                      | missing    | —                                    | —                                                        |
+| `Opacity`                               | **Pixel mode only**, 1–100%                                | partial    | 100%, in all three modes             | `Figures/Shape.tsx` — `Shape()`'s `alpha-slider`         |
+| `Anti-alias`                            | **Pixel mode only**, applied automatically                 | missing    | —                                    | —                                                        |
 
 **The Fill and Stroke app sites moved file, and the values did not.** Both defaults are still
 `#ffffff` and `#000000`; what was wrong was the file. `src/tools/shape.ts` — `setShapeCtx()` — writes
@@ -962,21 +963,21 @@ Sources:
 
 ## Keyboard
 
-| Keys      | Photoshop                                                                | App                                                                                                                       | App site                                                                                |
-| --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`               | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
-| `Shift+U` | cycle through the whole group                                            | cycles only `rectangle → oval → line → custom-shape`; `triangle` and `polygon` index to `-1` and restart at the rectangle | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
-| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                                      | `AppKeyboardShortcuts.tsx` — the `useKeyDownShortcut` registrations for `'['` and `']'` |
-| `Space`   | reposition while drawing                                                 | implemented                                                                                                               | `ShapeToolArea.tsx` — `ShapeToolArea()`'s Space key listeners                           |
+| Keys      | Photoshop                                                                | App                                                                                                           | App site                                                                                |
+| --------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `U`       | select the shapes tool group                                             | keeps the active figure; only a non-shape tool (including Custom Shape) falls back to `figure: 'rectangle'`   | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
+| `Shift+U` | cycle through the whole group                                            | walks the flyout's six entries in the rail's order and closes the group; how it closes is the wrap note below | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                        |
+| `[` / `]` | Rectangle: radius ∓1 px; Polygon: sides ∓1; Line: weight ∓1; Shift = ×10 | bound, but only for the eight tip-Size tools; every shape figure is outside that map                          | `AppKeyboardShortcuts.tsx` — the `useKeyDownShortcut` registrations for `'['` and `']'` |
+| `Space`   | reposition while drawing                                                 | implemented                                                                                                   | `ShapeToolArea.tsx` — `ShapeToolArea()`'s Space key listeners                           |
 
-The `Shift+U` cycle is the gap: `triangle` and `polygon` are absent from `orderedFigures` in
-`src/components/Common/AppKeyboardShortcuts.tsx` — `selectShapeTool()`, so `Shift+U` never advances to
-them even though
-both are registered `ToolName`s with their own entries in the tools map. **The failure mode is a
-restart, not a freeze**, and the distinction is load-bearing for the row's wording: the branch is
-`orderedFigures[(currentIndex + 1) % orderedFigures.length]` with `currentIndex = indexOf(currentFigure)`,
-so an unlisted figure gives `-1` and `(-1 + 1) % 4 === 0` — the rectangle. Every data-file row now says
-Shift+U from the Triangle or the Polygon "restarts at the rectangle instead of advancing".
+The `Shift+U` cycle WAS the gap, and is closed: `orderedFigures` in
+`src/components/Common/AppKeyboardShortcuts.tsx` — `selectShapeTool()` listed four entries
+against the flyout's six, so `triangle` and `polygon` indexed to `-1` and
+`orderedFigures[(-1 + 1) % 4]` was the rectangle — **a restart, not a freeze**. The list now
+holds all five `FigureType` values in the rail's order and the modulus spans six entries, the
+sixth being the Custom Shape tool, which carries its own `toolName` rather than a `figure`. The
+`-1 + 1 === 0` branch is still what a stored value outside the group takes, so it lands on the
+rectangle.
 
 **Plain `U` is not "always jumps to the rectangle" either, and that was the other half of the same
 mistake.** The five geometric figures in the rail all carry `name: 'shape'` and differ only by
@@ -988,6 +989,25 @@ figure. The Custom Shape tool is the one entry with its own tool name (`toolbar-
 `toolbarMap`'s `'custom-shape'` entry), so
 `U` from there is the one case that does force the rectangle. Both halves are now in the row rather
 than only in this table.
+
+**The group CLOSES, and the wrap note is the one statement of how.** The press after Custom Shape
+advances to the Rectangle, which is what Adobe's cycle does over a group's own finite set: the
+Adobe Photoshop manual's "Cycle through hidden tools" step is "By default, you cycle through a set
+of hidden tools by holding down Shift and repeatedly pressing a tool shortcut key"
+(`https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=32`, the Adobe manual
+reproduced), and the preference that governs it is `Use Shift Key for Tool Switch`
+(`https://helpx.adobe.com/photoshop/desktop/get-started/settings-and-preferences/view-keyboard-shortcuts.html`,
+Adobe). The set is the group's own tools, so cycling through all of them returns to the first.
+
+In the app that return took an explicit index rather than following from `indexOf`. The Custom
+Shape tool is a different `toolName` rather than a `figure`, so the figure lookup gave it `-1` and
+`-1 + 1 === 0` handed it the Rectangle's position — the cycle then closed over five entries and the
+Rectangle was unreachable by `Shift+U` from any press. The active tool's index is now derived from
+what it is, so the Custom Shape tool is the group's last position and the modulus wraps.
+
+The `-1 + 1 === 0` fallback is still what a stored figure the group does not list takes, and a
+non-shape tool falls back to the Rectangle before it advances, so both still start the group at the
+Rectangle.
 
 ---
 

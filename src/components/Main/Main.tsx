@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
+import { TextEditOverlay } from './TextEditOverlay.tsx';
 import { DummyToolArea } from './DummyToolArea.tsx';
 
 import './Main.scss';
@@ -349,6 +350,20 @@ const Main = () => {
           enabled={POLYGON_SELECTION_MODES.includes(interactionMode)}
         />
         <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+        {/*
+         * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so
+         * the last child paints on top. The in-place editor has to receive the pointer, because
+         * placing a caret is a click INSIDE the box — which is the `absolute inset-0` tool area's
+         * territory — so it cannot sit below `EventHandler`. It covers exactly the type box and
+         * nothing else, so every canvas gesture outside it still reaches the tool area.
+         *
+         * Gated on the text mode for the same reason `EventHandler` gates the tool areas: the
+         * editor reads `useCurrentTool`, and a hook that throws outside its provider takes the whole
+         * canvas region down with it through the `Canvas` ErrorBoundary. Measuring the workspace
+         * fit for every one of the twenty-odd tools would also be work no tool but this one needs.
+         * See `TextEditOverlay.tsx`.
+         */}
+        {interactionMode === 'text' && <TextEditOverlay />}
       </div>
     );
   };

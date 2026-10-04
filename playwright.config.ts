@@ -124,18 +124,20 @@ export default defineConfig({
     /* The pixel helpers in e2e/helpers/canvas-helpers.ts classify a pixel with FIXED
      * thresholds that are only correct against the app's LIGHT theme, and nothing
      * declared that. DARK_THRESHOLD is 50 and NEAR_WHITE_THRESHOLD is 250
-     * (canvas-helpers.ts:228-229), and the workspace backdrop the canvas sits on is a
+     * (the `DARK_THRESHOLD` / `NEAR_WHITE_THRESHOLD` constants), and the workspace backdrop the
+     * canvas sits on is a
      * 20px checkerboard chosen from the resolved theme: `#f3f3f3` over `#fff` for
-     * light, `#121212` over `#000` for dark (src/index.scss:139-163, switched at
-     * src/components/Main/Main.tsx:279). So under dark the backdrop is itself below
+     * light, `#121212` over `#000` for dark (the `.chessboard-light` / `.chessboard-dark`
+     * rules in `src/index.scss`, switched by `Main.tsx`). So under dark the backdrop is
+     * itself below
      * the dark threshold, and under light the letterbox is above the near-white one.
      * The thresholds are not "roughly right"; they are calibrated to one palette.
      *
      * Playwright's own default is 'light', so every already-green test is correct today
      * and is correct by an inherited value that this file never stated.
-     * e2e/document-dialogs.spec.ts:142-157 already pins it for itself and records that
-     * its opacity assertions INVERT under dark — that entry is the pin this line makes
-     * unnecessary, not a second one.
+     * `e2e/document-dialogs.spec.ts` no longer pins the theme itself; its own comment
+     * records that as a deletion rather than a demotion, which is what makes this line
+     * the only pin.
      *
      * What breaks without it, in the canvas helpers: every `hasDarkPixels` wait can be
      * satisfied by the dark letterbox alone, and every `getStrokeAnalysis` reads a

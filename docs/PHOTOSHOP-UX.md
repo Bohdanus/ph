@@ -61,13 +61,17 @@ violations on `main`.
     TRUE rather than false; it is not a dodge. It is still an `Image ▸ Adjustments`
     command either way, so the rail verdict does not change; the label was the second
     defect.
-  - **`color` has no honest Adobe name today, and this is the half that is still
-    open.** Its three controls are grayscale, sepia and saturation. `Photo Filter` is
-    the closest single Adobe command and it is a **partial match**: sepia IS its
-    Warming preset and saturation is nearest its Density slider, but grayscale is a
-    control Photo Filter does not have. `Black and White` is not an option at all —
-    it needs per-hue sextant weighting and there is no hue decomposition anywhere in
-    `src`. See `HANDOFF.md` §170, which is an open question with a recorded default.
+  - **`color` is hosted by `Desaturate`, and `Photo Filter` is disabled.** Its three
+    controls are grayscale, sepia and saturation. Adobe's Desaturate "assigns equal red,
+    green, and blue values to each pixel in an RGB image" and "has the same effect as
+    setting Saturation to minus (-)100 in the Hue/Saturation adjustment"
+    (<https://helpx.adobe.com/photoshop/using/applying-special-color-effects-images.html>), so the leading two controls are the command it is named for and `sepia`
+    is the bounded divergence — Adobe's Desaturate is a one-shot command with no dialog.
+    `Photo Filter` is not a partial match at all: Adobe's is a lens filter with a
+    Density slider and a Preserve Luminosity option, and the bar reproduces none of
+    the three, so it is an unbuilt command and carries the `disabled` item every
+    unbuilt command carries. `Black and White` is not an option either — it needs
+    per-hue sextant weighting and there is no hue decomposition anywhere in `src`.
   - **The capability is coming back, as real commands, and the requirements do not
     exist yet.** 2026-10-01, after the decision above: Levels, Colors and the other
     `Image ▸ Adjustments` commands "will be implemented". This **does not reopen the
@@ -106,9 +110,9 @@ violations on `main`.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
-  in `" Tool"`. Scanning all **37** `label:` entries in `toolbarMap` (the five
+  in `" Tool"`. Scanning all **40** `label:` entries in `toolbarMap` (the five
   `shape` figures and the six Pen-family entries each carry their own label, so the
-  entry count is 37 and not the tile count): **none lack the suffix**. It used to be
+  entry count is 40 and not the tile count): **none lack the suffix**. It used to be
   exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
   entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
   rather than tools; `extraTools` (`toolbar-mapping.ts`) is the list that now records
@@ -244,7 +248,7 @@ Adding a tool means updating every hand-written registry list, including
 `dispatchTable`, `icons`, and `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`.
 The hand-copied lists in the tests are the expensive part.
 `toolIconNames` in `src/components/SidebarLeft/__tests__/toolIcons.test.tsx` carries a
-**46-name** union by hand (46 = the 41 `ToolName`s plus 5 `shape-*` figure icons),
+**49-name** union by hand (49 = the 44 `ToolName`s plus 5 `shape-*` figure icons),
 byte-identical and in the same order to `ToolIconName` in
 `src/components/SidebarLeft/types.ts`; **keep it that way**.
 
@@ -257,5 +261,5 @@ radius** — it enumerates the hand-copied lists and the tests that pin tool nam
 `src/components/Common/AppKeyboardShortcuts.tsx`). **`HANDOFF.md` §68
 is not this**: it is about a committed shape being painted twice, and
 its pointer here was wrong. Count the lists yourself before estimating an edit rather
-than trusting a number written anywhere — including the 46 and the 41 above, which are
+than trusting a number written anywhere — including the 49 and the 44 above, which are
 cheap to re-derive with `grep -c` and a line count.

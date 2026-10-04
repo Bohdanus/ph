@@ -7,7 +7,7 @@ import type { Action, PublicAction, StoreDispatch } from '../StoreContext.tsx';
 
 const srcDir = resolve(import.meta.dirname, '../..');
 const repoRoot = resolve(srcDir, '..');
-const forbiddenModules = ['replay-coordinator', 'replay-checkpoints'] as const;
+const forbiddenModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
 const materializationModule = 'materialization';
 
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
@@ -340,8 +340,8 @@ describe('StoreContext boundary gates', () => {
     expect(walkedProductionModules()).toEqual(trackedProductionModules());
   });
 
-  // The forbidden set contains retired coordination modules only — `replay-coordinator` and
-  // `replay-checkpoints`. `materialization.ts` is intentionally excluded: the durable compositor
+  // The forbidden set contains retired coordination and budget modules — `replay-budget`,
+  // `replay-coordinator`, and `replay-checkpoints`. `materialization.ts` is intentionally excluded: the durable compositor
   // is its one allowed production boundary. `presentation-evaluator.ts` is imported
   // by production on purpose (`layer-renderer.ts:14`, `useLayer.ts:54`,
   // `materialization.ts:14`), and `durable-replay.ts` is read as a value at

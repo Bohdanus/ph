@@ -1,6 +1,6 @@
 # FOCUS AND TONE — research notes
 
-The six tools whose Photoshop names are the Blur, Sharpen and Smudge focus tools, the Dodge and
+The seven tools whose Photoshop names are the Blur, Sharpen and Smudge focus tools, the Dodge and
 Burn tonal tools, and the Gradient tool. Every `file:line` below was re-derived against the
 working tree in this worktree; every Photoshop claim below traces to a URL in that tool's
 **Sources** list, or is admitted as unverified in the `## Unverified` section at the end.
@@ -8,7 +8,7 @@ working tree in this worktree; every Photoshop claim below traces to a URL in th
 **What the re-audit pass changed, so a reader knows what to distrust.** A second pass re-derived
 every `file:line` in the data file against this worktree and re-opened Adobe's current pages for the
 bar enumerations. Two classes of thing turned up. The first is stale line numbers: **six of the
-forty-seven `implementationRefs` in `focus.ts` pointed at the wrong line** — five `settings.ts`
+sixty-six `implementationRefs` in `focus.ts` pointed at the wrong line** — five `settings.ts`
 seeds, all off by a few lines, and the one `toolbar-mapping.ts` line, which was off by one and
 pointed at the `Burn` row's neighbour rather than the `O` declaration it was cited for — and
 **eighteen more in this file's prose**. They are corrected, and the corrections are the point: the

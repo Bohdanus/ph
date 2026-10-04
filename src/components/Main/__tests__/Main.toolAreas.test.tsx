@@ -76,6 +76,23 @@ const marker = vi.hoisted(() => {
   };
 });
 
+/**
+ * The in-place type editor, mocked in the same style as its siblings and with one deliberate
+ * difference: its test id is OUTSIDE the `tool-area-` namespace.
+ *
+ * `TextEditOverlay` is not one of the routing table's `else if` branches — `Main` renders it
+ * beside the area, gated on the text mode — so putting it in `TOOL_AREA_IDS` would make the
+ * "exactly one tool area" count two for the text tool. A `text-edit-overlay-marker` id is
+ * readable by neither the count nor `toolAreaTestId()`, so the count for `'text'` stays 1 and
+ * the overlay's own presence is still observable. The real component is what throws here: it
+ * calls `useCurrentTool()`, and this file mounts no `CurrentToolProvider`.
+ */
+const overlayMarker = vi.hoisted(() => {
+  const Component = () => createElement('div', { 'data-testid': 'text-edit-overlay-marker' });
+  Component.displayName = 'TextEditOverlay';
+  return Component;
+});
+
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({ useTheme: () => themeState }));
 vi.mock('../../../contexts/image-load-save-utils.ts', () => ({ loadDocumentFile }));
 
@@ -109,6 +126,7 @@ vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
 vi.mock('../SpongeToolArea.tsx', () => ({ SpongeToolArea: marker('sponge') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
 vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
+vi.mock('../TextEditOverlay.tsx', () => ({ TextEditOverlay: overlayMarker }));
 
 /**
  * Every mocked tool area, in the order the routing table names them. `toolAreaTestId` walks this
@@ -263,6 +281,35 @@ describe('Main tool-area routing', () => {
       expect(mounted, toolName).toHaveLength(1);
       unmount();
     }
+  });
+
+  it('mounts the in-place type editor for the text tool and for no other tool', () => {
+    storeState.toolName = 'text';
+    const { rerender } = render(<GuardedMain />);
+
+    // BESIDE the area rather than instead of it: the editor is the text tool's second mounted
+    // surface, so the count in the test above is still 1 for `'text'` and this is not a claim that
+    // it replaced the area. Asserting both is what keeps that reading available — a change that
+    // swapped the area for the editor would fail here rather than silently satisfying either test.
+    expect(screen.getByTestId('tool-area-text')).toBeTruthy();
+    expect(screen.getAllByTestId('text-edit-overlay-marker')).toHaveLength(1);
+
+    // The absence half is the load-bearing one. `Main` gates the editor on the text mode because
+    // it reads `useCurrentTool`, and nothing else about it is tool-specific: it derives its box
+    // from the current args, so mounting it for another tool would put an editable box over that
+    // tool's gesture surface, reading args that are not text.
+    for (const toolName of ['reposition', 'brush', 'crop', 'shape', 'zoom'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
+      expect(screen.queryByTestId('text-edit-overlay-marker'), toolName).toBeNull();
+    }
+
+    // And back: the gate is on the tool, not on a one-way trip through it.
+    storeState.toolName = 'text';
+    rerender(<GuardedMain />);
+
+    expect(screen.getAllByTestId('text-edit-overlay-marker')).toHaveLength(1);
   });
 
   it.each([

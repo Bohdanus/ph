@@ -6,10 +6,10 @@
  * it is the whole of the current protection. Three things are wrong with it, and this
  * program exists because of them.
  *
- * WHERE IT LIVES. Prose in a long document, which the agent it is meant to protect is
- * not obliged to read. `AGENTS.md` — the one file every session is forced to read — says
- * nothing about it: the recipe appears zero times there. A gate nobody is told about is
- * a gate nobody runs.
+ * WHERE IT LIVES. It began as prose in a long document, which the agent it was meant to
+ * protect was not obliged to read, and that is why it needed code: a rule nobody is told
+ * about is a rule nobody runs. `AGENTS.md` now names this guard under **Worktrees and dev
+ * servers**, which is where the rule is stated for every session.
  *
  * WHEN IT IS CORRECT. Only AFTER the merge is committed. Before the commit, `HEAD` is
  * still the pre-merge tip, so `main..HEAD` measures the un-merged tree and the recipe

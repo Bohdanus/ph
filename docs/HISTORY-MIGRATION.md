@@ -7,11 +7,14 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 
 ## Authority
 
-The production authority is still the legacy `HistoryItem[]` timeline. It
-replays through `replayHistory()`, renders runtime `Layer` objects, and feeds
-export. `durableDocument` is a shadow projection. The migration is not complete
-until one replay/materialization authority feeds undo, redo, navigation, render,
-and export without a second logical state writer.
+The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
+now stages a durable-composed presentation cache into those legacy layers, and
+render and export consume that cache through `getLayerBitmap()`; logical
+undo/redo remains legacy-authoritative. `durableDocument` is a mounted
+navigation presentation cache as well as the durable state model. The migration
+is not complete until one replay/materialization authority feeds undo, redo,
+navigation, render, export and history-panel state without a second logical
+state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
 sources, asset registry, immutable operation cloning, and append boundary are
@@ -33,18 +36,31 @@ addressed by identity; they must not be duplicated into the timeline.
 ### RQ-2: lossless correction
 
 Editing an existing text or shape layer must edit its source arguments rather
-than create a replacement layer and leave the old one behind. The current
-durable operation union has no source-rewrite operation: `create-layer` and
-`merge-document` carry complete layer snapshots, while the other operations can
-change properties, position, order, filters, affine transforms, raster
-processors, frame, or selection only. `DurableLayerPropertyPatch` deliberately
-omits `source`.
+than create a replacement layer and leave the old one behind.
+`DurableLayerPropertyPatch` still deliberately omits `source`, so the
+capability needs its own operation: `create-layer` and `merge-document` carry
+complete layer snapshots, while the property, position, order, filter, affine,
+raster-processor, frame and selection operations change something other than a
+layer's arguments.
 
-The migration therefore needs one source-edit operation (name and exact payload
-to be decided) plus matching legacy production consumption, durable replay,
-source rehydration into the relevant options bar, and undo/redo parity. A new
-operation is not useful while durable state remains render-only shadow; the
-operation and its visible consumer must land together.
+**The authorized operation has landed and is named.** `replace-layer-source`
+carries a `layerId`, an `EditableDurableLayerSource` and the layer's `pos`, and
+`source` and `pos` travel together deliberately: a source edit re-measures the
+layer box, so a legacy entry that moved both must produce ONE operation or the
+legacy-to-durable cursor map grows by two for one edit. `DurableOperation` holds
+twelve kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
+(`history-adapter.ts`), reached from `legacyHistoryToDurable`, planned at the
+append boundary (`history-append.ts`), replayed by the `'replace-layer-source'`
+case in `durable-replay.ts`, and deep-frozen by `cloneOperation`
+(`history-model.ts`). Its retained operations deliberately survive a source
+rewrite, so a live filter or transform is not dropped when the text is retyped.
+
+**What the requirement still owes.** The production options bar reads
+`toolArgs` from legacy replay, so source rehydration is a cutover-time
+requirement governed by RQ-4's differential and ownership gates, not a gap in the
+operation itself. The pixel and export differential exists and has found one
+real divergence; the obligations it has not closed are listed under Sequencing.
+The pinned `args.enabled` divergence also remains open.
 
 ### RQ-3: bounded replay with explicit permission
 
@@ -59,11 +75,16 @@ The budget is a user setting, not an architecture constant. The repository has
 no recorded override for this requirement; agents must not invent one or write
 `OVERRIDES.md`.
 
-The earlier proposal for a thirteenth durable operation was an automatic
-`rasterize-layer` escape hatch and is superseded. The durable operation count
-was corrected to eleven in the finalisation audit. This document's authorized
-source-edit operation is a different requirement: it preserves editable text
-and shape sources and is not a rasterization path.
+The earlier proposal for an automatic `rasterize-layer` escape hatch — one more
+durable operation, whichever number it would have taken — is superseded.
+`DurableOperation` now holds twelve kinds, eleven from the finalisation audit plus
+the authorized `replace-layer-source`. That source-edit operation is a different
+requirement: it preserves editable text and shape sources and is not a
+rasterization path. Count the union in `history-model.ts`, not from this
+sentence.
+The count is also derived by `history-model.reachability.test.ts`'s
+`it('declares exactly the kinds the DurableOperation union declares')`, rather
+than by a hand-written list that could miss a newly added kind.
 
 ### RQ-4: one replay authority
 
@@ -72,11 +93,13 @@ undo, redo, navigation, and history-panel state must agree. During migration,
 legacy-versus-durable differential checks are allowed; shipping two authorities
 is not.
 
-The existing gate names `G0` and `G13` are contradictory as written: `G0`
-forbids production imports of durable replay/materialization modules while
-`G13` requires a production importer for `materialization.ts`. The gate must be
-rewritten to describe the staged state honestly, then become a normal assertion
-when the durable compositor is the intentional production boundary.
+The retired coordination gate forbids production imports of
+`replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
+allows exactly one production importer for `materialization.ts`,
+`durable-compositor.ts`. The compositor is mounted for navigation presentation
+and its `tmpCanvas` is already consumed by render and export. The remaining
+cutover surfaces stay legacy-authoritative until their differential and
+ownership gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -102,29 +125,52 @@ backing image. Do not auto-merge from a refused pointer gesture.
 the bedrock gate or requiring flatten before every tonal edit would be a product
 deviation and cannot be implemented without an operator decision.
 
-The first implementation slice deliberately supports a lone bedrock layer by
-preserving its name through the existing `merge-document` contract. It refuses
-to flatten a multi-layer stack; atomic multi-layer Background conversion remains
-a separate source-replacement requirement.
+The first implementation slice deliberately supports a lone bedrock layer. It
+reuses the existing `NEW_LAYER_ACTION` boundary rather than Flatten: naming the
+bedrock layer's own id makes `replayHistory`'s create arm replace the record
+instead of adding a second one, so the panel keeps its row, `activeLayerId`
+stays valid, and an undo rebuilds the backing layer from the document's first
+entry. The durable shadow derives the same `create-layer` operation from the same
+entry. `pos` is copied verbatim and the document frame is never touched, which is
+what preserves the pixels.
+
+It refuses to flatten a multi-layer stack, and `convertBedrockLayer()` names why
+in its own doc comment: both layer constructors place a created layer at
+`maxOrder + 1`, so converting under any other layer would stack an opaque copy of
+the whole frame on top of it and do so identically on every replay. Atomic
+multi-layer Background conversion is therefore a separate requirement, and it is
+sharper than "a source-replacement requirement": `replace-layer-source` admits
+only `EditableDurableLayerSource`, so it deliberately cannot carry the raster a
+Background conversion needs. Widening the action needs a raster-admitting
+variant or an equivalent atomic history action.
 
 ## Sequencing
 
 1. Record the operator rulings below and make the requirements document part of
    the tracked architecture map.
-2. Close the current migration boundary defects and keep every currently
-   appendable durable operation replayable without changing production
-   authority. The runtime retained-operation boundary is closed; lifting the
-   raster append refusal remains the separate `HANDOFF.md` §198 step.
-3. Verify source-edit history and source rehydration together for text and
-   shape correction. Keep independent legacy/durable parity for creation, edit,
-   undo, redo, and navigation.
+2. Keep every currently appendable durable operation replayable without changing
+   production authority. The runtime retained-operation boundary, the supported
+   raster append path and the navigation presentation mount are closed, and the
+   §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
+3. The source-edit durable slice is in: `replace-layer-source` is derived,
+   planned, replayed and cloned. Logical replay parity and a pixel/export
+   differential both exist; what is still owed is the divergence the differential
+   found (§205), the two scenarios jsdom cannot render in either direction (§206),
+   history-panel parity (§207), options-bar rehydration, the browser authority
+   seam (§203), and the pinned `args.enabled` divergence.
+   Do not read the landed operation as a closed requirement; the
+   operator's ruling was that the operation and its visible consumer land as one
+   slice, and the consumer is still legacy-sourced.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Wire one durable materialization/compositor boundary for render, export, and
-   navigation. Stage successfully before publication and delete the old
-   authority only after the differential and failure-contract gates pass.
+6. Transfer RENDER AUTHORITY, which render already reads, and keep EXPORT
+   legacy-authoritative until its own differential is green for every layer kind
+   (§206). Stage successfully before publication and delete the old authority only
+   after the differential and failure-contract gates pass. This is no longer a
+   mounting question: durable pixels already reach both surfaces through
+   `getLayerBitmap()`, and what is unmounted is durable STATE authority.
 
 ## Operator rulings
 
@@ -136,9 +182,9 @@ decisions, not Photoshop overrides, and are intentionally not encoded in
   lossless text and shape post-editing. Its legacy consumer, durable replay,
   and options-bar rehydration must land as one behavior slice.
 - **Authority gate:** durable materialization is the eventual single production
-  authority. Legacy replay remains the temporary authority during differential
-  parity; the contradictory `G0`/`G13` gate must be rewritten for that staged
-  cutover.
+  authority. Legacy replay remains the logical authority during differential
+  parity; navigation presentation is the first mounted surface, while retired
+  coordination modules stay fail-closed.
 - **Bedrock UX:** use an explicit Photoshop-faithful Layer-from-Background or
   equivalent conversion action. Keep the bedrock refusal, do not auto-flatten,
   and do not silently relax the gate.

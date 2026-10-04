@@ -64,8 +64,10 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   whichever checkout the root chat happens to sit in.
 - **One task = one worktree and one branch**, created **before** the first edit.
   Lowercase prefix (`fix/`, `feat/`, `e2e/`, `cleanup/`, `audit/`), for example:
-  `git worktree add -b fix/task .kilo/worktrees/task`. A second worktree for the
-  same task is a fork you reconcile by hand.
+  `git worktree add -b fix/task "$MAIN/.kilo/worktrees/task"`, where `$MAIN` is the main
+  checkout's absolute path as [`../AGENTS.md`](../AGENTS.md) under **Worktree FIRST** derives it.
+  Use the absolute path — a relative one nests the worktree inside whichever checkout you are
+  standing in. A second worktree for the same task is a fork you reconcile by hand.
 - **One writer per worktree; readers may share it.** A root-level agent is one a
   human started as a Kilo chat. Two of them never _write_ the same worktree, and
   one does not take over a worktree another is writing in. **Read-only agents may
@@ -112,9 +114,11 @@ under it.
 
 Three things stay allowed, each deliberately:
 
-- **A landing.** `git merge` into `main` runs `pre-merge-commit`, and a
-  fast-forward runs no hook at all, so the documented landing flow never reaches
-  this file.
+- **A landing.** A clean non-fast-forward `git merge` into `main` runs
+  `pre-merge-commit`; a fast-forward invokes no gating hook, so the documented
+  landing flow never reaches this file. It still invokes the non-blocking
+  `post-merge` hook, which attempts to release claims and locks for merged
+  worktrees whose branch, directory, and working tree are all eligible.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -211,9 +215,11 @@ status` and `git diff` before staging.
   meant it.
 
   **Its limits, because a gate that claims more than it has is the failure it replaces:**
-  git runs no hook for a **fast-forward**, so that landing shape is uncovered — safe by
-  construction, since the branch tip contains main as an ancestor, but uncovered. And
-  `--no-verify` bypasses it, as it bypasses every gate here.
+  git runs no **gating** hook for a **fast-forward**, so that landing shape is uncovered — safe
+  by construction, since the branch tip contains main as an ancestor, but uncovered. The
+  non-blocking `post-merge` hook still runs and releases only eligible merged worktrees;
+  dirty worktrees remain held and are reported. `--no-verify` bypasses the gating hooks,
+  but not `post-merge`.
 
   **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
   about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
@@ -867,8 +873,9 @@ heartbeat` still exists and is still correct — it is the only thing that can
 
 It is a command, not a gate, and no commit may be blocked on it. Exactly one thing
 calls it: `.husky/post-merge` runs `scripts/merge-release.mjs`, which releases the
-claims and locks of every worktree the merge put on `main` — non-blocking, because
-the merge is already recorded by the time a post-merge hook runs. Nothing else in
+claims and locks of eligible worktrees the merge put on `main`, while reporting
+merged worktrees blocked by dirty state or other release conditions — non-blocking,
+because the merge is already recorded by the time a post-merge hook runs. Nothing else in
 `.husky/` reads the board, and nothing runs it on worktree creation or on a chat
 stopping.
 

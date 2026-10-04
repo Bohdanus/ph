@@ -19,6 +19,7 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
   type CreatorToolParams,
@@ -355,12 +356,27 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
+    // The replacement is RENDERED, not merely recorded. `getLayerBitmap` re-runs a creator only for
+    // the vector tools — a `text` source is excluded — so a tool layer with neither `tmpCanvas` nor
+    // `bitmap` draws nothing at all: `drawLayerSource` declines it, `drawLayersToCanvas` reports
+    // "skipped layer without bitmap", and export flattens without the type. MEASURED: an in-place
+    // text commit over an existing layer emptied the layer from the canvas, from the export and from
+    // merge, and redo emptied it again. So the raster comes from the same creator a new layer uses.
+    let rebuilt: Layer;
+    try {
+      rebuilt = createLayerSource({ layerId: id, layers, source: nextSource });
+    } catch (error) {
+      console.error('Unable to render a replacement layer source', error);
+      return null;
+    }
     const nextLayer: Layer = {
       ...layer,
-      source: { ...source, args: { ...source.args }, pos: { ...source.pos } },
-      pos: { ...source.pos },
-      bitmap: null,
-      tmpCanvas: null,
+      name: rebuilt.name,
+      source: rebuilt.source,
+      pos: { ...rebuilt.pos },
+      bitmap: rebuilt.bitmap,
+      tmpCanvas: rebuilt.tmpCanvas,
     };
     const item = {
       layerId: id,
@@ -423,8 +439,10 @@ export const useLayers = () => {
 
     // should mark layer dirty
     if (!tempUpdateLayer({ id, toolArgs })) return;
-    // should pick that dirty later and do all hardening
-    const committedLayers = commitDirtyTool(true);
+    // should pick that dirty later and do all hardening. `id` is the ownership scope: this
+    // function records ONE `TOOL_ACTION` entry, for ONE layer, so no other layer's pixels may
+    // ride out in the record it is about to publish.
+    const committedLayers = commitDirtyTool(true, id);
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
     if (!committedArgs) return;
     const item = { layerId: id, actionName: TOOL_ACTION, args: committedArgs } as const;
@@ -454,13 +472,51 @@ export const useLayers = () => {
   };
 
   // honestly, the only dirty tool that needs saving is text and maybe crop
-  const commitDirtyTool = (deferDispatch = false): LayersRecord => {
+  /**
+   * `ownedLayerId` is the ownership scope, and `undefined` is "every preview the map holds".
+   *
+   * The tool switch, the merge, the new-document and the export paths own no single layer and
+   * must land all of them, which is what an unscoped call means. A caller committing ONE layer's
+   * edit — only `updateLayerByTool` does, and it appends exactly one `TOOL_ACTION` entry for
+   * exactly one layer — names that layer instead. Folding the rest of the preview map into the
+   * record it publishes would put another layer's draft pixels into committed state that no
+   * history entry reproduces, and clearing that preview would make them unrecoverable: a later
+   * navigation clears the drafts and rebuilds every layer from the timeline, which names no
+   * change to the layer whose pixels were published. So a scoped call leaves every preview and
+   * every dirty cache it does not own exactly where it found them.
+   */
+  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId | null): LayersRecord => {
     // can be run safely if no dirty layer
 
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
+      // An emptied draft is an edit session with nothing in it. It cannot be committed — the Commit
+      // button is disabled and there is no ink to record — so the implicit path CLOSES it rather than
+      // returning early, which used to leave a box on the canvas that a tool switch reopened and that
+      // no key could end: Escape, Ctrl+Enter and Commit were all no-ops and only Cancel escaped.
+      if (!args.text && args.rect) {
+        const closed = { ...args, text: '', rect: null };
+        if (setToolArgs) setToolArgs(closed);
+        else currentArgsRef.current = closed;
+        clearOverlay();
+        return layers;
+      }
       if (!args.text || !args.rect) return layers;
+      // An UNTOUCHED placeholder is discarded, not committed. This is the implicit path — a tool
+      // switch, or a click elsewhere on the canvas — and a box the user never typed into is not a
+      // layer: clicking with the Type tool and then clicking away in Photoshop leaves the document
+      // unchanged, and the placeholder is a preview of the font rather than content. The explicit
+      // Commit button deliberately still commits it, because there the user has said "take this".
+      // The flag is the whole of the test: a string comparison would discard real content that
+      // happens to be those words, which is the defect the flag replaced.
+      if (args.placeholderUntouched === true) {
+        const discarded = { ...args, text: '', rect: null };
+        if (setToolArgs) setToolArgs(discarded);
+        else currentArgsRef.current = discarded;
+        clearOverlay();
+        return layers;
+      }
 
       const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
@@ -471,7 +527,13 @@ export const useLayers = () => {
         if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y) {
           const source: ToolLayerSource = {
             kind: 'tool',
-            args: { ...args, rect: measuredRect },
+            // Layer-LOCAL, because that is what the create arm stores and what `createLayerSource`
+            // renders from: the creator builds a `pos`-sized canvas and draws at the rect's own
+            // coordinates. An unreduced canvas-space rect puts the ink outside that canvas whenever
+            // the document frame is not the origin — MEASURED on a crop with `documentFrame.x` at
+            // -100, a replace armed rendered an EMPTY layer at the right position. The origin
+            // comparison above still uses the un-reduced rect, so the guard is unaffected.
+            args: { ...args, rect: reduceRect(sortRect(measuredRect), pos), placeholderUntouched: false },
             pos,
           };
           const replaced = replaceLayerSource(activeLayer.id, source);
@@ -479,12 +541,13 @@ export const useLayers = () => {
             const cleared = { ...args, text: '', rect: null };
             if (setToolArgs) setToolArgs(cleared);
             else currentArgsRef.current = cleared;
+            clearOverlay();
             return { ...layers, [activeLayer.id]: replaced };
           }
         }
       }
 
-      const layer = createLayerFromTool({ args });
+      const layer = createLayerFromTool({ args: { ...args, placeholderUntouched: false } });
       const cleared = { ...args, text: '', rect: null };
       if (setToolArgs) {
         setToolArgs(cleared);
@@ -502,6 +565,10 @@ export const useLayers = () => {
 
     const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
+      // The ownership scope, ahead of the publication boundary below: a preview the caller does
+      // not own is still a draft, and a draft the caller did not stage must not become published
+      // state on this caller's history entry.
+      if (ownedLayerId && id !== ownedLayerId) continue;
       // The publication boundary, not a second copy of the preview guard: `commitDirtyTool` is
       // reached from the tool switch, the merge and the new-document paths as well as from
       // `updateLayerByTool`, so this is where a preview that no longer renders stops becoming a
@@ -521,10 +588,14 @@ export const useLayers = () => {
       }
       if (layer.tmpCanvas) pendingPresentations.set(id, layer);
     }
-    previewLayersRef.current = {};
+    // Only the previews this call consumed leave the map. A scoped commit must not discard a
+    // draft it declined to publish, or the pixels are gone from both the record and the map.
+    if (ownedLayerId) delete previewLayersRef.current[ownedLayerId];
+    else previewLayersRef.current = {};
 
     // Find any remaining dirty layer and save a detached copy.
     for (const layer of Object.values(committedLayers)) {
+      if (ownedLayerId && layer.id !== ownedLayerId) continue;
       if (layer.tmpCanvas) {
         const detachedLayer = { ...layer, pos: { ...layer.pos } };
         pendingPresentations.set(detachedLayer.id, detachedLayer);
@@ -750,7 +821,7 @@ export const useLayers = () => {
     }
 
     const bitmap = layer.tmpCanvas ?? layer.bitmap;
-    if (!bitmap && !processor.creator) {
+    if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
       console.error('No active layer or bitmap to update preview');
       return false;
     }

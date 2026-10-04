@@ -13,20 +13,21 @@
  * A merge is the one event that makes the claim FALSE rather than merely old. That is why
  * the trigger is a git fact and not a timer, and it is the same class of evidence `doctor`
  * already accepts: a claim whose worktree is gone is released on that basis
- * (`db.mjs:1703`), not on a lease countdown.
+ * (`doctor()`), not on a lease countdown.
  *
  * WHY IT NEVER USES `--force`
  * ---------------------------
  * The repo's rule is that a sweep may reclaim what lapsed but may NOT take a file from an
- * agent that is still writing — only the operator stops a chat (`db.mjs:1758`, enforced at
- * `:1761` by withholding `force`). `--force` skips that check on EVERY row for a path
- * (`db.mjs:1284`), so a forced release here would revoke a live agent's lock over files
+ * agent that is still writing — only the operator stops a chat (the `releaseFiles()` policy,
+ * enforced by withholding `force`). `--force` skips that check on EVERY row for a path
+ * (the same JSDoc), so a forced release here would revoke a live agent's lock over files
  * this script never inspected.
  *
  * So nothing is forced. Each release is made as the MERGED BRANCH'S OWN IDENTITY, which is
- * the same string the board already keys on (`identity.mjs:11` — identity is the branch,
+ * the same string the board already keys on (identity is the branch,
  * not a session or a pid). Releasing as the owner needs no force at all, and a claim held
- * by a DIFFERENT agent is refused rather than taken (`db.mjs:1035`). The hook can therefore
+ * by a DIFFERENT agent is refused rather than taken (the holder check in
+ * `releaseFiles()`). The hook can therefore
  * only ever clean up after the worktree it is looking at, never after somebody else.
  *
  * THE LOAD-BEARING PART IS THE ENUMERATION, NOT THE ABSENCE OF `force`, and the difference
@@ -162,7 +163,7 @@ export function releaseWorktree(board, { worktreePath, branch, base, dryRun = fa
   // output said nothing at all about it.
   //
   // Guarded on `branch`, not just on the blocker: `listIssues` treats a falsy `claimedBy`
-  // as "no filter" (`db.mjs:864`), so asking for a detached HEAD's holdings would name
+  // as "no filter" (its own parameter default), so asking for a detached HEAD's holdings would name
   // every claim on the board as that worktree's.
   const claims = branch ? board.listIssues({ claimedBy: branch }) : [];
   const locks = branch ? board.locksHeldBy(branch) : [];
