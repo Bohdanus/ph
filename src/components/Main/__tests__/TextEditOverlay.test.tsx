@@ -160,6 +160,19 @@ const composingKeydown = (init: KeyboardEventInit) => {
 };
 
 /**
+ * A `keyup` the browser marked as part of an IME composition.
+ *
+ * The twin of {@link composingKeydown}, and it exists because the cache is written by BOTH handlers:
+ * `handleKeyDown` refusing during composition while `handleKeyUp` measured the candidate is the
+ * disagreement this case is about, so the two flags have to be settable independently.
+ */
+const composingKeyUp = (init: KeyboardEventInit) => {
+  const event = new KeyboardEvent('keyup', { bubbles: true, cancelable: true, ...init });
+  Object.defineProperty(event, 'isComposing', { value: true, configurable: true });
+  return event;
+};
+
+/**
  * A `paste` carrying BOTH flavours.
  *
  * jsdom implements neither `ClipboardEvent` nor `DataTransfer`, so a real one cannot be constructed
@@ -180,6 +193,21 @@ const richPaste = () => {
     },
   });
   return { event, requested };
+};
+
+/**
+ * A `paste` of arbitrary plain text — the native context menu's shape.
+ *
+ * It fires NO key event, which is the entire reason it is separate from `Ctrl/Cmd+V`: the keyboard
+ * route leaves a keyup behind, and the two routes are indistinguishable to every other writer of the
+ * cached caret offset.
+ */
+const plainPaste = (text: string) => {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { types: ['text/plain'], getData: () => text },
+  });
+  return event;
 };
 
 /** A host element that is really in the document, for the exported helpers to be tested against. */
@@ -671,6 +699,153 @@ describe('TextEditOverlay', () => {
     });
   });
 
+  describe('the cached caret offset — written by keyup and by selectionchange, and only from a state the model agrees with', () => {
+    // Two writers, one rule: the cache is a REPAIR for Chromium's caret canonicalisation, so every
+    // value it holds has to be a character offset into the string the MODEL holds. `handleInput`
+    // spends that value against `args.text` and cannot tell it was measured against something else,
+    // which makes these two cases the only thing between a repair and a corruption.
+    it('does not cache a caret offset from a keyup the browser marked isComposing', () => {
+      // MUTATION: deleting `if (event.nativeEvent.isComposing) return;` from `handleKeyUp`.
+      //
+      // Mid-composition the model still holds the pre-composition string while the element holds the
+      // candidate, so an offset measured in the keyup addresses a string the model does not have.
+      // `handleKeyDown` already refuses during composition — the two handlers must agree about it,
+      // and nothing else in the file makes them agree.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      renderOverlay();
+      const el = overlay();
+
+      // A word select over `cd`, and the candidate the IME lays over it. The element is the
+      // authority here, exactly as it is in the browser: the model has not moved, so it still holds
+      // `abcdef` and the composition has not committed.
+      const node = el.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(node, 2);
+      range.setEnd(node, 4);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      el.textContent = 'abすef';
+      // The collapsed caret the browser leaves AFTER the candidate it inserted. Rewriting `textContent`
+      // replaced the text node, so the range has to be re-made: without it the keyup measures nothing
+      // (`readCaretOffset` needs `host.contains(anchorNode)`), the cache stays null for the wrong
+      // reason, and the case would pass with the guard deleted — which is what makes it worthless.
+      placeCaret(el, 3);
+
+      fireEvent(el, composingKeyUp({ key: 'す' }));
+
+      // The composition commits. `handleInput` still sees the model at `abcdef`, so with a null cache
+      // it publishes the browser's own result and rewrites nothing.
+      fireEvent.input(el, { inputType: 'insertText', data: 'す' });
+
+      expect(
+        el.textContent,
+        'a mid-composition offset was cached, so the reconcile branch brought the replaced characters back'
+      ).toBe('abすef');
+      const published = h.setToolArgs.mock.calls[h.setToolArgs.mock.calls.length - 1][0] as TextArgs;
+      expect(published.text, 'the committed composition did not reach the model intact').toBe('abすef');
+    });
+
+    it('does not cache from selectionchange while the element and the model disagree', () => {
+      // MUTATION: removing `&& host.textContent === args?.text` from the `selectionchange` listener.
+      //
+      // Mid-composition is the one state where the two differ — the element holds the candidate, the
+      // model the pre-composition string — and the browser fires `selectionchange` for every caret
+      // move the candidate makes. Caching there measures an offset against one of the two strings and
+      // spends it against the other, which is precisely what `handleInput`'s reconcile branch assumes
+      // and never proves.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      renderOverlay();
+      const el = overlay();
+
+      placeCaret(el, 2);
+      // The candidate inserted at the caret: the element has moved to `abきcdef` and the model has not.
+      el.textContent = 'abきcdef';
+      placeCaret(el, 3);
+      document.dispatchEvent(new Event('selectionchange'));
+
+      // The composition commits, and for everything except this cached offset the two are back in
+      // step. The assertion is about WHERE the candidate went: reconciled from an offset measured
+      // against the candidate, it lands after the `c` instead of before it.
+      fireEvent.input(el, { inputType: 'insertText', data: 'き' });
+
+      expect(el.textContent, 'an offset measured against the candidate was reconciled into the model string').toBe(
+        'abきcdef'
+      );
+    });
+  });
+
+  describe('restoring a caret offset into the element', () => {
+    it('refuses a character offset whose first child is an element, where the offset would be a child index', () => {
+      // MUTATION: weakening `if (!node || node.nodeType !== Node.TEXT_NODE) return;` to
+      // `if (!node) return;`.
+      //
+      // A CHARACTER offset addresses a text node; `Range.setStart` applies it to an element as a
+      // CHILD INDEX, so `<span>ab</span>` at offset 1 lands after `ab` rather than between `a` and
+      // `b`. An IME is what leaves a span around the candidate, and Enter is the keystroke whose
+      // RESULT depends on where the caret was — so a mis-applied offset does not merely move a caret,
+      // it breaks the line in the wrong place, which is why the case spends its assertion on the
+      // published string rather than on the selection.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      renderOverlay();
+      const el = overlay();
+
+      // The IME shape: the candidate in a span, the rest of the string a sibling text node.
+      el.innerHTML = '<span>ab</span>cdef';
+      expect(el.textContent, 'the markup does not carry the same flat text as the model').toBe('abcdef');
+
+      // The caret the user placed, INSIDE the span's text node. A container-level range would be the
+      // very child-index position under test, so the range is made on the text node explicitly.
+      const spanText = el.firstChild!.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(spanText, 1);
+      range.collapse(true);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+
+      fireEvent.keyDown(el, { key: 'Enter' });
+
+      const published = h.setToolArgs.mock.calls[0][0] as TextArgs;
+      expect(published.text, 'the break landed after `ab` instead of between `a` and `b`').toBe('a\nbcdef');
+      expect(el.textContent).toBe('a\nbcdef');
+    });
+
+    it('captures the caret BEFORE flattening an IME element, because rewriting textContent throws the caret away', () => {
+      // MUTATION: inverting the flatten branch's `if (caret !== null) restoreCaretOffset(host, caret);`
+      // to `=== null`.
+      //
+      // `host.textContent = flat` removes every child, so a range whose boundary was inside one of
+      // them is retargeted at the host and the caret lands at the front of the line — reached by
+      // Ctrl+B over a selection, since `contentEditable="true"` keeps the browser's formatting
+      // commands and the app prevents none of them. The end offset therefore has to be measured
+      // BEFORE the write: measured after, it is the position the user did not ask for and every
+      // later keystroke lands there.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      renderOverlay();
+      const el = overlay();
+
+      el.innerHTML = '<b>abcd</b>ef';
+      const bold = el.firstChild!.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(bold, 0);
+      range.setEnd(bold, 3);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      // No `inputType` and no `data` on the event: a formatting command's `input` carries neither,
+      // so the reconcile branch above the flatten branch is not the one under test here.
+      fireEvent.input(el);
+
+      expect(el.textContent, 'the element was not flattened').toBe('abcdef');
+      const restored = readSelection();
+      expect(restored.rangeCount, 'the caret was thrown away instead of restored').toBe(1);
+      expect(restored.startOffset, 'the caret was not put back where the selection ended').toBe(3);
+      // Collapsed, not merely present: a range spanning the three selected characters would satisfy
+      // the offset above while still being a selection the user never asked for.
+      expect(restored.collapsed, 'the restored caret is not collapsed').toBe(true);
+      expect(restored.string).toBe('');
+    });
+  });
+
   describe("keydown — Enter breaks the line and the other three commit, which is Adobe's split", () => {
     it('inserts a single newline at the caret for a bare Enter, and does not commit', () => {
       renderOverlay();
@@ -688,6 +863,58 @@ describe('TextEditOverlay', () => {
       expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, text: '\n', rect: SENTINEL_RECT });
       expect(el.textContent).toBe('\n');
       expect(el.children.length).toBe(0);
+    });
+
+    it('leaves the caret after the break it just inserted, so the next character lands there', () => {
+      // THE HARD-BREAK REPAIR, the one path in the file that was pinned by nothing. MUTATION: the
+      // older `caretOffsetRef.current = before + 1`.
+      //
+      // With a selection over `cd` in `abcdef`, `readCaretOffset` answers null for a non-collapsed
+      // selection and the cache is null as well, so `before + 1` claimed 1 — a `null + 1` — and the
+      // next character was reconciled into the middle of `ab` instead of after the break. Reading the
+      // caret AFTER the insert is the fix, and a cache is only falsifiable through the keystroke that
+      // spends it, which is what the second half of this case is for.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+
+      const node = el.firstChild as Text;
+      const range = document.createRange();
+      range.setStart(node, 2);
+      range.setEnd(node, 4);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      // The browser fires this for the word select too, and `readCaretOffset` answers null for a
+      // non-collapsed selection — so the cache genuinely starts this case at null rather than at
+      // whatever a collapsed-selection read would have left behind.
+      document.dispatchEvent(new Event('selectionchange'));
+
+      fireEvent.keyDown(el, { key: 'Enter' });
+
+      const broke = h.setToolArgs.mock.calls[0][0] as TextArgs;
+      expect(broke.text, 'the break did not replace the selection').toBe('ab\nef');
+      expect(el.textContent).toBe('ab\nef');
+      expect(readSelection().startOffset, 'the caret is not after the break').toBe(3);
+
+      // The store round trip `setToolArgs` performs in the app, so the reconcile branch below builds
+      // its expected text from the BROKEN string rather than from `abcdef`. The caret has to survive
+      // it — that is what the seed effect's inequality guard is for.
+      toolArgs = broke;
+      rerender(<TextEditOverlay />);
+      expect(readSelection().startOffset, 'the round trip moved the caret the break left').toBe(3);
+
+      // Chromium canonicalising the caret after the hard break: the browser's own insert of `X`
+      // lands at the end of the line, which is the position the cached offset exists to REPAIR.
+      el.textContent = 'ab\nefX';
+      placeCaret(el, 5);
+      fireEvent.input(el, { inputType: 'insertText', data: 'X' });
+
+      expect(el.textContent, 'the character was reconciled from an offset that was never measured here').toBe(
+        'ab\nXef'
+      );
+      const repaired = readSelection();
+      expect(repaired.startOffset, 'the caret was not repaired to where the character went').toBe(4);
+      expect(repaired.collapsed).toBe(true);
     });
 
     it('commits for the keypad Enter, which reports code NumpadEnter and carries no modifier', () => {
@@ -777,6 +1004,46 @@ describe('TextEditOverlay', () => {
       expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, text: 'pasted', rect: SENTINEL_RECT });
       expect(el.textContent).toBe('pasted');
       expect(el.children.length).toBe(0);
+    });
+
+    it('caches the caret the paste left behind, because a context-menu paste fires no key event', () => {
+      // MUTATION: deleting the trailing `caretOffsetRef.current = readCaretOffset(event.currentTarget);`
+      // from `handlePaste`.
+      //
+      // A keyboard paste is repaired by the `Ctrl/Cmd+V` keyup that follows it. A paste from the
+      // native context menu fires NO key event at all, so this line is its only writer of the cached
+      // offset — and without it the cache still holds the last keystroke's offset, and the next
+      // character is reconciled into the position the user occupied BEFORE the paste.
+      toolArgs = makeTextArgs({ text: 'abcdef' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+
+      // The last keystroke, which is what leaves the stale cache behind: a caret at 2 and a keyup
+      // over it. The keyup has to be there for this to be a test — a cache that never existed would
+      // make the mutation indistinguishable from the guard.
+      placeCaret(el, 2);
+      fireEvent.keyUp(el, { key: 'b' });
+      h.setToolArgs.mockClear();
+
+      fireEvent(el, plainPaste('XY'));
+      const pasted = h.setToolArgs.mock.calls[0][0] as TextArgs;
+      expect(pasted.text, 'the paste did not reach the model').toBe('abXYcdef');
+
+      // The store round trip, so the reconcile branch below builds its expected text from the pasted
+      // string. It also proves the element and the model agree afterwards, which is what keeps the
+      // seed effect from clearing the cache on the way through.
+      toolArgs = pasted;
+      rerender(<TextEditOverlay />);
+      expect(el.textContent, 'the round trip re-seeded the element').toBe('abXYcdef');
+
+      // What the browser then does: insert at the caret `handlePaste` left, after the pasted `XY`.
+      el.textContent = 'abXYZcdef';
+      placeCaret(el, 4);
+      fireEvent.input(el, { inputType: 'insertText', data: 'Z' });
+
+      expect(el.textContent, 'the next keystroke reconciled against the PRE-paste offset').toBe('abXYZcdef');
+      const published = h.setToolArgs.mock.calls[h.setToolArgs.mock.calls.length - 1][0] as TextArgs;
+      expect(published.text, 'the model disagrees with the element it published').toBe('abXYZcdef');
     });
   });
 
