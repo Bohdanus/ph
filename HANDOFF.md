@@ -1644,59 +1644,81 @@ have to be updated in the same change.
 `useSelectionMarchingAnts()`; `src/hooks/__tests__/useRect.drag.test.ts` — the two `setLineDash`
 titles named above
 
-## 91. The durable baseline's bedrock frame rule is implemented and no test reaches it at index 0
+## 90. A disabled FIRST history entry still sizes the durable baseline's FRAME
 
-**The rule, and why it is right, so nobody re-derives it.** Legacy replay takes the document frame
-from a bedrock source when the entry is the FIRST one (`history-replay.ts` — `replayHistory()`, at
-its bedrock frame branch), and that is the
-shape every document opens with: `App.tsx` — the `DEFAULT_BLANK_IMAGE` constant — seeds a
-`DEFAULT_BLANK_IMAGE` carrying
-`{ isBedrock: true, size }` and commits it through `setBlankImage` → `createBlankLayer(params, true)`
-(`useApp.ts` — `setBlankImage()`). `frameFromFirstEntryBedrock()` (`history-adapter.ts`) is the durable
-model's copy of that rule, applied inside `legacyHistoryToDurable()` as
+**Problem.** The converter's baseline branch (`history-adapter.ts` — `legacyHistoryToDurable()`, the
+`initial` binding) gates the **layers** on the entry being enabled:
+`first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null`.
+A disabled first entry therefore yields `layers: []`, which is what `replayHistory()` produces. That
+half is FIXED, and pinned by the `it('a disabled first entry replays as the empty state legacy
+replays')` title in `history-adapter.branches.test.ts`.
+
+The **frame** on that same fallback object is not gated, and TWO expressions read the disabled entry
+rather than one:
 
 ```ts
 frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
 ```
 
-— ranked **above** `options.initialFrame`, which is the caller's current frame, and therefore the
-cropped frame once the document has been cropped. The two models agree at index 0 by rule, not by
-seeding. The read is in the baseline, not in the create-layer arm, which still leaves `currentFrame`
-alone for every later entry (the create-layer arm of `legacyHistoryToDurable()`): a bedrock commit
-mid-history moves neither model.
+- `frameFromFirstEntryBedrock()` inspects `first` with no reference to its enabled state. This is
+  the reachable read for a real document: `createBlankLayer()` commits the opening entry through
+  `REPLACE_DOCUMENT` with `{ layerId, actionName: NEW_LAYER_ACTION, layerSource }` and **no**
+  `documentSource` — the size is carried in the dispatch's `updates`, not on the history item — and
+  `App.tsx`'s `DEFAULT_BLANK_IMAGE` seeds `isBedrock: true`, so a disabled opening entry sizes the
+  durable document here.
+- `initialSize` is bound from `options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 }`,
+  so a disabled first entry that DOES carry a `documentSource` still sizes the frame through
+  `documentFrameFromSize()`. Gating only `frameFromFirstEntryBedrock` leaves this open.
 
-**What is missing is the tripwire, and nothing on `main` can fail.** `grep -rn frameFromFirstEntryBedrock src/`
-matches only `history-adapter.ts` — the function has no test at all. The two cross-model tests that
-look like they cover it do not: `history-adapter.branches.test.ts` — the
-`it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history')` title
-in `describe('bedrock frame authority between durable shadow and legacy replay')` — puts its bedrock
-entry at
-index **1** (its `convert` helper prepends `baselineHistory()`), and
-`history-adapter.tool-conversion.test.ts` — the `it('derives a bedrock tool source size from the
-recorded size instead of the position')` title — does the same through its own `convert`
-helper and asserts only `created.layer.source` — never `baseline.frame`, never
-`replayDurableDocument(…, -1)`. The one test that seeds an `initialFrame` differing from the derived
-size, `history-adapter.branches.test.ts` — the `it('prefers the explicit initial frame over a derived
-size when the first entry has no document source')` title — has a history with **no** source at all,
-so
-`frameFromFirstEntryBedrock` returns `undefined` and `options.initialFrame` still wins.
+**User-visible failure, and it is REACHABLE.** `replayHistory()` skips a disabled item at the top of
+its loop (`history-replay.ts` — at its `if (!item || item.disabled) continue`), so it never reaches a
+bedrock source and never sizes the canvas from one. Measured on this tree: a single-entry timeline
+whose only entry is a DISABLED bedrock `NEW_LAYER_ACTION` of 640x480 converts to a durable baseline
+of `{x:0, y:0, width:640, height:480}`, and `replayDurableDocument(converted.document, -1)` returns
+that same frame, where `replayHistory()` reports the 1x1 document its own `initialSize` default
+produces. The same fixture carrying a `documentSource` and no caller frame measures 640x480 against
+the same 1x1, and with a caller `initialFrame` of a cropped `{x:80, y:270, width:640, height:300}`
+the durable frame reports the cropped document where legacy reports 1x1. Disable the first History
+row of a document that opened on a bedrock source and the canvas blanks while the durable shadow
+still describes the full opening frame: the layers now agree and the frame does not.
 
-So a regression that flips the ranking — putting the caller's seed back above the bedrock size — is
-invisible, and the failure it produces is a baseline that describes the cropped document at exactly
-the cursor where the user can undo back into the un-cropped original.
+**Nothing reports it, which is worse than a misleading warning.** The `invalid-history-entry`
+diagnostic fires only when the disabled first entry carries a `documentSource`. For the production
+shape — a bedrock `layerSource` with no `documentSource` — the conversion returns an EMPTY
+`diagnostics` array next to the divergent frame, so the shadow is marked healthy while the two
+models disagree about the same timeline.
 
-**Test that fails without it.** A history whose **first** element is a bedrock `NEW_LAYER`, converted
-with an `options.initialFrame` of a different size, asserting `baseline.frame` equals the bedrock
-size AND that `replayDurableDocument(converted.document, -1)` agrees with
-`replayHistory(history, 0)`. Neither model is allowed to prefer the caller's seed at index 0.
+**How the toggle is exposed.** The History tab renders one eye button per row, including the first:
+the row's `onClick` in `HistoryTab.tsx` — `HistoryTab` — calls `handleToggleDisabled`, whose `title`
+reads "Disable history item"
+→ `toggleDisabled(itemId)` (`HistoryTab.tsx` — inside `handleToggleDisabled`) → `useHistory.ts` —
+`toggleDisabled()` → `updateHistoryTimeline`'s
+`toggle-disabled` command, which flips `disabled` on the addressed entry
+(`history-timeline.ts` — the `toggle-disabled` arm of `updateHistoryTimeline()`). `sortedHistory` is
+`[...history].reverse()` (`HistoryTab.tsx` — the `sortedHistory` binding),
+so the first entry is the **last** row — the one closest to the panel's footer, not a row anyone
+treats as special. The mobile drawer exposes the same control
+(`MobileLayersDrawer.tsx` — its `handleToggleDisabled`).
 
-**Files.** `src/contexts/history-adapter.ts` — `frameFromFirstEntryBedrock()`, and the baseline and
-create-layer arms of `legacyHistoryToDurable()`;
-`src/contexts/history-replay.ts` — `replayHistory()`'s bedrock frame branch;
-`src/contexts/__tests__/history-adapter.branches.test.ts` — the `convert` helper and the two `it`
-titles named above;
-`src/contexts/__tests__/history-adapter.tool-conversion.test.ts` — the `convert` helper and its
-bedrock-size `it` title
+**Fix.** Gate the frame on the same predicate the layers are gated on, so the whole fallback object
+agrees with `replayHistory()` in one move rather than half of it. The shape to decide is what a
+timeline whose baseline is disabled converts to: `"an empty baseline"` and `"a baseline derived from
+the first **enabled** entry"` are two different answers and only one of them is the document
+`replayHistory()` produces. Answer that first — the residual is only correct once the answer is
+chosen, because gating `frameFromFirstEntryBedrock` on `isEntryEnabled(first)` alone leaves BOTH
+`initialSize`, which reads the disabled entry's own `documentSource.size`, and the `options.initialFrame`
+fallback reading an ungated value.
+
+**TRIPWIRE.** There is none for the frame half. The existing case asserts the layers and the cursor
+only, so a fix here is free to regress silently; the fix must extend it to assert the replayed FRAME
+as well, and to cover a disabled opening entry that carries a `documentSource` as well as one that
+does not, or the same change regresses with the suite green.
+
+**Files.** `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`'s `initialSize` binding and
+its `initial` fallback object, and `frameFromFirstEntryBedrock()`;
+`src/contexts/__tests__/history-adapter.branches.test.ts`
+
+---
 
 ---
 
@@ -4229,21 +4251,6 @@ subtraction), `src/util/layer-space.ts` (`documentPointsToLayerLocal()`, the lay
 different axis), `e2e/crop-history.spec.ts` (the
 `test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back')` case —
 the one that does not cover this).
-**Problem.** `usePaintStroke.ts` records brush points in document coordinates, while the runtime
-compositor renders a cropped document with `layerCoordinate - documentFrame.origin`. After a crop,
-the stroke is therefore offset by the frame origin and can render outside the visible document.
-The defect reproduces in the crop/transform headless gate: a bar drawn after a crop is committed,
-but the visible canvas remains unchanged. Sweeping frame heights and raw canvas heights reproduced
-the same bounds before and after the stroke.
-
-**What would close it.** Convert the committed stroke points into the current layer/frame coordinate
-space before `usePaintStroke.ts` writes the history item, then add a crop-followed-by-stroke pixel
-assertion to `e2e/crop-history.spec.ts`. Do not weaken the existing crop history assertions or add
-an accepted console error; the issue is a coordinate transform defect in the paint writer.
-
-**Files.** `src/tools/usePaintStroke.ts`, `src/contexts/useLayer.ts`, `src/contexts/layer-renderer.ts`,
-`e2e/crop-history.spec.ts`.
-
 ---
 
 ## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
