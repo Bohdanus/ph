@@ -35,8 +35,12 @@ vi.mock('../../../contexts/useHistory.ts', () => ({
 }));
 
 vi.mock('../../../hooks/useApp.ts', () => ({
-  useApp: () => ({ goToTool: goToToolMock }),
+  useApp: () => ({ goToTool: goToToolMock, handleImageSave: vi.fn() }),
 }));
+
+vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => ({ openSaveImageDialog: vi.fn() }) }));
+
+vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => ({ commitDirtyTool: vi.fn(() => ({})) }) }));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({

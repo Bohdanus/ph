@@ -2880,7 +2880,9 @@ rail, and must NEVER be hidden"
      carried forward: the rail half is in `docs/PHOTOSHOP-UX.md`'s open-violations bullet, the
      operator's later "will be implemented" signal and the unanswered adjustment-layer question
      are in `docs/TOOLS-TOO-HARD.md` and `docs/PHOTOSHOP-UX.md`, the unanswered
-     adjustment-layer question is §172, and the open label question is §170. -->
+     adjustment-layer question is §172. The label question was §170; it is resolved and
+     implemented, so it is deleted, and the rule it settled now lives in
+     `docs/TOOLS-TOO-HARD.md`'s enabled-items entry. -->
 
 ## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
 
@@ -4933,58 +4935,6 @@ its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180�
 `#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
 `src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
-## 168. `Image ▸ Adjustments ▸ Photo Filter` is enabled and ships a `grayscale` control Photo Filter does not have
-
-**Problem.** `Photo Filter` is one of only two enabled items in `ADJUSTMENTS_ITEMS`
-(the `const ADJUSTMENTS_ITEMS` list in `DesktopHeader.tsx`), and selecting it shows the `color`
-command's options bar, which renders
-three sliders — **Grayscale**, **Sepia**, **Saturation**
-(the three slider rows in `src/components/ToolbarsRight/Colors/Color.tsx`) — wired to
-`buildColorsFilter()`
-(`src/tools/functions.ts`), which emits `grayscale(%) sepia(%) saturate(%)`.
-
-Adobe's Photo Filter is a hue adjustment applied "from a preset filter or a custom color filter", with
-a **Density** slider and a **Preserve Luminosity** option, reachable at `Image > Adjustments > Photo
-Filter`.
-<https://helpx.adobe.com/photoshop/using/applying-color-balance-adjustment.html> (200 on 2026-10-01).
-Two of the app's three controls are defensible against that: **`sepia` picks a fixed warm tone**, which
-is what Adobe's colour choice is for — its colour-conversion presets are "Warming Filter (85)" /
-"Cooling Filter (80)" and its light-balancing presets "Warming Filter (81)" / "Cooling Filter (82)"
-(<https://helpx.adobe.com/photoshop-elements/desktop/guided-edits-effects-and-filters/adjustment-filters.html>,
-Adobe's Photo **Elements** page, which is where Adobe still enumerates those preset names) — and
-**`saturation` is the trim that Preserve Luminosity performs**, in a form Adobe does not expose as a
-slider. **`grayscale` has no counterpart in Photo Filter at all**: it is a conversion to luminance, not
-a hue adjustment, and it is the one control on the bar that the menu's own name does not cover. The item
-is enabled under a name that promises a capability its bar does not have, in the one menu a user opens
-precisely to find out what the app can do.
-
-**The control cannot simply be deleted without a decision, and that is the operator's call.** This bar
-is the app's only desaturation path. `Image ▸ Adjustments ▸ Desaturate` (the `Desaturate` entry in
-`ADJUSTMENTS_ITEMS`) is
-**disabled**, because no second command owns desaturation. `Black and White` is disabled too (the
-`Black and White` entry, which
-carries no `toolName`) —
-it needs per-hue sextant weighting, and there is no hue decomposition anywhere in `src`.
-
-**Exactly two honest answers, and this entry does not pick between them:**
-
-- **Drop the `grayscale` control.** The bar becomes Sepia + Saturation, which is Adobe's colour choice
-  plus its Density and Preserve Luminosity behaviour under different names — a defensible
-  `Photo Filter`. The cost is that desaturating a whole image, which the app does today, becomes
-  unreachable from any menu, because nothing else hosts it.
-- **Move it to `Desaturate`.** Enable `Image ▸ Adjustments ▸ Desaturate` on the `color` id and accept
-  that its bar's three controls do not match Adobe's Photo Filter. That is the same bounded divergence
-  already accepted for the `Black and White` naming decision, and `docs/OVERRIDES.md` is where a
-  deliberate Photoshop deviation belongs — **this entry does not add one and does not ask for one.**
-
-**Do not** give `Photo Filter` Adobe's Density and Preserve Luminosity while it computes
-`grayscale(%) sepia(%) saturate(%)`. That is a fake control dressed in Adobe's words, which is the one
-thing this repo's policy refuses, and doing it in a menu is worse than doing it in a rail.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and
-`ADJUSTMENTS_ITEMS`, and their doc comments), `src/components/ToolbarsRight/Colors/Color.tsx` (the
-three slider rows), `src/tools/functions.ts` (`buildColorsFilter()`), `src/tools/colors.ts`
-
 ## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
 
 **Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
@@ -5021,79 +4971,6 @@ at all, and should be decided rather than deferred.
 and their doc comments, and the five menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
-
-## 170. `Image ▸ Adjustments` enables two stand-ins, and whether it should is the operator's call — not derivable from the tree
-
-**Problem.** `ADJUSTMENTS_ITEMS` enables exactly two items
-(the `const ADJUSTMENTS_ITEMS` list in `src/components/DesktopHeader/DesktopHeader.tsx`), and both
-name a capability the app does
-not fully have. `Brightness/Contrast` selects the `levels` stand-in, whose args really are
-`{ brightness, contrast }` and whose processor really does emit `brightness(…) contrast(…)` — so that
-label is **honest**, and Photoshop's real `Levels` ships beside it as a disabled item. `Photo Filter`
-selects the `color` stand-in and is **a partial match**: sepia IS Photo Filter's Warming preset and
-saturation is nearest its Density slider, but the third control is a `grayscale` slider, and Photo
-Filter performs no luminance conversion. §168 records the narrower version of that.
-
-**This is a question, not a defect, and it is here because two branches implemented opposite answers
-to it.** A branch carried the extraction and enabled both items on the reasoning that a bounded,
-documented partial match beats a wrong name. `main` carries the operator's later signal and argues
-the opposite: "**do not relabel and do not build the stand-in into the menu** — a relabelled stand-in
-is the falsehood, made more permanent by being menu-launched." Both are defensible and **the tree
-cannot settle it**, which is what makes it a question. There is no Adobe page that says which to do,
-because the question is not about Photoshop.
-
-**Evidence, and what it does not settle.** The operator's signal is 2026-10-01, in their words: "some
-tools from photoshop menu will be implemented, like levels, colors, etc (this reqs are very vague yet),
-but letting you know." It is explicitly vague and it does not reopen the rail decision. Read strictly
-it says the real commands are coming and the spec is not written down. Read as direction about the
-interim it also says not to ship a relabelled stand-in from a menu. The first decision's own words
-cut the other way — "the capability is to be restructured, **not dropped**" — and disabling both items
-leaves `color` reachable from nowhere, which is a capability drop. Nothing in the tree decides which
-of those two consequences the operator prefers.
-
-**What was searched before asking.** Adobe's `Image ▸ Adjustments` reference, for an item whose
-definition the three filters satisfy (none exists — this is why `Black and White` and `Desaturate`
-were both rejected); `docs/OVERRIDES.md`, for an entry authorising the divergence (there is none, and
-an agent must not add one); `HANDOFF.md` and the session record, for a later decision superseding
-either (none found — the signal above is the latest). The tree answers every sub-question and is
-silent on this one.
-
-**Needed by:** before the real `Image ▸ Adjustments` work starts, and before anything is built on the
-assumption that these two items are permanent.
-
-**RESOLVED — 2026-10-01. The operator: "use naming that photoshop has."** Both items stay enabled under
-Adobe's own names, which is what the merge had already taken as its default. Read strictly, that answer
-is also a rejection of the one reading `main`'s note offered — that a relabelled stand-in must not be
-menu-launched at all — because `Brightness/Contrast` and `Photo Filter` are both Adobe's names, not
-app-invented ones. The alternative this entry was written to choose between is therefore closed:
-`color` stays reachable.
-
-What the answer does **not** settle, and what the merge is carrying: `Photo Filter` remains a partial
-match (two of three controls fit; `grayscale` is not one of them), and the real `Black and White` and
-real `Levels` remain unbuilt and disabled. Those are the §168 capability question, not this naming
-question, and building the real commands is what dissolves them.
-
-**What the naming rule now binds.** A future adjustment command takes Adobe's name, and takes it only if
-it computes that command. An item whose computation does not match its Adobe name is a new falsehood
-and does not get enabled — which is why `Levels` and `Black and White` are `disabled` items rather
-than relabelled ones. An app-invented name (`Colors`) is not available as a fallback: it is the defect
-the rail removal fixed.
-
-**Answer (operator writes this line and nothing else):** use naming that Photoshop has.
-
-**Default if unanswered — KEEP BOTH ENABLED, and the divergence stays documented in the code.** The
-merge takes this option so the rail removal — which both sides and the operator agree on — is not
-held hostage to a naming question, and because a `disabled`-only menu is a strictly smaller surface
-than a menu that works. It is recorded as an assumption by the merging agent on 2026-10-01 and can be
-overturned by writing one line above. The cost of taking it is that a user can reach a control under
-an Adobe name that Adobe's dialog does not have; the cost of the alternative is that `color` is
-unreachable until real Black and White is built, which is a larger loss than a documented partial.
-
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem` and `ADJUSTMENTS_ITEMS`),
-`src/components/DesktopHeader/__tests__/DesktopHeader.test.tsx`, `src/tools/colors.ts`,
-`src/tools/functions.ts` (`buildColorsFilter()`), `docs/TOOLS-TOO-HARD.md` (the enabled-items entry
-and Black and
-White), `docs/PHOTOSHOP-UX.md` (open violations, the rail bullet)
 
 ## 171. `color`'s and `levels`' `imageProcessor` is unreachable from every production call site, which leaves two files maintained on a path nothing runs
 
@@ -5936,3 +5813,37 @@ guard fix rather than alongside it.
 **Provenance.** Found by review. An earlier correction in this area added a blur handler that turned
 out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
 establishing that it was dead, the intermediate-value problem became visible.
+
+## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
+
+**Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) now drives Adobe's Brightness and Contrast
+proportionately over Adobe's own travels — Brightness ‑150..+150, Contrast ‑50..+100 — and that fixed the
+clipping the old exponential curve caused. It is still not Adobe's curve. Adobe pairs the two words
+itself: "In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments to the image
+layer, as with Levels and Curves adjustments." The **nonlinear** half is absent, and no formula for it is
+published by Adobe or by any reverse-engineering source found. What is measurable is that it is not any
+affine map: a `+20` brightness reads `10→11`, `128→145`, `250→253`, and those three deltas are
+mutually inconsistent with any constant scale and with any constant offset.
+
+Two consequences, both in the positive half of both controls, because the negative half is exact. A CSS
+`brightness(f)` is a clamped pure multiply, so it can never CREATE a white that was not already white, and
+`contrast(f)` clamps, so every `f > 1` clips every input past `0.5 + 0.5/f`. At `Contrast +50` the knee
+is 212.5 and a channel above it loses its tonal separation for good. The app's `e2e/levels.spec.ts` pins
+`244` there specifically because it is a NON-clipped reading; raising the contrast factor turns that pin
+into a saturated `255` that proves only that the channel saturated.
+
+**Affected.** `src/tools/functions.ts` — `buildLevelsFilter()` and `proportionateFactor()`; the boundary
+is stated on `buildLevelsFilter()`'s doc comment and in `src/tools/descriptions/transform.notes.md`, which
+`npm run docs:tools` carries into `docs/TOOLS.md`.
+
+**What would close it.** A per-channel lookup table applied per pixel, which is the same mechanism
+`docs/TOOLS-TOO-HARD.md` records as absent for Adobe's real Levels — a CSS filter string cannot express an
+arbitrary LUT. That is a new raster path, not an edit to this one: `presentation-evaluator.ts` builds the
+string and `layer-renderer.ts` assigns it to `ctx.filter` on an ordinary canvas, so the operation would
+have to carry a table instead of a filter and gain a read-back it does not currently have. Whoever takes
+it should re-derive the curve from Photoshop measurements rather than from this entry, because the entry's
+contribution is the boundary and not the shape.
+
+**Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
+travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
+This entry is only the part that did not.
