@@ -1,9 +1,12 @@
+import { flushSync } from 'react-dom';
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
+import { useFile } from '../../contexts/useFile.tsx';
+import { useLayers } from '../../contexts/useLayer.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
 import type { SpongeMode } from '../../tools/sponge.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
@@ -99,11 +102,13 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ hasImage, toolName }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
-  const { goToTool } = useApp();
+  const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { openSaveImageDialog } = useFile();
+  const { commitDirtyTool } = useLayers();
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -255,6 +260,43 @@ export const AppKeyboardShortcuts = () => {
     patchToolArgs(tool, { alpha: value } as ToolPatch<typeof tool>);
   };
 
+  /**
+   * The save the `mod+S` chord runs, and it is the header's save verbatim: commit the pending
+   * tool preview, stage the document, open `SaveDialog`, and record the new file name on the
+   * response. One flow rather than two is the point — a keyboard save and a `File > Save` click
+   * that differed by even the `flushSync` would encode the pre-commit layers on one path.
+   *
+   * `flushSync` around `commitDirtyTool` is load-bearing and is not decoration: `commitDirtyTool`
+   * bakes a live preview into a real layer and dispatches, and `exportLayers` has to hold that
+   * result before `openSaveImageDialog` is called. Without it the batch runs after the call, so
+   * the dialog would be handed the un-committed record. `DesktopHeader` and both mobile shells
+   * wrap it identically.
+   *
+   * `if (data) handleImageSave(data)` is the in-band refusal every other caller of this flow
+   * already guards: a cancelled dialog resolves `null` and is not a save, so there is nothing to
+   * record and nothing to report. The `try` matches them too — a throwing `commitDirtyTool` is
+   * reported rather than escaping a document-level `keydown` listener as an uncaught exception.
+   */
+  const saveDocument = async () => {
+    try {
+      if (!hasImage) return;
+
+      let exportLayers!: ReturnType<typeof commitDirtyTool>;
+      flushSync(() => {
+        exportLayers = commitDirtyTool();
+      });
+      const data = await openSaveImageDialog({
+        fileName,
+        layers: exportLayers,
+        size: totalSize,
+        documentFrame,
+      });
+      if (data) handleImageSave(data);
+    } catch (error) {
+      console.error('Unable to prepare document export', error);
+    }
+  };
+
   useKeyDownShortcut({
     key: 'z',
     mod: true,
@@ -363,6 +405,44 @@ export const AppKeyboardShortcuts = () => {
         console.error('Failed to create a layer from the active selection');
       }
     },
+  });
+
+  /**
+   * `mod+S`: Adobe's Save on both platforms at once. `mod: true` is what covers the pair —
+   * `matchesShortcut` compares `(event.metaKey || event.ctrlKey)` against the declared `mod`, so
+   * this one registration IS `Cmd+S` on macOS and `Ctrl+S` on Windows and Linux, which is exactly
+   * the split Adobe documents. Declaring `meta` or `ctrl` instead would bind one platform and
+   * silently unbind the other.
+   *
+   * **Position is NOT load-bearing here, unlike the Sponge's two mode keys.** Every other `s`
+   * registration in this file declares `mod: false`, so a press carrying either modifier fails
+   * their `mod` test before their undeclared `shift`/`alt` are ever compared, and last-registered-
+   * wins never gets to arbitrate. It sits here with the other document chords rather than beside
+   * the Clone Stamp because that is where it belongs by kind; a future bare-`s` registration that
+   * DID declare `mod: true` would need this moved last.
+   *
+   * `preventDefault` is the whole reason the key is registered at all: `Ctrl+S`/`Cmd+S` is the
+   * browser's own Save Page in every engine, and an in-app Save that also saved the HTML would be
+   * worse than the missing shortcut this replaces.
+   *
+   * `enabled: hasImage` alone, deliberately NOT narrowed further, for the reason the Meta+J
+   * comment above gives in full: `useKeyboardEvents.tsx` resolves `enabled` with a `continue`
+   * that runs BEFORE `preventDefault`, so any narrower gate hands the key back to the browser's
+   * Save Page in precisely the case the user pressed Save. The no-document case is answered in the
+   * handler, as a silent no-op, which is the same treatment an empty undo history already gets.
+   *
+   * `mutatesDocument` is left at its `true` default and that is deliberate: the handler commits a
+   * live tool preview, and `useKeyboardEvents.tsx` refuses a document-committing registration at
+   * `keydown` — before dispatch, therefore before `commitDirtyTool` — while a gesture holds the
+   * document. A mid-gesture save would consume the preview the gesture's own commit is about to
+   * write. The refusal costs the press, which is the correct trade.
+   */
+  useKeyDownShortcut({
+    key: 's',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: saveDocument,
   });
 
   useKeyDownShortcut({
