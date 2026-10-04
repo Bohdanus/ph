@@ -43,7 +43,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
-import { toolLayerBlendMode } from './layer-utils.ts';
+import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -1135,15 +1135,18 @@ export function sourceToRuntimeLayer(
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
+  const orderRecords: LayerOrderRecord = Object.create(null);
+  for (const [layerId, layer] of layers) orderRecords[layerId] = layer;
+  const { name, order } = deriveLayerNameAndOrder(orderRecords, source);
   return {
     id,
-    name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
+    name,
     isBedrock: !!source.isBedrock,
     visible: true,
     opacity: 1,
     locked: false,
     blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
-    order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
+    order,
     pos,
     source,
     operations: [],
