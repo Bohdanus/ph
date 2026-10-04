@@ -94,13 +94,20 @@ interface ViewportMeasurement {
 /**
  * Draws the line at one window and reports where the stroke actually landed.
  *
- * The box is measured AFTER `clickToolButton`, not before it, which is the fix for a filed
- * and separately real defect ("a cached canvas box addresses a different pixel after a tool
- * switch", same file): the tool's options bar is the main grid row's height, so selecting a
- * tool can move and resize the canvas, and a box measured before the switch addresses a
- * different pixel. The sanctioned remedy is "measure it once per tool after the options bar
- * for that tool has rendered", which is what this is. On the current layout the two boxes
- * coincide, so this changes no number today; it removes the dependence on them continuing to.
+ * The box is measured AFTER `clickToolButton`, not before it, and the order is kept because a
+ * fresh read is the box the finished layout produced and it costs one `boundingBox()`. It is
+ * not kept because a tool switch can move the box: it cannot. The tool's options mount in the
+ * TOOLBAR row — `ToolbarHorizontal` renders `<ToolComponent key={toolName} />` inside
+ * `TOOLBAR_BASE_CLASS`, a fixed `h-[50px]` strip — while the canvas sits in the main area,
+ * which `App.tsx` declares as a different row, so no tool choice resizes the box. A panel
+ * column taller than 50px paints over the workspace instead of reflowing it, and painting is
+ * not layout.
+ *
+ * So the two boxes coincide on this layout, and measuring per tool changes no number today.
+ * What it removes is the dependence on them continuing to: a layout that did let a tool resize
+ * the workspace would have the box read here already correct, and every coordinate below it is
+ * box-relative, so a stale one would aim the stroke and photograph the capture at a different
+ * pixel rather than fail loudly.
  */
 async function measureAtViewport(
   page: Parameters<typeof clickToolButton>[0],
