@@ -8,7 +8,7 @@ import {
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
-import type { DocumentFrame } from './document-frame.ts';
+import { isValidDocumentFrame, type DocumentFrame } from './document-frame.ts';
 import { getAssetRegistry, type AssetRegistry } from './asset-registry.ts';
 import {
   deriveRemoveLayerEntry,
@@ -28,7 +28,7 @@ import {
 } from './history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type AssetId,
   type DurableDocument,
   type DurableHistoryEntry,
@@ -1178,6 +1178,24 @@ export function validatePlannedDurableEntry(
     }
     const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
     if (!args?.nextFrame) return 'a document frame change has no next frame';
+    // Whether the planned `next` is a DOCUMENT FRAME is a separate question from
+    // whether it equals the legacy arg, and `sameFrame` cannot answer it: it
+    // compares structure, so a 0x0 next frame matches a 0x0 legacy arg perfectly
+    // well. Every derivation that BUILDS such an entry refuses one
+    // (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, reached from
+    // `translate()`), so only a SUPPLIED entry reaches this — and durable replay
+    // applies `next` with no validation of its own while `documentFrameSize()`
+    // clamps to a 1x1 minimum, so a published 0x0 crop is visible as a
+    // one-pixel-square document rather than as a degenerate size.
+    //
+    // Checked BEFORE the comparison, so the reason names the invalid frame itself
+    // rather than a disagreement that is only a symptom of it. It is a `mismatch`
+    // rather than a `preconditions` refusal because the store can answer this
+    // question and the answer is a defect in the plan: the two routes over one
+    // legacy item then say the same thing, which is the divergence.
+    if (!isValidDocumentFrame(planned.operation.next)) {
+      return 'the durable next frame is not a document frame';
+    }
     if (!sameFrame(planned.operation.next, args.nextFrame))
       return 'the durable next frame does not match the legacy entry';
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
@@ -1397,6 +1415,29 @@ export function decideDurableAppend({
   if (prior.cursor !== prior.entries.length - 1) {
     return { outcome: 'preconditions', reason: 'the append is not at the tip of the legacy timeline' };
   }
+  // The durable twin of the check above, and the one the legacy cursor cannot
+  // cover: nothing in the other preconditions asks about `base.cursor` at all.
+  //
+  // A base below its own tip describes an undone edit — the entries between its
+  // cursor and its end are redo-only — and the published cursor is
+  // `base.history.length`, NOT `base.cursor + 1`. Appending onto such a base
+  // therefore moves the cursor PAST those entries and turns them applied, so the
+  // shadow replays an edit the user undid and the redo-only state the base
+  // described is gone. It is a silent loss: the base satisfies every other
+  // precondition, so nothing reports it.
+  //
+  // The one cursor guard further down (`cursor > next.cursor`) runs the other way
+  // — it catches a base with too MANY entries — so a base with too few is exactly
+  // the shape it cannot see.
+  //
+  // Unreachable from the store today, and only by accident: a mid-timeline base
+  // is produced by a rebuild that derives the shadow cursor from the LEGACY cursor
+  // (`StoreContext.tsx` — `buildDurableDocument()`), and the same rebuild hands
+  // the boundary a `prior` that is not at its tip, which the check above refuses
+  // first. Nothing in this boundary enforces the invariant; that coupling does.
+  if (base.cursor !== base.history.length - 1) {
+    return { outcome: 'preconditions', reason: 'the durable document is not at the tip of its own history' };
+  }
   if (next.entries.length !== prior.entries.length + 1) {
     return { outcome: 'preconditions', reason: 'the append truncated the legacy timeline' };
   }
@@ -1468,13 +1509,16 @@ export function decideDurableAppend({
 
   return {
     outcome: 'published',
-    document: freezeDurableDocument({
-      ...base,
+    // Only `planned` is new here, so the retained timeline is carried across by
+    // reference when `base` is one of `history-model.ts`'s own frozen copies, and
+    // deep-copied when it is not. `planned` is copied either way: it arrives from
+    // the caller and no reuse claim covers it.
+    document: refreezeDurableDocument(base, {
+      history: [...base.history, planned],
+      cursor,
       documentRevision,
       branchRevision: next.branchRevision,
       durableRevision: base.durableRevision + 1,
-      history: [...base.history, planned],
-      cursor,
     }),
   };
 }

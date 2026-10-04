@@ -220,16 +220,14 @@ const spaceRepositionModifier: ToolModifier = {
 };
 
 /**
- * `U` and `Shift+U` are the group's own bindings, and both are narrower than the group.
+ * `U` and `Shift+U` are the group's own bindings, and plain `U` is narrower than the group.
  *
  * Plain `U` has a deliberate quirk worth stating rather than smoothing over: the five
  * geometric figures all resolve to ONE app tool name and differ only by a `figure` field,
  * so U from any of them keeps the figure it is already on. The Custom Shape tool is the
  * exception, because it carries its own tool name, and U from there falls back to the
- * rectangle. `Shift+U` cycles the four entries the app actually holds against a six-entry
- * flyout, and an unlisted figure does not skip forward — it indexes to `-1` and comes back
- * as the first entry, so the Triangle and the Polygon restart the cycle rather than
- * advancing it.
+ * rectangle. `Shift+U` closes the group the same way, over all six entries; the `Shift+U` row
+ * states that, and it is the row that owns it.
  */
 const shapeGroupShortcut: ToolShortcut = {
   keys: 'U',
@@ -240,7 +238,7 @@ const shapeGroupShortcut: ToolShortcut = {
 const shapeCycleShortcut: ToolShortcut = {
   keys: 'Shift+U',
   action:
-    'Cycles to the next tool in the shapes tool group, through the four the app’s cycle holds: rectangle, ellipse, line and Custom Shape. The Triangle and the Polygon are in the rail’s flyout but not in the cycle, and an unlisted figure does not skip ahead — Shift+U from either of them restarts at the rectangle instead of advancing.',
+    'Cycles to the next tool in the shapes tool group, through all six entries the rail’s flyout holds: rectangle, ellipse, line, triangle, polygon and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.',
 };
 
 const shapeToolShortcuts: readonly ToolShortcut[] = [shapeGroupShortcut, shapeCycleShortcut];

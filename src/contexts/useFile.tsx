@@ -1,4 +1,13 @@
-import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
 import { renderExportCanvas } from './export-canvas.ts';
 import type { PsdDocument } from './psd-utils.ts';
@@ -91,28 +100,33 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
   };
 
-  const openNewImageDialog = () => {
+  const openNewImageDialog = useCallback(() => {
     setShowNewDialog(true);
     return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
-  };
+  }, []);
 
-  const openLoadImageDialog = () => {
+  const openLoadImageDialog = useCallback(() => {
     return new Promise<ImageUploadResponse | null>((resolve) => {
       uploadResolverRef.current = resolve;
       // trigger file picker
       fileInputRef.current?.click();
     });
-  };
+  }, []);
 
-  const openSaveImageDialog = (input: ImageSaveInput) => {
+  const openSaveImageDialog = useCallback((input: ImageSaveInput) => {
     setFileInput(input);
     setShowSaveDialog(true);
     return new Promise<ImageSaveResponse | null>((resolve) => {
       saveResolverRef.current = resolve;
     });
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }),
+    [openNewImageDialog, openLoadImageDialog, openSaveImageDialog]
+  );
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
     try {
@@ -173,7 +187,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   };
 
   return (
-    <FileContext.Provider value={{ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }}>
+    <FileContext.Provider value={value}>
       {children}
       <input
         type="file"

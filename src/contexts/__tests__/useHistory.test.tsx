@@ -1196,17 +1196,51 @@ describe('useHistory undo replay', () => {
       expect(clearPreviewLayers()).toHaveBeenCalledTimes(2);
     });
 
-    it('drops the preview even when the navigation goes on to fail closed', () => {
+    it('drops the preview only once the replay has been published and dispatched', () => {
+      setup();
+      // The ORDER is the contract, so it is read at the moment of the clear rather than
+      // inferred from the counts above: a clear ahead of the dispatch could strand an
+      // in-progress draft in front of a replay that then refused to publish.
+      const dispatchedAtClear: string[][] = [];
+      clearPreviewLayers().mockImplementationOnce(() => {
+        dispatchedAtClear.push(dispatchedTypes());
+      });
+
+      useHistory().undo();
+
+      expect(dispatchedAtClear).toEqual([['APPLY_HISTORY_REPLAY']]);
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+      // Canvas publication is the other precondition, and it is unchanged: one staged
+      // draw, the same call the successful path always made.
+      expect(rendererControl.drawCalls).toHaveLength(1);
+    });
+
+    it('keeps the in-progress preview when the replay itself throws', () => {
+      setup();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      replayControl.failure = new Error('replay refused');
+
+      useHistory().undo();
+
+      // The refusal moves neither the store nor the canvas, so it must not cost the user
+      // the stroke they are still dragging. `SET_DURABLE_STATUS` is the whole dispatch.
+      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
+      expect(rendererControl.drawCalls).toHaveLength(0);
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
+    });
+
+    it('keeps the in-progress preview when the replayed canvas cannot be published', () => {
       setup();
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
       rendererControl.result = false;
 
       useHistory().undo();
 
-      // The clear sits ahead of the replay, so an unpublished replay cannot leave a
-      // stale preview standing in for the document it failed to draw.
+      // Same reasoning one step later: the renderer was asked, and declined, so the
+      // document on screen is still the one the preview was drawn over.
       expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
-      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+      expect(rendererControl.drawCalls).toHaveLength(1);
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
     });
 
     it('does not drop the preview for a navigation it refuses', () => {

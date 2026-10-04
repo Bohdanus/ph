@@ -26,7 +26,7 @@ The corollary is the one that bites: **`store.history` is the only thing that
 rendering, export and undo read, and it stores args, never pixels.** Undo re-runs
 the tool processors. It is not an inverse operation and it is not incremental.
 
-Evidence, all four current:
+Evidence, all three current:
 
 - `src/contexts/StoreContext.tsx` — the doc comment on `StoreData`'s
   `durableDocument` field — _"Diagnostic shadow only; legacy history/runtime
@@ -37,10 +37,6 @@ Evidence, all four current:
 - `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — _"Navigation
   therefore replays the legacy runtime representation and lets StoreContext
   rebuild the sidecar."_
-- `src/contexts/replay-coordinator.ts` — the `ReplayCoordinator` class JSDoc —
-  _"No production path mounts a coordinator… and this module must not be imported
-  by a navigation or rendering path while the legacy runtime stays
-  authoritative."_
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
@@ -54,7 +50,6 @@ guard refuses any logical movement. `publishDurableNavigationPresentation()` als
 returns early while any snapshot in the replay carries a `'legacy-tool'` source,
 so the durable presentation is skipped outright for a document still holding a
 legacy tool snapshot.
-`src/contexts/replay-coordinator.ts` still has no importer outside `__tests__`.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
@@ -83,15 +78,20 @@ trusting a figure stored here.
   no production writer and no `StoreData` field to write. Both return the state
   unchanged, which is what the reducer's `default: return state` gave them. The
   `default` is now a `never` guard, so an action type added without an arm is a
-  typecheck error instead of a dispatch that quietly does nothing.
+  typecheck error instead of a dispatch that quietly does nothing. So the 31 arms
+  cover `StoreAction`'s 31 kinds and the `Action` **29** is the public subset.
   `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
   the arm count, and `StoreContext.boundary-gates.test.ts` pins the set against the
   union.
 - **The dispatcher is not the reducer.** `dispatchAction()` intercepts seven
-  types, computes `latestStateRef.current = reducer(currentState, action)` _before_
-  dispatching, and only then calls `rawDispatch`: `PROMOTE_LAYER_PRESENTATIONS`,
+  types, named in `INTERCEPTED_STORE_ACTION_TYPES`, and the rest take an explicit
+  default at the top of the chain: one `reducer()` call outside React, so a
+  second dispatch in the same batch is decided against the state the first one
+  produced, then one `rawDispatch`. The seven are `PROMOTE_LAYER_PRESENTATIONS`,
   `ADOPT_LAYER_BITMAPS`, `PUBLISH_RUNTIME_PRESENTATION`, `REORDER_LAYERS`,
-  `COMMIT_DOCUMENT_EDIT`, `APPLY_HISTORY_REPLAY`, `REPLACE_DOCUMENT`.
+  `COMMIT_DOCUMENT_EDIT`, `APPLY_HISTORY_REPLAY`, `REPLACE_DOCUMENT`. An assertion
+  at the end of the chain types the narrowed `action.type` as the complement of
+  that list, so a branch and its name cannot drift apart.
 
 `StoreData` has 35 top-level fields: seven refs, four imperative
 handles, five file/image fields, one tool field, three layer fields, five selection
@@ -281,7 +281,9 @@ Typed in `src/contexts/history-model.ts`: twelve operation kinds
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
 `apply-raster-processor`, `set-document-frame`, `replace-layer-source`,
 `merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
-every write by `freezeDurableDocument()`, one operation at a time by
+every write by `freezeDurableDocument()` — or, for a write that only moves the
+cursor or appends to the tip, by `refreezeDurableDocument()`, which reuses the
+frozen copies that write retains — one operation at a time by
 `cloneOperation()`. `replace-layer-source` is the lossless source-edit kind:
 `history-adapter.ts` emits it, `durable-replay.ts` replays it, and
 `history-append.ts`'s `replaceLayerSourceProblem()` refuses any shape that is not
@@ -316,7 +318,7 @@ as a sequence against the reorder being planned. `publishDurableNavigationPresen
 adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
 production caller, `composeDurableDocument()` in `durable-compositor.ts`;
 `materializeLayer` is reached only from inside `materializeDocument()` and has no
-importer of its own; `ReplayCoordinator` has none.
+importer of its own.
 
 ## The tool registry
 

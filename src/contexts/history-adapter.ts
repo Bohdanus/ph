@@ -21,6 +21,7 @@ import {
   cloneLayerSnapshot,
   collectDurableAssetIds,
   freezeDurableDocument,
+  refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
@@ -43,7 +44,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
-import { toolLayerBlendMode } from './layer-utils.ts';
+import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -1135,15 +1136,18 @@ export function sourceToRuntimeLayer(
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
+  const orderRecords: LayerOrderRecord = Object.create(null);
+  for (const [layerId, layer] of layers) orderRecords[layerId] = layer;
+  const { name, order } = deriveLayerNameAndOrder(orderRecords, source);
   return {
     id,
-    name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
+    name,
     isBedrock: !!source.isBedrock,
     visible: true,
     opacity: 1,
     locked: false,
     blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
-    order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
+    order,
     pos,
     source,
     operations: [],
@@ -1160,8 +1164,12 @@ export function createDurableDocument(
 
 export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
   const history = [...document.history.slice(0, document.cursor + 1), next];
-  return freezeDurableDocument({
-    ...cloneDurableDocument(document),
+  // One freeze, not two. `cloneDurableDocument` used to run here and the freeze it
+  // fed deep-copied its result immediately, so the retained prefix was copied twice
+  // per append and the first copy was observable in neither. The retained entries are
+  // carried across by reference when `document` is one of `history-model.ts`'s own
+  // frozen copies, and deep-copied when it is not.
+  return refreezeDurableDocument(document, {
     history,
     cursor: history.length - 1,
     branchRevision: document.branchRevision + 1,
@@ -1175,8 +1183,7 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   const history = document.history.map((historyEntry, historyIndex) =>
     historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
   );
-  return freezeDurableDocument({
-    ...document,
+  return refreezeDurableDocument(document, {
     history,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
@@ -1187,5 +1194,5 @@ export function setDurableCursor(document: DurableDocument, cursor: number): Dur
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
   return cursor === document.cursor
     ? document
-    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
+    : refreezeDurableDocument(document, { cursor, durableRevision: document.durableRevision + 1 });
 }

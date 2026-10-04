@@ -15,12 +15,26 @@ it only where the failure mode needed naming, and in those places it defers rath
 redefines: the worktree rule, the gates, the headed-browser refusal and the handoff lifecycle are
 `AGENTS.md`'s, and nothing here changes them. **Where the two disagree, `AGENTS.md` wins and this
 document is wrong** — including on the two points where this file takes a position `AGENTS.md`
-leaves open: the questions file's home, and the five sweeps.
+leaves open: **the questions file's home** (Appendix C: tracked at the worktree root, never under
+the gitignored `.kilo/`) and **the five sweeps** (Phase 7).
 
-Every `file:line` here was read against `main` at `766b0268` on 2026-09-29. **Re-verify before you
-rely on one**, and name a symbol as well as a line wherever you can: a stale citation sends the
-next session after a bug that does not exist. Every commit cited is real and in this repository —
-`git show <sha>` prints the merge body it is quoted from.
+On the sweeps, the position is narrow and worth stating because it is a judgement, not a
+derivation: **there is one sweep per silent-loss class this repository has actually paid for**, and
+a sweep earns its place by naming the incident that motivated it, not by being thorough. Every one
+of the five names one — markers that survived a committed merge, a heading dropped by a union, a
+duplicate key git merged last-wins, a citation invalidated by a line insertion, a hook re-anchored
+to a string match. **A sixth proposal has to arrive with its incident.** The reason is that this is
+the only phase whose cost is unbounded: a sweep nobody can fail is theatre, and a sweep whose
+refusals are sometimes false trains its reader to discount it. Neither is worth five minutes.
+
+**This document cites no line numbers, and that is deliberate.** `AGENTS.md` bans the form
+because a name is checkable and a number is not: what this file cites is the **declared identifier
+in call form** (`mergeConflict()`, `citationsIn()`, `parseHandoffDoc()`), a **string literal the
+program dispatches on** (`'toolbar-overflow'`, `derived-live-writer`, `remerge CONFLICT`), an
+**`it('…')` title**, or a **document heading**. All of those survive the next merge, which is the
+property the ban exists to buy. Every commit cited is real and in this repository — `git show <sha>`
+prints the merge body it is quoted from — and those shas are the only part of a citation here that
+needs re-verifying, because a merge can rewrite what a commit is reachable from.
 
 ## When to use this
 
@@ -72,7 +86,8 @@ These are the ones that change outcomes. Each is expanded where it is used.
    → [Phase 6](#6-corrected-rather-than-deleted)
 4. **Re-derive a citation from the sentence, never shift the number.** Every merge moves line
    numbers in every file it touches, and a `grep` sweep does not catch it — the text at the stale
-   line still reads plausibly. → [Phase 7](#74-the-citation-sweep)
+   line still reads plausibly. →
+   [Phase 7](#74-the-citation-sweep)
 5. **A generated file is regenerated, never hand-merged.** This repository's standing case,
    `WORKTREES.json`, is now untracked: the rule was followed far enough to delete the conflict
    instead of documenting it. For any generated file that is still tracked, a hand-merge preserves
@@ -82,7 +97,8 @@ These are the ones that change outcomes. Each is expanded where it is used.
 7. **An agent may propose a resolution. It may never be the judge of one.** On a benchmark of real
    React-family merge conflicts, accepting both sides scored **48/86**; the best frontier model
    scored **36/86**. Textual concatenation of the two branches beat every model at preserving both
-   branches' behaviour. → [Phase 7](#74-the-citation-sweep)
+   branches' behaviour. →
+   [What the merge is _not_ allowed to be judged by](#what-the-merge-is-_not_-allowed-to-be-judged-by)
 8. **A blocking question is a file, not a chat message.**
    → [Phase 5](#phase-5--ask-the-human-in-a-file)
 9. **Escalating is the last resort, and it is never the first move.** Time and compute are almost
@@ -98,8 +114,9 @@ These are the ones that change outcomes. Each is expanded where it is used.
 
 ## How to read this document
 
-Read the phase you are in. Each phase opens by naming the source of truth it defers to — a
-`file:line`, a real commit, a quoted human turn — so a claim can be checked rather than believed.
+Read the phase you are in. Each phase opens by naming the source of truth it defers to — a declared
+identifier in call form, a dispatched string literal, an `it('…')` title, a real commit, a quoted
+human turn — so a claim can be checked rather than believed.
 
 The phases are ordered by **destroyability**, not by chronology. Phase 1 and Phase 2 change nothing
 and are the two that prevent every expensive mistake; Phase 6 is the only one that writes.
@@ -120,7 +137,9 @@ into, so the merge runs in the branch's own worktree, `main` is merged **into th
 and the commit that lands on `main` is a fast-forward or a mechanical two-parent commit with nothing
 left to decide. `scripts/main-worktree-guard.mjs` refuses a commit made from the main worktree —
 it runs first in `.husky/pre-commit`, ahead of `gate:commit`, and a landing never reaches it
-because `git merge` runs `pre-merge-commit` and a fast-forward runs no hook at all. It does not
+because `git merge` runs `pre-merge-commit` and a fast-forward runs no **blocking** hook. (It does
+run `post-merge`, which releases this merge's board claims and cannot block anything — the reason
+that word is "blocking" and not "at all".) It does not
 stop the write, only the commit.
 
 **Every subagent this skill sends out inherits your working directory.** The worktree exists before
@@ -132,17 +151,30 @@ skill's delegation splits by file, never by hunk**, and never puts two writers o
 board cannot see that collision at all, because its identity is the git branch and `holdFiles`
 refuses only a _foreign_ lock, so it surfaces as a clobbered index rather than a refusal. **Claim
 the merge, not just the files:** a branch about to land carries a hazard to every path in it, and no
-file claim expresses that.
+file claim expresses that:
+
+```bash
+npm run swarm -- claim <id> --files <every path the merge touches>
+npm run swarm -- note "<branch>: hard merge, resolving <n> conflicts"   # before you resolve
+npm run swarm -- check <paths>                                         # exits 1 and names the holder
+```
+
+`.skills/worktree-merge-harvest.md` §Step 4 is the one home for the board protocol.
 
 **Two traps that belong to the landing rather than to the resolution.** Never `git add -A` in a
 worktree whose root checkout is dirty: the root is a different checkout of a different `HEAD`, so
 `-A` commits a deliberate reverting of whatever `main` has since done to those files, with **no
-conflict marker** — this repository shipped 17 such reverts and not one of them was a conflict. Run
-`scripts/merge-takeover-guard.mjs` **before** the review, because a reviewer only catches the files
-its brief happened to mention; it refuses a merge that resolved any path by copying one whole
-side's content, and `docs/ORCHESTRATION.md` is its one home. And a red `tsc` in the main worktree may be
+conflict marker** — this repository shipped 17 such reverts and not one of them was a conflict. The
+guard for that shape is `scripts/merge-takeover-guard.mjs`, and **it fires from `pre-commit` and
+`pre-merge-commit` — running it by hand gets you nothing**, because outside a hook it refuses with
+exit 2 and the message "cannot tell which ref is being merged in", and before the merge there is no
+`MERGE_HEAD` or `GIT_REFLOG_ACTION` for it to read. What you owe the reviewer
+is the set difference it will check once the merge is real:
+`git diff <branch>...main --stat` is the half of the answer that is computed before anything is
+resolved. And a red `tsc` in the main worktree may be
 another session's half-written change rather than a broken `main`; check the _committed_ state in a
 throwaway worktree before you touch a path you have not touched.
+`docs/ORCHESTRATION.md` — §Landing — is the one home for the mechanism and for its three limits.
 
 **The gates and the board.** `npm run test:e2e` starts its own server on a port it picks, and
 `npm run test:e2e:raw` from a worktree attaches to whatever holds port 5173. The cross-session channel
@@ -154,6 +186,23 @@ is not evidence that nobody is working.**
 ---
 
 ## Phase 0 — decide the tool
+
+**First: prove there is something to merge.** `range-diff` compares the two branches **to each
+other**, so it cannot see that one of them is already on `main`. Both sibling procedures make this
+check mandatory and neither is optional — `.skills/worktree-merge-harvest.md` §Step 1 is the home,
+and `.skills/stale-worktree-reclaim.md`'s Never list is the reason:
+
+```bash
+git cherry main <branch>            # EMPTY = every patch already absorbed by main
+git log --oneline main..<branch>    # what is genuinely not there
+```
+
+`git cherry` proves **patch-id** absorption, which `git log` and `merge-tree` both miss: a branch
+that reads as unlanded work by every other signal can already be on `main` byte-identically. **An
+empty `git cherry` does not mean the merge is a no-op** — it proves patch absorption, not tree
+identity, and a three-way merge of content `main` re-landed in a different surrounding context still
+conflicts. Confirm on the branch's own touched paths before you treat it as absorbed; the recipe is
+in `.skills/stale-worktree-reclaim.md` case (a).
 
 **A hard merge is not a merge until `range-diff` says it is.** Two branches that took different
 routes to the same intent rebase and cherry-pick cleanly. Two branches that did _different_ work
@@ -185,11 +234,15 @@ git log --format='%h %P %s' -3 <a>     # parents: first = the side, second = mai
 
 Two traps here, both of which cost real time in this repository:
 
-- **A branch tip is not always a merge's first parent — it depends which way the merge went.** A
+- **A branch tip is not always a merge's first parent, and sometimes neither parent is `main`.** A
   branch landing on `main` with `--no-ff` has `main` as `^1`; a branch merging `main` into itself
-  has the branch as `^1`. **The two merges in this incident have opposite orientations**
-  (`1eb275a1` is branch-into-`main`, `e473a45f` is `main`-into-branch), so any blanket "always take
-  `^2`" rule picks the wrong one of them. Read the merge's subject line. →
+  has the branch as `^1`. **And the two merges in this incident failed the rule in opposite ways**:
+  `e473a45f` is `main`-into-branch (`^1` is the toolbar tip `89d9a6e6`), while `1eb275a1` is an
+  **in-branch** merge — `^1` is a `docs(agents)` line of work and `^2` is the panel tip `02f0c4de`,
+  whose own history already carries `5e01a612` (`merge main into feat/panel-docks`). Neither parent
+  is `main`, so any rule of the form "take `^2`" picks a panel commit and calls it the base. Read
+  the merge's subject line, and confirm with `git log --format='%h %s' <parent> -3` that you know
+  which parent you are about to trust. →
   [Appendix E](#appendix-e--the-trap-list)
 - **The base is per-merge.** A branch that has already merged `main` has a _different_ merge-base
   against a newer `main` than the one its own in-branch merge used.
@@ -204,15 +257,17 @@ git rev-parse --git-path rr-cache   # resolves to the SAME path in every worktre
 
 `rr-cache` is the one state path that does **not** fork per worktree — `HEAD`, `index`, `MERGE_HEAD`
 and `logs/HEAD` all do, and the `rr-cache` path resolves identically from each of them while `HEAD`
-resolves differently. With ~60 worktrees sharing one common git dir, a resolution recorded by one
-agent becomes an autofill candidate for every other, and `git rerere clear` (which
+resolves differently. With every worktree in this repository sharing one common git dir, a resolution
+recorded by one agent becomes an autofill candidate for every other, and `git rerere clear` (which
 `rebase --abort` and `am --abort` run for you) wipes the shared cache for all of them. If you want
 rerere, scope it to the one invocation: `git -c rerere.enabled=true merge main`, or point
 `GIT_RR_CACHE` at a per-worktree path. **Treat a pre-existing shared `rr-cache` as a reason to stop
 and re-resolve by hand.**
 
-**Gate.** The `range-diff` output is in the working notes, the base sha is recorded, and the tool
-choice is written down with the evidence that forced it. Everything downstream assumes a merge.
+**Gate.** The `git cherry` and `git log main..<branch>` output is in the working notes — a branch
+already absorbed by `main` is not a hard merge and Phase 0 stops here — the `range-diff` output is
+pasted, the base sha is recorded, and the tool choice is written down with the evidence that forced
+it. Everything downstream assumes a merge.
 
 ---
 
@@ -248,7 +303,7 @@ you are supposed to be arbitrating between.
 
 ### Where the transcripts are
 
-Kilo sessions live in `~/.local/share/kilo/kilo.db` (get it with `kilo db path`). The schema is
+Kilo sessions live in `~/.local/share/kilo/kilo.db` (get it from `AGENTS.md` — §Subagents — which carries the read-only query). The schema is
 `session` → `message` → `part`, with the text in `part.data` as JSON at `$.text` and the role at
 `message.data` `$.role`. `session.parent_id` is NULL for a root session and set for a subagent, so
 you can tell the two apart. The read-only query, with the two guards that matter:
@@ -356,9 +411,9 @@ One row per requirement. **No requirement enters the ledger without a source.** 
 requirement is a guess wearing a table row, and it will be treated with the authority of the
 operator's own sentence.
 
-| #   | Requirement                                                        | Source                                     | Rank             | Disputed? | Where it is implemented (branch A / branch B / neither) |
-| --- | ------------------------------------------------------------------ | ------------------------------------------ | ---------------- | --------- | ------------------------------------------------------- |
-| R1  | <verbatim or a one-line restatement that preserves the constraint> | `<session id>` turn 2, 2026-09-29 08:14:50 | hard requirement | yes       | A: `file:line` · B: `file:line`                         |
+| #   | Requirement                                                        | Source                                     | Rank             | Disputed? | Where it is implemented (branch A / branch B / neither)   |
+| --- | ------------------------------------------------------------------ | ------------------------------------------ | ---------------- | --------- | --------------------------------------------------------- |
+| R1  | <verbatim or a one-line restatement that preserves the constraint> | `<session id>` turn 2, 2026-09-29 08:14:50 | hard requirement | yes       | A: `mergeConflict()` · B: `dispose-worktree.mjs` §Landing |
 
 **Gate.** Every row has a source and a rank. Every row that touches both branches is marked
 disputed. Any requirement you found yourself rather than read is written as _"inferred — not
@@ -486,21 +541,18 @@ merge is where that is most load-bearing: the task spends a whole context on res
 resolution right, and a cheap wrong merge costs a day of arbitration to unpick. So the axis below
 **ranks what to run first — it is not a licence to stop.** Everything else is a judgement call, and
 the repo already encodes the judgement: research fan-out is free and is the _preferred_ shape,
-because a subagent runs in a fresh context and a long main turn is what costs. `AGENTS.md` states
-the substitution in call counts rather than tokens, deliberately — "40 sequential tool calls in one
-context = 8 parallel subagents + a 6-call synthesis. Sequential calls are the defect, not the token
-count."
+because a subagent runs in a fresh context and a long main turn is what costs. `AGENTS.md` — §Subagents — is where the cap and the working-directory rule live; it caps **simultaneous**
+subagents at fifteen and has this project fan out in waves of three, so "fan out as wide as the task
+needs" is bounded by a number you do not own. **Quote it, do not paraphrase it.** A paraphrase of a
+cap reads as permission, and this paragraph once carried a paraphrase claiming `AGENTS.md` mandates
+unbounded fan-out — the opposite of what it says.
 
-A previous form of this paragraph made a paid model's budget the hard requirement. **That is not
-this repository's rule**, and an agent reading it as one rations the transcripts — the single most
-expensive corner in the document to cut, because a requirement recovered cheaply is a requirement
-recovered wrongly.
-
-Rank the work by **what the cost is a function of**, never by a figure, because `AGENTS.md` forbids
-unsourced numbers in this repository's gates and docs and this document does not get an exemption:
+Rank the work by **what the cost is a function of**, never by a figure. A number quoted as a gate is
+the target of `AGENTS.md` — §Gates — "Never weaken a gate with a skip, raised threshold, deleted
+assertion, or re-recorded baseline", and this document does not get an exemption:
 
 1. **Context breadth × turn count.** Every token read is re-paid on every later turn of the same
-   session. Loading `StoreContext.tsx`, `useApp.ts` or `TEXT_TOOL_REQUIREMENTS.md` end to end is
+   session. Loading `StoreContext.tsx`, `useApp.ts` or `src/components/ToolbarsRight/Text/TEXT_TOOL_REQUIREMENTS.md` end to end is
    the expensive shape. This is why Phase 1 hands you a ledger instead of a pile of transcripts:
    the synthesis happens once, in a small context.
 2. **Whole-tree verification runs.** A commit's suite share is a function of its fan-in, not of
@@ -559,30 +611,52 @@ Two things to know about the output:
   not be reported as a clean merge, because 'no conflicts' is a licence to land and a wrong licence
   is how a branch breaks main") and that function's `return { conflict: null, … }` on its failure
   paths. The `^CONFLICT` match is inside `mergeConflict()` too.
-- **Use `zdiff3`, and know why.** Plain `merge` style shows two sides and nothing between, so you
-  cannot tell a line that was _added by them_ from one that was _in the base and deleted by us_.
-  `diff3` shows the base but **always** shows it, and git has no way to omit an empty one, so on a
-  hunk where the base is large and both sides rewrote it you get hundreds of lines of base between
+- **Use `zdiff3`, and get it from `merge-tree`.** Plain `merge` shows two sides and nothing between,
+  so you cannot tell a line that was _added by them_ from one that was _in the base and deleted by
+  us_. `diff3` shows the base but **always** shows it, and git has no way to omit an empty one, so on
+  a hunk where the base is large and both sides rewrote it you get hundreds of lines of base between
   the two answers. `zdiff3` emits the base section **only when the base is non-empty for that hunk**,
   which is what keeps a "both sides added the same thing" hunk compact instead of carrying a blank
   base block through every conflict.
 
-  The real `AGENTS.md` conflict in the incident has **two** blocks and a **large base in both**, so
-  `zdiff3` does not collapse it — it shows you the base, and that is the point:
+  ```bash
+  # the FIRST line is the result tree; the blob it holds for a conflicted path is
+  # marker-annotated, and honouring conflictStyle. Read it with git ls-tree + cat-file.
+  git -c merge.conflictStyle=zdiff3 merge-tree --write-tree <ours> <theirs>
+  t=$(git -c merge.conflictStyle=zdiff3 merge-tree --write-tree <ours> <theirs> | head -1)
+  git ls-tree "$t" <path>          # then: git cat-file -p <blob>
+  ```
+
+  **Two output shapes, and they answer different questions — this is where a reader goes wrong.** The
+  `100644 <oid> <stage> <path>` lines after the tree are the raw sides, and they are
+  **style-invariant**: identical under `merge`, `diff3` and `zdiff3`. The **tree** on line one is
+  not. Measure on a content conflict and the difference is unmistakable:
+
+  | style    | result tree             |
+  | -------- | ----------------------- |
+  | `merge`  | one oid                 |
+  | `diff3`  | a second oid            |
+  | `zdiff3` | the same oid as `diff3` |
+
+  and the blob that tree holds for the conflicted path carries the markers and the base section
+  accordingly. **Compare the tree, never the stage line** — a stage line is the same under every
+  style by construction, so a reader who checks one concludes the override "does nothing" and
+  discards a method that works. There is no `git merge --zdiff3` flag on git 2.50.1; use the `-c`
+  override, or `git checkout --conflict=zdiff3 -- <path>` on a conflict already in the worktree.
+
+  The `AGENTS.md` conflict in the incident had **two** blocks and a **large base in both**, so
+  `zdiff3` did not collapse it — it showed the base, and that was the point:
 
   | block | ours | base | theirs |
   | ----- | ---- | ---- | ------ |
   | 1     | 701  | 675  | 56     |
   | 2     | 152  | 110  | 0      |
 
-  Block 2 is the case `zdiff3` exists for in the other direction: `theirs=0` means that side added
-  nothing, so what you are actually choosing between is a 152-line `ours` and a 110-line base — and
-  the base is what tells you whether `ours` deleted something. Reproduce the table with
-  `git -c merge.conflictStyle=zdiff3 merge-tree --write-tree <ours> <theirs>` and count the regions
-  of the resulting blob.
-
-  There is no `git merge --zdiff3` flag on git 2.50.1 — use the `-c` override, or
-  `git checkout --conflict=zdiff3 -- <path>` on a conflict already in the worktree.
+  Those four numbers are a property of that one `AGENTS.md` at that commit, not a constant. Block 2
+  is the case `zdiff3` exists for in the other direction: `theirs=0` means that side added nothing,
+  so what you are choosing between is a 152-line `ours` and a 110-line base — and the base is what
+  tells you whether `ours` deleted something. Re-derive your own with the command above; a table
+  copied from here is a claim about a file that has since moved.
 
 ### Separate candidates from conflicts
 
@@ -631,11 +705,12 @@ ledger is built around it.
 
 A conflict has a _kind_, and the kind determines the action. Guessing the action from the shape of
 the diff is how a union becomes a silent loss. The taxonomy is in
-[Appendix A](#appendix-a--the-conflict-taxonomy); the ten rows below are the ones that appeared
-in the incident that produced this document, each with its real instance. **The numbering skips
-10** because class 10 exists only in Appendix A (a structural union git found by itself) and the
-skip is what stops a reader hunting for a row that is not in this table. Class 11 is not a
-conflict at all, and that is the point of it.
+[Appendix A](#appendix-a--the-conflict-taxonomy); the eleven rows below are the ones that appeared
+in the incident that produced this document, each with its real instance. **Rows 10 and 11 are not
+conflicts** — 10 is a structural union git found by itself, and 11 is a merge git reported as clean
+and whose committed file still carried live conflict markers. Read the row number, not the row
+order: 10 and 11 are the two that are not conflicts, and a table whose numbering skips is a table
+whose rows get hunted for.
 
 | Class                                                   | What it looks like                                                                            | The action                                                                                    |
 | ------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -703,26 +778,23 @@ with no context, the reader must reconstruct the decision from a transcript, and
 the session ends. A question file inverts that — the context arrives _with_ the question, at the
 reader's chosen time, and the interrupt is paid once instead of per-respondent.
 
-### This repository has three dead question files
+### What a dead question file looks like
 
-Read this before writing a fourth. Each of these is a real artifact in the tree right now, each
-holds real questions, and **none has ever been answered**, because in every one the questions have
-no place for an answer:
+Read this before writing your own. **One survives on the machine this document was written on** —
+`.kilo/reviews/2026-09-27/operator-decisions.md` — and it is a `docs(agents):` review dossier
+carrying **ten** decisions, each with a fenced evidence block, a `| option | cost |` table, and a
+closing **"Needs from operator:"** line. Ten for ten, the ask is the _last_ line and there is no slot
+above it, so no answer has a place to go. Two sibling question files named alongside it are gone
+from the machine entirely. **Do not read that as a count to reproduce** — a fresh clone has none of
+them, because the whole directory is untracked. Read it as the shape.
 
-- **A review dossier with ten decisions**, each with a fenced evidence block, a `| option | cost |`
-  table, and a closing "Needs from operator:" line. Ten for ten, the ask is the _last_ line and
-  there is no slot above it.
-- **A migration plan's "Decisions Needed From the Human Owner"** — eight questions, currently
-  live, one of them still open with a red `it.fails` pinning it, and the plan's own audit records
-  that **no answer to any of the eight is recorded anywhere in the repository.**
-- **A feature plan with an "Open Questions" section.** One of its two questions is answered inside
-  its own body — the text says "This is compatible" — and nothing noticed, because the format
-  invites no answer.
-
-What they all share: a question with no **answer slot**, no **status**, no **default if
-unanswered**, and no **owner**. And all three live under `.kilo/`, which `AGENTS.md` says is
-gitignored and machine-local, so a file a human has to go and find in a scratch directory is a file
-that does not get edited.
+What the surviving file shares with the two that are gone: a question with no **answer slot**, no
+**status**, no **default if unanswered**, and no **owner**. And all of them lived under `.kilo/`,
+which is gitignored and machine-local — `git check-ignore -v .kilo` names `.gitignore`, and
+`git ls-files .kilo` is empty — so a file a human has to go and find in a scratch directory is a
+file that does not get edited. **A question file under `.kilo/` is a question that was never asked**,
+which is the whole reason [Appendix C](#appendix-c--the-questions-file) puts yours at the worktree
+root and tracks it.
 
 ### The three states, and why "open" is not one of the only two
 
@@ -791,12 +863,13 @@ decision they cannot explain has exactly two options, both bad.
   _choice_. The existing dossier that got this right says so in its own preamble: "Items a person
   has to choose, because the choice is a policy or an authorisation rather than a defect. Every
   other finding in this review set is technical and has a demanded fix."
-- **Effort estimates.** `AGENTS.md` is explicit, and this repository has shipped a decision off an
-  unmeasured number before.
+- **Effort estimates.** This repository has shipped a decision off an unmeasured number before.
+  **No tracked document states this rule**, which is itself the reason to write it down here: an
+  attribution to `AGENTS.md` for a rule `AGENTS.md` does not contain is worse than no attribution.
 - **Anything the tree can answer.** This is the most common real failure. If the repository can
   answer it, it is not a question.
 - **Anything durable in `.kilo/`.** A file the human must go find in a scratch directory will not
-  be edited. That is why all three dead question files are dead.
+  be edited. That is why a question file under it is a question that was never asked.
 
 **Gate.** No blocking question is left in chat. Every open question is in the file with a deadline
 and a default; every resolved one is in `## Resolved` with its consequence; every default that has
@@ -923,7 +996,7 @@ merge** — it is a seam with a green `tsc` on it.
 The rule for tests, stated once and completely:
 
 > Two of main's tests asserted a premise this branch removes, and both are updated against **what
-> is now true rather than against a number that happens to hold**: `SidebarLeft.workspace.test.tsx`
+> is now true rather than against a number that happens to hold**: `src/components/SidebarLeft/SidebarLeft.workspace.test.tsx`
 > read the default instead of pinning it, since its real claim is that the toggle reaches the other
 > width and back; and `no-document-overflow.spec.ts` was measuring the rail overflowing, which it
 > no longer does — the scroll container MOVED to the tools slot, so `scrollbar-none` moved with it
@@ -978,10 +1051,20 @@ conflict in AGENTS.md, and shorten it") removed them.
 ```bash
 # search the MERGED TREE, not the working tree — a merge is judged on what it
 # committed, and the working tree may already have been repaired since.
-git grep -nIE '^[[:space:]]*(<{7}|={7}|>([[:space:]]*>){6,})' <merge> -- \
-  $(git diff --name-only --diff-filter=ACMR <merge>^1 <merge>)
+paths=$(git diff --name-only --diff-filter=ACMR <merge>^1 <merge>)
+# exit 2 for "the sweep could not run", which is a DIFFERENT answer from exit 1 "clean"
+[ -n "$paths" ] || { echo 'no changed paths — the sweep would be vacuous' >&2; exit 2; }
+# shellcheck disable=SC2086
+git grep -nIE '^[[:space:]]*(<{7}|={7}|>([[:space:]]*>){6,})' <merge> -- $paths
 # exit 0 = markers present (the merge is not finished) · exit 1 = clean
 ```
+
+**The empty-pathspec guard is not decoration.** `git grep <commit> -- ` with nothing after the `--`
+searches the **whole tree at that commit**, not nothing — so a merge whose first-parent diff is empty
+or filter-only silently turns a per-file sweep into a repository-wide one, and reports every
+historical marker in a document this merge never touched. The result is still "clean" or "not clean",
+so nothing looks wrong; the check just stopped being the check it claimed to be. Without the guard
+this block does exactly that.
 
 **Four things about that sweep are load-bearing, and all four were got wrong the first time.**
 
@@ -990,13 +1073,25 @@ merge committed. A plain `xargs grep` reads the checkout, where those markers ha
 repaired — so the retrospective version of the sweep silently reports a broken merge as clean. For a
 gate run _during_ the merge the two agree; for the audit you run afterwards, only the tree is right.
 
-**Require seven of the marker character, and allow leading whitespace.** The obvious version —
-anchored, no whitespace, `>` uncounted — finds only **3 of the 6** markers in that commit, because
-one of the markers it misses is indented and two more are the space-separated `diff3` label form
-`> > > > > > > main`, not `>>>>>>> main`. The same uncounted `>` also matches **every markdown
-blockquote**: it fires 79 times in `.skills/photoshop-tool-creation.md` and 7 times in
-`HANDOFF.md` on ordinary `>` quote lines. A sweep like that reports a clean merge as broken, and an
-agent who sees it fire on `AGENTS.md` learns to ignore it — strictly worse than not sweeping.
+**Require seven of the marker character, and allow leading whitespace.** Measured on that commit,
+against `e473a45f:AGENTS.md`:
+
+| pattern             | markers found |
+| ------------------- | ------------- |
+| `^[[:space:]]*(<{7} | ={7}          | >([[:space:]]*>){6,})` — required          | **6** |
+| `^(<{7}             | ={7}          | >)`— anchored, no whitespace,`>` uncounted | 5     |
+| `^(<{7}             | ={7}          | >{7})`— anchored, and`>` **counted**       | 3     |
+
+So the pattern that misses most is the one that **counts** `>`, and it misses the two
+space-separated `diff3` label lines `> > > > > > > main` as well as the indented opening. Dropping
+the `[[:space:]]*` loses the indented marker. What separates the good pattern from the bad is the
+**`([[:space:]]*>){6,}`** clause, not the leading whitespace and not the count.
+
+**And that same clause is what keeps the sweep quiet.** A bare `>` also matches **every markdown
+blockquote** and every table rule, so on this repository's own maintained documents a pattern that
+accepts one `>` fires on ordinary quote lines by the hundred. A sweep like that reports a clean merge
+as broken, and an agent who sees it fire on `AGENTS.md` learns to ignore it — strictly worse than not
+sweeping. Requiring the label's full width is what makes the pattern's failure mode narrow instead.
 
 **Never end it in `|| echo "clean"`.** `xargs` exits **123** when _any_ of its batches exits 1, so a
 pipeline over a dozen-plus files ends non-zero even when one of them matched — and the `||` prints
@@ -1012,10 +1107,11 @@ printf '%s\n' '> a blockquote' '|---|---|' '======' | grep -cE "$PAT"           
 ```
 
 On this repository's own documents — `HANDOFF.md`, `AGENTS.md`, `docs/ORCHESTRATION.md`,
-`docs/TESTING.md`, `docs/PHOTOSHOP-UX.md`, `e2e/OPEN_PROBLEMS.md` and both existing `.skills/`
-documents — the corrected pattern matches **0**; the uncorrected one matches 92 (79 in
-`.skills/photoshop-tool-creation.md`, 7 in `HANDOFF.md`, the rest in this file). A sweep whose
-failure mode is "always fires" looks identical to a working one on the failure case alone.
+`docs/TESTING.md`, `docs/PHOTOSHOP-UX.md`, `e2e/OPEN_PROBLEMS.md` and every `.skills/`
+documents — the corrected pattern matches **0** and the uncorrected one matches it well over a
+hundred times. **Do not write those counts into a document.** They were 92 here when this sentence
+was written and they are not 92 now: `HANDOFF.md` alone grew, and a new `.skills/` document arrived
+after the figure was taken. Re-derive both numbers with the two commands above and quote neither.
 
 Gate over the merge's changed files. **A merge with live markers in it is not a resolution.** If
 this exits 0, the merge is not finished, regardless of its status or its gates.
@@ -1040,8 +1136,14 @@ because after is when it is too late to know what was lost.
 Do the same for the documents this repository maintains: the `## N.` headings in `HANDOFF.md` and
 `TEST-FLAKES.md`, the `## P<severity> —` headings in `e2e/OPEN_PROBLEMS.md`, the exported symbols
 of any touched module, and the keys of any map or object literal that both branches touched. **A
-count mismatch after resolution is a silently dropped entry, not a flaky test** — and the handoff
-importer's own test fails on a duplicate section number for exactly this reason, so run it.
+count mismatch after resolution is a silently dropped entry, not a flaky test.**
+
+**There is no mechanical check for this yet, and the duplicate case fails silently.** An earlier
+version of this section claimed the handoff importer's own test fails on a duplicate section
+number. It does not: `scripts/__tests__/handoff-import.test.mjs` has no such case, and
+`parseHandoffDoc()` — the function the sweep should be leaning on — **drops the second heading
+without a warning**, so a duplicated `## 79.` imports as one item rather than two. That is why the
+arithmetic above is the check, and it is why the arithmetic is not optional. Re-derive it yourself:
 
 ```bash
 # 7.2 — enumerate BOTH sides against the base BEFORE resolving, then compare to the merge
@@ -1052,11 +1154,20 @@ for f in HANDOFF.md TEST-FLAKES.md; do
     "$(git show <theirs>:$f | grep -cE '^## [0-9]+\.')" \
     "$(git show <merge>:$f | grep -cE '^## [0-9]+\.')"
 done
-npx vitest run scripts/__tests__/handoff-import.test.mjs   # one item per numbered heading
+# A duplicate number on either side is invisible to a count, so name them explicitly:
+# a collision is ACROSS the two sides, so compare them against each other:
+comm -12 <(git show <ours>:HANDOFF.md   | grep -oE '^## [0-9]+\.' | sort -u) \
+         <(git show <theirs>:HANDOFF.md | grep -oE '^## [0-9]+\.' | sort -u)   # empty = no collision
+# and within one side, uniq -d catches the rest:
+git show <theirs>:HANDOFF.md | grep -oE '^## [0-9]+\.' | sort | uniq -d
 ```
 
 `merged` must be `ours + theirs − base` minus the duplicates you deliberately collapsed, and **a
-shortfall is a dropped entry, not rounding**. The unnumbered `## P<severity> —` headings in
+shortfall is a dropped entry, not rounding**. Both forms are needed and neither alone is enough: a duplicate the count is blind
+to is usually **across** the two sides — ours kept `## 79.`, theirs added `## 79.` — and
+`uniq -d` run on one side cannot see that at all.
+
+The unnumbered `## P<severity> —` headings in
 `e2e/OPEN_PROBLEMS.md` are in discovery order, so there is no number to renumber and no count to
 hold — that is why its conflicts are tractable text and not arithmetic.
 
@@ -1117,9 +1228,44 @@ conflicts.
 at the stale line still reads plausibly, which is precisely why `grep` does not find it. A fix that
 touches a cited file invalidates that file's citations, _including the fix's own_.
 
+**A single `sed -n '<line>p' <path>` is not a sweep**, and it is also the form this repository
+forbids:
+`AGENTS.md` bans `file.ext:<line>` in every tracked document precisely because a number cannot be
+checked. Read a line when you are verifying one claim; do not enumerate lines to find claims.
+
+**The sweep is: enumerate the call forms this merge's prose now cites, and resolve each one.** The
+repository already has that check — `it('cites no backticked call that the program does not contain')`
+in `scripts/__tests__/agents-citations.test.mjs` — and the resolver behind it is `citationsIn()` in
+`scripts/lib/citations/resolve.mjs`. Run it over the merge's changed markdown, and it answers the
+only question that matters, which is whether the symbol is still there:
+
 ```bash
-sed -n '<line>p' <path>     # read the line and its neighbours against the claim
+# the whole sweep, in one command, over the merge's changed markdown:
+npx vitest run scripts/__tests__/agents-citations.test.mjs
+
+# or triage it by hand, for a file the suite does not cover:
+git diff --name-only --diff-filter=ACMR <merge>^1 <merge> -- '*.md' | while read -r f; do
+  # do NOT guard on [ -f "$f" ]: that reads THIS checkout, while the next line reads the
+  # merge's tree. A file the merge touched and this checkout has since dropped is skipped
+  # silently and the sweep passes on it.
+  git show "<merge>:$f" 2>/dev/null | grep -oE '`[A-Za-z_$][A-Za-z0-9_$.]*\(\)`' |
+    tr -d '`()' | sort -u | while read -r sym; do
+      rg -q --fixed-strings "$sym" src/ scripts/ e2e/ ||
+        echo "UNRESOLVED: $f cites $sym"
+    done
+done
 ```
+
+**Three things make the by-hand form a triage aid and not a gate.** One: it matches only the
+zero-argument call form, so a citation carrying arguments, a dispatched string literal, an `it('…')`
+title or a document heading is invisible to it — the four forms the preamble declares are not four
+things this loop covers. Two: Strip the parentheses before searching — a declaration reads `mergeConflict(`,
+never `mergeConflict()`, so a form that searches for the empty-argument call reports every exported
+function in the document as unresolved. And the tree is not the only thing a document may cite:
+Appendix D cites platform APIs such as `getAsFileSystemHandle()` that exist in the browser and
+nowhere in `src/`. **A check whose refusals are sometimes false trains its reader to discount them**,
+so read an `UNRESOLVED` line as "decide where this is supposed to resolve" — the platform contract
+or this repository — not as a defect.
 
 A citation that resolves to a blank line, an import, a closing brace or a neighbouring function is
 wrong even though the file and the number both exist. **If a cited symbol has moved, the fix is the
@@ -1198,7 +1344,7 @@ and writes to its own output directory. **Nothing about the lock can fail a run*
 board unreachable, malformed lease, wait expired — each logs and the suite proceeds, because a lost
 queue costs a concurrent run rather than correctness and both runs have their own ports. An earlier
 version exited 4 when it could not have the lock, which turned an unenforceable mechanism into a
-hard block on a merge gate; do not reintroduce one. `swarm check` exits **1** for a busy path, and
+hard block on a merge gate; do not reintroduce one. `npm run swarm -- check <paths>` exits **1** for a busy path, and
 that is a different question from the one the queue answers, so do not read one as the other. A
 bare `npx playwright test` from a worktree is the shape that reported seven product mutations green
 against another checkout's code; it is `npm run test:e2e:raw` and it belongs to CI, where one job
@@ -1214,9 +1360,10 @@ quoted on `main` to prove it.
 ## Phase 9 — the resolution record
 
 **The merge commit body is the durable artifact.** Nothing else in this repository records why a
-resolution was what it was, and the corpus is unusually good: of the last 200 merge commits on
-`main`, **63 carry a body that is not just git's `Conflicts:` trailer** (the measurement, which you
-should re-derive rather than trust):
+resolution was what it was, and the corpus is good enough to be worth reading: **well under half**
+of the merge commits on `main` carry a body that is not just git's `Conflicts:` trailer, and the
+majority that do not are exactly the easy merges nobody had to decide anything about. The shape is a
+measurement, so re-derive the number rather than trust this one:
 
 ```bash
 git log main --merges -200 --format='%H' | while read -r s; do
@@ -1262,6 +1409,45 @@ jsdom cannot see it.
 interrupted merge can leave `AUTO_MERGE` with no `MERGE_HEAD`, and `git commit` then lands a
 single-parent commit that reads as a resolution.
 
+**Then remove the worktree, through the one program — and know what `mustNotPrune` can and cannot do
+for you first.** A hard merge is the case where this is easiest to skip, because the resolution was
+the hard part and the directory feels like a formality. It is not.
+
+`mustNotPrune` is a curated flag that vetoes **landing as well as deleting**, and it exists for
+exactly the case git cannot see: a clean tree, on a ref, holding work that is not committed anywhere.
+A clean `mergeConflict: false` does not outrank it. **But you cannot go and read it.** As of this
+writing **no curated entry sets it** — the field was deleted from every entry when the guard was
+re-derived from git — so there is no `note` to consult and a reader who goes looking finds nothing.
+Verify before you rely on it:
+
+```bash
+node --input-type=module -e "import {CURATED} from './scripts/lib/worktree-inventory/curated.mjs'; \
+  console.log(Object.entries(CURATED).filter(([,v])=>Object.hasOwn(v,'mustNotPrune')))"
+```
+
+If that prints an empty array, the veto cannot fire for you, and **if you believe something in that
+directory is unaccounted for, raising it is the whole of your move** — tell the operator it is a
+`mustNotPrune` claim, because the field records a human claim and a subagent setting it would make
+the guard self-served. `HANDOFF.md` §225 is the entry.
+
+```bash
+node scripts/worktree-inventory.mjs          # a fresh verdict: disposal reads it
+npm run dispose -- <name> --dry-run          # names the signal that refuses, if any
+npm run dispose -- <name>
+```
+
+There is no other sanctioned removal path, and reaching for one is what destroyed a live chat's
+worktree on 2026-10-01: a sweep ran a hard-coded list of `git worktree remove` and `git branch -D`
+and read a fourteen-hour-old merge subject carrying a branch's _name_ as proof the work had landed.
+`docs/ORCHESTRATION.md` — §"Removal goes through one program" — is the one home for the mechanism;
+`.skills/worktree-merge-harvest.md` §Step 6 is the one home for the harvest sequence.
+
+**Expect `dispose` to refuse on `derived-live-writer`.** Phase 8 ran the gates inside this
+worktree, and that refusal reads what a chat did in there — including reading. `--no-live-writers`
+does not clear it. That is the gate working, not an obstacle to route around: land the work, leave
+the directory, and say in the record that the removal is pending. The mechanism and its one home
+are `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking".
+
 ---
 
 ## Appendix A — the conflict taxonomy
@@ -1271,18 +1457,18 @@ incident that produced this document; the rest from the wider merge corpus.
 
 ### The ten that decide the merge
 
-| #   | Class                                                              | Real instance                                                                                                                                                                                                                     |
-| --- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **A test asserts a premise the other side removed**                | `SidebarLeft.workspace.test.tsx` pinned `width:'108px'`; the other branch made one column the default. Resolved by reading the declared units off `style` rather than through `toHaveStyle`, which normalises `3.5rem` to `56px`. |
-| 2   | **Opposing product decisions on one literal**                      | `useState(false)` vs `useState(true)`. Resolved against the operator's spoken instruction to the branch that had it.                                                                                                              |
-| 3   | **Both sides rewrote the same explanatory comment**                | The `h-full` / `min-h-full` block in `SidebarLeft.tsx`; also `responsive-shell.spec.ts`, `text-tool.spec.ts`, `document-dialogs.spec.ts` — prose collisions above unchanged code.                                                 |
-| 4   | **A duplicated numbered section**                                  | Two `## 79.` in `HANDOFF.md`, independently authored, both real. Main keeps 79; the branch renumbers to 83.                                                                                                                       |
-| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` in that entry and on the branch at a different place. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.         |
-| 6   | **A helper whose signature diverged**                              | `leftOf(): number` vs `boxOf(): {left, top}`, and the call sites diverged with it.                                                                                                                                                |
-| 7   | **The same import, added twice**                                   | `SidebarLeft.tsx` and `SidebarLeft.flyout-hardening.test.tsx`. The trivial union — **and the most common shape, so do not let its triviality set your expectation for the rest.**                                                 |
-| 8   | **A document was split on `main`**                                 | `main` split `AGENTS.md` into a thin root plus `docs/ORCHESTRATION.md`, `docs/TESTING.md` and `docs/PHOTOSHOP-UX.md`; the branch edited the long form. Ported the edit to its new home.                                           |
-| 9   | **A generated file**                                               | `WORKTREES.json`, five merges deep. Regenerated, never resolved.                                                                                                                                                                  |
-| 10  | **A structural union, no conflict at all**                         | The curated table gained entries from each branch. A union that git found by itself — still verify it, see class 11.                                                                                                              |
+| #   | Class                                                              | Real instance                                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **A test asserts a premise the other side removed**                | `src/components/SidebarLeft/SidebarLeft.workspace.test.tsx` pinned `width:'108px'`; the other branch made one column the default. Resolved by reading the declared units off `style` rather than through `toHaveStyle`, which normalises `3.5rem` to `56px`. |
+| 2   | **Opposing product decisions on one literal**                      | `useState(false)` vs `useState(true)`. Resolved against the operator's spoken instruction to the branch that had it.                                                                                                                                         |
+| 3   | **Both sides rewrote the same explanatory comment**                | The `h-full` / `min-h-full` block in `src/components/SidebarLeft/SidebarLeft.tsx`; also `e2e/responsive-shell.spec.ts`, `e2e/text-tool.spec.ts` and `e2e/document-dialogs.spec.ts` — prose collisions above unchanged code.                                  |
+| 4   | **A duplicated numbered section**                                  | Two `## 79.` in `HANDOFF.md`, independently authored, both real. Main keeps 79; the branch renumbers to 83.                                                                                                                                                  |
+| 5   | **A duplicated key added in two places, with no textual conflict** | `'toolbar-overflow'` in `curated.mjs`, present on `main` in that entry and on the branch at a different place. The base has zero occurrences of the key. JS object-literal last-wins: git merged it cleanly and kept one.                                    |
+| 6   | **A helper whose signature diverged**                              | `leftOf(): number` vs `boxOf(): {left, top}`, and the call sites diverged with it.                                                                                                                                                                           |
+| 7   | **The same import, added twice**                                   | `src/components/SidebarLeft/SidebarLeft.tsx` and `src/components/SidebarLeft/SidebarLeft.flyout-hardening.test.tsx`. The trivial union — **and the most common shape, so do not let its triviality set your expectation for the rest.**                      |
+| 8   | **A document was split on `main`**                                 | `main` split `AGENTS.md` into a thin root plus `docs/ORCHESTRATION.md`, `docs/TESTING.md` and `docs/PHOTOSHOP-UX.md`; the branch edited the long form. Ported the edit to its new home.                                                                      |
+| 9   | **A generated file**                                               | `WORKTREES.json`, five merges deep. Regenerated, never resolved.                                                                                                                                                                                             |
+| 10  | **A structural union, no conflict at all**                         | The curated table gained entries from each branch. A union that git found by itself — still verify it, see class 11.                                                                                                                                         |
 
 ### Class 11 — the one that is not a conflict
 
@@ -1292,7 +1478,7 @@ incident that produced this document; the rest from the wider merge corpus.
 through three further commits before`ef85d3ab`repaired them. Neither`--remerge-diff`, nor
 `--cc`, nor the existence of a merge commit catches that. **A grep over the
 merge's changed files does** — and it must allow leading whitespace _and_ require seven of the
-marker character, or it finds 3 of these 6 while firing on every markdown blockquote in the
+marker character, or it misses the label lines and fires on every markdown blockquote in the
 repository. → [Phase 7](#71-the-marker-sweep)
 
 ### The full resolution-pattern set
@@ -1370,8 +1556,12 @@ re-derivation; a reader searching for "silent" must find every silent loss. Each
 [Phase 5](#phase-5--ask-the-human-in-a-file) for when to write one and what it must not contain.
 
 **Where it lives.** Tracked, at the root of the worktree that owns it, merged to `main` like any
-other artifact. **Not under `.kilo/`** — that path is gitignored and machine-local, and all three
-dead question files in this repository are dead for exactly that reason. Per worktree, not shared:
+other artifact. **Not under `.kilo/`** — that path is gitignored and machine-local, so a question
+asked there is asked into a drawer nobody else opens. The one that survives on the machine this
+document was written on is `.kilo/reviews/2026-09-27/operator-decisions.md`, and it holds ten
+`Needs from operator` blocks with no answer to any of them anywhere in the repository; the two other
+question files named alongside it are gone from the machine entirely, so **do not treat a count here
+as evidence** — treat the surviving path as the shape of the failure. Per worktree, not shared:
 one writer per worktree is the rule, and a single file written by N concurrent agents can race on
 its own counts. If your question has to cross worktrees, it crosses by merge.
 
@@ -1406,7 +1596,8 @@ at stake. A question, never a refactor prescription. Answerable without interpre
 **Evidence.**
 ```
 
-<file:line and command output. Fenced. No prose inside.>
+<the identifier in call form, or the dispatched literal, or the test title; then the
+command output. Fenced. No prose inside.>
 
 ```
 
@@ -1454,7 +1645,7 @@ without asking at the deadline. Naming the default does not make the question op
 | `Default if unanswered`                  | Converts a blocking question into a time-boxed one, which is the only way to keep progressing while it is open                                                                                                                                                                  |
 | `Needed by` as a **condition**           | A date is a record; a condition is what tells the agent when to stop waiting. It is the **trigger** for the `## Assumed` transition, which is why the template has no separate `deadline:` field                                                                                |
 | Answer slot, moved never deleted         | It is still relevant to know a decision _was_ made. Deleting it is how the same question is asked again next month                                                                                                                                                              |
-| `Verified by:` never the fixer           | The handoff lifecycle's own rule, applied to decisions                                                                                                                                                                                                                          |
+| `Verified by:` never the fixer           | Not an `AGENTS.md` rule — its lifecycle line is "fixed and verified deletes the entry", about entries rather than verifiers. Stated here because a decision nobody independent checked is the defect this column exists to catch                                                |
 | **The field partition**                  | The operator writes the `Answer:` line only; the agent writes every other field **and performs the move** between sections. This is the only element that makes concurrent edits safe without a lock — and it is why the `## Resolved` template's agent-owned lines ship blank. |
 
 **The two questions-worth rule.** Fewer than two options with known consequences is not a
@@ -1525,15 +1716,22 @@ Schema: a bold claim shaped like a symptom, then what you will actually observe,
 then the mechanical check. **`Verified:` is omitted, and the entry marked `[unverified by me]`,
 where the check was not actually run** — the same honesty convention the tool-creation skill uses.
 
-1. **A branch tip is not always a merge's first parent — it depends which way the merge went.**
+1. **Neither parent of a merge is `main` just because the subject mentions `main`, and sometimes
+   neither parent is `main` at all.**
    Symptom: you take `git log -1 <merge>^1` believing it is `main` and it is the branch, or the
-   reverse, and every preview built on it silently previews the wrong pair. **The two merges in
-   this very incident have opposite orientations**, which is why no blanket rule works:
+   reverse, and every preview built on it silently previews the wrong pair. **The two merges in this
+   very incident fail the rule in opposite ways**, which is why no blanket rule works:
 
-   | merge      | what it did                                        | `^1`                | `^2`                |
-   | ---------- | -------------------------------------------------- | ------------------- | ------------------- |
-   | `1eb275a1` | branch **into** `main` (a `--no-ff` landing merge) | `ae4052b2` — `main` | `02f0c4de` — branch |
-   | `e473a45f` | `main` **into** the branch                         | `89d9a6e6` — branch | `55e17620` — `main` |
+   | merge      | what it did                                        | `^1`                         | `^2`                         |
+   | ---------- | -------------------------------------------------- | ---------------------------- | ---------------------------- |
+   | `1eb275a1` | **in-branch** — `docs(agents)` into the panel work | `ae4052b2` — neither is main | `02f0c4de` — neither is main |
+   | `e473a45f` | `main` **into** the toolbar branch                 | `89d9a6e6` — the branch      | `55e17620` — `main`          |
+
+   `1eb275a1`'s `^2` is the panel tip, and its own history already carries `5e01a612` ("merge main
+   into feat/panel-docks"), so it had merged `main` in long before. **Neither parent is `main`, and
+   `ae4052b2` is a `docs(agents):` commit** — reading it as the base is the mistake this entry is
+   about. Check what a parent _is_ with
+   `git log --format='%h %s' <parent> -3` before building anything on it.
 
    Defence: **read the merge's own subject line** and take the parent that matches its direction, or
    use the branch ref directly. Then verify the tip you chose with
@@ -1553,9 +1751,13 @@ where the check was not actually run** — the same honesty convention the tool-
 3. **A merge can commit live conflict markers, and git will call it resolved.** Symptom: a merge
    flagged as a conflict lands with `<<<<<<<` still in the file, and it survives further merges.
    Defence: the grep in [Phase 7](#71-the-marker-sweep), over the merge's changed files, as a gate
-   before anything else. **Prove it is quiet on a clean file first** — a sweep written as
-   `'^[[:space:]]*(<{7}|={7}|>)'` finds only 3 of the 6 markers in `e473a45f:AGENTS.md` and fires
-   83 times across this repository's own documents on ordinary blockquotes and table rules.
+   before anything else. **Prove it is quiet on a clean file first**, and measure the false-positive
+   side rather than the miss side: on `e473a45f:AGENTS.md` both the required pattern and the
+   `'^[[:space:]]*(<{7}|={7}|>)'` pattern find all six markers, but the second fires well over a
+   hundred times across this repository's own documents on ordinary blockquotes and table rules.
+   Only `'^(<{7}|={7}|>{7})'` finds three — that is, it is the one that **counts** `>`, which is the
+   opposite of what an earlier version of this entry claimed it did. **Do not quote any of these
+   counts; re-derive them** — they are measured properties of one commit and one document.
 
 4. **`rr-cache` is shared across every worktree in this repository.** Symptom: a resolution you
    never made appears in a worktree you have never been in. Defence: never set `rerere.enabled`
@@ -1573,7 +1775,7 @@ where the check was not actually run** — the same honesty convention the tool-
    `conflict: null` returns implement.
 
 6. **An expired lease makes a file look free while the agent working in it is not.** Symptom: a
-   `swarm check` returns `free` for a path another agent is actively rewriting, because its
+   `npm run swarm -- check <path>` returns `free` for a path another agent is actively rewriting, because its
    45-minute lease lapsed and was swept. Defence: an unclaimed path looks free — claim or hold it
    before editing, and treat "free" as "not currently locked", never as "nobody is here". See
    `docs/ORCHESTRATION.md` — "The swarm board".
@@ -1582,14 +1784,16 @@ where the check was not actually run** — the same honesty convention the tool-
    in two worktrees.** Symptom: two agents pick overlapping work and neither sees the other.
    Board identity is the git branch, and the lock test is foreign-vs-self by agent id, so it can
    only arbitrate on **paths** — and only across agents that are not the same branch. There is no
-   feature axis at all. Defence: a `swarm note` naming the feature at the start, checked against
-   the log before planning, and never a `grep`-filtered `swarm watch` — the filter is what hid
-   the second agent's note in the incident.
+   feature axis at all. Defence: an `npm run swarm -- note` naming the feature at the start,
+   checked against `npm run swarm -- list` before planning, and never a `grep`-filtered
+   `npm run swarm -- watch` — the filter is what hid the second agent's note in the incident.
 
 8. **Renumbering a handoff section is a cross-reference rewrite.** Symptom: the section number is
    right and every `§N` reference to it in prose now points at the wrong entry. Defence: sweep all
-   three handoff documents for the old number. The handoff importer's own test fails on a duplicate
-   number, which makes it a tripwire for the count sweep.
+   three handoff documents for the old number. **There is no tripwire for this** — an earlier
+   version of this entry claimed the handoff importer's own test fails on a duplicate number, and it
+   does not; `parseHandoffDoc()` drops the second heading silently, so the collision the count sweep
+   is supposed to catch is invisible to it. Phase 7's arithmetic and `uniq -d` are the check.
 
 9. **A letter-suffixed handoff heading is live, unreachable, and corrupts its parent.** Symptom:
    `## 15a.` opens no board item _and_ closes item 15's body mid-sentence, because the importer's
@@ -1634,12 +1838,13 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` after any interrupted or aban
 
 ## Appendix F — what to distrust in this document
 
-**A `file:line` is a claim about a _file_, and a file can move its own content around without
-changing one line of the thing it points at.** `AGENTS.md` was restructured and every citation into
-it became wrong while the code it described stayed byte-identical. Re-derive each citation from the
-sentence that makes the claim, and name a section beside every line — **a heading survives an
-insertion above it; a line number does not.** A re-verification pass is required after _any_ change
-to a cited document, not only to the code it points into.
+**A citation is a claim about a _file_, and a file can move its own content around without changing
+one line of the thing it points at.** `AGENTS.md` was restructured and every citation into it became
+wrong while the code it described stayed byte-identical. Re-derive each citation from the sentence
+that makes the claim — and **this document no longer carries a `file:line` to be re-derived**, which
+is the fix rather than the loss: `AGENTS.md` bans the form, and a symbol in call form, a string
+literal, an `it('…')` title and a document heading all survive the insertion that breaks a number.
+A re-verification pass over a line number is a pass over a number, which is the defect.
 
 **A count is the same defect wearing a different hat.** If a count is load-bearing, derive it in
 the same sentence that uses it. Line counts for `.skills/photoshop-tool-creation.md` have drifted

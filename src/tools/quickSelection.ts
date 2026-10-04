@@ -33,12 +33,13 @@ export const quickSelection =
  * `SelectionSourceTool` in `src/contexts/general-types.ts:17` has no
  * `'quick-selection'` member and that union is the integration's file, not this tool's.
  * `'magic-wand'` is borrowed because the region this tool commits is a traced mask
- * boundary — the same representation the wand produces — and it is the borrowed value
- * whose behaviour is also correct: `drawSelectionOutline` skips the per-vertex anchor
- * dots for it and `findSelectionAnchorAtPoint` returns `null` for it
- * (`src/util/selection.ts:201` and `:239`), and a staircase boundary hundreds of
- * vertices long must carry neither. Adding the real member, plus the two `selection.ts`
- * exclusions, is the whole follow-up.
+ * boundary — the same representation the wand produces — and the borrow pays for the two
+ * `selection.ts` exclusions keyed on that source: `drawSelectionAnchors` returns before
+ * painting for it and `findSelectionAnchorAtPoint` returns `null` for it
+ * (`src/util/selection.ts:155` and `:203`), and a staircase boundary hundreds of
+ * vertices long must carry neither. Nothing else consults the source — the border is the
+ * marching ants, and `useSelectionAnts` strokes every active selection whatever made it.
+ * Adding the real member, plus those two exclusions, is the whole follow-up.
  */
 export const QUICK_SELECTION_SOURCE_TOOL = 'magic-wand' as const;
 

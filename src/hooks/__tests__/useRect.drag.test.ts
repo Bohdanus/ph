@@ -144,6 +144,23 @@ describe('useRect mask drawing', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
   });
 
+  /**
+   * `handlesOutside` is the Type tool's alone, and the default above is Adobe's: a grip straddling
+   * the corner is grabbable across its whole width, because `edgeAtPoint` takes
+   * `HANDLE_SIZE / scale / 2` either side of the corner either way. Painting the grip wholly outside
+   * left the outer half of every visible handle unclickable on the marquee, the crop and the Move
+   * tool, and `e2e/select-move.spec.ts` — `stretches selected line` — caught exactly that.
+   */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 250, handle, handle);
+  });
+
   it('reports the sorted rect to onRepaint but not to onChange while idle', () => {
     const onRepaint = vi.fn();
     const onChange = vi.fn();
@@ -992,9 +1009,12 @@ describe('useRect pointer up and move tool', () => {
  * rectangle out from the press point, and both at once is a square centred on it.
  *
  * They are per-consumer props rather than a behaviour of the hook, because `useRect` is shared
- * with crop and the Move tool and neither of them constrains a drag. The first case below is
- * the regression guard for that: the same gesture with neither prop set is the pre-existing
- * `adjustFreePoint` path, byte for byte.
+ * with the Move tool and the text tool and neither of them constrains a drag. The crop is the
+ * second consumer to opt in, beside the rectangular marquee, and it is the one that carries an
+ * aspect ratio of its own — so the cases below also pin that Shift is a square rather than
+ * "whatever ratio is in play", and that the ratio a marquee is NOT given is not read from the
+ * press either. The first case is the regression guard for the consumers that opt out: the same
+ * gesture with neither prop set is the pre-existing `adjustFreePoint` path, byte for byte.
  */
 describe('useRect fresh-drag modifiers', () => {
   beforeEach(resetPointerMock);
@@ -1078,7 +1098,8 @@ describe('useRect fresh-drag modifiers', () => {
       move: { altKey: true, shiftKey: true },
     });
 
-    // Crop and the Move tool: the modifiers are pressed and nothing about the rect changes.
+    // The Move tool and the text tool: the modifiers are pressed and nothing about the rect
+    // changes.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 150 });
   });
 
@@ -1104,5 +1125,51 @@ describe('useRect fresh-drag modifiers', () => {
     // A 2:1 rect dragged by its top-left corner is still 2:1, measured from the shared
     // opposite corner the handle anchored it to: 250 wide, 125 tall.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 75, x2: 300, y2: 200 });
+  });
+
+  it.each([
+    ['Command', { metaKey: true }],
+    ['Control', { ctrlKey: true }],
+  ] as const)('%s is not the aspect-ratio modifier on a fresh drag', (_name, modifier) => {
+    // The crop's own modifier table gives Command to Straighten and to disabling edge snapping,
+    // and neither Command nor Control constrains proportions on a marquee anywhere in Adobe's
+    // geometry modifiers — Shift is that key. So a fresh drag out of the existing 2:1 selection
+    // must take no ratio from it: before the gate in `getEdgeAtPoint`, this press recorded the
+    // selection's ratio as well and the drag out of it came out 2:1.
+    const onChange = dragFrom(
+      { from: { x: 500, y: 500 }, to: { x: 700, y: 550 }, down: modifier, move: modifier },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 500, y1: 500, x2: 700, y2: 550 });
+  });
+
+  it('keeps a Command corner resize on the ratio the box already has', () => {
+    // The gate is on WHERE the press landed, not on WHICH key was held: a resize still pins the
+    // box's own ratio, which is what the Move tool, the text tool and the marquees read it for.
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 320, y: 195 }, down: { metaKey: true }, move: { metaKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 195, x2: 310, y2: 200 });
+  });
+
+  it('prefers the square over the ratio the consumer is configured with', () => {
+    // The crop's options bar can hold a Ratio while a fresh box is drawn, and Shift is Adobe's
+    // square rather than "the ratio, whichever it is".
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { aspectRatio: 2, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 300 });
+  });
+
+  it('keeps the configured ratio on a fresh drag held under no modifier', () => {
+    const onChange = dragFrom({ from: { x: 100, y: 100 }, to: { x: 300, y: 150 } }, { aspectRatio: 2 });
+
+    // 200x50 is wider than 2:1, so the width collapses to the 50px height doubled.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 200, y2: 150 });
   });
 });

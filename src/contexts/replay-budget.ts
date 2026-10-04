@@ -33,8 +33,8 @@
  * This is dormant scaffolding: nothing in production constructs a budget or runs this runner, and
  * no navigation or rendering path may import it while the legacy `HistoryItem[]` timeline stays
  * authoritative. The first durable production surface must choose its own materialization caller,
- * revision token, user setting, and publication policy; this module deliberately does not depend on
- * the retired `replay-coordinator.ts`.
+ * revision token, user setting, and publication policy; this module schedules nothing itself and
+ * takes every one of those as an argument.
  */
 
 /** Why a run stopped for cost rather than for cancellation or failure. */
@@ -95,12 +95,13 @@ export type ReplayRunRequest<T> = Readonly<{
   /**
    * The revision guard, called at every yield point and once more before `collect()`. Returning
    * `false` stops the run as `stale`. It must be backed by live document state, never by the
-   * request-time snapshot — the same rule `ReplayCoordinator.isCurrent()` states.
+   * request-time snapshot — a snapshot proves what the document was when the run began, which is
+   * exactly the question a run cannot answer about itself.
    */
   isStillValid?: () => boolean;
   /** Injected so measurement is deterministic under test and needs no ambient clock. */
   now?: () => number;
-  /** Injected so the caller controls the scheduling policy; see `replay-coordinator.ts`. */
+  /** Injected so the caller owns the scheduling policy; this module never yields on its own. */
   yieldToHost?: () => Promise<void>;
 }>;
 
