@@ -9,6 +9,7 @@
     "build": "vite build",
     "dist": "vite build",
     "swarm": "node scripts/agent-board.mjs",
+    "repo:state": "node scripts/repo-state-gate.mjs",
     "swarm:release-merged": "node scripts/merge-release.mjs",
     "dispose": "node scripts/dispose-worktree.mjs",
     "docs:tools": "node scripts/generate-tool-docs.mjs",

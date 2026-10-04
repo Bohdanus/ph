@@ -248,7 +248,7 @@ const readStoredLayout = (): Partial<LayoutState> => {
   // the only way out of the icon strip is `setDockWidth(layout.dockWidth)`, which re-collapses
   // on a width that is still under the floor, and the double-arrow that would otherwise widen it
   // is not rendered while collapsed. A hand-edited, stale or cross-version value was enough to
-  // reach it, and `Window > Reset Workspace` was the only escape.
+  // reach it, and `Window > Workspace > Reset Essentials` was the only escape.
   //
   // So: collapse on read, exactly as `setDockWidth` does on write, and let the remembered width
   // be the one that will fit again. The second pass is what keeps the dock recoverable — a

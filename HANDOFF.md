@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204, 208-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -989,7 +989,7 @@ corrections to the research behind it, and the sequencing.
 **The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, same rendered
 names, same groups, same letters. A tool Photoshop does not have is **deleted, not relabelled** —
 the app already has the Brush, which is `draw`'s nearest. Adjustments and transforms are
-`Image ▸ Adjustments` and `Edit ▸ Transform` commands and leave the rail entirely. The registry
+`Image ▸ Adjustments` and `Edit ▸ Free Transform` commands and leave the rail entirely. The registry
 identifier stays free (`reposition` for the Move tool is fine); the **rendered label** does not.
 
 **Shape of the work: 41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete.**
@@ -1525,7 +1525,7 @@ several panels into one body, not moving a group.
 **7. There are no workspaces.** Adobe documents saving, switching, deleting and restoring them
 as four separate operations, and a workspace "remembers the size and position of panels". This
 app has one unnamed workspace persisted under one key, with a single hard-coded
-`Window > Reset Workspace` and no panel list to remove a panel from — "Select Window from the
+`Window > Workspace > Reset Essentials` and no panel list to remove a panel from — "Select Window from the
 menu bar. Select the panel name to remove it from the workspace", and the per-tab
 **Close / Close Tab Group** context menu, are both absent.
 
@@ -2079,67 +2079,6 @@ same change.
 
 ---
 
-## 102. A failed raster open resizes the canvas and then keeps the old document
-
-**Problem.** `setImageFromUpload()` in `useApp.ts` resizes the canvas before it has anything to
-replace:
-
-```ts
-const { image } = data;
-const size = { width: image.width, height: image.height };
-handleImageCreate(size); // :162  resizes the canvas
-await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true); // :163  may reject
-```
-
-`createLayerFromBitmap` awaits `immutableRaster` (`useLayer.ts` — `createLayerFromBitmap()`) before it
-dispatches
-`REPLACE_DOCUMENT`, so a decode failure rejects at that `createLayerFromBitmap` call with the canvas
-already resized and no store
-transition published. The store half is correct — the retained document is untouched, and
-`src/hooks/__tests__/useApp.document-reset.test.tsx` pins exactly that as a negative control. The
-canvas half is not: it is now the new file's size while the document, `totalSize` and `documentFrame`
-are all still the old one.
-
-Measured 2026-09-30, failing a 64×48 open against a seeded 800×600 document:
-
-```
-PROBE canvas after failed open = 64 x 48
-PROBE document totalSize after failed open = {"width":800,"height":600}
-PROBE documentId after failed open = outgoing
-```
-
-The retained document then renders through a canvas of the wrong size until something redraws it, and
-the overlay refs are untouched, so the tool overlay keeps the old geometry while the base canvas does
-not. The PSD arm already gets this right — it resizes all three refs in `setImageFromUpload()`'s PSD arm
-only after
-`immutableRaster` has resolved every layer in that same arm.
-
-**Fix.** Move `handleImageCreate(size)` to after `await createLayerFromBitmap(...)`, matching the PSD
-arm's ordering, or resize inside `_addLayer`'s `newDocument` branch where the replacement is
-published. Three things must change in the same commit, all of them pins of this defect rather than of
-intended behaviour:
-
-- The `it('sizes the canvas, creates the bedrock layer, and renames the document only afterwards')`
-  title in `useApp.image-upload.test.ts` asserts
-  `['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap', 'SET_FILE_NAME']`.
-- The `it('has already resized the canvas to the image size when the layer creation starts')` title in
-  the same file asserts the same shape with a live canvas
-  read — `createLayerFromBitmap(canvas=120x90)` is interpolated from inside the mock, so it pins the
-  canvas's dimensions at the moment the layer build starts and cannot be satisfied by reordering alone.
-- That second title, and the `describe('useApp setImageFromUpload')` block it sits in, declare the
-  ordering as the behaviour ("has already resized the canvas to the image size when the layer creation
-  starts"), so renaming the expectations while leaving those titles would leave the test promising the
-  defect.
-
-**Files.** `src/hooks/useApp.ts` — `setImageFromUpload()`, `src/contexts/useLayer.ts` — `_addLayer()`
-and `createLayerFromBitmap()`,
-`src/hooks/__tests__/useApp.image-upload.test.ts` — the `describe` block and the two `it` titles named
-above,
-`src/hooks/__tests__/useApp.document-reset.test.tsx` ("kills nothing when the import fails before the
-document is replaced")
-
----
-
 ## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
 
 **Problem.** The dispatcher's `REPLACE_DOCUMENT` arm in `StoreContext.tsx` intercepts `REPLACE_DOCUMENT`
@@ -2417,11 +2356,15 @@ conclusion from a missing policy is that no policy was ever written down.
 { label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
 ```
 
-All four activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
-equivalent in `Mobile/mobile-tools.ts`, the `Image`/`Edit` menu dispatch in `DesktopHeader.tsx`, and
-the keyboard map in `AppKeyboardShortcuts.tsx` — and `useApp.ts` holds the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx` records that dispatching the
-key directly was a **bug they fixed**: it mounted the Shape panel where the
+All three activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
+equivalent in `Mobile/mobile-tools.ts` and the keyboard map in `AppKeyboardShortcuts.tsx` — and
+`useApp.ts` holds the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. A fourth surface existed until 2026-10-02: the header's
+`Tools` menu, the one menu this app carried that Adobe does not have, and the menu bar's rebuild
+against Adobe's own list removed it. What that menu recorded about dispatching the key directly is
+still true of the three that remain, and it is why they dispatch `shape` plus the figure rather
+than the figure key: `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed** — it
+mounted the Shape panel where the
 `toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
 red and the shape committed black.
 
@@ -2486,28 +2429,30 @@ defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`
 rendered body, `src/tools/ellipticalSelection.ts` — `applyRatio()`,
 `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
 
-## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
+## 116. Three of the six pen tools have no shortcut, and Adobe's Pen flyout carries all six
 
 `AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so
 `P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
-`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx`'s
-`TOOL_MENU_ITEMS` lists only the three pens. There is no standalone keymap table the enumeration
-could be incomplete against: the keymap _is_ the `useKeyDownShortcut({ key: … })` registrations in
-`AppKeyboardShortcuts.tsx`, and `grep -n "add-anchor-point\|delete-anchor-point\|convert-point"
-src/components/Common/AppKeyboardShortcuts.tsx` returns nothing —
-`toolbar-mapping.ts` declares the three without a `shortcut` as well, so no other surface declares a
-binding either. `selectPenTool()` is the only consumer of `penGroup`, and `useApp.ts`'s `goToTool()`
+`convert-point` have **no keybinding**, and no surface can be declaring one: all six are entries in
+`toolbar-mapping.ts` — the Pen group's six — and the three declare no `shortcut` field at all. There
+is no standalone keymap table the enumeration could be incomplete against: the keymap _is_ the
+`useKeyDownShortcut({ key: … })` registrations in
+`AppKeyboardShortcuts.tsx`, and none of them names one of the three.
+`selectPenTool()` is the only consumer of `penGroup`, and `useApp.ts`'s `goToTool()`
 is the only site in `src` that dispatches `SET_TOOL_NAME`, so a tool is reachable by key only
 through a registration calling one of those selectors.
 
 **Both other halves of the earlier version of this heading are wrong, and the rail never needed
 them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx`'s `freeform-pen` entry gives
 `freeform-pen` its own `FreeformPenIcon`, and `toolbar-mapping.ts`'s `toolbarMap` gives each of the
-six its own label. The Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference
-(Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it costs" cites for its own shortcut
-list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a
-menu row for them would be a departure rather than a fix, and `docs/OVERRIDES.md` has no entry
-authorising one. What `docs/TOOLS.md` — "Freeform Pen Tool", "Curvature Pen Tool" and "Curvature
+six its own label. The missing shortcut is Adobe's own doing on one count and not on the other:
+Adobe's keyboard-shortcut reference (Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it
+costs" cites for its own shortcut list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor
+Point` or `Convert Point`, so nothing here is missing that Adobe binds — and `docs/OVERRIDES.md` has
+no entry authorising inventing one. **Adobe's Tools panel does carry all three**, in the Pen flyout
+beside the three it groups here, so this is a keyboard question and the rail is not implicated: the
+rail matches Adobe's membership and not Adobe's bindings. What `docs/TOOLS.md` — "Freeform
+Pen Tool", "Curvature Pen Tool" and "Curvature
 Pen Tool" again — record is only that the shortcuts do not exist, which is what this entry says.
 
 **The rail half does not survive either.** `docs/PHOTOSHOP-UX.md` — "Open violations" states the six
@@ -2518,7 +2463,7 @@ pen family. So the "incomplete hiding" framing has no premise: nothing was hidde
 not add a shortcut here without asking.** What remains is a record, not a defect.
 
 **Files.** `src/components/Common/AppKeyboardShortcuts.tsx` — `penGroup` and `selectPenTool()`;
-`src/components/DesktopHeader/DesktopHeader.tsx` — `TOOL_MENU_ITEMS`;
+`toolbar-mapping.ts` — the Pen group's six entries, three of them without a `shortcut`;
 `src/components/SidebarLeft/SidebarLeft.tsx` — `RailGripIcon`;
 `src/components/SidebarLeft/toolIcons.tsx` — the `freeform-pen` entry; `docs/TOOLS.md` — "Freeform
 Pen Tool", "Shape Tool (the Tools panel group; no entry by that name)" and "Pen Tool";
@@ -3487,6 +3432,39 @@ symlink removed and a real `npm ci` in the worktree, the same two specs on the s
 13 passed (16.7s)
 ```
 
+**The remedy above is available, and it is not this repository's default — which is why
+the trap keeps firing.** Measured 2026-10-05 across every registered worktree:
+
+```bash
+git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
+  | while read -r w; do [ -d "$w/node_modules/react" ] && echo "own $w" || echo "none $w"; done \
+  | cut -d' ' -f1 | sort | uniq -c
+```
+
+**133 of 160 worktrees have no `node_modules` of their own**, so Node resolution walks up
+into the main checkout's and every one of them serves the AVIF wasm out of Vite's allow
+list. The other 27 hold a real install — measured as `node_modules/react` being present,
+not as how it got there. So the convention this entry states is widely not followed, and the
+failure a non-follower sees is indistinguishable from the one this entry documents — which
+is the whole reason it has been re-derived twice.
+
+**A scope correction to the entry's own recipe, because it is what makes the trap
+reproducible.** Its reproduction assumes a symlinked `node_modules`. **A worktree with no
+`node_modules` directory at all is the same trap**, because that is the majority case and
+no symlink has to be created for it: the packages still resolve up into the main checkout,
+and the wasm URL is still a main-checkout path. Measured the same URL against both roots
+on one machine, same commit, no code change:
+
+| dev server rooted at                     | `@fs/…/node_modules/@jsquash/avif/codec/enc/avif_enc.wasm` |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `/Users/bkalynovskyi/ph` (main checkout) | **200**                                                    |
+| a worktree with no `node_modules`        | **403 Restricted** — "outside of Vite serving allow list"  |
+
+`vite.config.ts` declares no `server.fs` block, so Vite's default workspace root is the
+boundary, and a worktree's is the worktree. Only AVIF is exposed: `@jsquash/avif` is the
+only wasm-backed codec this app imports, and `src/contexts/tiff-utils.ts` imports `utif`,
+whose published bundle carries no `.wasm` at all.
+
 **Reproduce the trap rather than the defect.**
 
 ```bash
@@ -3497,13 +3475,16 @@ rm -rf /tmp/avif-check/node_modules          # or simply do NOT symlink it
 ```
 
 **Fix / convention.** A measurement taken through a symlinked `node_modules` is not a measurement of
-`main`. When an audit reports that a documented flake reproduces on `main`, the first thing to check is
-whether the reproduction was itself broken — and the run's own `[WebServer]` log usually says so in one
-line. **The AVIF entry in `e2e/OPEN_PROBLEMS.md` stands.** Do not edit it, and do not add a second
+`main`; neither is one taken through a worktree with **no** `node_modules`. When an audit reports
+that a documented flake reproduces on `main`, the first thing to check is whether the reproduction
+was itself broken — and the run's own `[WebServer]` log usually says so in one line. **Run `npm ci`
+in a worktree before trusting any e2e run from it**, which is cheaper than re-deriving this a third
+time. **The AVIF entry in `e2e/OPEN_PROBLEMS.md` stands.** Do not edit it, and do not add a second
 AVIF entry.
 
 **Files.** `e2e/OPEN_PROBLEMS.md` — "P2 — the AVIF export waits on a wasm encoder inside a 30s
 download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `waitUntil()`;
+`vite.config.ts` — the absent `server.fs` block that sets the boundary;
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
 
 ---
@@ -4263,7 +4244,8 @@ header describes the state that commit fixed:
   four-violation attribution block under it, describe a red suite. `npm run test:e2e -- accessibility` is
   **3 passed, 0 violation(s)**.
 - The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
-  File (New/Open/Save) and Tools menus only.
+  Adobe's ten menus (`File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help`) and no
+  Export among them.
 - The header's "The scans are per-state, not per-app" bullet says the Save dialog is unscanned. It
   was measured here: 0 violations, 45 nodes, both
   themes. (Not added to the gate, so the header is still right about the gate and wrong about the
@@ -4478,13 +4460,14 @@ the frame a non-zero origin and an extent that disagrees with `size`.
 `src/contexts/StoreContext.tsx` (the `documentFrameSize()` call sites, `reducer()`'s `SET_SIZE`
 arm, and the commented-out `SET_SIZE` dispatch)
 
-## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
+## 167. `Edit ▸ Transform` renders six disabled mode rows, and every item in Adobe's submenu is blocked on the same two constraints
 
-**Problem.** `Edit` carries exactly one item, `Free Transform`
-(the `Edit` menu's only `<li>`, in `src/components/DesktopHeader/DesktopHeader.tsx`), because that
-is where Adobe puts it at
-the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
-where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
+**Problem.** `Edit` carries `Free Transform` at the top level, beside a `Transform` submenu whose six
+modes are all disabled (`DesktopHeader.tsx` — the `edit` entry of the `menus` array). **The placement
+is this app's own and it does not match Adobe**: Adobe nests `Free Transform` _inside_ `Transform`, and
+`DesktopHeader.tsx`'s comment above the `menus` array says exactly that while keeping the two apart
+here. So the submenu is unbuilt and is not even where a user who knows Photoshop looks for
+`Free Transform`. Adobe's own page enumerates the eleven commands in it —
 "You can find these commands under `Edit > Transform`" —
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>
 (fetched 200 on 2026-10-01 with a default `curl` User-Agent; it 403s a browser-shaped one):
@@ -4559,40 +4542,36 @@ its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180�
 `#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
 `src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
-## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
+## 169. Adobe's ten menus all render now, and most of the commands inside them are unbuilt
 
-**Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
-(the five `header-*-menu-button` triggers in `DesktopHeader.tsx`). Adobe's is eleven: File, Edit,
-Image, Layer,
-Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
-one item, and `Image` holds one submenu.
+**Problem.** The bar was **five** menus — File, Tools, Image, Edit, Window (the five
+`header-*-menu-button` triggers in `DesktopHeader.tsx`) — when this entry was written, against
+Adobe's File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help. The structural half of
+that gap is closed: the bar was rebuilt against Adobe's own list, so all ten render, the `Tools`
+menu Adobe does not have is gone, and a command this app cannot run renders `disabled` where the
+user looks for it. What is left is membership, and it is not cosmetic.
 
-The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Deselect`,
-`Select > Modify > Feather`, `Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds
-nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
-app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
-(`src/util/selection.ts` exports no such function), and no adjustment layers at all
+A user who knows Photoshop reaches for `Select > Deselect`, `Select > Modify > Feather`,
+`Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds each row greyed. Worse,
+several of those commands are **unreachable entirely**, not merely unreachable from a menu: the
+app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a
+selection (`src/util/selection.ts` exports no such function), and no adjustment layers at all
 (the unsupported-key warning list in `src/contexts/psd-utils.ts` names `adjustment`, `mask` and
 `clipping`, and says they are not preserved on import).
 
-**The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
-gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
-surface that could host them". There **is** a menu bar now; there is no `Select` menu on it. Adding that
-menu is separable work from the selection-model work, and conflating the two is how a menu gap got filed
-as an algorithm gap in the first place.
+**The documentation consequence was the part to fix first, and it is fixed.**
+`docs/TOOLS-TOO-HARD.md` used to file the Select gaps as capability absences and justify them with a
+menu that did not exist — "There is no menu surface that could host them". There **is** a menu
+surface now, so those entries name the `Select` rows that host them and record that every one is
+greyed.
 
-**Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
-already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
-(the `MenuHostItem` rule that an item is enabled by having a `toolName` and nothing else, applied by the
-`disabled={toolName === undefined}` attribute on the menu item button).
-Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
-trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
-**`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
-follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
-at all, and should be decided rather than deferred.
+**Fix.** Build the commands, not the menus. The `Select` model work — an inverse, a morphological
+grow/shrink and a feather over a mask — is the substrate for five greyed `Select` rows, and
+adjustment layers are the substrate for the twenty greyed `Image ▸ Adjustments` rows. Adding rows to
+a menu without their computation widens the greyed surface without narrowing the gap.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem`, `ADJUSTMENTS_ITEMS`
-and their doc comments, and the five menu triggers), `src/util/selection.ts`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`ADJUSTMENTS_ITEMS` and its doc comment,
+the `menus` array, and the ten menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
@@ -5879,25 +5858,10 @@ requiring that the branch's first-parent line contains no merge commit. `.husky/
 runs in the branch and already has `main...HEAD`. Do **not** solve this by making the merge guard
 refuse more; it is already refusing correctly, and widening it fires on ordinary landings.
 
-## 221. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
+## 221. The unit suite still has assertions that cannot fail
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
-assertions that pass on any non-null value, but six classes of defect remain, and one of them is a
-source bug the new tests now prove.
-
-`PanelGroup.tsx` emits `aria-controls={panel-body-<id>}` unconditionally while the body it names is
-rendered only when the panel is not rolled up. A collapsed panel therefore points at an id that is not
-in the tree, and `aria-expanded="false"` beside a reference to nothing is the pair the panel's own
-accessibility test claims is dishonest. The new suite asserts the truth — the attribute is present,
-and the id it names is absent — so the finding cannot be removed by a test edit.
-
-**Affected.** `src/components/SidebarRight/PanelGroup.tsx` for the dangling reference.
-
-**What would close it.** Make the attribute conditional on the same expression that renders the body,
-AND replace the two assertions that currently pin the defect: the one that reads
-`aria-controls` off a rolled-up control, and the one that reads the absent body back out of the
-document. They cannot both stay: the second is the defect's proof, so it is the first that has to go.
-Whoever does this is fixing the component, not the test.
+assertions that pass on any non-null value, but six classes of defect remain.
 
 The remaining test defects, each with the fix that was proven to work:
 
@@ -5952,7 +5916,7 @@ reviewers who had read neither the triage nor the authors' reasoning then found 
 cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
 no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table
 above, which is the only one of them that was a merge artefact rather than a defect present from the
-start. The dangling reference and the fixture divergence were left unfixed because the mandate was
+start. The fixture divergence was left unfixed because the mandate was
 test files only.
 
 ## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
@@ -6331,3 +6295,66 @@ names a brush-tip circle as part of its own fix because that transform is commen
 closes with §151 rather than before it, and the entry stays until it does.
 
 **Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.scss`
+
+## 236. The inventory reports a dirty main checkout as clean, and an attempt to fix it destabilised a test whose cause is still unknown
+
+**Problem.** `classify()` in `scripts/lib/worktree-inventory/classify.mjs` assigns
+`STATUS.LANDED` for `wt.isPrimary` BEFORE it tests `uncommitted`, so the main checkout is reported
+`LANDED` with no uncommitted reason whether or not its tree holds changes. A reader is told `LANDED`
+and infers a clean tree. The status itself is right — the main checkout IS the landing site and its
+commits are on `main` by definition — so this is a missing reason, not a wrong status. It is also
+**not** a safety hole: the recommendation is computed under a second `if (wt.isPrimary)` that no-ops
+before any prune advice, so no dirty primary can be advised for deletion.
+
+**What makes this an entry rather than a two-line edit.** Adding the two missing reasons —
+`if (uncommitted)` and `if (unmerged)` inside that branch — turned
+`the curated table > never asks the table to protect a worktree whose protection is derived` from
+green to a 60s timeout. **These are single-machine observations, not a benchmark**, taken with 158
+live worktrees under concurrent agent load: five runs with the change, at 67s, 86s, 107s, 155s and
+200s, and six runs green — at 13s, 22s, 24s, 29s, 43s and 47s — with `classify.mjs` at `HEAD`, with
+an inert comment appended to the file, and with an inert comment inside that exact branch.
+
+**What those runs do and do not establish.** The two statements are _semantically_ inert:
+`uncommitted` and `unmerged` are both computed before the branch chain, and the test filters on raw
+git facts (`ahead`, `mergedIntoMain`, `dirty`, `untracked`) and never reads `reasons`. That is a fact
+about the code, and it is not an explanation of the timeouts — the timings differ by enough to be
+worth reporting, and the inert-comment control passing is evidence AGAINST load alone, not for it.
+**The cause was not found, and the change was reverted rather than landed unexplained.** Do not
+re-add these two lines before the timeout itself is understood.
+
+**What would close it.** Two things, and the first is now the better-evidenced one. Under full-suite
+load, individual tests in `worktree-inventory.test.mjs` exceed their 60s budgets: two DIFFERENT tests
+from this file have failed on different full-suite runs, while the whole file passes 160/160 in 24s
+when run alone. The budget is a function of the fleet rather than of the code under test, so sizing
+it is the first repair. That does **not** explain the classify correlation above — an inert edit in
+the same branch passed every time — so after the budget is fixed, re-run the two pushes and find out
+whether they still matter. If they do not, the fix is those two lines plus a unit test over a
+synthetic primary worktree fact set asserting that a dirty primary's `reasons` carry the uncommitted
+line; a synthetic fact set is what would make that safe, because the real inventory cannot exercise
+the case without a dirty main checkout.
+
+**Files.** `scripts/lib/worktree-inventory/classify.mjs`,
+`scripts/__tests__/worktree-inventory.test.mjs`
+
+## 237. The tool rail patches a figure's args before selecting the tool, so the outgoing commit reads the wrong args
+
+**Problem.** `SidebarLeft`'s `selectTool` calls `patchToolArgs('shape', { figure })` and only then
+`goToTool(tool.name)`. `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, and that commit
+reads the outgoing args — so with the incoming figure already written into `currentArgs`, a figure
+picked from the rail commits the outgoing tool against the incoming tool's args. In the text case the
+commit takes its drop branch: `useLayer`'s text branch reads `args.text` and `args.rect`, finds
+neither on a shape args object, early-returns, and an unapplied text layer is dropped with nothing to
+undo. The inverse order is what `mobile-tools.ts`'s `makeSelectTool` already does, and what the
+header's figure rows used to do before the `Tools` menu was removed; the rail is the one caller left
+that does it the other way. Nothing pins either order: the header's own test for it was deleted with
+its surface, and no rail test asserts the sequence.
+
+**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; the surviving safe order is in
+`src/components/Mobile/mobile-tools.ts`.
+
+**What would close it.** Select first, then patch, in `SidebarLeft`, plus a test that asserts the
+order the way the header's asserted it: have `commitDirtyTool` record the args it sees and fail if
+they are the incoming figure's. Ordering it against `makeSelectTool` also removes the last place the
+two surfaces can disagree, which is how the sheet and the bar came to differ once already.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`
