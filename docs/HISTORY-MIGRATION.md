@@ -34,18 +34,34 @@ addressed by identity; they must not be duplicated into the timeline.
 ### RQ-2: lossless correction
 
 Editing an existing text or shape layer must edit its source arguments rather
-than create a replacement layer and leave the old one behind. The current
-durable operation union has no source-rewrite operation: `create-layer` and
-`merge-document` carry complete layer snapshots, while the other operations can
-change properties, position, order, filters, affine transforms, raster
-processors, frame, or selection only. `DurableLayerPropertyPatch` deliberately
-omits `source`.
+than create a replacement layer and leave the old one behind.
 
-The migration therefore needs one source-edit operation (name and exact payload
-to be decided) plus matching legacy production consumption, durable replay,
-source rehydration into the relevant options bar, and undo/redo parity. A new
-operation is not useful while durable state remains render-only shadow; the
-operation and its visible consumer must land together.
+**This requirement is satisfied, and its premise when written is no longer true.**
+The durable operation union now carries a source-rewrite operation,
+`replace-layer-source` — a twelfth kind beside `create-layer` and `merge-document`,
+which still carry complete layer snapshots, while the other operations change
+properties, position, order, filters, affine transforms, raster processors, frame,
+or selection only. `DurableLayerPropertyPatch` still deliberately omits `source`;
+`replace-layer-source` is a separate kind rather than a widening of that patch.
+
+It landed as the one behaviour slice the operator authorized, carrying every part
+the requirement named — legacy production consumption, durable replay, and
+options-bar rehydration — plus an append-boundary shape check:
+
+| Part                    | Where it lives                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| legacy consumer         | `useLayer.ts`'s `replaceLayerSource()`, dispatching `REPLACE_LAYER_SOURCE_ACTION`              |
+| durable emission        | `history-adapter.ts`, which builds the `replace-layer-source` operation                        |
+| durable replay          | `durable-replay.ts`'s `'replace-layer-source'` arm                                             |
+| options-bar rehydration | `Text.tsx` and `ShapeToolArea.tsx`, which both call `replaceLayerSource()` on the active layer |
+| append-boundary check   | `history-append.ts`'s `replaceLayerSourceProblem()`, which refuses any non-canonical shape     |
+
+The operation carries no raster, which is what makes a correction reversible
+rather than additive: legacy undo is a full replay from index zero that skips the
+disabled entry, so dropping the correction restores the prior source instead of
+leaving pixels behind. `convertBedrockLayer()`'s own JSDoc names the same
+consequence as a limit — a source-edit operation that admitted a raster would be
+the seam a multi-layer bedrock conversion needs.
 
 ### RQ-3: bounded replay with explicit permission
 
@@ -61,10 +77,10 @@ no recorded override for this requirement; agents must not invent one or write
 `OVERRIDES.md`.
 
 The earlier proposal for a thirteenth durable operation was an automatic
-`rasterize-layer` escape hatch and is superseded. The durable operation count
-was corrected to eleven in the finalisation audit. This document's authorized
-source-edit operation is a different requirement: it preserves editable text
-and shape sources and is not a rasterization path.
+`rasterize-layer` escape hatch and is superseded. The durable operation count was
+eleven when the finalisation audit corrected it, and is **twelve** now:
+`replace-layer-source` was added as RQ-2's source-edit operation. That operation
+preserves editable text and shape sources and is not a rasterization path.
 
 ### RQ-4: one replay authority
 
@@ -118,9 +134,13 @@ a separate source-replacement requirement.
    authority. The runtime retained-operation boundary, supported raster append
    path, and navigation presentation mount are closed; remaining work is the
    render/export surfaces and final authority transfer.
-3. Verify source-edit history and source rehydration together for text and
-   shape correction. Keep independent legacy/durable parity for creation, edit,
-   undo, redo, and navigation.
+3. ~~Verify source-edit history and source rehydration together for text and shape
+   correction.~~ **Done** — `replace-layer-source` carries every part named above
+   and is pinned per layer by `history-adapter.source-edit.test.ts`,
+   `durable-replay.source-edit.test.ts`, `history-append.source-edit.test.ts` and
+   `useLayer.text.test.tsx`. Keeping independent legacy/durable parity for
+   creation, edit, undo, redo, and navigation **remains open** and is not closed
+   by this slice.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
