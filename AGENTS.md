@@ -156,7 +156,7 @@ Four husky hooks, and only two of them wrap a `package.json` script. The other t
 
 **ONE gate runs on commit, and it runs no app test.** `gate:verify` asks "does the tree still build and typecheck" — and it PASSES a flipped numeric threshold, a renamed branch or a dropped case, the same class of change that has repeatedly needed its own worktree ("Fix 12 failing useHistory tests", "Fix 3 failing replay-coordinator tests", "Fix failing useApp.psd tests", "Fix failing useRect tests"). `test:staged` would ask the second question — "did this commit break a test covering the files in it", and only that — but **no hook invokes it**: `.husky/pre-commit` ends at `npm run gate:commit`, and the full suite is the push gate. Run it by hand when you want the scoped answer. [`docs/TESTING.md`](docs/TESTING.md#teststaged-is-a-command-not-a-gate) is the one home for why it was taken out and what it costs.
 
-- `lint-staged` formats two groups: `*.{ts,tsx}` gets `eslint --fix` and `prettier --write`, everything else `prettier --write` only, because no ESLint config covers it. [`docs/TESTING.md`](TESTING.md#gates) carries the exact second glob and why `.js`, `.scss` and `.jsonc` are in it: `prettier --check .` matches all of them, and anything it matches but lint-staged does not is formatted by nobody at commit time and fails in CI instead.
+- `lint-staged` formats two groups: `*.{ts,tsx}` gets `eslint --fix` and `prettier --write`, everything else `prettier --write` only, because no ESLint config covers it. [`docs/TESTING.md`](docs/TESTING.md#gates) carries the exact second glob and why `.js`, `.scss` and `.jsonc` are in it: `prettier --check .` matches all of them, and anything it matches but lint-staged does not is formatted by nobody at commit time and fails in CI instead.
 - `--fail-on-changes` is why the hook is trustworthy: by default lint-staged re-adds whatever `--fix`/`--write` changed, so the commit ends up containing code that was never staged and never read. With the flag the fix stays in the working tree, the index is untouched, and the commit is blocked. `--no-stash` makes that clean — without it a blocked commit leaves a `WIP on <branch>` stash behind. Together: no index rewrite, no residue. Cost is one extra round trip per commit that touched an unformatted file; `npm run format` removes it. One residue does survive: `.git/lint-staged_unstaged.patch` after any blocked commit, and nothing removes it.
 - `build` is in the commit hook because it is not redundant. `gate:verify`'s name predates its contents — it runs no lint and no app test, which is why it is a distinct row.
 - **NOTHING LOCAL RUNS `lint:check` ANY MORE** (`gate:push` used to). Whole-repo `eslint . --cache` and `prettier --check .` are CI-only, so an already-committed unformatted file, a branch switch that changes lint rules, and a bad rebase are all caught by the `ci` job rather than locally. lint-staged covers the staged files, which is what the `.scss` gap needed.
@@ -205,13 +205,13 @@ On the default headless run **no e2e test fails**. The only skips are 3 declarat
 below with a `‹line›` placeholder rather than a real number, so this section obeys
 the rule it states and the check reads it.
 
-| Instead of                         | Write                                                     |
-| ---------------------------------- | --------------------------------------------------------- |
-| `` `history-adapter.ts:‹line›` ``  | `` `history-adapter.ts` — `durableLayerForSource()` ``    |
-| `` `materialization.ts:‹lines›` `` | `` `materialization.ts` — `materializeDocument()` ``      |
-| `` `reducer.ts:‹line›` ``          | `PUBLISH_RUNTIME_PRESENTATION`                            |
-| `` `adapter.test.ts:‹line›` ``     | the `it('rejects an unknown source kind')` title          |
-| `` `HANDOFF.md:‹lines›` ``         | `HANDOFF.md` — "the tombstone the lifecycle rule forbids" |
+| Instead of                           | Write                                                                                   |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| `` `history-adapter.ts:‹line›` ``    | `` `history-adapter.ts` — `durableLayerForSource()` ``                                  |
+| `` `materialization.ts:‹lines›` ``   | `` `materialization.ts` — `materializeDocument()` ``                                    |
+| `` `reducer.ts:‹line›` ``            | `PUBLISH_RUNTIME_PRESENTATION`                                                          |
+| `` `history-utils.test.ts:‹line›` `` | the `it('keeps an unknown layer source kind out of the source-argument rewrite')` title |
+| `` `HANDOFF.md:‹lines›` ``           | `HANDOFF.md` — "the tombstone the lifecycle rule forbids"                               |
 
 - **Code** — the declared identifier in call form (`` `materializeDocument()` ``), the
   string literal the program dispatches on (an action type, a source kind, a

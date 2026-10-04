@@ -479,8 +479,9 @@ pressed')` and `test('abandoning a rename with Escape keeps the original name')`
 - `GAP` — Tab / Shift-Tab navigation between rows during a rename.
 - **Locator trap, load-bearing.** A layer row's `title` is `"Drag to reorder"` (the row `<div>` in
   `LayersTab.tsx`) and `page.getByTitle` matches on **substring**. That string is a locator used
-  verbatim by **seven e2e call sites across five files** — the file-local `layerRows` locator in
-  `e2e/layers.spec.ts`, the `test('a tool shortcut is ignored while a layer name is being edited')`
+  verbatim by **eight e2e call sites across five files** — the file-local `layerRows` locator in
+  `e2e/layers.spec.ts`, which each of that file's two `test()` cases declares for itself and so
+  counts twice, the `test('a tool shortcut is ignored while a layer name is being edited')`
   case in `e2e/keyboard-shortcuts.spec.ts`, the `test('committing a draft adds a text layer to the
 layers panel')`, `test('committed text reaches the canvas as foreground pixels inside the dragged
 rectangle')` and `test('Clear discards the draft without committing a layer')` cases in
@@ -496,7 +497,8 @@ rectangle')` and `test('Clear discards the draft without committing a layer')` c
 > The tally "five e2e specs and three unit tests" — stated in that `PanelGroupProps.title` doc
 > comment and in
 > `HANDOFF.md` §83 — counts **files**, and it is right on that reading. It reads as a count of call
-> sites and is short by two: `getByTitle('Drag to reorder')` has seven call sites across five files.
+> sites and is short by three: `getByTitle('Drag to reorder')` has eight call sites across five
+> files.
 > Anyone auditing this trap should count sites, not files.
 
 ---
@@ -758,7 +760,7 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 | Row testid         | `data-testid="layer-row"` (the row `<div>` in `LayersTab.tsx` — `LayersTab`)                             | the `test('finds layer rows without matching History rows')` case in `e2e/layers-panel.spec.ts`        |
 | List testid        | `data-testid="layers-list"` (the list `<ul>` in `LayersTab.tsx` — `LayersTab`)                           | —                                                                                                      |
 | Name testid        | `data-testid="layer-name"` (the name span in `LayersTab.tsx` — `LayersTab`)                              | one e2e file, through its `LAYER_NAME` constant in `e2e/layers-panel.spec.ts`; no unit file queries it |
-| Row title          | `title="Drag to reorder"` (the row `<div>`'s `title` in `LayersTab.tsx` — `LayersTab`)                   | 7 e2e call sites, 3 unit files, substring-matched — [§7](#7-rename)                                    |
+| Row title          | `title="Drag to reorder"` (the row `<div>`'s `title` in `LayersTab.tsx` — `LayersTab`)                   | 8 e2e call sites, 3 unit files, substring-matched — [§7](#7-rename)                                    |
 | Panel header title | `${title} panel — drag this tab to move it, …` (the header's `title` in `PanelGroup.tsx` — `PanelGroup`) | Deliberately avoids the phrase above (the `PanelGroupProps` `title` doc comment)                       |
 | Panel body id      | `id="panel-body-{id}"` (the rolled-up body's `<div>` in `PanelGroup.tsx` — `PanelGroup`)                 | `aria-controls` must name the element that exists                                                      |
 | Default layer name | `Blank 1`                                                                                                | `openWorkspace` waits for the seeded row **by name** — the row name is a test contract                 |
@@ -823,7 +825,7 @@ A requirement is not done until a test fails without the change. For this panel 
   `history-replay` test proving the property reverts, and a `history-adapter` test proving the
   durable entry derives. The third is the one that gets skipped.
 - Any new **row locator** needs the e2e audit first: `rg 'getByTitle|getByTestId' e2e/` and count
-  what resolves to the row. A renamed `title` breaks all **ten** of them — the 7 e2e call sites
+  what resolves to the row. A renamed `title` breaks all **eleven** of them — the 8 e2e call sites
   and 3 unit files in [§7](#7-rename) — silently.
 - Any **history count** claim needs an e2e that counts History rows, not a unit test — the unit test
   sees one dispatch, the user sees one row per step.

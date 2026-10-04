@@ -243,7 +243,8 @@ and the CI job's bare `npx playwright test` never load the wrapper at all).
 
 Each run writes to `test-results/runs/<run-id>/`, and the wrapper prints that
 directory before the suite starts. `test-results/` is gitignored wholesale, and
-`npm run test:e2e:clean` removes it. A bare `npx playwright test` (or
+`npm run test:e2e:clean` clears the run directories under it plus `playwright-report/`, while
+deliberately keeping `test-results/results.json`. A bare `npx playwright test` (or
 `npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
 — that is the same as CI, where the JSON reporter's output is collected as an
 artifact, and it is why CI calls Playwright directly. A bare run still starts its
