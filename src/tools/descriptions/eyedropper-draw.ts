@@ -1,6 +1,6 @@
 import type { ToolDescription } from './types.ts';
 
-export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescription> = {
+export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw' | 'ruler', ToolDescription> = {
   eyedropper: {
     photoshopName: 'Eyedropper Tool',
     summary:
@@ -34,7 +34,8 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       { keys: 'I', action: 'Selects the Eyedropper, or temporarily switches to it while held.' },
       {
         keys: 'Shift+I',
-        action: 'Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count.',
+        action:
+          'Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count. The app cycles the two of the five it has, the Eyedropper and the Ruler.',
       },
     ],
     implementation: 'partial',
@@ -50,7 +51,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       'toolbar-mapping.ts:64',
     ],
     appNotes:
-      'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:226`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:334` and `:480`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:475` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all.',
+      'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:226`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits one of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. `Shift+I` now cycles the tile, which is the last of the divergences this record used to carry and the only one that was ever about the app rather than about Photoshop: `measurementGroup` in `AppKeyboardShortcuts.tsx` holds the two tools this app has in Adobe’s `I` family, with a `shift: true` twin beside the plain registration, and it replaced a pair of identical `i` registrations of which the second had been dead code on `useKeyboardEvents`’ last-registered-wins. Three of the five tools Photoshop cycles to are still absent — Color Sampler, Note and Count — and they are absent from the cycle rather than listed in it, because a name the app cannot select would make `Shift+I` land on the inert surface. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html',
@@ -153,6 +154,108 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       'https://www.thedigitalprocess.com/selecting-color-in-photoshop/',
       'https://clippingpathstudio.com/photoshop-toolbar/',
       'https://offshoreclipping.com/blog/photoshop-cc-toolbar-tools/',
+    ],
+  },
+  ruler: {
+    photoshopName: 'Ruler Tool',
+    summary:
+      'Measures a distance on the canvas: drag a nonprinting line and the options bar reports X, Y, W, H, the angle and the length, with Shift snapping to 45 degrees.',
+    purpose:
+      'The Ruler answers a question about the image that no other tool answers: how far apart two things are. You drag a line from one point to another and the measurement appears in the options bar and the Info panel — the starting location, the horizontal and vertical distances traveled, the angle relative to the axis, and the total length traveled. The line is a nonprinting overlay: it measures the document and is never part of it, so it creates no history state, cannot be undone, and disappears when you drag it out of the image or clear it. Holding Shift constrains the line to 45-degree increments, which is how a straight edge or a repeated offset is laid out rather than eyeballed. Alt-drag (Windows) or Option-drag (Mac OS) from one end of an existing line pulls a second leg out of it, turning the measurement into a protractor: the bar then also reports the second leg as D2 and re-reads the angle as the angle between the two legs. It shares the I key with the Eyedropper, the Color Sampler, the Note tool and the Count tool, and Shift+I cycles between them.',
+    options: [
+      {
+        control: 'X, Y',
+        detail:
+          'The starting location of the measurement, which is where the drag began rather than either end of it. The app reads the pointer-down point directly, so a drag that ends up and to the left of where it started reports the start it was given.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:42',
+      },
+      {
+        control: 'W, H',
+        detail:
+          'The horizontal and vertical distances traveled from the x and y axes. Both are magnitudes in the app, so a drag up and to the left reports the same W and H as the drag down and to the right; Adobe prints them as unsigned distances too.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:44',
+      },
+      {
+        control: 'A',
+        detail:
+          'The angle measured relative to the axis, in degrees. It is the one readout Adobe exempts from the document unit: "All measurements except the angle are calculated in the unit of measure currently set in the Units & Rulers preference dialog box." With a protractor present the bar re-reads it as the angle between the two legs, which is Adobe\'s own reuse of the same letter.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:46',
+      },
+      {
+        control: 'D1',
+        detail:
+          'The total length traveled. The app reports it in document pixels, which is the unit available while the app has no Units & Rulers preference; a measurement scale would rescale this number and not the geometry.',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:47',
+      },
+      {
+        control: 'D2',
+        detail:
+          'The second leg of a protractor, and the only readout that appears and disappears with a gesture: it is present once an Alt/Option-drag has pulled a leg out of an existing line and absent before that, rather than reported as zero.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:50',
+      },
+      {
+        control: 'Clear',
+        detail:
+          'Removes the measuring line, which Adobe describes as one of two ways to remove it: "To remove the line, drag it outside the image area or press the Clear button". The app implements both, and the button is greyed while there is no line because there is nothing for it to remove.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:64',
+      },
+      {
+        control: 'Use Measurement Scale',
+        detail:
+          'A checkbox Adobe\'s Ruler page does not document and this app does not render. The measurement scale itself is an Image > Analysis menu command — "Select Image > Analysis > Set Measurement Scale > Custom", where the Pixel Length and Logical Length are typed — and the app has no Analysis submenu, so the scale does not exist to be switched on. Recorded rather than omitted so the gap is visible.',
+        status: 'missing',
+      },
+    ],
+    modifiers: [
+      {
+        keys: 'Shift',
+        action:
+          'Constrains the measuring line to 45-degree increments — "Hold down the Shift key to constrain the tool to 45° increments" — which rotates the drag onto the nearest multiple while keeping its length and its direction of travel.',
+      },
+      {
+        keys: 'Alt',
+        action:
+          'Pulls a second leg out of an existing measuring line and turns the measurement into a protractor: "To create a protractor from an existing measuring line, Alt-drag (Windows) or Option-drag (Mac OS) at an angle from one end of the measuring line". The drag has to start within eight pixels of one end of the line, which is the app\'s tolerance and not Adobe\'s: Adobe states the gesture and not the radius, and without one every Alt-drag anywhere on the canvas would be a protractor.',
+      },
+    ],
+    shortcuts: [
+      {
+        keys: 'I',
+        action: 'Selects the Ruler, or the Eyedropper when that is already the selected tool of this tile.',
+      },
+      {
+        keys: 'Shift+I',
+        action:
+          'Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count. The app cycles the two it has and leaves the other three out of the cycle rather than landing on tools that do not exist.',
+      },
+    ],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/components/Main/RulerToolArea.tsx:203',
+      'src/components/Main/RulerToolArea.tsx:237',
+      'src/components/Main/RulerToolArea.tsx:246',
+      'src/components/Main/RulerToolArea.tsx:118',
+      'src/components/ToolbarsRight/Ruler/Ruler.tsx:31',
+      'src/tools/ruler.ts:120',
+      'src/tools/ruler.ts:77',
+      'src/tools/ruler-measurement-store.ts:44',
+      'src/tools/toolProcessors.ts:103',
+      'src/tools/toolsMap.ts:153',
+      'toolbar-mapping.ts:79',
+    ],
+    appNotes:
+      'The tool is implemented as a pixel-free tool, and that classification is the reason its history behaviour is not a bug. Adobe calls the measuring line a nonprinting line and gives its removals as dragging it out of the image and pressing Clear, neither of which is an undo, so there is no history state to record and no durable operation to replay: the tool has no entry in `toolProcessors.ts` at all and is declared in `PIXEL_FREE_TOOLS` beside the Eyedropper, whose pixel-free status is established rather than assumed. Adobe never states the history rule outright for this tool, so the app-side answer is `HANDOFF.md` §74 naming the Ruler one of the measurement-band tools that commit no pixels and need no durable operation. Four behaviors diverge. The protractor has one gesture of Adobe\'s two: the Alt/Option-drag is implemented and the double-click half — "or double-click the line and drag" — is not, because Adobe does not say which end of the line the double-clicked leg pivots on and a second gesture that guessed would be worse than the first alone. The measurement scale is missing, as its own control above records, and it is missing with its `Image > Analysis` menu rather than as a checkbox without one. There is no Info panel, so the options bar is the only place the readouts exist; Adobe names both. And the endpoint tolerance for the protractor is eight document pixels, an app decision stated in `src/tools/ruler.ts` rather than presented as Adobe\'s, because a gesture with no radius at all would make every Alt-drag a protractor and leave no way to start a new measurement. What is implemented is the whole of the drag, both modifiers Adobe documents, both removals, and all seven readouts. The line survives a tool switch, which is Adobe\'s own sentence rather than an app convenience — "If your document has an existing measuring line, selecting the Ruler tool causes it to be displayed" — so it lives in a module store rather than in the tool area, and it is dropped when the document frame size changes, which is the cheapest available signal that the document under the line is a different one and also covers a crop, whose origin has moved underneath the line. The angle convention is the screen one: 0 degrees along positive x and increasing clockwise, because y grows downward on the overlay and that is how a protractor on the screen reads.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/using/positioning-ruler-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html',
+      'https://helpx.adobe.com/photoshop/using/default-keyboard-shortcuts.html',
+      'https://helpx.adobe.com/photoshop/using/viewing-images.html',
     ],
   },
 };

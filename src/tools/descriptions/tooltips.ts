@@ -227,6 +227,11 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'This app’s own freehand stroke tool, not a Photoshop tool: a drag becomes a new layer of ink, drawn with a pen, a dashed pen or a spray.',
     implementation: 'implemented',
   },
+  ruler: {
+    summary:
+      'Measures a distance on the canvas: drag a nonprinting line and the options bar reports X, Y, W, H, the angle and the length, with Shift snapping to 45 degrees.',
+    implementation: 'partial',
+  },
 };
 
 /**

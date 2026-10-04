@@ -528,6 +528,19 @@ export type DurableDocumentRefreeze = Readonly<{
 }>;
 
 /**
+ * The next history array for a base that already holds the entries it retains: an
+ * entry is carried across when it is, BY IDENTITY, an object `retained` holds, so a
+ * rebuilt, reordered, edited or truncated entry always takes the copy path.
+ */
+function freezeDurableHistory(
+  retained: readonly DurableHistoryEntry[],
+  next: readonly DurableHistoryEntry[]
+): readonly DurableHistoryEntry[] {
+  const kept = new Set(retained);
+  return Object.freeze(next.map((entry) => (kept.has(entry) ? entry : freezeDurableHistoryEntry(entry))));
+}
+
+/**
  * `freezeDurableDocument` for the writes that change almost nothing: moving the
  * cursor, and appending to the tip of a timeline whose retained entries are already
  * frozen copies. It returns what the full freeze would return, and costs one shallow
@@ -563,19 +576,6 @@ export type DurableDocumentRefreeze = Readonly<{
  * to re-copy and re-freeze every entry and every baseline layer in order to read one
  * field differently, which is quadratic work over a long edit session.
  */
-/**
- * The next history array for a base that already holds the entries it retains: an
- * entry is carried across when it is, BY IDENTITY, an object `retained` holds, so a
- * rebuilt, reordered, edited or truncated entry always takes the copy path.
- */
-function freezeDurableHistory(
-  retained: readonly DurableHistoryEntry[],
-  next: readonly DurableHistoryEntry[]
-): readonly DurableHistoryEntry[] {
-  const kept = new Set(retained);
-  return Object.freeze(next.map((entry) => (kept.has(entry) ? entry : freezeDurableHistoryEntry(entry))));
-}
-
 export function refreezeDurableDocument(base: DurableDocument, changes: DurableDocumentRefreeze): DurableDocument {
   const history = changes.history ?? base.history;
   const cursor = changes.cursor ?? base.cursor;

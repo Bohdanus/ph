@@ -25,6 +25,7 @@ import {
   type ColorReplacementToolArgs,
 } from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
+import type { RulerToolArgs } from './ruler.ts';
 import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from './quickSelection.ts';
 import type { GradientToolArgs } from './gradient.ts';
@@ -241,6 +242,11 @@ export const defaultSettings = {
     sampleAllLayers: false,
     toolName: 'eyedropper',
   } satisfies EyedropperToolArgs,
+  // The Ruler has no settings to seed: every number it reports belongs to the gesture that produced
+  // it rather than to a choice the user made, so the args object is the tool's name and nothing
+  // else. The measuring line itself is deliberately not here — it is view state, not document state
+  // (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
+  ruler: { toolName: 'ruler' } satisfies RulerToolArgs,
   'elliptical-selection': {
     style: 'normal',
     fixedRatio: 1,

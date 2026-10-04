@@ -16,6 +16,7 @@ const toolArgs = vi.hoisted(() => ({
   text: 'Hello',
   fontSize: 64,
   lineHeight: 1.1,
+  kind: 'point' as 'point' | 'paragraph',
   // A real `RectXYSorted`. This used to be a `Pos` (`{x, y, width, height}`), which made
   // `rect.x1` undefined, every rect `calculateNewRect` recomputed came back all-`NaN`,
   // and `expect.any(Number)` happily matched the `NaN` — so the recompute assertions in
@@ -90,6 +91,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
     text: 'Hello',
     fontSize: 64,
     lineHeight: 1.1,
+    kind: 'point',
     rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
     bold: false,
     italic: false,
@@ -665,7 +667,7 @@ describe('Text toolbar', () => {
     });
 
     it('keeps the align choice when the family changes', () => {
-      resetToolArgs({ align: 'right' });
+      resetToolArgs({ kind: 'paragraph', align: 'right' });
       renderWithProvider(<Text />);
 
       fireEvent.click(screen.getByLabelText('Font'));
@@ -1013,6 +1015,7 @@ describe('Text toolbar', () => {
       // and the fixture this renders already carries one, which is why Commit and Cancel are stops
       // here at all. A `disabled` control is not focusable, so presenting no draft would drop both
       // ends of the walk rather than reorder it.
+      resetToolArgs({ kind: 'paragraph' });
       renderWithProvider(<Text />);
       const user = userEvent.setup();
 
@@ -1144,6 +1147,7 @@ describe('Text toolbar', () => {
     });
 
     it('changes alignment through the native select and reports it to the store', async () => {
+      resetToolArgs({ kind: 'paragraph' });
       renderWithProvider(<Text />);
       const user = userEvent.setup();
       const alignSelect = screen.getByLabelText('Align') as HTMLSelectElement;
@@ -1161,6 +1165,15 @@ describe('Text toolbar', () => {
       await user.selectOptions(alignSelect, 'right');
       expect(lastToolArgs().align).toBe('right');
       expect(alignSelect).toHaveValue('left');
+    });
+
+    it('disables alignment for point type and explains why', () => {
+      renderWithProvider(<Text />);
+
+      const alignSelect = screen.getByLabelText('Align');
+      expect(alignSelect).toBeDisabled();
+      expect(alignSelect).toHaveAccessibleDescription('Alignment is available for paragraph text only');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
     });
 
     it('allows enter/space to toggle bold and italic buttons', async () => {

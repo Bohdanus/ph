@@ -1021,8 +1021,12 @@ tool goes, and the engine should be renamed to stop pretending to be one.
 Row and Single Column Marquee (SHIPPED 2026-10-01, `src/tools/singleRowColumnMarquee.ts`; the
 phrase "two lines of geometry reusing `rectangularSelection`" held up), Sponge, Red
 Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
-is the measurement band — Color Sampler, Ruler, Note, Count — because these are `PIXEL_FREE_TOOLS`
-like the Eyedropper, committing no pixels and needing no durable operation.
+is the measurement band — Color Sampler, Note, Count — because these are `PIXEL_FREE_TOOLS` like
+the Eyedropper and the Ruler, committing no pixels and needing no durable operation. **The Ruler is
+built**: `src/tools/ruler.ts` for the arithmetic, `src/components/Main/RulerToolArea.tsx` for the
+gesture and the nonprinting overlay, and `src/components/ToolbarsRight/Ruler/Ruler.tsx` for the
+readout bar. What it still lacks is the `Image ▸ Analysis` measurement scale, which is a menu
+command rather than a tool and belongs with the menu gaps rather than here.
 
 **Largest, and they need a primitive the app does not have:** Object Selection, Spot Healing,
 Content-Aware Move, Remove (a generative backend), History Brush and Art History Brush (a read-out

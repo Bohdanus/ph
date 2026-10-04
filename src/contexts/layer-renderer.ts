@@ -187,7 +187,8 @@ function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: S
 export function drawLayersToCanvas(
   canvas: HTMLCanvasElement,
   layers: readonly Layer[],
-  documentFrame: DocumentFrame
+  documentFrame: DocumentFrame,
+  silentMissingLayerIds?: ReadonlySet<string>
 ): boolean {
   if (typeof document === 'undefined') return true;
   const size = documentFrameSize(documentFrame);
@@ -204,7 +205,11 @@ export function drawLayersToCanvas(
       // the other layers. The staging canvas is discarded by the return below, so the visible
       // canvas keeps the presentation it already had.
       try {
-        if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+        if (!drawLayer(stagingContext, layer, documentFrame)) {
+          if (!silentMissingLayerIds?.has(layer.id)) {
+            console.error('skipped layer without bitmap', layer.id);
+          }
+        }
       } catch (error) {
         if (error instanceof FilterArgumentUnrenderableError) {
           console.error('skipped layer whose filter arguments cannot be rendered', layer.id, error);

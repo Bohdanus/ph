@@ -990,16 +990,16 @@ describe('AppKeyboardShortcuts tool cycling', () => {
   });
 
   it.each([
-    ['eyedropper', 'I'],
     ['eraser', 'E'],
     ['clone-stamp', 'S'],
   ] as const)('selects %s with a bare %s and with Shift+%s', (toolName, key) => {
-    // The three single-tool tiles get one plain registration each and no `shift: true` twin.
+    // The two single-tool tiles get one plain registration each and no `shift: true` twin.
     // `matchesShortcut` only compares a modifier the registration actually declares
     // (`src/hooks/useKeyboardEvents.tsx:70`), so these keys are unshifted-only by DEFAULT
     // rather than by an explicit `shift: false` — a shifted press falls through to the same
     // registration and selects the tool once, which is the whole reason a twin would be
-    // redundant rather than load-bearing here.
+    // redundant rather than load-bearing here. `i` was one of the three until the Ruler joined
+    // the tile and gave the key something to cycle; its own cases are below.
     storeState.toolName = 'text';
     renderShortcuts();
 
@@ -1007,6 +1007,39 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     press(key, { shiftKey: true });
 
     expect(goToTool.mock.calls).toEqual([[toolName], [toolName]]);
+  });
+
+  it.each([
+    ['eyedropper', 'ruler'],
+    ['ruler', 'eyedropper'],
+  ] as const)('cycles Shift+I from %s to %s', (from, to) => {
+    // Adobe's `I` family: "Eyedropper, Color Sampler, Ruler, Note, and Count Tool I". The app has
+    // two of the five, and the cycle covers exactly those two — a name the app cannot select would
+    // make Shift+I land on the inert tool area.
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('i', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it('cycles Shift+I from another tool to the tile anchor, the eyedropper', () => {
+    storeState.toolName = 'text';
+    renderShortcuts();
+
+    press('i', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('ruler');
+  });
+
+  it('keeps the current member of the I tile on a bare I', () => {
+    storeState.toolName = 'ruler';
+    renderShortcuts();
+
+    press('i');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('ruler');
   });
 
   it('falls back to the rectangular selection for a bare M from another tool', () => {

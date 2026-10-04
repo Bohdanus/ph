@@ -15,12 +15,65 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import type { ToolName } from '../../contexts/tool-types.ts';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
+import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import { useDockDrag } from '../../hooks/useDockDrag.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
+
+import './SidebarLeft.scss';
+
+/**
+ * THE RULE: a tool is unimplemented exactly when its entry in `toolProcessors`
+ * (`src/tools/toolProcessors.ts`) carries `commit: 'unimplemented'`. That registry is the
+ * source of truth, so the set is DERIVED from it here rather than written out, and that is
+ * the whole point: a hand-maintained list is a second answer to a question the registry
+ * already answers, and it goes stale the moment a tool is implemented and nobody edits this
+ * file. A tile greyed out on the strength of a list, over a tool that now commits pixels, is
+ * a lie the rail cannot take back — and nothing in the app would report it, because the dim
+ * is a CSS class.
+ *
+ * There is a second, INDEPENDENT signal for the same fact: `implementation: 'placeholder'`
+ * in the description records under `src/tools/descriptions/`, which `ToolTooltip` already
+ * reads and prints as its status line. The registry is the one used here because it is the
+ * narrower claim — dimming a tile is a statement about BEHAVIOUR, where `placeholder` is a
+ * documentation status a tool could carry while committing pixels. Today both sets are the
+ * same seven names, the Pen family and Custom Shape, and they come from different files, so
+ * neither can quietly become the only one.
+ *
+ * `Object.keys` over the registry rather than a typed union, and `findToolProcessor` for the
+ * lookup, because it is the registry's own single lookup point: the pixel-free `eyedropper`
+ * is then absent from the set because no entry exists for it, rather than because an
+ * exception here has to name it.
+ */
+const UNIMPLEMENTED_TOOL_NAMES: ReadonlySet<ToolName> = new Set(
+  (Object.keys(toolProcessors) as ToolName[]).filter(
+    (toolName) => findToolProcessor(toolName)?.commit === 'unimplemented'
+  )
+);
+
+/** Whether the rail dims this tool. The rule and its source are {@link UNIMPLEMENTED_TOOL_NAMES}. */
+const isUnimplementedTool = (toolName: ToolName): boolean => UNIMPLEMENTED_TOOL_NAMES.has(toolName);
+
+/**
+ * The class a tile and a flyout item wear for a tool that does not work yet.
+ *
+ * The treatment itself — the `filter` and the two numbers in it — lives in
+ * `SidebarLeft.scss`, because a filter that long does not belong in a `className`
+ * expression, and because a theme decision belongs in the stylesheet where the theme is.
+ *
+ * VISUAL ONLY, and that is load-bearing rather than cautious. There is no `disabled`, no
+ * `aria-disabled`, no `pointer-events: none` and no early return anywhere near this class,
+ * because selecting a placeholder tool is what opens its placeholder options bar — the
+ * existing documented behaviour of the roster — and a dim that stopped responding would take
+ * that away while looking like a more polite version of the same button. The tooltip stays
+ * undimmed as well: it is portalled to `document.body` by `AnchoredOverlay`, so the reason
+ * the tile is dimmed is the one thing about it still drawn at full strength.
+ */
+const UNIMPLEMENTED_TOOL_CLASS = 'tool-unimplemented';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -627,6 +680,30 @@ const SidebarLeft = () => {
     const tileLabel = identity?.label ?? primaryTool.label;
     const isOpen = openGroup === groupIndex;
 
+    /**
+     * The tool whose state decides whether this tile is dimmed, which is `group[0]` and NOT
+     * the promoted `primaryTool` above.
+     *
+     * A flyout group's tile wears the identity of its FIRST entry — that is the contract the
+     * comment above this function states, and the reason the Pen tile's icon is the Pen's — so
+     * that is the tool a user reads the tile as. Promotion changes which nested tool the tile
+     * currently selects, and the tile must not take its greyed-out state from a pick: the
+     * three-dots tile's whole `group` is an arbitrary set of whichever tools did not fit, so a
+     * dim there would flip as the window resized and would claim the More Tools button itself
+     * does not work. Which is also why `identity` is the signal to leave the tile alone
+     * entirely — that tile stands for no tool at all.
+     *
+     * The `figure` is resolved through `descriptionKeyFor` because the five shape entries all
+     * carry the name `shape` and differ only by figure, and this is the SAME resolution
+     * `ToolTooltip` applies one line below — so a tile is judged by the tool its tooltip
+     * describes, and cannot be dimmed for one tool while describing another. The Shape tile's
+     * first entry is the Rectangle, which commits pixels, so it is not dimmed even though its
+     * flyout carries the unimplemented Custom Shape.
+     */
+    const tileTool = identity === undefined ? group[0] : null;
+    const isTileUnimplemented =
+      tileTool !== null && isUnimplementedTool(descriptionKeyFor(tileTool.name, tileTool.figure));
+
     return (
       <li
         className="group relative"
@@ -656,7 +733,9 @@ const SidebarLeft = () => {
             // (both above) and must not also claim to be a pressed toggle for a tool the user
             // cannot see.
             aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
-            className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
+            className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
+              isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
+            }`}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
@@ -911,6 +990,15 @@ const SidebarLeft = () => {
               {group.map((tool: ToolbarTool) => {
                 const FlyoutIcon = getToolIcon(tool);
                 const isSelected = isToolSelected(tool);
+                /**
+                 * The dim is per ITEM, not per group: a flyout is the one place a user
+                 * compares tools side by side, so this is where "which of these work" has to be
+                 * answerable without opening anything. The five shape figures and the Custom
+                 * Shape share one group and one tile, and they do not share an answer — the
+                 * figure is resolved exactly as a tile's is, so the Rectangle Tool row is
+                 * undimmed and the Custom Shape Tool row beside it is not.
+                 */
+                const isUnimplemented = isUnimplementedTool(descriptionKeyFor(tool.name, tool.figure));
 
                 return (
                   <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
@@ -950,7 +1038,7 @@ const SidebarLeft = () => {
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                      }`}
+                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}`}
                       onClick={() => {
                         // The three-dots tile is excluded: its identity is the tile's, so a
                         // pick must not promote anything to be its icon. Every other tile
@@ -966,6 +1054,21 @@ const SidebarLeft = () => {
                         closeFlyout();
                       }}
                       role="menuitemradio"
+                      /**
+                       * The reason, on the one control that has no tooltip to carry it. A
+                       * rail tile gets the line out of `ToolTooltip`, which reads the
+                       * description record; a flyout row is a bare `<button>` with no overlay
+                       * at all, so a native `title` is the whole of the component's existing
+                       * convention for saying something about a control — the colour swatches
+                       * and both rail-header buttons use it — and it costs one attribute.
+                       *
+                       * `aria-label` is left as the bare tool name, deliberately. The
+                       * accessible name is the tool's name in both cases, and lengthening it
+                       * would change what every `getByRole('menuitemradio', { name })` locator
+                       * in the suite and in `e2e/` matches; a `title` is an addition to the
+                       * description, not a rewrite of the name.
+                       */
+                      title={isUnimplemented ? `${tool.label} — not implemented yet` : undefined}
                       type="button"
                       data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
                     >
