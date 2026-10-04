@@ -34,11 +34,6 @@ const h = vi.hoisted(() => ({
   // whether the gesture may change what KIND of box the draft is.
   currentEdgeRef: { current: null as string | null },
   useRectProps: { current: null as UseRectProps | null },
-  textarea: { current: null as HTMLTextAreaElement | null },
-  // How many times the store mock's `textareaRef` GETTER ran. The component used to read it and
-  // focus what it held; it no longer touches it, and this counter is what turns "no longer" into an
-  // assertion instead of an absence nobody checked.
-  textareaRefReads: 0,
   containerRef: { current: document.createElement('div') },
   toolOverlayRef: { current: document.createElement('canvas') },
 }));
@@ -63,10 +58,6 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
     {
       get containerRef() {
         return h.containerRef;
-      },
-      get textareaRef() {
-        h.textareaRefReads += 1;
-        return h.textarea;
       },
       get toolOverlayRef() {
         return h.toolOverlayRef;
@@ -182,8 +173,6 @@ describe('TextToolArea', () => {
     h.pointerUp.mockReset();
     h.currentEdgeRef.current = null;
     h.useRectProps.current = null;
-    h.textarea = { current: null };
-    h.textareaRefReads = 0;
     h.color = '#000000';
     toolArgs = makeTextArgs();
     vi.mocked(calculateNewRect).mockReset();
@@ -193,31 +182,19 @@ describe('TextToolArea', () => {
     vi.mocked(drawOverflowIndicator).mockReset();
   });
 
-  it('does not crash when the textarea ref is not attached yet', () => {
+  it('renders without the removed options-bar textarea', () => {
     expect(() => renderArea()).not.toThrow();
   });
 
-  /**
-   * The replacement for the pin this used to be. There is no options-bar textarea to focus: typing
-   * goes into `TextEditOverlay`, a transparent DOM element laid over the same box, and it owns the
-   * caret and the focus. What replaced the focus effect is the absence — so that is the assertion,
-   * and it is made on the store's own getter, because a focus path reached through a different
-   * spelling would still have to read the ref to get at a textarea.
-   */
-  it('never reads the store textareaRef, and focuses nothing when the text tool becomes active', () => {
+  it('does not render an options-bar textarea when the text tool becomes active', () => {
     toolArgs = makeTextArgs({ toolName: 'draw' });
     const { container, rerender } = renderArea();
-    const textarea = document.createElement('textarea');
-    const focus = vi.spyOn(textarea, 'focus');
-    h.textarea.current = textarea;
 
     act(() => {
       toolArgs = makeTextArgs({ toolName: 'text' });
       rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
     });
 
-    expect(h.textareaRefReads).toBe(0);
-    expect(focus).not.toHaveBeenCalled();
     expect(container.querySelector('textarea')).toBeNull();
   });
 

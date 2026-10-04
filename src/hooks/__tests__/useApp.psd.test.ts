@@ -12,7 +12,6 @@ function createMockStoreData(): StoreData {
     toolOverlayRef: { current: null },
     rectOverlayRef: { current: null },
     containerRef: { current: null },
-    textareaRef: { current: null },
     currentArgs: {
       current: { toolName: 'draw', alpha: 0.9, lineWidth: 10, color: '#000000', points: [], penType: 'pen' },
     } as { current: ToolArgs },

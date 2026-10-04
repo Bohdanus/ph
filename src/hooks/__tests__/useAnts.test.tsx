@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Layer } from '../../contexts/layer-types.ts';
-import { useMarchingAnts } from '../useAnts.ts';
+import { DASH_LENGTH, SPEED, useMarchingAnts } from '../useAnts.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
 function createRafMocks() {
@@ -93,9 +93,11 @@ describe('useMarchingAnts', () => {
     frame();
     frame();
 
-    // SPEED 1 CSS px per frame is 2 document px at scale 0.5, and the black/white half-shift is
-    // the whole dash (12), not the undivided 6.
-    expect(offsets).toEqual([0, 12, -2, 10]);
+    // `SPEED` is a CSS px per frame, so at scale 0.5 it is twice as many document px; the
+    // black/white half-shift is the whole dash (12), not the undivided 6. Written against the
+    // constant rather than its value on purpose: a rate change must not be a number here that
+    // silently stops being the rate.
+    expect(offsets).toEqual([0, 12, -SPEED / 0.5, 12 - SPEED / 0.5]);
   });
 
   it('pads the erase by the scaled line width, so the clear covers what was stroked', () => {
@@ -139,7 +141,7 @@ describe('useMarchingAnts', () => {
     expect(path.closePath).toHaveBeenCalledOnce();
     expect(containerRef.current.classList.contains('cursor-grab')).toBe(false);
     frame();
-    expect(offsets).toEqual([0, 6, -1, 5]);
+    expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, 32, 32);
     expect(ctx.save).toHaveBeenCalled();
     expect(ctx.restore).toHaveBeenCalled();

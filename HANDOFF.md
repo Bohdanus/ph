@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 200 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 191-192, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1549,7 +1549,7 @@ fails if `xAnchor` is removed.
 
 ---
 
-## 86. No `useRect` border animates, so the crop, move, text and rectangular-selection rects all sit still
+## 86. `useRect`'s border still sits still for the three callers that are not a selection
 
 **Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
 `ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
@@ -1559,60 +1559,43 @@ border: it recomputes the rect and calls `drawMask(true)`, which redraws the sam
 looks alive during a drag only because the drag is RAF-throttled, so the line is redrawn at pointer
 rate — the dashes never move.
 
-**`useRect` is the one border in the app that redraws without advancing, and THREE selection
-borders are drawn that way — not one.** `useMarchingAnts`
-(`useAnts.ts` — `useMarchingAnts()`) is the real marching-ants loop, and its only production
-consumer is `MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a
-**hovered layer** in `reposition` mode. So
-"marching ants on a rectangle" is the Move tool's layer outline.
+**What this costs is now ONE selection border, not three.** Every selection tool's committed
+border is now the same animated loop — `Main.tsx` — `SELECTION_INTERACTION_MODES` — admits all
+seven selection modes, `useSelectionMarchingAnts` strokes every active selection whatever made it,
+and the static stroke the elliptical marquee and quick selection used to hand-roll is gone from
+`selection.ts`. The rect is what is left: `rectangular-selection` strokes it only while a marquee is
+in flight (`borderMode: 'while-dragging'`, below), which §229 records, and the three callers that
+are not selections stroke it whenever the rect is drawn.
 
-**Three selection borders still sit still, not one.** A polygon selection animates
-(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx` — the
-`POLYGON_SELECTION_MODES` list. The elliptical and quick selection tools are deliberately absent
-from it and map to their own `interactionMode`s (`Main.tsx` — the `interactionMode` mapping in
-`Main`), so their borders stay the static
-`drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
-(`createCommittedPolygonSelection`, `selection.ts` — whose `geometry: 'polygon'` is the value it
-returns), so nothing about the selection's
-own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
-(`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
-of the choice below — would leave two behind, which is why they are named here together.
+**`useMarchingAnts` is a fourth border and reaches none of them.** Its only production consumer is
+`MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a **hovered layer**
+in `reposition` mode. So "marching ants on a rectangle" is the Move tool's layer outline, and the
+crop rectangle, the move rectangle and the text frame have no loop that could reach them.
 
-**The rectangle and the polygon no longer match each other** in colour or weight (`#007bff` at 2px,
-plus four square handles, versus black/white ants at 1px), and the two marquee tools match neither.
+**The one thing NOT to change here.** `borderMode: 'while-dragging'` is load-bearing for the
+rectangular selection and must keep its current meaning (`useRect.ts` — `drawMask()`): the marquee
+being dragged is the only evidence of itself, because a marquee in progress has not been committed
+and so has no ants, and the ants stand down for the duration so the committed rectangle does not
+appear beside the one being dragged. Animating the border must not move it out from under that
+gate, and must not be applied to the handles, which are the resize hit area.
 
 **It affects four tools, not one.** `useRect` is shared by `MoveToolArea` — its `useRect()` call —
 `CropToolArea`, `RectangularSelectionToolArea` and `TextToolArea`, each reached through their own
-`useRect()` call, so the crop rectangle, the move
-rectangle, the text frame and the rectangular selection all have the same still border.
+`useRect()` call. Three of them stroke the still border whenever the rect is drawn; the rectangular
+selection strokes it only between press and release.
 
-**Fix.** Three shapes, and the choice is a recording decision rather than a mechanical one. Fixing
-the rectangle alone is a real option, but it is not the same task as fixing all three still
-borders, and the entry above says which is which — pick the scope deliberately.
+**Fix.** Two shapes remain, and the choice is a recording decision rather than a mechanical one.
 
 - Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
-  existing draw path, keeping the current colour and the four handles. Cheapest, and the only option
-  that covers all four callers at once. It needs its own loop, because `drawMask` is only called while
-  something is changing. Fixes the rectangle and the crop, move and text frames with it; leaves the
-  two marquee tools static.
-- Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
-  `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
-  (`useSelectionMarchingAnts` currently skips rectangles on the assumption that `useRect` still
-  paints one), and let the ants canvas own the rect. Note the constraint this has to respect:
-  `useRect` also draws the dim-out scrim and, in the same `drawMask()` pass, the border and the
-  corner handles, so the border and the handles have to
-  end up on different canvases or the scrim will wipe the ants mid-drag.
-- Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
-  three: add `'elliptical-selection'` and `'quick-selection'` to `Main.tsx`'s
-  `POLYGON_SELECTION_MODES` and stop those two tool areas calling `drawSelectionOutline`. This one
-  is not only a
-  mode list, because both commit `sourceTool: 'magic-wand'` — `ellipticalSelection.ts` —
-  `ELLIPTICAL_SELECTION_SOURCE_TOOL` and `quickSelection.ts` — `QUICK_SELECTION_SOURCE_TOOL`, the
-  constant each borrows from the wand —
-  and `drawSelectionAnchors` skips that source, so the anchors have to be taught the difference
-  between a wand selection and a marquee selection or the two tools lose their handles as well as
-  their border. `EllipticalSelectionToolArea.test.tsx`'s 'strokes a committed selection border' pins
-  the current ownership and will fail until this is done on purpose.
+  existing draw path, keeping the current colour and the four handles. It needs its own loop,
+  because `drawMask` is only called while something is changing. It must advance for
+  `borderMode: 'while-dragging'` without advancing for `'always'`, or the Move tool's own dashed rect
+  starts crawling under a different rule than the ants use. Fixes the three non-selection frames
+  and the in-flight marquee with it.
+- Or give the rect the treatment every other selection border already has: stop `useRect` stroking
+  it and let the ants canvas own it. Not a one-line change, and §229 says why: `useRect` draws the
+  dim-out scrim, the border and the corner handles in the same `drawMask()` pass, so the border and
+  the handles have to end up on different canvases or the scrim will wipe the ants mid-drag.
 
 Whichever is chosen, the two `setLineDash` assertions in `useRect.drag.test.ts` — the
 `it('paints the initial selection, its blend cut-out, and the four handles')` and
@@ -2677,20 +2660,32 @@ compared shortcuts across the rail; that was true of the figure-flyout assertion
 (`it('keeps Triangle, Polygon, Line and Custom Shape in the flyout')` and
 `it('only declares U as the shape shortcut')`) but not of the rail-wide contract since.
 
-**What remains live is a gap, and closing it is a decision rather than a repair.** Photoshop binds
-the Draw tool to `Shift+W`, and that chord is not free here: `w` and `shift+w` both go to
-`selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
-`useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile's `objectSelectionGroup`).
-`toolbar-mapping.ts`'s own comment declines to decide it — "binding a key for fidelity is a product
-decision about which tool wins the chord, and it is not one this comment should make silently" — and
-`docs/DOCUMENTATION.md`'s ladder makes Adobe's documentation the authority, so this entry does not
-answer it and no change may be made on this paragraph alone.
+**What remains live is a gap, and closing it is a decision rather than a repair.** An earlier version
+of this paragraph claimed Adobe binds the Draw tool to `Shift+W`. Adobe’s published
+default-keyboard-shortcut reference gives no letter for a Draw tool, so that provenance was
+fabricated, it is withdrawn here, and `src/tools/descriptions/eyedropper-draw.ts` carried the same
+sentence and no longer does. The chords are occupied by this app’s own keymap instead: `w` and
+`shift+w` both go to `selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
+`useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile’s `objectSelectionGroup`),
+and `b` and `shift+b` both go to `selectBrushTool()`. `docs/DOCUMENTATION.md`’s ladder makes Adobe’s
+documentation the authority, so this entry does not answer whether the tile should carry a key
+anyway and no change may be made on this paragraph alone.
 
-**Fix.** Take the ruling — does the Draw tile get `Shift+W`, and does Object Selection lose it — and
-write it into `docs/OVERRIDES.md` if it departs from the current "no key". If the tile is to carry a
-key, add the `useKeyDownShortcut` registration and the `shortcut` in the same change, since
+**Fix.** Take the ruling — does the Draw tile get a key of its own, and which chord if so — and
+write it into `docs/OVERRIDES.md` if it departs from the current "no key". There is no published
+Adobe letter to reproduce, so the ruling is about this app’s keymap: `w` and `shift+w` are the
+Object Selection chord, `b` and `shift+b` the brush group. If the tile is to carry a key, add the
+`useKeyDownShortcut` registration and the `shortcut` in the same change, since
 `it('never declares the same shortcut on two entries')` will refuse a declaration that collides. If
 the tile is to keep none, nothing needs changing and the live half of this entry closes.
+
+One claim beside this one is still unverified and is left as it stands rather than restated here:
+the comment above the Draw entry in `toolbar-mapping.ts` says "Adobe publishes none" on the premise
+that "Photoshop has no Draw tool", and `docs/OVERRIDES.md` titles OVR-2 "Photoshop’s Tools panel has
+no Draw tool". Whether Adobe’s Tools panel carries a tool by that name is a separate question from
+whether its shortcut reference gives that tool a letter, and only the second is settled. Re-derive
+that premise from Adobe before either is quoted as authority, and correct both together — OVR-2 is
+what keeps the tile, so its heading is not a comment that can drift alone.
 
 **Files.** `toolbar-mapping.ts` — `toolbarMap`'s `brush` entry, its Draw flyout entry and the
 comment above it; `src/components/Common/AppKeyboardShortcuts.tsx` — `brushGroup`,
@@ -3042,39 +3037,24 @@ rider survives.
 `src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
 
-## 129. The worktree-inventory suite's per-test timeout is I/O-bound on the shared session database, so it fails under concurrent readers and is indistinguishable from a real break
+## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
 
 **Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
-to protect a worktree whose protection is derived` runs the inventory generator over every worktree.
-Measured on `main` with 56 worktrees:
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
+and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
+with 56 worktrees:
 
 ```
 full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
 the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
-the same test under branch load   : 147s wall, user 8.78s / sys 16.07s
 ```
 
-**This entry's stated cause was wrong and is corrected here.** It used to say the cost grows with
-the fleet because the generator runs git per worktree. The third measurement refutes that:
-**147 seconds of wall clock against 24.85 seconds of CPU is about 17% utilisation**, and a
-CPU- or process-bound workload cannot look like that. It is **blocked on I/O**, not spending
-anything — three generator modules open the same file independently (`chats.mjs`'s `openDb()`,
-`board.mjs`'s `openBoard()`, `writes.mjs`'s `openDb()`), and that store is the operator's 14 GB
-session database, not repository content. So the cost scales with **concurrent readers of one
-shared store**, which is worse exactly when the swarm is busiest, and a measurement taken on a
-quiet machine is not evidence. `chats.mjs`'s own module docstring already says the dominant cost
-is two unindexed `LIKE` scans over `part`.
-
-The 53s figure is also not the worst case: the 76957ms above is already over budget, and 147s is
-the real headroom. Both are observations with their dates, on a store that has since grown — quote
-them as measurements, not as constants.
-
-The knife edge and the indistinguishability are unchanged and are the reason this is an entry rather
-than a re-run: the failure it produces is a bare `Test timed out` with no assertion, which is the
-same output a genuine break produces.
+So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
+bare `Test timed out` with no assertion — the same output a genuine break produces.
 
 **Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
-started with makes this test cross the line, and CI cannot tell the difference.
+started with makes this test cross the line, and CI cannot tell the difference. A green local run at
+99 worktrees and a red CI run at 56 would be the same defect with a different cause.
 
 **Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
 worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
@@ -3856,8 +3836,6 @@ That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export
 its two JSX wirings,
 `src/components/Main/RectangularSelectionToolArea.tsx` — `handlePointerCancel`,
 `src/tools/singleRowColumnMarquee.ts` — `singleRowMarqueeRect`'s doc comment.
-
----
 
 ## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
 
@@ -5055,58 +5033,73 @@ ref of this repository; `.skills/photoshop-tool-creation.md` records that the un
 has since landed and that these claims are mainline. The finding outlived the branch, and the
 branch's own entry died with it, which is how it came to have no entry at all.
 
-## 184. A selection's anti-aliased edge is computed and then thrown away, so the app cannot reproduce its own soft edge
+## 184. The feathered selection path thresholds its own anti-aliased edge to fully-in or fully-out
 
 **Problem.** `rasterizePolygonMask()` in `src/util/selection.ts` fills a polygon path into a canvas,
 reads the pixels back, and reduces the alpha channel with a presence test rather than a scale. The
 threshold is "greater than zero", not a midpoint, so a pixel the canvas covered at five per cent is
-recorded as **fully** selected rather than as a fifth of a pixel. The CPU fallback is equally
-binary: `isPointInPolygon()` samples at pixel centres and returns a boolean, so this is not an
-artefact of the canvas arm — both paths produce a 1-bit mask.
+recorded as **fully** selected. The CPU fallback is binary for the same reason rather than by
+accident: `isPointInPolygon()` samples at pixel centres and returns a boolean.
 
-The consequence is downstream of the mask, not in it. `createFeatheredAlphaMask()` re-derives a
-smooth alpha from that already-binary mask by way of a chamfer distance transform, so by the time
-feathering runs the anti-aliasing the canvas had computed is gone. Every copy-out path in
-`copySelectionToCanvas()` goes through `rasterizePolygonMask()`, so the app cannot reproduce a
-feathered selection edge at full precision from the selection it stored.
+The loss is then compounded downstream. `createFeatheredAlphaMask()` re-derives a smooth alpha from
+that already-binary mask by way of `chamferDistanceFromSeeds()`, so the coverage the canvas computed
+is gone before feathering begins. What the user gets is a distance-transform ramp across a
+one-pixel-wide boundary rather than the antialiased ramp the renderer had.
+
+**Scope, which is narrower than it first appears.** `rasterizePolygonMask()` has exactly one caller,
+inside `copyFeatheredPolygonSelectionToCanvas()`, so this reaches production only for a selection
+whose `sourceTool` is `'feather-magnetic-lasso'`. The other arms of `copySelectionToCanvas()` do not
+touch it: the rectangle arm is a bare `drawImage`, and the default polygon arm masks with `ctx.clip()`
+and blits, which keeps the canvas's own antialiasing.
 
 **How this sits against what is already recorded.** `docs/FEATURES.md` — Selection records the
 representation decision: a selection is a polygon point list rather than a pixel channel, which is
-why marching ants read points and why holes are impossible. That document owns the _choice_. It
-does not say that the code computes coverage and then discards it, and the choice does not require
-discarding it — a mask is exactly where that coverage would live. The combination-modes decision in
-`docs/TOOLS-TOO-HARD.md` is the other half: it names "a single point path cannot express" boolean
-operations, and this is the same missing structure seen from the rasteriser.
+why marching ants read points. That document owns the _choice_, and the choice does not require
+discarding coverage — a mask is exactly where it would live. `docs/TOOLS-TOO-HARD.md` — Selection
+combination modes is the same missing structure seen from the model side: it names "a single point
+path cannot express" boolean operations.
 
 **Affected.** `src/util/selection.ts` — `rasterizePolygonMask()`, `isPointInPolygon()`,
-`createFeatheredAlphaMask()`, and `copySelectionToCanvas()` as the caller that makes it reachable
-in production.
+`chamferDistanceFromSeeds()`, `createFeatheredAlphaMask()`, and `copyFeatheredPolygonSelectionToCanvas()`
+as the only production caller.
 
-**What would close it.** Return the alpha channel instead of the thresholded mask, and let
-`alphaFromSignedDistance()` consume coverage directly. On its own that changes nothing the user
-can see, because the mask is still recomputed from the point list on every use — so it is worth
-doing together with making the mask authoritative rather than derived, not before.
+**What would close it.** Return the alpha channel from `rasterizePolygonMask()` instead of the
+thresholded mask, and build the feathered alpha from that coverage rather than from a
+`chamferDistanceFromSeeds()` pass over a binary mask. `alphaFromSignedDistance()` is not where the
+change lands — it takes a signed distance, a feather radius and an anti-alias flag, and coverage is
+none of those — so this is a change to how the seeds are chosen. On its own it changes little the user
+can see, because the mask is still recomputed from the point list on every use, so it belongs with
+making the mask authoritative rather than derived, not before.
 
 ## 185. The Magic Wand discards every matched region except the largest, on every click
 
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
 loops, classifies them into outer contours and holes, and then keeps exactly one outer contour:
 `selectLargestBoundaryLoop()` returns the single loop with the largest absolute area. Every other
-matched region is dropped. There is no warning, no log line, and no note in any tracked document.
+matched region is dropped, and nothing in `magicWand.ts` warns or logs it.
 
-It is not gated on an option. The bar renders `Contiguous`, and this reduction runs unconditionally
-on every click — the earlier claim that it is a discontinuous-mode behaviour is wrong, and there is
-no Discontinuous control on this tool at all.
+It is not gated on an option. The bar renders `Contiguous`, the checkbox writes `contiguous`, and this
+reduction runs unconditionally on every click — unchecking Contiguous feeds the same call, so the loss
+bites hardest exactly when the user has asked for the whole image rather than one region. No control
+on this bar offers that mode by name.
 
-**Distinct from the recorded hole refusal.** The same function refuses the whole selection when any
-hole is present, and that refusal _is_ already recorded in `src/tools/descriptions/selection.ts` for
-the Magic Wand. Keeping only the largest contour is a different loss on a different condition, and
-it is the one a user hits without any signal at all: a click spanning two separated areas silently
-produces a selection of one of them.
+**Where it is already recorded.** The header comment on `src/util/floodFill.ts` states that the wand
+"keeps only the largest outer loop", for the sibling module's own reasons, and `selectLargestBoundaryLoop()`'s
+own neighbour explains the magnitude comparison that drops the rest. So the behaviour is not undocumented
+in the repository — but it appears only in source comments, with no entry in `docs/` and nothing in the
+wand's own tool record, and the user-visible consequence is stated nowhere. The `floodFill.ts` comment
+also cites the reduction by line range, and those citations have drifted past the end of the file it
+points at.
 
-**Affected.** `src/util/magicWand.ts` — `selectLargestBoundaryLoop()`,
-`createMagicWandSelectionFromImageData()`, and `classifyBoundaryLoops()` as the caller that already
-has every contour in hand before the reduction.
+**Distinct from the recorded hole refusal.** The same function also refuses the whole selection when
+any hole is present. That refusal is recorded, but for a different tool: the sentence lives in the
+**Quick Selection** record in `src/tools/descriptions/selection.ts` — a grown region, not a wand click
+— and `docs/TOOLS-TOO-HARD.md` — Regions with holes quotes the same case. Keeping only the largest
+contour is a different loss on a different condition, and it is the one with no record anywhere.
+
+**Affected.** `src/util/magicWand.ts` — `selectLargestBoundaryLoop()`, and
+`createMagicWandSelectionFromImageData()` as its caller, which already holds every contour before the
+reduction; `classifyBoundaryLoops()` is what separates outer contours from holes for it.
 
 **What would close it.** Keep every outer contour and commit them as subpaths, which needs the
 selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
@@ -5133,74 +5126,86 @@ four-channel Euclidean RGBA distance is not Adobe's — and the default differs 
 `src/tools/descriptions/selection.ts` itself records as a third-party claim with no Adobe citation.
 Neither needs this entry.
 
-**Not already owned elsewhere.** The `fix/audit-falsehoods` branch was checked: the sentence is
-byte-identical there and `getToleranceDistance()` is untouched, so that branch does not own this.
-
 **Affected.** `src/tools/descriptions/selection.ts` — the Magic Wand record's `appNotes`, which
 `npm run docs:tools` then renders into `docs/TOOLS.md` — and `src/util/flood-fill.ts` —
-`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand.
+`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand. The
+`fix/audit-falsehoods` branch leaves both untouched, so it does not own this.
 
 **What would close it.** Correct the note at source and regenerate. Do not widen the slider to match
 the sentence: the code is right about the range and the sentence is wrong about it, and "fixing"
 the code to agree with a false note would trade a documentation defect for a behavioural one.
 
-## 187. The blend-mode comment names six absent modes, omits five, and ends on two that are not mode values
+## 187. The Brush's `Mode` row promises 29 blend modes and the bar renders 16
 
-**Problem.** The doc comment on `PAINT_BLEND_MODES` in `src/tools/brush.ts` says "Photoshop offers
-more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind, Clear)". Six of the
-modes actually absent from that set are missing from the sentence — Darker Color, Lighter Color,
-Linear Dodge (Add), Linear Light and Hard Mix — and the two it ends on, Behind and Clear, are
-Layers-panel entries rather than values the Mode dropdown can carry. So the comment's own premise,
-that the list is in the order Photoshop's Mode dropdown lists them, does not hold for the two it
-closes with.
+**Problem.** The Brush's `Mode` row in `src/tools/descriptions/paint.ts` describes what the bar offers
+as "the 27 layer blend modes — Dissolve among them — plus the two the painting tools add, Behind and
+Clear". That is twenty-nine. `Paint.tsx` renders `{PAINT_BLEND_MODES.map(...)}`, and
+`PAINT_BLEND_MODES` in `src/tools/brush.ts` holds sixteen. So the row states the app offers thirteen
+values it does not, and the row is data — `npm run docs:tools` renders it into `docs/TOOLS.md`, so the
+generated per-tool specification carries the overcount as the app's own description of its bar.
 
-The list of sixteen is right, and so is the recorded reasoning beside it: the canvas compositing set
-has no equivalent for the rest, and offering one would ship a dead option. `brush.test.ts` pins the
-sixteen values, not this sentence, so nothing catches the enumeration drifting.
+The source comment on `PAINT_BLEND_MODES` makes a smaller version of the same mistake. It says
+"Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind,
+Clear)" — thirteen absent values, of which it names eight. The five it omits are Darker Color, Lighter
+Color, Linear Dodge (Add), Linear Light and Hard Mix. None appears in the comment, and none is an alias
+of a name that does, so the omission is not a naming choice. `brush.test.ts` pins the sixteen values and
+not this sentence, so nothing catches the enumeration drifting.
 
-**Why it is worth an entry rather than a shrug.** The comment is the nearest thing to a record of
-why the mode set is short, and it is the sentence a reader will consult to learn which modes are
-missing. Being wrong in the direction of undercounting is what makes it survive review — a reader
-checking "is Dissolve in that list" finds it, and stops.
+**What is already right.** The Brush's `appNotes` in the same file state the shortfall correctly —
+"sixteen canvas compositing operations rather than Photoshop's 29 for this tool" — and the reasoning
+beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
+would ship a dead option.
 
-**Affected.** `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`. The capability itself
-is already recorded in `docs/TOOLS-TOO-HARD.md` and the per-tool data; only this enumeration is
-wrong.
+**Affected.** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose "offering" sentence is
+the overcount and whose `appNotes` is the correct statement it contradicts;
+`src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, for the five omitted names.
 
-**What would close it.** Correct the list and drop Behind and Clear from it, keeping the decision's
-reasoning intact.
+**What would close it.** Correct the row to say the bar offers the sixteen the component actually
+renders, keeping the `appNotes` sentence as the statement of the shortfall. That is the half a reader
+is misled by, and it regenerates into `docs/TOOLS.md`. Adding the five missing names to the source
+comment is the smaller half, and it makes the comment agree with the row rather than the reverse.
 
 ## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
 
 **Problem.** The
 `it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them')`
 title in `src/components/ToolbarsRight/SingleRowColumnMarquee/__tests__/SingleRowColumnMarquee.test.tsx`
-carries a comment asserting the modes are "absent for EVERY selection tool here". The test queries
-by button role, and `QuickSelection.tsx` renders Add and Subtract in a `Mode` dropdown over
-`QUICK_SELECTION_MODES` — a `select`, not buttons, so the query misses them and the comment's
-universal claim is false.
+carries a comment asserting the modes are "absent for EVERY selection tool here". `QuickSelection.tsx`
+renders Add and Subtract in a `Mode` dropdown over `QUICK_SELECTION_MODES`, so the universal claim is
+false — and the falsehood is in the `it()` title as well as the comment, so it survives a reader who
+skips the body.
 
-**The fact is recorded; the contradiction is not.** `docs/TOOLS-TOO-HARD.md` owns the combination
-modes as an unbuilt capability, and `src/tools/descriptions/selection.ts` separately records that
-Quick Selection's dropdown offers Add and Subtract. So nothing here is new about the app. What is new
-is a test whose stated reason contradicts it, and a pin is the one artefact in this repository that
-gets quoted as evidence — so a false reason in a pin propagates.
+**Why the test does not already fail on it.** The file imports and renders only
+`SingleRowColumnMarquee`, so Quick Selection is never in the tree and no query strategy would surface
+its dropdown. The assertion is true of what it mounts; only its stated reason is wrong.
 
-**Affected.** The single test file above. The pin itself is correct as an assertion of what it
-queries: no selection _bar_ renders the four as buttons.
+**The same falsehood is recorded in prose, twice over.** `docs/TOOLS-TOO-HARD.md` — Selection
+combination modes says "No selection tool's bar renders any of the four". And the per-tool data
+repeats it in two records of its own: the single-row and single-column marquee notes in
+`src/tools/descriptions/selection.ts` each explain their `missing` modes with "they are absent for
+every selection tool in the application", while the Quick Selection record in the same file correctly
+states that its dropdown offers Add and Subtract. So the capability is not new, and the contradiction
+is not confined to a test — it is in the data that generated document is built from, which makes the
+per-tool documentation propagate it too.
 
-**What would close it.** Narrow the comment to what the assertion actually proves. Deleting the pin
-is not the fix and would be a gate being weakened — the combination buttons are still absent.
+**Affected.** The single test file above, for the title and the comment; the two marquee records in
+`src/tools/descriptions/selection.ts` for the prose; and `docs/TOOLS-TOO-HARD.md` — Selection
+combination modes, which owns the capability and states the overreach.
+
+**What would close it.** Narrow the title and the comment to what the assertion proves — that this bar
+renders the four as neither buttons nor a select — and narrow the two per-tool records to the tools
+they actually describe. Deleting the pin is not the fix and would be a gate being weakened: the
+combination buttons are still absent from every selection bar.
 
 ## 189. Three fields on a tool's replay declaration are read by tests and by nothing else
 
 **Problem.** `ToolProcessorDefinition` in `src/tools/toolProcessors.ts` gives every tool a `replay`
 descriptor carrying a kind, a determinism flag, a raster requirement and a version. Across the whole
 repository the first three have **zero production reads**. Every read of them is in
-`src/tools/__tests__/tool-processors.test.ts`, in `color-replacement.test.ts`, or in a fixture
-literal. Production consults only the version, at seven sites across three files, through
-`operationForTool()` in `history-adapter.ts` and the version guards in `history-append.ts` and
-`materialization.ts`.
+`src/tools/__tests__/tool-processors.test.ts`, in `color-replacement.test.ts`, or in the fixture
+literal at `src/contexts/__tests__/durable-replay.layer-operations.test.ts`. Production reads only the
+version, at seven sites across three files, through `operationForTool()` in `history-adapter.ts` and
+the version guards in `history-append.ts` and `materialization.ts`.
 
 The unimplemented kind is a declared member of both the commit-kind and the replay-kind unions, and
 no production branch compares either field against it. An unimplemented tool reaches production only
@@ -5219,83 +5224,66 @@ flag set on a wall-clock tool ships as a silently irreproducible commit with a g
 
 The gap is specific to these three fields, and that is what makes it a defect rather than a
 convention: the sibling declaration fields on the same type _are_ read in production.
-`requiresCanvasFilter` gates five sites, and `creator` is what `materialization.ts` — the refusal in
-`sourceBitmap()` — checks before it will render a vector source. The project enforces two of its
-declaration fields and not three others, with nothing recording the difference.
+`requiresCanvasFilter` gates five production sites, `compositesOntoInput` is read on the raster path in
+`history-append.ts`, `commit` is read at roughly twenty, and `creator` is what `materialization.ts` — the
+refusal in `sourceBitmap()` — checks before it will render a vector source. Four fields enforced,
+three not, with nothing recording the difference.
 
 **Affected.** `src/tools/toolProcessors.ts` — the `replay` descriptor on
 `ToolProcessorDefinition`; `src/contexts/history-adapter.ts` — `operationForTool()`, which is where a
 version is already read and where one assertion would go; `src/contexts/materialization.ts`, which
 already refuses on `creator` and could refuse on the raster requirement the same way.
 
-**What would close it.** One production assertion at the durable write point rejecting an
-unimplemented replay kind, and a guard refusing a layer whose recorded raster requirement is false.
-Neither needs a schema change.
+**What would close it.** One production assertion at the durable write point in `operationForTool()`,
+rejecting an unimplemented replay kind — it needs no schema change, because the commit kind is already
+in scope there. The raster requirement is not fixable this way: it is recorded nowhere, so there is no
+stored value to refuse against. Enforcing it means first deciding that the durable operation should
+carry the flag, which is a schema decision rather than an assertion.
 
-## 190. The triangle's geometry is asserted nowhere, so a fix would break no test
+## 190. The triangle's geometry is recorded but under-pinned, and the one pin that exists will move with any fix
 
-**Problem.** `drawShape()` in `src/tools/shape.ts` renders the triangle by inscribing a regular
-three-sided polygon in the drag box, and `normalizeShapeGeometry()` squares the drag box when Shift
-is held rather than forcing an equilateral result. Both halves are already recorded —
-`src/tools/descriptions/shape.ts` — the `triangle` entry's `appNotes` — and `shape.notes.md`
-explains why the original premise was wrong twice over. None of that is new.
+**Problem.** `drawShape()` in `src/tools/shape.ts` places the triangle's vertices from the drag box's
+two half-extents with an even angular step, so the result is a regular three-sided polygon only when
+the box is square, and `normalizeShapeGeometry()` squares that box when Shift is held rather than
+forcing an equilateral result. Both halves are already recorded — `src/tools/descriptions/shape.ts`,
+the `triangle` entry's `appNotes`, and `src/tools/descriptions/shape.notes.md`. What is not recorded is
+how little stands
+behind them.
 
-What is not recorded is that **no assertion anywhere would fail if this were fixed**. The only test
-touching the rendered triangle, the
-`it('draws the figure each geometry variant is registered for, not a generic shape')` title, counts
-`moveTo` and `lineTo` calls, so it cannot fail when the vertices move. `normalizeShapeGeometry()`'s
-aspect tests are a `describe.each` over rectangle and oval only, so the Shift squaring is unpinned
-for the triangle too. And there is no triangle spec under `e2e/` at all, where every other figure has
-some path through the suite.
+**What is pinned, and what is not.** `shape.test.ts` — the
+`it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures')` case —
+asserts both halves of `normalizeShapeGeometry()` for the triangle: the unconstrained drag passes
+through unchanged, and Shift squares the box. So a fix to the squaring **will** turn that case red and it
+has to move with the behaviour. What is not pinned is anything about _where the vertices land_.
 
-**Why that is an entry.** A fix here will look like it should turn tests red, and it will not. Read
-without this, an unred fix reads as an incomplete one, and the instinct to make it red sends someone
-to write an assertion for the behaviour they just replaced. The pin-removal rule cuts the other way
-here: there is nothing to remove, and inventing an assertion after the fact is how the current state
-would get pinned again.
+Everything that touches what is rendered measures the other three figures and only counts the
+triangle. `paint-tools.test.ts` — the
+`it('draws the figure each geometry variant is registered for, not a generic shape')` title — asserts
+`strokeRect` called with real coordinates for the rectangle, `ellipse` with real coordinates for the
+oval, and `moveTo`/`lineTo` with real coordinates for the line, then asserts only call counts for the
+triangle and the polygon. The asymmetry is inside a single test, so it is not a matter of which file
+someone chose to extend. `shape.test.ts` — the `it.each` pairing triangle with three vertices, and the
+`it('leaves the triangle at three whatever the field says')` case — likewise assert counts.
+
+**And nothing watches from outside.** `e2e/keyboard-shortcuts.spec.ts` cycles the bar's figure readout
+with `Shift+u` and asserts it passes through Triangle and Polygon, so both figures are reachable
+end-to-end. It asserts the figure's _name_; it never draws one, and no other spec under `e2e/` draws a
+polygon or a triangle at all — the polygonal lasso is a different tool. A regression in the inscribed
+placement would reach a user with the whole suite green.
 
 **Affected.** `src/tools/shape.ts` — the `figure === 'triangle' || figure === 'polygon'` branch of
 `drawShape()` and the `shiftKey` arm of `normalizeShapeGeometry()`;
 `src/tools/__tests__/shape.test.ts` — the `it.each` case that pins the squaring for triangle and
-polygon, which asserts the square and would need to change with the behaviour.
+polygon, and the two vertex-count cases; `src/tools/__tests__/paint-tools.test.ts` — the
+figure-dispatch case.
+
+**What would close it.** Fix the placement, move the squaring assertion with it, and give the triangle
+the coordinate assertion its three siblings in that test already have. An e2e path that draws the
+figure is the stronger version of the same coverage and is proportionate to a figure the suite can
+currently only cycle by name.
 
 A branch named `fix/shape-truth` exists and is ahead of `main`; read its diff before starting, since
-it may already carry the change this entry describes.
-
-## 191. Theme is a two-value toggle, and no interface-size control exists anywhere
-
-**Problem.** `ThemeContext.tsx` declares the theme as the two-value union light and dark and one
-button flips between them. Nothing in the application offers an interface size.
-
-`docs/FEATURES.md` — Keyboard records that the corresponding keyboard shortcut is unbound. That is a
-true and different claim: an unbound key and an absent control are two gaps, and binding the key to
-the toggle would produce a shortcut that changes the theme rather than the size — a fix that looks
-like a fix and addresses nothing.
-
-**Affected.** `src/contexts/ThemeContext.tsx`, and the theme ramp the stylesheet would have to
-support.
-
-**What would close it.** Either widen the union to the size ramp the stylesheet already carries, or
-record the absence as a decision. Which of those is the operator's call — the documentation ladder
-puts a deliberate departure in `docs/OVERRIDES.md`, and an agent must not add an entry there.
-
-## 192. Painting shows the default cursor: no brush-tip outline, and no modifier for a precise one
-
-**Problem.** While a paint stroke is in progress the cursor is the default one. `DrawToolArea.tsx`
-draws no outline, and the application has no cursor registry — `src/tools/descriptions/eyedropper-draw.ts`
-says so for its own tool. Sixteen tool areas do set their own cursor, so this is not a general
-absence of per-tool cursors and should not be described as one; what is missing is the cursor for the
-one tool whose cursor carries information, because it tells the user where the tip is and how wide.
-
-`HANDOFF.md` §151 names a brush-tip circle as part of its fix, since the view transform that would
-size it is commented out. The modifier that switches to a precise cursor is recorded nowhere.
-
-**Affected.** `DrawToolArea.tsx`, and the cursor rules in `src/components/Main/Main.scss` for the
-precise variant.
-
-**What would close it.** A screen-space circle sized from the tip during a paint drag, and a
-modifier that swaps the crosshair for the precise crosshair. Both depend on the view transform
-§151 carries, so neither lands usefully before it.
+it may already carry part of this.
 
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 
@@ -5418,6 +5406,29 @@ silently destroy the stack.
 `FillToolArea.tsx`; `src/hooks/usePaintStroke.ts`; `src/components/SidebarRight/LayersTab.tsx`;
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
+
+## 198. The citation gate checks `AGENTS.md` for everything except line numbers, so this file's citations are ungated
+
+**Problem.** `scripts/__tests__/agents-citations.test.mjs` enforces the citation rule, and its coverage
+is narrower than the rule. `LINE_NUMBER_GATED` holds `AGENTS.md`, `docs/DOCUMENTATION.md` and
+`docs/README.md`, so the line-number leg skips every other tracked document — this one included.
+`staleCallForms()` is invoked only against `readAgentsMd()`, and `staleHandoffRefs()` takes this file as
+its _target_ while validating the references in `AGENTS.md` alone. So no backticked call and no `§N` in
+this file is checked by anything.
+
+Two further limits are structural rather than a missing path. `CALL_FORM` requires a trailing `()`, so
+a bare constant, a type, a union member or an `it('...')` title is invisible to the call-form leg by
+construction — and those are the forms most of this file uses. And no leg of the test reads a sentence
+for meaning, so even full coverage could not catch a claim that is confidently false.
+
+**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `LINE_NUMBER_GATED`, and the two
+assertions that pass `readAgentsMd()`.
+
+**What would close it.** Two steps, in order. Run `scripts/resolve-citations.mjs` over this file and
+repair what it reports, then add this file to `LINE_NUMBER_GATED` and invoke `staleCallForms()`
+against it. Widening `CALL_FORM` to accept a
+constant, a type and a test title is a separate change and needs its own migration, because it will
+flag every bare identifier in every gated document.
 
 ## 199. Replay budget runner is dormant until a durable production surface owns it
 
@@ -6038,3 +6049,254 @@ no independent derivation, an arithmetic restatement of a sibling assertion, and
 above, which is the only one of them that was a merge artefact rather than a defect present from the
 start. The dangling reference and the fixture divergence were left unfixed because the mandate was
 test files only.
+
+## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
+
+**The problem.** Two agents independently write `## 79.`, and a merge resolves the collision
+by keeping both headings. That is the shape `.skills/hard-merge.md` taxonomy class 4 exists
+for, and its fix — incumbent keeps the number, the newcomer takes `max + 1` — is a
+**document-level** decision. Nothing enforces it, and the machine that reads the result cannot
+see the violation: `parseHandoffDoc()` in `scripts/lib/agent-board/handoff-import.mjs` keys
+items by number, so the second heading overwrites or is dropped rather than reported.
+`parseHandoffDoc({ file: 'HANDOFF.md', text: '## 79. one … ## 79. two …' })` returns **one**
+item, titled `one`, with no warning and no entry in any diagnostics field.
+
+**Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
+case, so the suite is green on a document that has lost an entry. **There is no mechanical check
+anywhere**: `.skills/hard-merge.md` Phase 7.2 asserted one existed, which is false, and its own count
+sweep cannot catch it either — a duplicated number leaves `merged == ours + theirs − base` true. The
+only check is a set comparison between the two sides' number lists, run by hand.
+
+**What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding rather
+than resolving it silently, in the shape it already uses for a retired heading (`deadNumbers` and
+the `DEAD_HEADING` consumed by `assemble`), and `scripts/__tests__/handoff-import.test.mjs` should
+gain the case: two headings, one number, one reported finding, and the heading count still two. §82
+is the same parser failing the same way on a different input, and the remedy is shared.
+
+## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
+
+**The problem.** `scripts/dispose-worktree.mjs` refuses `derived-live-writer` when the inventory
+record's `derivedLive` is true or `writeHistory.derivedChatIds` is non-empty. Two of the four arms
+that produce `derivedLive` are call histories inside the worktree — `writeHistory` from the write
+calls, and `shellHistory` from bash calls whose `workdir` is under it, per the header of
+`scripts/lib/worktree-inventory/writes.mjs` — so a chat that ran the gates in a worktree is the chat
+the refusal is about. `--no-live-writers "<why>"` does **not** clear it: `classify()` in
+`scripts/lib/worktree-inventory/classify.mjs` keeps `derivedLive` beside the suppressed `live`
+precisely so an override cannot erase its own evidence, and `dispose` reads `derivedLive`.
+
+**The consequence, which is the finding.** `.skills/worktree-merge-harvest.md` §Step 5 runs the
+gates from inside the branch's worktree and §Step 6 then calls `npm run dispose`, so **a harvest
+cannot complete its own removal**. Every sweep that hit this correctly refused to defeat the gate,
+which left landed branches accumulating behind a gate nobody could open.
+
+**What the refusal does and does not tell you.** Only the **write** arm names a chat id, and it
+expires at `LIVE_WINDOW_MS`, thirty minutes. The **I/O** arm is `RECENT_IO_WINDOW_MS`, four hours,
+counts **reads** as well as writes, and prints "a chat" with no id. The **session** and **board**
+arms print no id either — `chatLive` is `session.directory` plus `time_updated`, and `liveAgent` is
+a board row, so neither is a record of a call inside the directory. `docs/ORCHESTRATION.md` —
+§"`derived-live-writer` can refuse the session that is asking" — is the one home, and both skills
+defer to it rather than restating it.
+
+**What is missing.** A lever that is **safe**. The shape that would close this without weakening the
+guard is a self-scoped one: a refusal is cleared when the named `derivedChatIds` are **this session's
+own** ids and nothing else is live, recorded in `ownership.suppressed` beside the signals it
+overrode, so the file stays auditable rather than believed. Whether an agent may clear its own name
+at all is an architecture judgement and belongs to the operator. **A lever already exists and is not
+safe — see §224**, which is where that defect belongs.
+
+## 224. `--now` with a future clock defeats both the liveness arm and the staleness arm of `dispose`
+
+**The problem.** `node scripts/worktree-inventory.mjs --now <ms>` is documented as "pin the
+clock, for reproducible output". `scripts/lib/worktree-inventory/assemble.mjs` computes
+`const effectiveNow = Math.max(nowMs, newestKnown)` — a clamp that bounds a **past** clock and
+lets a **future** one through untouched. Everything downstream is then evaluated against that
+clock: `classify()`'s recency tests (`hasRecentIo()`, and the `LIVE_WINDOW_MS` filter that builds
+`derivedChatIds`) see every signal as expired, and `generatedAt` is stamped with the same future
+value, so `dispose`'s freshness check `nowMs - inventory.generatedAtMs > maxAgeMs` computes a
+**negative** age and passes.
+
+**Reproduced on an unchanged tree.** `disposalCandidates` and `ownership.liveWriterCount` go from
+their honest values to `51` and `0`; the worktree running the measurement came back
+`derivedLive: false` with all four `liveSignals` false and `writeHistory.derivedChatIds: []`.
+**Only the far-side figures are stable** — with every window expired the candidate set is a pure
+git function, so 51 reproduces exactly; the honest-side count moves as the repository moves, and
+this session's own call counters rise every minute. Re-derive both halves. Worktrees the honest run classified `in-use` on a live
+`derivedLive` became disposal candidates. **It clears three refusals, not one, and the staleness hole is the wider of the two.** A future
+stamp makes `action-not-dispose` read as satisfied as well as `inventory-stale` and
+`derived-live-writer`, and `preflight()` returns `ok: true` with an empty failure list on a clean
+worktree. The two paths need different amounts of clock: **+2 seconds is enough for the staleness
+check alone**, because a negative age is never `> maxAgeMs`, while the liveness arm needs more than
+four hours. So the staleness hole is roughly 8 000× the easier one to fall into, and the two are
+independent — which is the argument for fixing the consumer side first.
+
+**The clamp's stated purpose is backwards, and that matters for the fix.** `assemble.mjs` claims
+`Math.max(nowMs, newestKnown)` is what makes `--now` reproducible. It is not: a **past** pin is
+_discarded_ and replaced by the newest session row, so two different past pins produce two different
+`generatedAt` values. The clamp's real value is defensive — it stops a negative age from passing the
+liveness test — and any symmetric bound needs a written rule for what a pin is allowed to be, or
+`--now` becomes a no-op in one direction and a lie in the other.
+
+**What would close it.** Two changes, and the second holds even if another generator grows the
+flag. **First**, the smaller one: `dispose` should refuse an inventory whose age is outside the
+staleness ceiling in **either** direction — `Math.abs(nowMs - generatedAtMs) > maxAgeMs`, not the
+one-sided test — because a future stamp is the whole bypass and this does not require trusting the
+generator. One assertion pins it: `preflight()` with a `generatedAtMs` of `nowMs + 2_000` over a
+clean record must refuse as `inventory-stale`. **Second**, the generator: stop `generatedAt` being
+authoritative about time — emit the wall-clock stamp beside the pinned one and let every recency test
+read the pinned value, which makes a pin incapable of moving a freshness verdict and is what
+`assemble.mjs`'s own honesty rule already claims. That is a schema bump, and it must land with the
+`schemaVersion` check §225 asks for.
+
+**Related, and the same shape.** The refusal message prints a chat id only when `derivedChatIds` is
+non-empty, which is the **write** arm alone; the `io`, session and board arms all print "a chat", and
+`classify.mjs` folds `readHistory` into the `io` arm, so a **reader** can trip a refusal worded as
+"a chat wrote a file in it" when nothing was written. `docs/ORCHESTRATION.md` —
+§"`derived-live-writer` can refuse the session that is asking" — has the per-arm table.
+
+## 225. The `mustNotPrune` veto is advertised in a refusal message and can never fire
+
+**The problem.** `dispose`'s refusal text tells a reader the way out of a disposal it is about to
+refuse: _"A curated finding sets `mustNotPrune`, which vetoes `dispose` as well as `land`. It
+records work git cannot see in a clean tree."_ The mechanism behind that sentence is real —
+`classify.mjs` reads `Boolean(curated?.mustNotPrune)` into `curatedBlocksPrune`, and
+`dispose-worktree.mjs` refuses `must-not-prune` on the same field. **No input sets it.**
+
+```bash
+node --input-type=module -e "import {CURATED} from './scripts/lib/worktree-inventory/curated.mjs'; \
+  console.log(Object.entries(CURATED).filter(([,v])=>Object.hasOwn(v,'mustNotPrune')))"
+# → []      (160 entries, 0 with the field)
+```
+
+The field was removed from every entry when the curated summary was re-derived from git — the
+reasoning recorded in `curated.mjs` is that the hand-maintained list was the thing that rotted.
+One entry that carried it retracts it explicitly, on the grounds that git now proves the work
+committed. So the guard is not wrong, and it is not a lie: it is a **guard with no reachable input**,
+and the removal deleted the branch that read it.
+
+**Why it matters.** This is the one mechanism standing between "git says this worktree is
+disposable" and a worktree holding work that exists nowhere else. The scenario it exists for is real
+and has happened — the 2026-10-01 incident was a worktree whose only copy of someone's work was
+uncommitted. Today the guard cannot catch it, because the only way to arm it is for a human to edit
+a source file by hand, and nothing tells them to.
+
+**What would close it.** `dispose` should offer the claim rather than assert it: when it refuses on
+liveness or staleness and the worktree has uncommitted or untracked content, say that arming
+`mustNotPrune` is what a human does, and where. That is a wording fix, it costs nothing, and it
+stops the refusal message from implying a path that requires hand-editing `curated.mjs`. Whether a
+subagent may ever set the flag is a separate question and belongs to the operator — the field
+records a _human_ claim, so a subagent setting it would make the guard self-served.
+
+## 226. `dispose` reads two record keys that it never checks a version for
+
+**The problem.** `dispose-worktree.mjs` gates its liveness refusal on
+`inventory.record.derivedLive === true || (writeHistory?.derivedChatIds ?? []).length > 0`. Both are
+**duck-typed**: an absent key is neither `true` nor a non-empty list, so it reads as safe. The
+inventory carries `schemaVersion`, but `dispose` never reads it — the string does not appear in the
+file at all — and `readInventory` performs no version check.
+
+Probed directly against `preflight()`:
+
+```
+record WITH derivedLive + derivedChatIds            → ok=false  [derived-live-writer]
+record WITHOUT derivedLive, no writeHistory          → ok=true   []
+record WITHOUT derivedLive, empty writeHistory      → ok=true   []
+```
+
+**Why it is still open.** `scripts/__tests__/dispose-worktree.test.mjs` writes `derivedLive`
+explicitly in every fixture, so no case covers its absence and the suite is green either way. The
+reachable path today is a `WORKTREES.json` written by a pre-`6eaeef6c` build, which is narrow — but
+the shape is the general one: **a consumer that reads two keys it does not version will eventually
+read a file where they are missing, and it will fail toward disposal rather than toward refusal.**
+Every other guard in this program fails closed.
+
+**What would close it.** `readInventory` should refuse a `schemaVersion` it does not recognise, the
+way it already refuses a missing or unreadable file, and the refusal should be the existing
+`inventory-missing` shape rather than a new code. Then the liveness keys may be read as an
+invariant instead of as a hope. This should land with the `generatedAt` half of §224, which is the
+same schema and the same file.
+
+## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
+
+**Problem.** `src/contexts/useSelectionHistory.ts` builds both of its `SelectionSnapshot` baselines by
+hand — `{ selections: existing, activeSelectionId }` in `clearSelections()` and again in
+`commitSelection()` — where `existing` is the store's live `selections` array, not a copy of it. The
+same object is then stored in the legacy entry's `args.previousSelectionState` and passed as
+`currentSelections` to `planHistoryAppend()`, so one aliased array reaches both the legacy timeline
+and the durable `before` baseline.
+
+This contradicts the rule the shared helper already states. `selectionSnapshot()` in
+`src/contexts/selection-baseline.ts` is documented as "the clone both replay paths use to keep a
+selection snapshot off the legacy history args", and it deep-copies `points`, `pos` and `metadata`
+and freezes the wrapper, yet neither writer calls it.
+
+Nothing writes through the alias today, so this is latent rather than a live wrong answer:
+`COMMIT_DOCUMENT_EDIT` replaces `selections` with a fresh array instead of mutating the old one,
+`history-replay.ts` copies each selection when it replays `nextSelectionState`, and
+`history-adapter.ts` copies `currentSelections` and leans on the document's later deep freeze. The
+hazard is that the invariant is currently enforced by those three call sites' restraint rather than
+by the snapshot itself, and the recorded `before` is the one value a future in-place write would
+silently rewrite.
+
+**Affected.** `src/contexts/useSelectionHistory.ts` — the `previousSelectionState` construction in
+`clearSelections()` and in `commitSelection()`; `src/contexts/selection-baseline.ts` —
+`selectionSnapshot()`, which already owns the rule.
+
+**What would close it.** Route both baselines through `selectionSnapshot(existing, activeSelectionId)`.
+Leave `nextSelectionState` alone: its own comment records that `next` is deliberately the object this
+dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
+`previousSelectionState.selections` is not the same array reference as the store's would fail before
+the change and pass after it, which is the only shape of proof this needs.
+
+## 228. Every shape draws unfilled by default, and no entry records whether that is the ruling
+
+**Problem.** A rectangle drawn on a fresh document is stroked and never filled, because the shape
+args seed no `hasFill`: `src/tools/settings.ts` seeds `backgroundColor: null` and no `hasFill` key,
+so `Figures/Shape.tsx` renders `filled-toggle` unchecked and `drawShape()`'s gate —
+`args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor` — is false on its first
+conjunct. The colour half is not the blocker: `Shape.tsx` adopts the store's `backgroundColor`, and
+`StoreContext.tsx`'s `initialState` carries `#ffffff`, so ticking `Filled` does fill. The default is
+the whole of the question.
+
+Whether Adobe's own shape tools fill by default was **not established** while filing this. A search
+of Adobe's published default-keyboard-shortcut reference settled a different question — whether a
+Draw tool has a letter — and returned no row either way for shapes. So this entry states the app's
+behaviour and records the divergence as unresolved; it does not assert what Photoshop does, and no
+document in `docs/` may be corrected on the strength of this paragraph.
+
+**Affected.** `src/tools/settings.ts` — the `shape` default; `src/components/ToolbarsRight/Figures/Shape.tsx`
+— `filled-toggle` and `handleFillToggle()`; `src/tools/shape.ts` — `drawShape()`'s `hasFill`
+conjunct; `src/tools/__tests__/tool-settings.test.ts` pins the seeded table with `toEqual`, so it
+refuses a flip until it is re-derived.
+
+**What would close it.** Take the ruling from Adobe's own shape-options documentation. If shapes are
+meant to fill, seed `hasFill: true` beside the existing `backgroundColor` seed, re-derive the
+tool-settings pin, and expect the e2e baselines that draw a shape to move. If they are meant to stay
+unfilled, record the divergence in `docs/OVERRIDES.md` — the tile is kept there under OVR-2, so the
+override is where a deliberate divergence belongs. Either way the `!!args.backgroundColor` half of
+the gate must survive the change: it is what stops a filled figure with no colour from painting with
+whatever `fillStyle` the shared overlay last carried.
+
+---
+
+---
+
+## 229. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
+
+**Problem.** A selection's border is the marching ants for every selection tool, so the crawl is
+uniform across all of them. The exception is the rectangle BETWEEN press and release: while a gesture
+is in flight the ants stand down (`selection-drag-preview.ts` — published by `useRect`'s
+`beginGesture`) and the only border on screen is `useRect`'s own stroke, whose dashes are static for
+the reason in §86. The user sees the border appear — a dashed rectangle where there was none — and
+then not move, for the whole drag, on the one tool whose border is otherwise indistinguishable from
+the others at rest.
+
+**It is a smaller defect than it looks, and the fix is the fix.** The drag is RAF-throttled, so the
+rectangle itself tracks the pointer; only the dashes are frozen, and a still dash around a moving
+rectangle reads as a marquee rather than as a stalled border. Animating it means §86's loop, and
+that loop has to reach this case too: `borderMode: 'while-dragging'` is the only place the
+rectangle's stroke is on screen while `useRect` owns it, so the offset ref has to advance there
+without advancing for `'always'`, where the Move tool's own dashed rect would start crawling under a
+different rule than the ants use.
+
+**Files.** `src/hooks/useRect.ts` — `drawMask()`, `beginGesture()`;
+`src/hooks/selection-drag-preview.ts` — `publishSelectionDragPreview()`

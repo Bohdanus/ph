@@ -402,7 +402,8 @@ the project name and the OS, which would make a baseline committed on one machin
 read as missing on another.
 
 Of the files in the directory, the ones `visual-regression.spec.ts` actually reads are
-one per format with `comparePixels: true`:
+one per format in `browserVerifiedFormats` (`e2e/export/helpers.ts`) — the filter the spec
+iterates, and the only place that selection is made:
 
 ```
 e2e/export/visual-regression.spec.ts-snapshots/

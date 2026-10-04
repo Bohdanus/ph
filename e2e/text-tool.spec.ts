@@ -529,8 +529,13 @@ async function setTextToolColor(page: Page, hex: string): Promise<void> {
  * order that makes a stale box possible: the draft drag is expressed in canvas-box
  * coordinates, so a box read before the tool click would address different pixels if the
  * click reflowed the workspace. Measured, it does not — the box is the same size before and
- * after selecting the Text tool, because the tool's options mount in the RIGHT sidebar and the
- * left rail scrolls inside its own box. So this re-read is not load-bearing for the tool click;
+ * after selecting the Text tool, because the tool's options do not mount anywhere near it.
+ * `ToolbarHorizontal` renders `<ToolComponent key={toolName} />` in the TOOLBAR row, inside
+ * `TOOLBAR_BASE_CLASS`, which fixes that strip at `h-[50px]`, and `App.tsx` declares the
+ * toolbar row and the canvas's main area as two different rows — so the box is the main area
+ * whichever tool is selected, and no tool choice can resize it. The left rail is
+ * `toolbarWidth`, which the viewport decides and the tool does not, and it scrolls inside its
+ * own box. So this re-read is not load-bearing for the tool click;
  * it is here so that a reflow which did change the box could not make the drag quietly address
  * a different pixel, and it is the reason nothing here caches a box across the tool click.
  *
@@ -944,16 +949,15 @@ const isDraftFrame: PixelPredicate = (red, green, blue, alpha) =>
 /**
  * How far outside the box the frame's blue reaches, in DOCUMENT px, on every side.
  *
- * Both things that paint it are CENTRED on the box's own edge rather than inside it, which is
- * why the frame is wider and taller than the box it reports: the dashed stroke is `2 / scale`
- * wide (`useRect.ts:209-212`) so 1 document px of it lies outside, and each handle is an
- * `HANDLE_SIZE / scale` square centred on a corner (`useRect.ts:218-224`) so `HANDLE_SIZE / 2`
- * of it does too. `HANDLE_SIZE` is 12 (`src/util/constants.ts:1`), so 6 + 1 = 7.
+ * The outline is centred on the box edge, while each handle is an `HANDLE_SIZE / scale` square
+ * drawn OUTSIDE its corner (`useRect.ts`). The scan includes the one-pixel outline overhang beside
+ * the 12px handle, so this derived frame margin is 13 document px. `HANDLE_SIZE` is 12
+ * (`src/util/constants.ts`).
  *
  * It is used only as a DERIVATION of where the box's own edge is from where the blue stops, never
  * as a tolerance, so it does not widen any margin in this file.
  */
-const FRAME_OVERHANG_DOC_PX = 7;
+const FRAME_OVERHANG_DOC_PX = 13;
 
 /**
  * `TEXT_PADDING`, copied rather than imported for the reason `DRAW_TOOL_STROKE_WIDTH` documents:
@@ -2160,8 +2164,8 @@ test.describe('Text tool', () => {
     //
     // The FRAME's own overhang has to come off before the comparison, or the assertion cannot fail:
     // `useRect`'s `drawMask` strokes a 2px outline centred on each edge and paints corner handles
-    // `HANDLE_SIZE / 2` out from each corner on every call, unconditionally — which is the
-    // `FRAME_OVERHANG_DOC_PX` this file already carries. That is 7 document px per edge, about
+    // `HANDLE_SIZE` out from each corner on every call, unconditionally — which is the
+    // `FRAME_OVERHANG_DOC_PX` this file already carries. That is 13 document px per edge, about
     // 13.6 CSS px at this fit, so an UNGROWN 120px box already measures 133.6 and cleared a bare
     // `> 120`. The first version of this assertion did exactly that and its comment claimed it would
     // catch the regression; it would not have. Subtracting the overhang puts the un-grown box at the

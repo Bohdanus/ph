@@ -358,6 +358,12 @@ interface PsdOptions {
   layers?: Array<{ name: string } & Partial<PsdLayerSpec>>;
   /** Write the records with no channel data at all. */
   skipLayerImageData?: boolean;
+  /**
+   * Pixel value for the flat composite. Omit it and `writePsd` synthesises one from the
+   * children, which is not what the exporter does — `src/contexts/psd-utils.ts` hands
+   * `writePsd` the flattened document canvas — so a test about the composite states it.
+   */
+  compositeFill?: number;
 }
 
 interface PsdLayerSpec {
@@ -387,6 +393,7 @@ function containerPsd(options: PsdOptions = {}): Buffer {
     layerCount,
     layers,
     skipLayerImageData = false,
+    compositeFill,
   } = options;
 
   const specs = layers ?? [{ name: 'Blank 1' }, { name: 'draw 2', fill: 0 }];
@@ -397,6 +404,7 @@ function containerPsd(options: PsdOptions = {}): Buffer {
       {
         width,
         height,
+        ...(compositeFill === undefined ? {} : { imageData: solidRaster(width, height, compositeFill) }),
         children: specs.map((spec) => ({
           name: spec.name,
           left: spec.left ?? 0,
@@ -2813,6 +2821,49 @@ describe('Export Helpers', () => {
       await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
         'Photoshop PSD (layers): its layers carry 4 inked pixels against the source'
       );
+    });
+
+    /**
+     * The COMPOSITE, which is the document and was the one raster nothing looked at.
+     *
+     * The layer rasters and the flat composite are separate claims about the same bytes, and
+     * the exporter writes both itself — `src/contexts/psd-utils.ts` hands `writePsd` the
+     * flattened document canvas alongside the children. So a PSD can pass every layer check
+     * above and still open as an empty image, because the composite every reader renders first
+     * is blank. That is a false green of exactly the kind the raster pass was added to stop,
+     * one level down.
+     */
+    it('rejects a PSD whose layers carry the drawing and whose flat composite does not', async () => {
+      // Structurally perfect, and the drawing layer is solid black across the document, so the
+      // whole layer oracle passes. The composite is paper-white: the file's layers are right and
+      // its picture of the document is empty.
+      const file = containerPsd({
+        layerCount: 2,
+        layers: [
+          { name: 'Blank 1', fill: 255 },
+          { name: 'draw 2', fill: 0 },
+        ],
+        compositeFill: 255,
+      });
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).rejects.toThrow(
+        'Photoshop PSD (layers): its flat composite carries 0 inked pixels against the source'
+      );
+    });
+
+    it('accepts a PSD whose layers and flat composite both carry the drawing', async () => {
+      // The other half, because an oracle nothing can satisfy is not an oracle. `containerPsd`'s
+      // default leaves `writePsd` to synthesise a composite, so the inked one is stated.
+      const file = containerPsd({
+        layerCount: 2,
+        layers: [
+          { name: 'Blank 1', fill: 255 },
+          { name: 'draw 2', fill: 0 },
+        ],
+        compositeFill: 0,
+      });
+
+      await expect(verifyPsd(file, await drawnSourceDataUrl())).resolves.toBeUndefined();
     });
 
     it('rejects a PSD whose layer rasters cannot be decoded at all', async () => {
