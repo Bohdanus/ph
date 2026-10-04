@@ -1806,6 +1806,10 @@ describe('PLACEHOLDER_TEXT and domOverlayStyle', () => {
       expect(atTwo.fontStyle).toBe(atOne.fontStyle);
       expect(atTwo.fontVariantCaps).toBe(atOne.fontVariantCaps);
       expect(atTwo.textDecorationLine).toBe(atOne.textDecorationLine);
+      expect(atOne.textDecorationThickness).toBe('1px');
+      expect(atTwo.textDecorationThickness).toBe('2px');
+      expect(atOne.textUnderlineOffset).toBe('1.6px');
+      expect(atTwo.textUnderlineOffset).toBe('3.2px');
       expect(atTwo.whiteSpace).toBe(atOne.whiteSpace);
     });
 

@@ -246,8 +246,9 @@ repository.
   in `.husky/pre-commit`, ahead of `gate:commit`, and tells you the worktree recipe instead of a bare
   "no". It stops the **commit, not the write** — it runs after the edit — so it converts rogue commits
   into a dirty tree the next `git status` names. A landing never reaches it, because a fast-forward
-  runs no hook and `git merge` runs `pre-merge-commit`; the one override is `ALLOW_MAIN_COMMIT=1`,
-  and only the exact value `1`. Everything that changes a tracked file belongs in the branch's own
+  fires no **blocking** hook and `git merge` runs `pre-merge-commit`; the one override is
+  `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Everything that changes a tracked file
+  belongs in the branch's own
   worktree, **including a comment**, and `git rev-parse --show-toplevel` before the first edit is the
   only thing that distinguishes where you are from where you believe you are.
 - **Never resolve _or repair_ a merge conflict in the main worktree.** `reset --hard` and
@@ -268,9 +269,10 @@ repository.
   This is enforced, not merely documented: `scripts/merge-takeover-guard.mjs` runs from
   `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean merge
   that commits itself), and **refuses** the merge. `docs/ORCHESTRATION.md` is the one home for
-  the mechanism, both loss shapes, and the limits — a fast-forward fires no hook at all, and
-  `--no-verify` bypasses this. The old `comm -13` recipe is retired: it fired hundreds of
-  false positives when run before the merge and missed the very incident it was written for.
+  the mechanism, both loss shapes, and the limits — a fast-forward fires no **blocking** hook
+  (`post-merge` runs, and cannot block), and `--no-verify` bypasses this. The old `comm -13`
+  recipe is retired: it fired hundreds of false positives when run before the merge and missed the
+  very incident it was written for.
 
 **And a red `tsc` in the main worktree may be somebody else's work in progress**, not a broken `main`
 — the main worktree is shared, so it routinely holds an agent's half-written change, and that state

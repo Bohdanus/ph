@@ -956,6 +956,8 @@ export type DomOverlayStyle = {
   textAlign: 'left' | 'center' | 'right';
   textDecorationLine: string;
   textDecorationColor: string;
+  textDecorationThickness: string;
+  textUnderlineOffset: string;
   paddingTop: string;
   paddingRight: string;
   paddingBottom: string;
@@ -1043,6 +1045,8 @@ export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTe
     textAlign: style.align,
     textDecorationColor: style.color,
     textDecorationLine: decoration.length > 0 ? decoration.join(' ') : 'none',
+    textDecorationThickness: `${decorationThickness(style.fontSize) * scale}px`,
+    textUnderlineOffset: `${UNDERLINE_BELOW_BASELINE_EM * style.fontSize * scale}px`,
     whiteSpace: 'pre-line',
     wordBreak: 'normal',
   } satisfies Omit<DomOverlayStyle, 'paddingTop'>;

@@ -944,16 +944,15 @@ const isDraftFrame: PixelPredicate = (red, green, blue, alpha) =>
 /**
  * How far outside the box the frame's blue reaches, in DOCUMENT px, on every side.
  *
- * Both things that paint it are CENTRED on the box's own edge rather than inside it, which is
- * why the frame is wider and taller than the box it reports: the dashed stroke is `2 / scale`
- * wide (`useRect.ts:209-212`) so 1 document px of it lies outside, and each handle is an
- * `HANDLE_SIZE / scale` square centred on a corner (`useRect.ts:218-224`) so `HANDLE_SIZE / 2`
- * of it does too. `HANDLE_SIZE` is 12 (`src/util/constants.ts:1`), so 6 + 1 = 7.
+ * The outline is centred on the box edge, while each handle is an `HANDLE_SIZE / scale` square
+ * drawn OUTSIDE its corner (`useRect.ts`). The scan includes the one-pixel outline overhang beside
+ * the 12px handle, so this derived frame margin is 13 document px. `HANDLE_SIZE` is 12
+ * (`src/util/constants.ts`).
  *
  * It is used only as a DERIVATION of where the box's own edge is from where the blue stops, never
  * as a tolerance, so it does not widen any margin in this file.
  */
-const FRAME_OVERHANG_DOC_PX = 7;
+const FRAME_OVERHANG_DOC_PX = 13;
 
 /**
  * `TEXT_PADDING`, copied rather than imported for the reason `DRAW_TOOL_STROKE_WIDTH` documents:
@@ -2160,8 +2159,8 @@ test.describe('Text tool', () => {
     //
     // The FRAME's own overhang has to come off before the comparison, or the assertion cannot fail:
     // `useRect`'s `drawMask` strokes a 2px outline centred on each edge and paints corner handles
-    // `HANDLE_SIZE / 2` out from each corner on every call, unconditionally — which is the
-    // `FRAME_OVERHANG_DOC_PX` this file already carries. That is 7 document px per edge, about
+    // `HANDLE_SIZE` out from each corner on every call, unconditionally — which is the
+    // `FRAME_OVERHANG_DOC_PX` this file already carries. That is 13 document px per edge, about
     // 13.6 CSS px at this fit, so an UNGROWN 120px box already measures 133.6 and cleared a bare
     // `> 120`. The first version of this assertion did exactly that and its comment claimed it would
     // catch the regression; it would not have. Subtracting the overhang puts the un-grown box at the

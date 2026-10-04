@@ -2695,20 +2695,32 @@ compared shortcuts across the rail; that was true of the figure-flyout assertion
 (`it('keeps Triangle, Polygon, Line and Custom Shape in the flyout')` and
 `it('only declares U as the shape shortcut')`) but not of the rail-wide contract since.
 
-**What remains live is a gap, and closing it is a decision rather than a repair.** Photoshop binds
-the Draw tool to `Shift+W`, and that chord is not free here: `w` and `shift+w` both go to
-`selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
-`useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile's `objectSelectionGroup`).
-`toolbar-mapping.ts`'s own comment declines to decide it — "binding a key for fidelity is a product
-decision about which tool wins the chord, and it is not one this comment should make silently" — and
-`docs/DOCUMENTATION.md`'s ladder makes Adobe's documentation the authority, so this entry does not
-answer it and no change may be made on this paragraph alone.
+**What remains live is a gap, and closing it is a decision rather than a repair.** An earlier version
+of this paragraph claimed Adobe binds the Draw tool to `Shift+W`. Adobe’s published
+default-keyboard-shortcut reference gives no letter for a Draw tool, so that provenance was
+fabricated, it is withdrawn here, and `src/tools/descriptions/eyedropper-draw.ts` carried the same
+sentence and no longer does. The chords are occupied by this app’s own keymap instead: `w` and
+`shift+w` both go to `selectObjectSelectionTool()` (`AppKeyboardShortcuts.tsx` — its two
+`useKeyDownShortcut({ key: 'w' … })` registrations, the Magic Wand tile’s `objectSelectionGroup`),
+and `b` and `shift+b` both go to `selectBrushTool()`. `docs/DOCUMENTATION.md`’s ladder makes Adobe’s
+documentation the authority, so this entry does not answer whether the tile should carry a key
+anyway and no change may be made on this paragraph alone.
 
-**Fix.** Take the ruling — does the Draw tile get `Shift+W`, and does Object Selection lose it — and
-write it into `docs/OVERRIDES.md` if it departs from the current "no key". If the tile is to carry a
-key, add the `useKeyDownShortcut` registration and the `shortcut` in the same change, since
+**Fix.** Take the ruling — does the Draw tile get a key of its own, and which chord if so — and
+write it into `docs/OVERRIDES.md` if it departs from the current "no key". There is no published
+Adobe letter to reproduce, so the ruling is about this app’s keymap: `w` and `shift+w` are the
+Object Selection chord, `b` and `shift+b` the brush group. If the tile is to carry a key, add the
+`useKeyDownShortcut` registration and the `shortcut` in the same change, since
 `it('never declares the same shortcut on two entries')` will refuse a declaration that collides. If
 the tile is to keep none, nothing needs changing and the live half of this entry closes.
+
+One claim beside this one is still unverified and is left as it stands rather than restated here:
+the comment above the Draw entry in `toolbar-mapping.ts` says "Adobe publishes none" on the premise
+that "Photoshop has no Draw tool", and `docs/OVERRIDES.md` titles OVR-2 "Photoshop’s Tools panel has
+no Draw tool". Whether Adobe’s Tools panel carries a tool by that name is a separate question from
+whether its shortcut reference gives that tool a letter, and only the second is settled. Re-derive
+that premise from Adobe before either is quoted as authority, and correct both together — OVR-2 is
+what keeps the tile, so its heading is not a comment that can drift alone.
 
 **Files.** `toolbar-mapping.ts` — `toolbarMap`'s `brush` entry, its Draw flyout entry and the
 comment above it; `src/components/Common/AppKeyboardShortcuts.tsx` — `brushGroup`,
@@ -3060,39 +3072,24 @@ rider survives.
 `src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
 
-## 129. The worktree-inventory suite's per-test timeout is I/O-bound on the shared session database, so it fails under concurrent readers and is indistinguishable from a real break
+## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
 
 **Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
-to protect a worktree whose protection is derived` runs the inventory generator over every worktree.
-Measured on `main` with 56 worktrees:
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
+and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
+with 56 worktrees:
 
 ```
 full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
 the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
-the same test under branch load   : 147s wall, user 8.78s / sys 16.07s
 ```
 
-**This entry's stated cause was wrong and is corrected here.** It used to say the cost grows with
-the fleet because the generator runs git per worktree. The third measurement refutes that:
-**147 seconds of wall clock against 24.85 seconds of CPU is about 17% utilisation**, and a
-CPU- or process-bound workload cannot look like that. It is **blocked on I/O**, not spending
-anything — three generator modules open the same file independently (`chats.mjs`'s `openDb()`,
-`board.mjs`'s `openBoard()`, `writes.mjs`'s `openDb()`), and that store is the operator's 14 GB
-session database, not repository content. So the cost scales with **concurrent readers of one
-shared store**, which is worse exactly when the swarm is busiest, and a measurement taken on a
-quiet machine is not evidence. `chats.mjs`'s own module docstring already says the dominant cost
-is two unindexed `LIKE` scans over `part`.
-
-The 53s figure is also not the worst case: the 76957ms above is already over budget, and 147s is
-the real headroom. Both are observations with their dates, on a store that has since grown — quote
-them as measurements, not as constants.
-
-The knife edge and the indistinguishability are unchanged and are the reason this is an entry rather
-than a re-run: the failure it produces is a bare `Test timed out` with no assertion, which is the
-same output a genuine break produces.
+So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
+bare `Test timed out` with no assertion — the same output a genuine break produces.
 
 **Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
-started with makes this test cross the line, and CI cannot tell the difference.
+started with makes this test cross the line, and CI cannot tell the difference. A green local run at
+99 worktrees and a red CI run at 56 would be the same defect with a different cause.
 
 **Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
 worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
@@ -6056,3 +6053,200 @@ no independent derivation, an arithmetic restatement of a sibling assertion, and
 above, which is the only one of them that was a merge artefact rather than a defect present from the
 start. The dangling reference and the fixture divergence were left unfixed because the mandate was
 test files only.
+
+## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
+
+**The problem.** Two agents independently write `## 79.`, and a merge resolves the collision
+by keeping both headings. That is the shape `.skills/hard-merge.md` taxonomy class 4 exists
+for, and its fix — incumbent keeps the number, the newcomer takes `max + 1` — is a
+**document-level** decision. Nothing enforces it, and the machine that reads the result cannot
+see the violation: `parseHandoffDoc()` in `scripts/lib/agent-board/handoff-import.mjs` keys
+items by number, so the second heading overwrites or is dropped rather than reported.
+`parseHandoffDoc({ file: 'HANDOFF.md', text: '## 79. one … ## 79. two …' })` returns **one**
+item, titled `one`, with no warning and no entry in any diagnostics field.
+
+**Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
+case, so the suite is green on a document that has lost an entry. **There is no mechanical check
+anywhere**: `.skills/hard-merge.md` Phase 7.2 asserted one existed, which is false, and its own count
+sweep cannot catch it either — a duplicated number leaves `merged == ours + theirs − base` true. The
+only check is a set comparison between the two sides' number lists, run by hand.
+
+**What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding rather
+than resolving it silently, in the shape it already uses for a retired heading (`deadNumbers` and
+the `DEAD_HEADING` consumed by `assemble`), and `scripts/__tests__/handoff-import.test.mjs` should
+gain the case: two headings, one number, one reported finding, and the heading count still two. §82
+is the same parser failing the same way on a different input, and the remedy is shared.
+
+## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
+
+**The problem.** `scripts/dispose-worktree.mjs` refuses `derived-live-writer` when the inventory
+record's `derivedLive` is true or `writeHistory.derivedChatIds` is non-empty. Two of the four arms
+that produce `derivedLive` are call histories inside the worktree — `writeHistory` from the write
+calls, and `shellHistory` from bash calls whose `workdir` is under it, per the header of
+`scripts/lib/worktree-inventory/writes.mjs` — so a chat that ran the gates in a worktree is the chat
+the refusal is about. `--no-live-writers "<why>"` does **not** clear it: `classify()` in
+`scripts/lib/worktree-inventory/classify.mjs` keeps `derivedLive` beside the suppressed `live`
+precisely so an override cannot erase its own evidence, and `dispose` reads `derivedLive`.
+
+**The consequence, which is the finding.** `.skills/worktree-merge-harvest.md` §Step 5 runs the
+gates from inside the branch's worktree and §Step 6 then calls `npm run dispose`, so **a harvest
+cannot complete its own removal**. Every sweep that hit this correctly refused to defeat the gate,
+which left landed branches accumulating behind a gate nobody could open.
+
+**What the refusal does and does not tell you.** Only the **write** arm names a chat id, and it
+expires at `LIVE_WINDOW_MS`, thirty minutes. The **I/O** arm is `RECENT_IO_WINDOW_MS`, four hours,
+counts **reads** as well as writes, and prints "a chat" with no id. The **session** and **board**
+arms print no id either — `chatLive` is `session.directory` plus `time_updated`, and `liveAgent` is
+a board row, so neither is a record of a call inside the directory. `docs/ORCHESTRATION.md` —
+§"`derived-live-writer` can refuse the session that is asking" — is the one home, and both skills
+defer to it rather than restating it.
+
+**What is missing.** A lever that is **safe**. The shape that would close this without weakening the
+guard is a self-scoped one: a refusal is cleared when the named `derivedChatIds` are **this session's
+own** ids and nothing else is live, recorded in `ownership.suppressed` beside the signals it
+overrode, so the file stays auditable rather than believed. Whether an agent may clear its own name
+at all is an architecture judgement and belongs to the operator. **A lever already exists and is not
+safe — see §224**, which is where that defect belongs.
+
+## 224. `--now` with a future clock defeats both the liveness arm and the staleness arm of `dispose`
+
+**The problem.** `node scripts/worktree-inventory.mjs --now <ms>` is documented as "pin the
+clock, for reproducible output". `scripts/lib/worktree-inventory/assemble.mjs` computes
+`const effectiveNow = Math.max(nowMs, newestKnown)` — a clamp that bounds a **past** clock and
+lets a **future** one through untouched. Everything downstream is then evaluated against that
+clock: `classify()`'s recency tests (`hasRecentIo()`, and the `LIVE_WINDOW_MS` filter that builds
+`derivedChatIds`) see every signal as expired, and `generatedAt` is stamped with the same future
+value, so `dispose`'s freshness check `nowMs - inventory.generatedAtMs > maxAgeMs` computes a
+**negative** age and passes.
+
+**Reproduced on an unchanged tree.** `disposalCandidates` and `ownership.liveWriterCount` go from
+their honest values to `51` and `0`; the worktree running the measurement came back
+`derivedLive: false` with all four `liveSignals` false and `writeHistory.derivedChatIds: []`.
+**Only the far-side figures are stable** — with every window expired the candidate set is a pure
+git function, so 51 reproduces exactly; the honest-side count moves as the repository moves, and
+this session's own call counters rise every minute. Re-derive both halves. Worktrees the honest run classified `in-use` on a live
+`derivedLive` became disposal candidates. **It clears three refusals, not one, and the staleness hole is the wider of the two.** A future
+stamp makes `action-not-dispose` read as satisfied as well as `inventory-stale` and
+`derived-live-writer`, and `preflight()` returns `ok: true` with an empty failure list on a clean
+worktree. The two paths need different amounts of clock: **+2 seconds is enough for the staleness
+check alone**, because a negative age is never `> maxAgeMs`, while the liveness arm needs more than
+four hours. So the staleness hole is roughly 8 000× the easier one to fall into, and the two are
+independent — which is the argument for fixing the consumer side first.
+
+**The clamp's stated purpose is backwards, and that matters for the fix.** `assemble.mjs` claims
+`Math.max(nowMs, newestKnown)` is what makes `--now` reproducible. It is not: a **past** pin is
+_discarded_ and replaced by the newest session row, so two different past pins produce two different
+`generatedAt` values. The clamp's real value is defensive — it stops a negative age from passing the
+liveness test — and any symmetric bound needs a written rule for what a pin is allowed to be, or
+`--now` becomes a no-op in one direction and a lie in the other.
+
+**What would close it.** Two changes, and the second holds even if another generator grows the
+flag. **First**, the smaller one: `dispose` should refuse an inventory whose age is outside the
+staleness ceiling in **either** direction — `Math.abs(nowMs - generatedAtMs) > maxAgeMs`, not the
+one-sided test — because a future stamp is the whole bypass and this does not require trusting the
+generator. One assertion pins it: `preflight()` with a `generatedAtMs` of `nowMs + 2_000` over a
+clean record must refuse as `inventory-stale`. **Second**, the generator: stop `generatedAt` being
+authoritative about time — emit the wall-clock stamp beside the pinned one and let every recency test
+read the pinned value, which makes a pin incapable of moving a freshness verdict and is what
+`assemble.mjs`'s own honesty rule already claims. That is a schema bump, and it must land with the
+`schemaVersion` check §225 asks for.
+
+**Related, and the same shape.** The refusal message prints a chat id only when `derivedChatIds` is
+non-empty, which is the **write** arm alone; the `io`, session and board arms all print "a chat", and
+`classify.mjs` folds `readHistory` into the `io` arm, so a **reader** can trip a refusal worded as
+"a chat wrote a file in it" when nothing was written. `docs/ORCHESTRATION.md` —
+§"`derived-live-writer` can refuse the session that is asking" — has the per-arm table.
+
+## 225. The `mustNotPrune` veto is advertised in a refusal message and can never fire
+
+**The problem.** `dispose`'s refusal text tells a reader the way out of a disposal it is about to
+refuse: _"A curated finding sets `mustNotPrune`, which vetoes `dispose` as well as `land`. It
+records work git cannot see in a clean tree."_ The mechanism behind that sentence is real —
+`classify.mjs` reads `Boolean(curated?.mustNotPrune)` into `curatedBlocksPrune`, and
+`dispose-worktree.mjs` refuses `must-not-prune` on the same field. **No input sets it.**
+
+```bash
+node --input-type=module -e "import {CURATED} from './scripts/lib/worktree-inventory/curated.mjs'; \
+  console.log(Object.entries(CURATED).filter(([,v])=>Object.hasOwn(v,'mustNotPrune')))"
+# → []      (160 entries, 0 with the field)
+```
+
+The field was removed from every entry when the curated summary was re-derived from git — the
+reasoning recorded in `curated.mjs` is that the hand-maintained list was the thing that rotted.
+One entry that carried it retracts it explicitly, on the grounds that git now proves the work
+committed. So the guard is not wrong, and it is not a lie: it is a **guard with no reachable input**,
+and the removal deleted the branch that read it.
+
+**Why it matters.** This is the one mechanism standing between "git says this worktree is
+disposable" and a worktree holding work that exists nowhere else. The scenario it exists for is real
+and has happened — the 2026-10-01 incident was a worktree whose only copy of someone's work was
+uncommitted. Today the guard cannot catch it, because the only way to arm it is for a human to edit
+a source file by hand, and nothing tells them to.
+
+**What would close it.** `dispose` should offer the claim rather than assert it: when it refuses on
+liveness or staleness and the worktree has uncommitted or untracked content, say that arming
+`mustNotPrune` is what a human does, and where. That is a wording fix, it costs nothing, and it
+stops the refusal message from implying a path that requires hand-editing `curated.mjs`. Whether a
+subagent may ever set the flag is a separate question and belongs to the operator — the field
+records a _human_ claim, so a subagent setting it would make the guard self-served.
+
+## 226. `dispose` reads two record keys that it never checks a version for
+
+**The problem.** `dispose-worktree.mjs` gates its liveness refusal on
+`inventory.record.derivedLive === true || (writeHistory?.derivedChatIds ?? []).length > 0`. Both are
+**duck-typed**: an absent key is neither `true` nor a non-empty list, so it reads as safe. The
+inventory carries `schemaVersion`, but `dispose` never reads it — the string does not appear in the
+file at all — and `readInventory` performs no version check.
+
+Probed directly against `preflight()`:
+
+```
+record WITH derivedLive + derivedChatIds            → ok=false  [derived-live-writer]
+record WITHOUT derivedLive, no writeHistory          → ok=true   []
+record WITHOUT derivedLive, empty writeHistory      → ok=true   []
+```
+
+**Why it is still open.** `scripts/__tests__/dispose-worktree.test.mjs` writes `derivedLive`
+explicitly in every fixture, so no case covers its absence and the suite is green either way. The
+reachable path today is a `WORKTREES.json` written by a pre-`6eaeef6c` build, which is narrow — but
+the shape is the general one: **a consumer that reads two keys it does not version will eventually
+read a file where they are missing, and it will fail toward disposal rather than toward refusal.**
+Every other guard in this program fails closed.
+
+**What would close it.** `readInventory` should refuse a `schemaVersion` it does not recognise, the
+way it already refuses a missing or unreadable file, and the refusal should be the existing
+`inventory-missing` shape rather than a new code. Then the liveness keys may be read as an
+invariant instead of as a hope. This should land with the `generatedAt` half of §224, which is the
+same schema and the same file.
+
+## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
+
+**Problem.** `src/contexts/useSelectionHistory.ts` builds both of its `SelectionSnapshot` baselines by
+hand — `{ selections: existing, activeSelectionId }` in `clearSelections()` and again in
+`commitSelection()` — where `existing` is the store's live `selections` array, not a copy of it. The
+same object is then stored in the legacy entry's `args.previousSelectionState` and passed as
+`currentSelections` to `planHistoryAppend()`, so one aliased array reaches both the legacy timeline
+and the durable `before` baseline.
+
+This contradicts the rule the shared helper already states. `selectionSnapshot()` in
+`src/contexts/selection-baseline.ts` is documented as "the clone both replay paths use to keep a
+selection snapshot off the legacy history args", and it deep-copies `points`, `pos` and `metadata`
+and freezes the wrapper, yet neither writer calls it.
+
+Nothing writes through the alias today, so this is latent rather than a live wrong answer:
+`COMMIT_DOCUMENT_EDIT` replaces `selections` with a fresh array instead of mutating the old one,
+`history-replay.ts` copies each selection when it replays `nextSelectionState`, and
+`history-adapter.ts` copies `currentSelections` and leans on the document's later deep freeze. The
+hazard is that the invariant is currently enforced by those three call sites' restraint rather than
+by the snapshot itself, and the recorded `before` is the one value a future in-place write would
+silently rewrite.
+
+**Affected.** `src/contexts/useSelectionHistory.ts` — the `previousSelectionState` construction in
+`clearSelections()` and in `commitSelection()`; `src/contexts/selection-baseline.ts` —
+`selectionSnapshot()`, which already owns the rule.
+
+**What would close it.** Route both baselines through `selectionSnapshot(existing, activeSelectionId)`.
+Leave `nextSelectionState` alone: its own comment records that `next` is deliberately the object this
+dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
+`previousSelectionState.selections` is not the same array reference as the store's would fail before
+the change and pass after it, which is the only shape of proof this needs.
