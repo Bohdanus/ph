@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2057,67 +2057,6 @@ same change.
 `proposedName`,
 `src/components/DesktopHeader/DesktopHeader.tsx` — its File > Save handler and the two
 `confirmDiscard()` guards, `src/components/Mobile/MobileHeader.tsx` — its `fileName` binding
-
----
-
-## 102. A failed raster open resizes the canvas and then keeps the old document
-
-**Problem.** `setImageFromUpload()` in `useApp.ts` resizes the canvas before it has anything to
-replace:
-
-```ts
-const { image } = data;
-const size = { width: image.width, height: image.height };
-handleImageCreate(size); // :162  resizes the canvas
-await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true); // :163  may reject
-```
-
-`createLayerFromBitmap` awaits `immutableRaster` (`useLayer.ts` — `createLayerFromBitmap()`) before it
-dispatches
-`REPLACE_DOCUMENT`, so a decode failure rejects at that `createLayerFromBitmap` call with the canvas
-already resized and no store
-transition published. The store half is correct — the retained document is untouched, and
-`src/hooks/__tests__/useApp.document-reset.test.tsx` pins exactly that as a negative control. The
-canvas half is not: it is now the new file's size while the document, `totalSize` and `documentFrame`
-are all still the old one.
-
-Measured 2026-09-30, failing a 64×48 open against a seeded 800×600 document:
-
-```
-PROBE canvas after failed open = 64 x 48
-PROBE document totalSize after failed open = {"width":800,"height":600}
-PROBE documentId after failed open = outgoing
-```
-
-The retained document then renders through a canvas of the wrong size until something redraws it, and
-the overlay refs are untouched, so the tool overlay keeps the old geometry while the base canvas does
-not. The PSD arm already gets this right — it resizes all three refs in `setImageFromUpload()`'s PSD arm
-only after
-`immutableRaster` has resolved every layer in that same arm.
-
-**Fix.** Move `handleImageCreate(size)` to after `await createLayerFromBitmap(...)`, matching the PSD
-arm's ordering, or resize inside `_addLayer`'s `newDocument` branch where the replacement is
-published. Three things must change in the same commit, all of them pins of this defect rather than of
-intended behaviour:
-
-- The `it('sizes the canvas, creates the bedrock layer, and renames the document only afterwards')`
-  title in `useApp.image-upload.test.ts` asserts
-  `['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap', 'SET_FILE_NAME']`.
-- The `it('has already resized the canvas to the image size when the layer creation starts')` title in
-  the same file asserts the same shape with a live canvas
-  read — `createLayerFromBitmap(canvas=120x90)` is interpolated from inside the mock, so it pins the
-  canvas's dimensions at the moment the layer build starts and cannot be satisfied by reordering alone.
-- That second title, and the `describe('useApp setImageFromUpload')` block it sits in, declare the
-  ordering as the behaviour ("has already resized the canvas to the image size when the layer creation
-  starts"), so renaming the expectations while leaving those titles would leave the test promising the
-  defect.
-
-**Files.** `src/hooks/useApp.ts` — `setImageFromUpload()`, `src/contexts/useLayer.ts` — `_addLayer()`
-and `createLayerFromBitmap()`,
-`src/hooks/__tests__/useApp.image-upload.test.ts` — the `describe` block and the two `it` titles named
-above,
-`src/hooks/__tests__/useApp.document-reset.test.tsx` ("kills nothing when the import fails before the
-document is replaced")
 
 ---
 
