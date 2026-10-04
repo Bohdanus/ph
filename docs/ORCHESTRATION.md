@@ -91,7 +91,7 @@ Three things stay allowed, each deliberately:
   reaches this file. The narrow word matters: a fast-forward does run
   `post-merge`, which is why §Landing can name it as the thing that releases this
   merge's board claims. A document that says "runs no hook at all" is wrong about
-  git, and this one was, in six tracked places.
+  git, and this one was: the phrase was in seven places across five files.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -386,111 +386,32 @@ git guarantees two worktrees cannot share a _path_, which is not the same thing.
 Each of those three was a direction where a failed lookup produced the same
 value as a clean answer.
 
-### `derived-live-writer` can refuse the session that is asking — and no override clears it
+### `derived-live-writer` can refuse the session that is asking
 
-**The one refusal that has no escape is worth naming on its own, because it is
-the one that has cost the most time.** `dispose` refuses `derived-live-writer`
-when the record's `derivedLive` is true or `writeHistory.derivedChatIds` is
-non-empty. Both are derived from what a chat **did inside that worktree**, so the
-chat that ran the gates in there, or that committed there, is the chat the refusal
-names. `classify()` deliberately keeps `derivedLive` beside the suppressed `live`
-rather than letting `--no-live-writers` erase its own evidence, and `dispose`
-reads `derivedLive` — so **the documented override does not open this door.** The
-window is `RECENT_IO_WINDOW_MS`, four hours wide, and `shellHistory` is fed by
-the bash calls whose `workdir` is inside the worktree, which is exactly what a
-harvest does in its gate step.
+**The refusal most likely to be hit by a reader who did nothing wrong.** `dispose` refuses
+`derived-live-writer` when the record's `derivedLive` is true or
+`writeHistory.derivedChatIds` is non-empty, and both are derived from what a chat **did inside
+that worktree** — so the chat that ran the gates in there, committed there, or read there is the
+chat the refusal is about. `classify()` deliberately keeps `derivedLive` beside the suppressed
+`live` rather than letting `--no-live-writers` erase its own evidence, and `dispose` reads
+`derivedLive`, so **the documented suppression flag does not clear this refusal.** The `io` arm is
+the wide one — `RECENT_IO_WINDOW_MS`, four hours — and it folds in `readHistory`, so a pure reader
+holds it too; `derivedChatIds` expires at `LIVE_WINDOW_MS`, thirty minutes, and is the only arm
+that **names** the chat it is refusing, so an `io`-only refusal prints "a chat", not an id.
 
-So the ordinary shape of a harvest is: gate the branch inside its worktree, land
-it, and then find that the worktree you just gated cannot be disposed by you.
-**That is the tool working, not a bug to route around** — the same `io` signal is
-the one that caught a worktree with agents editing it an hour earlier carrying
-`action: "dispose"` and `prunable: true` with every git fact correct. Do not look
-for a flag, and do not reach for `git worktree remove`; a later session, or the
-operator, disposes it once the window closes. Land the work and **say in the
-report that the removal is pending**, because a harvest that reports its landing
-and silently leaves the directory is indistinguishable from one that forgot.
+So the ordinary shape of a harvest is: gate the branch inside its worktree, land it, and find the
+worktree you just gated cannot be disposed. **Treat that as the tool working, not a flag to find.**
+The same `io` signal is the one that caught a worktree with agents editing it an hour earlier
+carrying `action: "dispose"` and `prunable: true` with every git fact correct. Land the work,
+leave the directory, and **say in the report that the removal is pending** — a harvest that
+reports its landing and silently leaves the directory is indistinguishable from one that forgot.
 
-Then it **anchors** the branch at `refs/keep/disposed/<name>` before deleting
-anything, so no `git gc` can make a disposed branch unreachable, and it
-**salvages** uncommitted work to `.git/worktree-salvage/<name>/` — a
-`git diff HEAD --binary` patch plus a `tar` of the untracked and the gitignored
-files, because no diff mentions a file git does not track. That salvage is a
-backstop for a caller that reaches `dispose()` directly; **the CLI does not rely
-on it**, because it refuses a dirty or ignored-content tree first and there is no
-override. Finally it removes the worktree with **no `--force`** and deletes the
-branch with **`git branch -d`**, which refuses an unmerged branch.
-
-**There is no `--force`, deliberately.** `git worktree remove` already refuses a
-dirty tree and prints the modified and untracked paths — the cheapest inventory of
-uncommitted work in the repository, delivered before the only irreversible step.
-Re-running it with `--force` discards exactly what it just named. Treat that
-refusal as a finding: commit the work, carry it to a worktree as a patch, or leave
-it and file it.
-
-`kilo.jsonc` denies `git worktree remove --force` and `rm -rf` against a path
-containing `kilo/`, and puts `git branch -D` behind a prompt. The documented
-throwaway recipe (`git worktree remove --force /tmp/verify-main`) does not match
-those patterns and keeps working: that worktree was created minutes earlier by
-the same command and holds nothing but a checkout.
-
-**A merge subject naming a branch is not evidence that the branch is landed.**
-This is worth stating separately because it is what a sweep did on 2026-10-01: it
-read `git log --grep=fix/stale-citations`, found a fourteen-hour-old
-`merge(fix/stale-citations): …` of an unrelated dead branch, and disposed of a
-live worktree whose tip was not an ancestor of `main`. Every record now carries
-`nameCollisions` — the merges on `main` whose subject already carried that
-branch's name — as an advisory flag that changes no verdict. The fact is
-`mergedIntoMain`, and it is already computed. The name is the only thing that
-misleads, so the inventory now shows the name's history next to the fact.
-
-**Do not flag a worktree for holding work on no ref — that case is derived.** A
-branch at 0 ahead of main, already on it, with a dirty working tree is reported
-`uncommitted-only` and is never prunable whatever the curated table says, and
-`worktree-inventory.test.mjs` re-derives the set from the live worktrees and
-asserts the generator's verdict on it. A flag on such an entry protected nothing
-and went stale on its own: the moment its owner committed, the claim was false and
-the list had to be re-derived by hand. Anything a human must decide lives in
-`scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
-entries are not interchangeable: `tsc-guard` has a `note` but no `issues` and no
-`landed`, while `paint-easy` carries an `issues` ref and a claimed `landed` state.
-Read the source file rather than copying a prose example. **Curation is worth
-writing when you know something git cannot see**, which today means exactly one
-field: `mustNotPrune` on a branch git already calls disposable. Nothing else in
-an entry moves a verdict, and a test enforces that — `summary`, `note`,
-`liveNote`, `issues` and `landed` are documentation.
-
-**An uncurated worktree is not at risk**, and there is deliberately no rule that
-demands an entry for one. There was: every live worktree holding work had to
-have an entry, which is what an in-flight task looks like for the whole of its
-life, so it was red from an agent's first edit to its merge — in every other
-checkout too, since the generator reads the repository's worktrees and not the
-caller's. The table was re-derived by hand four times in one session against a
-fleet that kept moving. What protects that work is `classify`, on git's facts
-alone, and `worktree-inventory.test.mjs` asserts it over the live worktrees with
-the curated entry removed. Measured on 2026-09-30: 160 curated keys, 102 live
-in-repo worktrees, 26 with no entry, 13 holding work on no ref — every one of
-them reported `at-risk`. Write an entry when you have a judgement to record; the
-suite does not ask you for one per worktree.
-
-`readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
-`readLostWorktree` are named at the top of the file so you do not have to filter
-the whole list to find them, and `node scripts/worktree-inventory.mjs` prints the
-first two before the evidence. `readLostWorktree` matters most of those: it is
-the only list that names a session whose worktree was **deleted**, which no
-computed signal can produce, and it cannot be derived from the worktree record it
-used to live on — the loop that fills it only visits worktrees that still exist,
-so it was structurally always false.
-
-**"merges cleanly" is VERIFIED, not assumed.** `mergeConflict` comes from
-`git merge-tree --write-tree`, which performs the merge in a scratch object store
-and touches no working tree, index or ref. `mergeConflictFiles` names the files
-that collide. It is `null` — never `false` — when the merge could not be
-attempted, because an unknown is not a licence to land. **`mergeChecked: false`
-means _no answer_, and does not say which of the two reasons applied; treat
-unknown as unknown and re-run the check yourself before acting on it.**
-`prunable: true` remains the strict disposal test: not the main worktree, the
-branch is an ancestor of `main`, the tree is clean, and no curated finding
-protects it.
+**And there is a flag that does clear it, which is why the sweep must not use one.** See `HANDOFF.md`
+§205: `node scripts/worktree-inventory.mjs --now <ms>` stamps `generatedAt` with the clock you
+pass, so a clock in the future expires every recency window **and** hands `dispose` a negative
+inventory age, defeating the staleness check as well. The clamp in `assemble.mjs` is
+`Math.max(nowMs, newestKnown)`, which bounds a **past** clock and lets a future one through. On
+this repository that moved `disposalCandidates` from 15 to 51 on an unchanged tree.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 

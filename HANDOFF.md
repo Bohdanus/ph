@@ -5577,3 +5577,47 @@ weakening the guard is a self-scoped one — a refusal is cleared when the named
 are **this session's own** ids and nothing else is live, recorded in `ownership.suppressed` beside
 the signals it overrode, so the file stays auditable rather than believed. Whether an agent may
 clear its own name at all is an architecture judgement and belongs to the operator.
+
+**Correction, 2026-10-04: a lever exists and it is not safe.** `scripts/worktree-inventory.mjs`
+accepts `--now <ms>`, documented as "pin the clock, for reproducible output". A **future** clock
+expires every recency window at once, so it clears the refusal this entry says nothing clears.
+See §205 — it is a defect, not a lever, and the fix belongs there rather than in a scoped
+override here.
+
+## 205. `--now` with a future clock defeats both the liveness arm and the staleness arm of `dispose`
+
+**The problem.** `node scripts/worktree-inventory.mjs --now <ms>` is documented as "pin the
+clock, for reproducible output". `scripts/lib/worktree-inventory/assemble.mjs` computes
+`const effectiveNow = Math.max(nowMs, newestKnown)` — a clamp that bounds a **past** clock and
+lets a **future** one through untouched. Everything downstream is then evaluated against that
+clock: `classify()`'s recency tests (`hasRecentIo()`, and the `LIVE_WINDOW_MS` filter that builds
+`derivedChatIds`) see every signal as expired, and `generatedAt` is stamped with the same future
+value, so `dispose`'s freshness check `nowMs - inventory.generatedAtMs > maxAgeMs` computes a
+**negative** age and passes.
+
+**Reproduced on an unchanged tree.** Honest run: `disposalCandidates` held 15 worktrees. Same
+commit, same tree, `--now` five hours ahead: `disposalCandidates` held **51**,
+`ownership.liveWriterCount` was `0`, and `ownership.derivedLiveWorktrees` was empty. The worktree
+the measurement ran in was the one running it — 23 write calls and 31 shell calls, the newest
+seconds old — and the record came back `derivedLive: false`, all four `liveSignals` false,
+`writeHistory.derivedChatIds: []`. Worktrees the honest run classified `in-use` on a live
+`derivedLive` became disposal candidates. Nothing was forced and no permission was asked for.
+
+**Why it matters more than a flag bug.** `scripts/dispose-worktree.mjs` is the only sanctioned
+removal path, and its refusal list exists because a sweep destroyed a live chat's uncommitted work
+on 2026-10-01 by using a hand-written deletion list instead. A documented flag that turns the
+liveness verdict off **and** simultaneously defeats the staleness check removes both of the signals
+that refusal list is built from.
+
+**What would close it.** Clamp `effectiveNow` on **both** sides — the past clamp is what makes
+`--now` reproducible, and a future clock is never a reproducibility need — or, smaller and holding
+even if another generator gains the same flag, have `dispose` refuse an inventory whose
+`generatedAt` is further ahead than its staleness ceiling. Either way `--now` should be documented
+as a test-only input. The honesty rule `assemble.mjs` already states — "a flag whose purpose is
+reproducibility must not change the answer" — is currently false in exactly this direction.
+
+**Related, and the same shape.** The refusal message prints a chat id only when `derivedChatIds`
+is non-empty; on the `io`-only arm it prints "a chat", and `classify.mjs` folds `readHistory` into
+that arm, so a **reader** can trip a refusal worded as "a chat wrote a file in it" when nothing
+was written. `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is
+asking" — now states which arm names an id and which does not.

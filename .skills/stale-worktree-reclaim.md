@@ -535,19 +535,16 @@ header of `scripts/dispose-worktree.mjs`). The
 cleanliness probe it ran first — `git status --porcelain` — reads the same for an
 abandoned worktree and a busy one, so it could not have caught that.
 
-**A refusal naming YOU is a finding, not an obstacle — and one refusal has no
-override.** `dispose` refuses `derived-live-writer` when the record's `derivedLive`
-is true or `writeHistory.derivedChatIds` is non-empty, and both come from what a
-chat did _inside_ the worktree. So the sweep that ran the gates in there, or
-committed there, is the chat the refusal names, for four hours, and
-`--no-live-writers` does **not** clear it: the inventory suppresses the verdict
-without erasing the evidence, on purpose. Five separate sweeps have hit this and
-every one of them correctly refused to defeat the gate — report it and move on.
-`docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is
-asking — and no override clears it" — is the one home, and the Never list's entry
-against reaching for `git worktree remove` is what you do instead. **Do not fold
-it into "skipped"**: a pending removal is a claim about a directory that outlives
-the session.
+**A refusal naming YOU is a finding, not an obstacle — and `--no-live-writers` does
+not clear it.** `dispose` refuses `derived-live-writer` when the record's `derivedLive` is
+true or `writeHistory.derivedChatIds` is non-empty, and both come from what a chat did
+_inside_ the worktree. So the sweep that ran the gates in there, committed there, or merely
+read there is the chat the refusal is about, and the suppression flag does not reach it: it
+suppresses the verdict without erasing the evidence, on purpose. Report it and move on.
+`docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is
+the one home; the Never list's entry against reaching for `git worktree remove` is what you do
+instead. **Do not fold it into "skipped"**: a pending removal is a claim about a directory
+that outlives the session.
 
 **0 commits ahead of `main` is not evidence a worktree is disposable.** It is the single most
 expensive mistake available here: such a branch can hold uncommitted work that exists on no ref

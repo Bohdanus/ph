@@ -479,17 +479,19 @@ move on. A dirty tree means commit it or carry it as a patch. `git branch -d`
 refusing is likewise a finding, not an obstacle — and `dispose` already uses `-d`,
 so a branch it kept is anchored and recoverable.
 
-**Expect `derived-live-writer` to name you.** Step 5 ran `npm run tsc` with its
-`workdir` inside the worktree you are about to dispose, and that is the signal
-`dispose` refuses on — for four hours, and with **no override that clears it**,
-because `--no-live-writers` suppresses the verdict the record carries without
-erasing the evidence it is built from. `docs/ORCHESTRATION.md` — §"`derived-live-writer`
-can refuse the session that is asking — and no override clears it" is the one
-home. This is the gate working: the same signal is what caught a worktree with
-agents editing it an hour earlier reading `action: "dispose"` with every git fact
-correct. Do not go looking for a flag and do not reach for `git worktree remove`.
-**Land the work, leave the directory, and say in the report that the removal is
-pending** — a harvest that reports its landing and silently leaves the worktree
+**Expect `derived-live-writer` to fire on a worktree you just gated.** Step 5 ran the gates
+in that worktree, and `dispose` refuses on what a chat did _inside_ it. `--no-live-writers`
+does **not** clear the refusal: it suppresses the verdict the record carries without erasing the
+evidence it is built from. The wide arm is recent command I/O, four hours, and it counts **reads**
+as well as writes — so the refusal may name no id at all, printing "a chat"; only the write arm
+names one, and it expires in thirty minutes. `docs/ORCHESTRATION.md` — §"`derived-live-writer`
+can refuse the session that is asking" — is the one home, and it also names the one flag that
+_would_ clear this (`--now`, which is why a sweep must not use it: `HANDOFF.md` §205).
+
+This is the gate working: the same signal caught a worktree with agents editing it an hour
+earlier reading `action: "dispose"` with every git fact correct. Do not reach for
+`git worktree remove`. **Land the work, leave the directory, and say in the report that the
+removal is pending** — a harvest that reports its landing and silently leaves the worktree
 behind is indistinguishable from one that forgot.
 
 **Record the outcome.** `.skills/stale-worktree-reclaim.md` and this file both

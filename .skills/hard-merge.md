@@ -1411,12 +1411,11 @@ and read a fourteen-hour-old merge subject carrying a branch's _name_ as proof t
 `docs/ORCHESTRATION.md` — §"Removal goes through one program" — is the one home for the mechanism;
 `.skills/worktree-merge-harvest.md` §Step 6 is the one home for the harvest sequence.
 
-**Expect `dispose` to refuse on `derived-live-writer`, naming you.** Phase 8 ran `npm run tsc` with
-its `workdir` inside this worktree, which is the signal that refusal reads, for four hours, and
-`--no-live-writers` does not clear it. That is the gate working, not an obstacle to route around:
-land the work, leave the directory, and say in the record that the removal is pending. The mechanism
-and its one home are `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that
-is asking — and no override clears it".
+**Expect `dispose` to refuse on `derived-live-writer`.** Phase 8 ran the gates inside this
+worktree, and that refusal reads what a chat did in there — including reading. `--no-live-writers`
+does not clear it. That is the gate working, not an obstacle to route around: land the work, leave
+the directory, and say in the record that the removal is pending. The mechanism and its one home
+are `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking".
 
 ---
 
