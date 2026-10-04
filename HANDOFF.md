@@ -573,22 +573,24 @@ the session store instead — every `apply_patch` / `edit` / `write` target in a
 **72 `src/` files the manifest does not list**, and several of them are load-bearing for entries here:
 
 Re-derive the table from the entries this file still carries rather than reading it off this entry —
-the entries it was built from have been deleted. Comparing every live entry's `Files` line against
-the manifest returns **64** `src/` files the manifest does not list, and the omissions are exactly
-where the migration's own boundary lives:
+the entries it was built from have been deleted. Collecting every `src/` path named in the `Files`
+paragraph of a numbered entry and comparing it against the manifest returns **82** the manifest does
+not list — one of them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
+names in that form — and the omissions are exactly where the migration's own boundary lives:
 
-| not in the manifest                                                                | live entries whose `Files` line names it |
-| ---------------------------------------------------------------------------------- | ---------------------------------------- |
-| `src/contexts/history-model.ts`                                                    | 10, 56, 172, 197                         |
-| `src/contexts/replay-coordinator.ts`                                               | 10, 199                                  |
-| `src/contexts/presentation-evaluator.ts`                                           | 1, 159, 163                              |
-| `src/contexts/durable-replay.ts`                                                   | 94                                       |
-| `src/contexts/psd-utils.ts`                                                        | 45, 56, 147, 166, 169, 172               |
-| `src/contexts/layer-types.ts`                                                      | 56, 172                                  |
-| `src/components/SidebarLeft/toolIcons.tsx`                                         | 116                                      |
-| `src/tools/fill.ts`                                                                | 47, 122                                  |
-| `src/tools/quickSelection.ts`, `rectangularSelection.ts`, `ellipticalSelection.ts` | 59, 115                                  |
-| `src/tools/draw.ts`                                                                | 163, 164                                 |
+| not in the manifest                                           | live entries whose `Files` line names it |
+| ------------------------------------------------------------- | ---------------------------------------- |
+| `src/contexts/history-model.ts`                               | 10, 56, 172, 197                         |
+| `src/contexts/replay-coordinator.ts`                          | 10, 199                                  |
+| `src/contexts/presentation-evaluator.ts`                      | 1, 159, 163                              |
+| `src/contexts/durable-replay.ts`                              | 94                                       |
+| `src/contexts/psd-utils.ts`                                   | 45, 56, 147, 166, 169, 172               |
+| `src/contexts/layer-types.ts`                                 | 56, 172                                  |
+| `src/components/SidebarLeft/toolIcons.tsx`                    | 116                                      |
+| `src/tools/fill.ts`                                           | 47, 122                                  |
+| `src/tools/rectangularSelection.ts`, `ellipticalSelection.ts` | 59, 115                                  |
+| `src/tools/quickSelection.ts`                                 | 59                                       |
+| `src/tools/draw.ts`                                           | 163, 164                                 |
 
 So an entry whose `Files` line names only unlisted files reads as unblocked when it is not. The
 sharpest case is the one this entry originally turned on: `src/tools/draw.ts` is absent from the
@@ -605,6 +607,24 @@ failure the manifest's completeness claim would have to cover to be a boundary a
 **Fix.** Regenerate the manifest from the session store rather than maintaining it by hand, and
 extend it with the unmerged-branch file set. Until then, treat "not in the manifest" as carrying no
 information at all, and derive ownership the way this entry does before touching anything.
+
+**Reproduce the live-entries half.** It is the cheap half and it is exact, so run it before the
+session-store one. It takes the first `Files` paragraph of each numbered entry, and it has to be run
+from the main checkout: the manifest is gitignored under `.kilo/`, so the relative path below resolves
+only there.
+
+```bash
+awk '/^## [0-9]/{f=0;s=0;next} f&&/^\*\*[A-Z]/{f=0} !s&&/^\*\*Files\.\*\*/{f=1;s=1} f' HANDOFF.md \
+  | grep -o '`src/[^`]*`' | tr -d '`' | sort -u > /tmp/handoff_paths.txt
+comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 82
+```
+
+Those paragraphs name 132 distinct `src/` paths, 50 of them in the manifest. `sort -u` is what makes
+the answer a count of paths rather than of entry-path pairs, which is 260. Two `Files` paragraphs in
+the file are deliberately outside the extraction and neither changes the count: §142 carries a second
+one that names no `src/` path at all, and §159's section ends in a `**Problem.**` / `**Files.**` pair
+that no heading opens — its `src/tools/usePaintStroke.ts` is a path that does not exist, the real file
+being `src/hooks/usePaintStroke.ts`.
 
 **Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
 re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
@@ -3248,8 +3268,9 @@ false, and inverted.** `applyDocumentCrop()` normalises with `sortRoundRect()`
 (`src/contexts/useLayer.ts` — `applyDocumentCrop()`), not `trimRect()`. `rect.ts` documents the
 difference deliberately: `trimRect` feeds `roundedPos` clamped edges, `sortRoundRect` feeds it
 unclamped ones, "the rounding is the same, the clamp is the caller's decision"
-(`src/util/rect.ts` — `sortRoundRect()`, `trimRect()`, `clampEdge()`), and the function's own comment
-says "Unclamped on purpose, and that is the whole feature". So `applyDocumentCrop()` **can** and does
+(`src/util/rect.ts` — `roundedPos()`, `trimRect()`, `sortRoundRect()`, `clampEdge()`), and
+`applyDocumentCrop()`'s own comment says "Unclamped on purpose, and that is the whole feature"
+(`src/contexts/useLayer.ts` — `applyDocumentCrop()`). So `applyDocumentCrop()` **can** and does
 grow the document, and the added band stays transparent — that is OVR-1 in `docs/OVERRIDES.md`. The
 green probes are still explained, by the other half of the sentence: only this one dispatch carries a
 frame, so no _ordinary tool commit_ moves `totalSize`. The conclusion stands; the mechanism named for
