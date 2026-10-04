@@ -170,6 +170,15 @@ describe('dispose preflight', () => {
         'operation-state-unreadable',
       ],
       ['no git state was supplied for it', { operationState: undefined }, 'operation-state-absent'],
+      [
+        'a squash is in progress, which has no abandon command at all',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+          }),
+        },
+        'operation-in-progress',
+      ],
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
@@ -645,6 +654,66 @@ describe('a signal that could not be read is not an empty signal', () => {
   it('still permits a clean tree, so the unreadable rule is not a blanket refusal', () => {
     expect(green().ok).toBe(true);
     expect(codes(green({ gitState: greenState({ statusError: null }) }))).toEqual([]);
+  });
+
+  it('names no command to run when git has none, rather than naming a wrong one', () => {
+    // Measured: `git merge --abort` answers "fatal: There is no merge to abort
+    // (MERGE_HEAD missing)" during a squash, and `git squash` is not a command. An
+    // earlier version substituted `git status` — a report, not a remedy — so the
+    // refusal read "Finish or abandon it deliberately — git status".
+    const squash = green({
+      operationState: greenOperationState({ operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }] }),
+    });
+    const message = squash.failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toMatch(/No operation marker is set|no \w[\w -]*will clean this up/);
+    expect(message).not.toMatch(/git status/);
+    expect(message).not.toMatch(/git squash --abort/);
+  });
+
+  it('names `git am --abort` for a rebase-apply, which `git rebase --abort` cannot do', () => {
+    // Both rebase rows are operation `rebase`, and taking the operation NAME produced
+    // `git rebase --abort` for `git am` — which fatals with "It looks like 'git am' is
+    // in progress".
+    const am = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'rebase', marker: 'rebase-apply', value: null }],
+      }),
+    });
+    expect(am.failures.find((f) => f.code === 'operation-in-progress').message).toContain('git am --abort');
+  });
+
+  it('tells the operator who else is in the worktree before they read an abort command', () => {
+    // The refusal names a command that DISCARDS work, and `preflight` already holds
+    // the ownership facts. It used to run ahead of every ownership check and drop
+    // them, so the advice to consider `git merge --abort` arrived with no hint that a
+    // live session was mid-merge in it.
+    const message = green({
+      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress')?.message;
+    // With no operation there is no refusal at all, which is the first thing to check.
+    expect(message).toBeUndefined();
+
+    const withMerge = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(withMerge).toContain('1 board claim(s)');
+    expect(withMerge).toContain('1 live session(s)');
+    expect(withMerge).toMatch(/before you abort anything/);
+  });
+
+  it('adds no ownership sentence when nothing is live, because that is absence of evidence', () => {
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).not.toContain('Others are recorded');
+    expect(message).toContain('deadbee');
   });
 
   it('reads an operation state as no-operation rather than as no-answer', () => {

@@ -381,18 +381,25 @@ repository held an eight-path unresolved merge for hours, and the only reason
 anybody knew was that a person ran the audit's `find` by hand.
 
 `npm run repo:state` reports it. It is `scripts/repo-state-gate.mjs`, and it reads
-git's own markers — `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`,
-`rebase-merge/`, `rebase-apply/` — plus `git diff --name-only --diff-filter=U`, which
-is the only query that separates an unmerged index entry from an ordinary edit.
+git's own markers — `MERGE_HEAD`, `SQUASH_MSG`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
+`BISECT_LOG`, `rebase-merge/`, `rebase-apply/` — plus
+`git diff --name-only --diff-filter=U`, which is what separates an unmerged index
+entry from an ordinary edit. `git ls-files -u` separates them too and returns the same
+paths; `-U` was chosen because its output is already one path per record.
 `--json` prints the same findings for a caller that wants them as data.
+
+**It exits non-zero when it could not look, not only when it found something.** A
+roster it could not read, or a worktree it could not describe, is reported as
+unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
+a report that answered them with exit 0 would be the surface a person trusts more.
 
 **Run it before you believe the repository is quiet.** It exits non-zero when
 anything is in progress, and it is the check to run before a sweep, before a landing,
 and before you conclude that a worktree is finished.
 
 **It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
-worktree, so it scales with the fleet — measured in seconds on a repository with 155
-worktrees. That is right for a command a person runs and wrong for a hook, and the
+worktree, so it scales with the fleet — measured in seconds on a fleet of this
+repository's size. That is right for a command a person runs and wrong for a hook, and the
 decisive reason is behavioural: a hook would block every push in the repository
 because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
 for one session's state gets `--no-verify`'d, after which it protects nothing.

@@ -159,8 +159,12 @@ const REFUSALS = {
     `\`${command ?? 'git status'}\` failed on this worktree (${detail}), so what it would have reported is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
-  'operation-in-progress': (detail, commands) =>
-    `A git operation is in progress in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about it is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. Finish or abandon it deliberately — ${commands} — and re-run this. If every conflict below is already resolved, COMMIT it instead: the abort throws the resolution away, which is the one outcome this refusal exists to prevent.`,
+  'operation-in-progress': (detail, remedy, ownership) =>
+    `A git operation is in progress in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about it is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
+    (remedy
+      ? `Finish or abandon it deliberately — ${remedy} — and re-run this. If every conflict is already resolved, COMMIT it instead: the abort throws the resolution away, which is the one outcome this refusal exists to prevent. `
+      : `No operation marker is set, so no abort will clean this up — inspect \`git diff --name-only --diff-filter=U\` there and resolve or stage it by hand. `) +
+    (ownership ?? ''),
   'operation-state-unreadable': (detail, command) =>
     `\`${command}\` failed while reading this worktree's git state (${detail}), so whether an operation is in progress is UNKNOWN rather than no. This program will not read an unreadable state as a clear one; restore the worktree's git state, or ask the operator.`,
   'operation-state-absent': () =>
@@ -503,11 +507,13 @@ export function preflight({
   } else if (state.operations.length > 0 || state.unmerged.length > 0) {
     const named = state.operations.map((o) => `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`);
     const unmerged = state.unmerged.length > 0 ? [`${state.unmerged.length} unmerged path(s) in the index`] : [];
-    refuse(
-      'operation-in-progress',
-      [...named, ...unmerged].join(', '),
-      state.operations.map((o) => abortCommand(o.operation)).join(' / ') || 'git status'
-    );
+    // No remedy name when there is no marker. `git merge --abort` does nothing for an
+    // unresolvable index with no operation behind it, and a refusal that names a
+    // command which cannot work is the same defect as a report that calls such a
+    // state clean. `repo-state-gate.mjs` says the same thing about the same shape,
+    // and the two must not advise differently.
+    const remedy = state.operations.map(abortCommand).filter(Boolean).join(' / ');
+    refuse('operation-in-progress', [...named, ...unmerged].join(', '), remedy, liveSignal(board, sessions));
   }
 
   // Ownership, from three independent sources. ANY of them means somebody is
@@ -736,6 +742,13 @@ export function locateInventory(cwd, { run = defaultRun, exists = existsSync } =
  * its own message naming the command, exactly as `dirty-tree-unreadable` is. A
  * reader that cannot answer must not be indistinguishable from one that answered
  * "nothing in progress".
+ *
+ * BOTH injected readers are guarded, not one. `preflight` is a pure decision
+ * function with no try/catch of its own, so an unguarded throw here escapes it as
+ * a stack trace — which is the outcome this refusal exists to replace. An earlier
+ * version guarded `unmergedPaths` and left `readOperations` bare, which is
+ * untestable as well as unreachable: `readOperations` cannot throw, so nothing
+ * could have shown the asymmetry to be a hole.
  */
 export function readOperationState(
   absolutePath,
@@ -745,7 +758,12 @@ export function readOperationState(
   if (gitDir === null) {
     return { gitDir: null, operations: [], unmerged: [], readError: 'git rev-parse --absolute-git-dir failed' };
   }
-  const operations = readOps(gitDir);
+  let operations;
+  try {
+    operations = readOps(gitDir);
+  } catch (error) {
+    return { gitDir, operations: [], unmerged: [], readError: error?.message ?? String(error) };
+  }
   let unmerged;
   try {
     unmerged = unmergedOf(absolutePath);
@@ -753,6 +771,36 @@ export function readOperationState(
     return { gitDir, operations, unmerged: [], readError: error?.message ?? String(error) };
   }
   return { gitDir, operations, unmerged, readError: null };
+}
+
+/**
+ * Who else is in this worktree, in one sentence, from the sources already in hand.
+ *
+ * The `operation-in-progress` refusal names a command that DISCARDS work, and the
+ * operator's first question about that command is whether anybody is standing there.
+ * `board` and `sessions` are already arguments to `preflight`, so the facts are
+ * already computed — an earlier version of this refusal ran ahead of every ownership
+ * check and dropped them, so the advice to consider `git merge --abort` arrived with
+ * no hint that a live session was mid-merge in it. On the repository this was written
+ * for, that gap is the difference between a safe abort and destroying a session's
+ * in-flight work.
+ *
+ * Returns null when nothing is live, so the refusal does not gain a sentence claiming
+ * nobody is there: that is an ABSENCE of evidence, and stating it as evidence is how a
+ * reader concludes a worktree is safe when it is only unobserved.
+ */
+function liveSignal(board, sessions) {
+  const parts = [];
+  const claims = board?.claims?.length ?? 0;
+  const locks = board?.fileLocks?.length ?? 0;
+  const agents = board?.liveAgents?.length ?? 0;
+  const live = sessions?.live?.length ?? 0;
+  if (claims > 0) parts.push(`${claims} board claim(s)`);
+  if (locks > 0) parts.push(`${locks} board file lock(s)`);
+  if (agents > 0) parts.push(`${agents} live board agent(s)`);
+  if (live > 0) parts.push(`${live} live session(s)`);
+  if (parts.length === 0) return null;
+  return `Others are recorded in this worktree RIGHT NOW: ${parts.join(', ')}. Establish who they are before you abort anything.`;
 }
 
 /**

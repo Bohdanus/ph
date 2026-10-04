@@ -199,6 +199,31 @@ describe('readOperations reads what git actually writes', () => {
     expect(readOperations(resolveGitDir(repo))).toEqual([{ operation: 'bisect', marker: 'BISECT_LOG', value: null }]);
   });
 
+  it('reports a cherry-pick and a revert, each from real git', () => {
+    // Both rows existed in the table with NO real-git assertion — removing either one
+    // failed nothing, which a test that hand-writes the marker could not have caught.
+    const repo = makeRepo();
+    const markerFile = { 'cherry-pick': 'CHERRY_PICK_HEAD', revert: 'REVERT_HEAD' };
+
+    for (const operation of ['cherry-pick', 'revert']) {
+      const marker = markerFile[operation];
+      writeFileSync(join(resolveGitDir(repo), marker), 'x');
+      expect(readOperations(resolveGitDir(repo)).map((o) => o.operation)).toEqual([operation]);
+      rmSync(join(resolveGitDir(repo), marker), { force: true });
+    }
+  });
+
+  it('reports nothing for a worktree that has finished and been cleaned up', () => {
+    // The false-positive direction, driven for real rather than asserted: a merge
+    // that was completed and aborted must leave no marker, or every finished merge
+    // in the repository would be reported forever.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    mergeThatConflicts(repo, 'theirs');
+    git(repo, 'merge', '--abort');
+    expect(readOperations(resolveGitDir(repo))).toEqual([]);
+    expect(unmergedPaths(repo)).toEqual([]);
+  });
+
   it('does not report MERGE_MSG on its own, because that file outlives the merge', () => {
     const repo = makeRepo();
     writeFileSync(join(resolveGitDir(repo), 'MERGE_MSG'), 'Merge branch x\n');
@@ -212,6 +237,7 @@ describe('readOperations reads what git actually writes', () => {
   it('reports nothing for a directory that is not a git directory', () => {
     expect(readOperations(null)).toEqual([]);
     expect(readOperations(scratch())).toEqual([]);
+    expect(readOperations('/nowhere/at/all')).toEqual([]);
   });
 
   it('derives its marker set from the table, so a marker git adds is covered by data', () => {
@@ -231,11 +257,34 @@ describe('readOperations reads what git actually writes', () => {
 });
 
 describe('abortCommand names a command that exists', () => {
-  it('uses the real abort flag for merge, rebase, cherry-pick and revert', () => {
-    expect(abortCommand('merge')).toBe('git merge --abort');
-    expect(abortCommand('rebase')).toBe('git rebase --abort');
-    expect(abortCommand('cherry-pick')).toBe('git cherry-pick --abort');
-    expect(abortCommand('revert')).toBe('git revert --abort');
+  it('uses the real abort flag for merge, cherry-pick and revert', () => {
+    expect(abortCommand({ operation: 'merge', marker: 'MERGE_HEAD' })).toBe('git merge --abort');
+    expect(abortCommand({ operation: 'cherry-pick', marker: 'CHERRY_PICK_HEAD' })).toBe('git cherry-pick --abort');
+    expect(abortCommand({ operation: 'revert', marker: 'REVERT_HEAD' })).toBe('git revert --abort');
+  });
+
+  it('distinguishes `git am` from `git rebase`, because they do not share a remedy', () => {
+    // Both rows of the table are operation `rebase`, and an earlier version took the
+    // operation NAME, so `rebase-apply` — which `git am` writes — was told to run
+    // `git rebase --abort`. Checked against the real binary rather than from memory:
+    // this string is what an operator copies, and the failure mode is a fatal.
+    expect(abortCommand({ operation: 'rebase', marker: 'rebase-merge' })).toBe('git rebase --abort');
+    expect(abortCommand({ operation: 'rebase', marker: 'rebase-apply' })).toBe('git am --abort');
+  });
+
+  it('returns null for a squash, because git has no command that abandons one', () => {
+    // Measured on a real conflicted `git merge --squash`: `git merge --abort` answers
+    // "fatal: There is no merge to abort (MERGE_HEAD missing)" and `git squash` is not
+    // a command. `null` says there is no remedy, which is actionable; any string here
+    // would be a command to copy that fatals.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const result = spawnSync('git', ['merge', '--squash', 'theirs'], { cwd: repo, encoding: 'utf8', env: GIT_ENV });
+    expect(`${result.stdout ?? ''}${result.stderr ?? ''}`).toMatch(/CONFLICT|Automatic merge failed/);
+    writeFileSync(join(repo, 'f.txt'), 'a resolution nobody reviewed\n');
+    git(repo, 'add', 'f.txt');
+    expect(readOperations(resolveGitDir(repo)).map((o) => o.operation)).toEqual(['squash']);
+    expect(() => git(repo, 'merge', '--abort')).toThrow(/no merge to abort/);
+    expect(abortCommand({ operation: 'squash', marker: 'SQUASH_MSG' })).toBeNull();
   });
 
   it('uses `git bisect reset`, because `git bisect --abort` is not a command', () => {
@@ -245,6 +294,23 @@ describe('abortCommand names a command that exists', () => {
     expect(() => git(repo, 'bisect', '--abort')).toThrow();
     expect(spawnSync('git', ['bisect', 'reset'], { cwd: repo, encoding: 'utf8' }).status).toBe(0);
   });
+
+  it('is asserted for EVERY operation the table can report', () => {
+    // The mutation that motivated this: replacing `abortCommand('bisect')` with the
+    // wrong answer failed NOTHING, because the one test that proves `git bisect
+    // --abort` does not exist never called the function. So this pins the output of
+    // every reachable input rather than a hand-picked few, which is what makes a
+    // change to the table or to the mapping fail here.
+    expect(OPERATION_MARKERS.map((m) => abortCommand({ operation: m.operation, marker: m.file ?? m.dir }))).toEqual([
+      'git merge --abort',
+      null,
+      'git cherry-pick --abort',
+      'git revert --abort',
+      'git rebase --abort',
+      'git am --abort',
+      'git bisect reset',
+    ]);
+  });
 });
 
 describe('scanRepository covers every registered worktree, not one', () => {
@@ -252,7 +318,7 @@ describe('scanRepository covers every registered worktree, not one', () => {
     const repo = makeRepo();
     const path = addWorktree(repo, 'linked');
 
-    const found = scanRepository(repo);
+    const found = scanRepository(repo).worktrees;
     // `realpathSync` on this side of the comparison, because git reports worktree
     // paths already resolved while `mkdtempSync` hands back the unresolved form.
     // On macOS `TMPDIR` is under `/var`, which is a symlink to `/private/var`, so
@@ -280,24 +346,115 @@ describe('scanRepository covers every registered worktree, not one', () => {
     mergeThatConflicts(path, 'theirs');
 
     expect(unmergedPaths(repo)).toEqual([]);
-    const found = findings(scanRepository(repo));
+    const found = findings(scanRepository(repo).worktrees);
     expect(found).toHaveLength(1);
     expect(found[0].name).toBe('linked');
     expect(found[0].unmerged).toEqual(['f.txt']);
     expect(found[0].operations.map((o) => o.operation)).toEqual(['merge']);
   });
 
-  it('reports a registration whose directory is gone, rather than dropping it', () => {
+  it('reports a registration whose directory is gone, WITH the operations git left behind', () => {
+    // The disposal case. `rm -rf` on a worktree mid-merge is what a runaway session
+    // does, and `git worktree prune` then deletes `.git/worktrees/<name>/` with no
+    // reflog entry and nothing for `git fsck` to recover. An earlier version reported
+    // such a worktree as `operations: []` — arguing that reporting it beat dropping
+    // it — and then dropped it one line later in `findings`, so the net behaviour was
+    // the thing it argued against.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'linked');
+    git(path, 'checkout', '-B', 'wt/linked');
+    mergeThatConflicts(path, 'theirs');
+    rmSync(path, { recursive: true, force: true });
+
+    const gone = scanRepository(repo).worktrees.find((w) => w.name === 'linked');
+    expect(gone).toMatchObject({ present: false, readError: null });
+    expect(gone.operations.map((o) => o.operation)).toEqual(['merge']);
+    expect(findings([gone])).toHaveLength(1);
+  });
+
+  it('cannot report a registration whose git directory git itself has dropped', () => {
+    // The limit of the roster, asserted rather than glossed: with BOTH the worktree
+    // directory and its git directory gone, `git worktree list` omits the entry, so
+    // there is nothing for `scanRepository` to report. That is git's contract for the
+    // one query this module builds on, and the reason the worktree-directory-only case
+    // above — where the git directory survives — is the one that matters: those state
+    // files are what `git worktree prune` is about to delete, and they are still there
+    // to be read.
     const repo = makeRepo();
     const path = addWorktree(repo, 'linked');
     rmSync(path, { recursive: true, force: true });
+    rmSync(join(repo, '.git', 'worktrees', 'linked'), { recursive: true, force: true });
+    expect(scanRepository(repo).worktrees.map((w) => w.name)).not.toContain('linked');
+    expect(scanRepository(repo).worktrees).toHaveLength(1);
 
-    const found = scanRepository(repo);
-    const gone = found.find((w) => w.name === 'linked');
-    // Dropping it would make the count disagree with `git worktree list` for a
-    // reader who counts, and would report "clean" for a worktree git still lists.
-    expect(gone).toMatchObject({ present: false, operations: [], unmerged: [] });
-    expect(found).toHaveLength(2);
+    // And the record shape the surviving case falls back to when nothing is readable
+    // at all, which `findings` must still surface rather than treat as clean.
+    const unreadable = {
+      name: 'linked',
+      path: '/gone',
+      branch: null,
+      present: false,
+      gitDir: null,
+      operations: [],
+      unmerged: [],
+      readError: 'the worktree directory and its git directory are both gone',
+    };
+    expect(findings([unreadable])).toHaveLength(1);
+  });
+});
+
+describe('it fails closed on what it could not read', () => {
+  it('refuses rather than reporting an unreadable repository as clean', () => {
+    // The most dangerous arm of the whole module: `git worktree list` failing used to
+    // yield exit 0 and the word "clean", so a stripped `.git`, a wrong `workdir` or a
+    // transient git failure all produced a clean bill of health.
+    const scanned = scanRepository(join(tmpdir(), 'definitely-not-a-repository-here'));
+    expect(scanned.ok).toBe(false);
+    expect(scanned.worktrees).toEqual([]);
+  });
+
+  it('reports a roster it could not read through `run`, on stderr, with exit 1', () => {
+    const out = [];
+    const err = [];
+    let code = null;
+    const result = run({
+      cwd: join(tmpdir(), 'definitely-not-a-repository-here'),
+      out: { write: (s) => out.push(s) },
+      err: { write: (s) => err.push(s) },
+      exit: (c) => {
+        code = c;
+      },
+    });
+    expect(code).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(err.join('')).toContain('could not be read');
+    expect(out.join('')).not.toContain('clean');
+  });
+
+  it('keeps reporting the rest when ONE worktree cannot be described', () => {
+    // `readError` is a finding in its own right, and the other worktrees are still
+    // reported: a reader that aborted on the first unreadable registration would hide
+    // the merge that matters most behind the registration that could not be read.
+    const readable = {
+      name: 'ok',
+      path: '/ok',
+      branch: 'b',
+      present: true,
+      operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'abc' }],
+      unmerged: ['f.txt'],
+      readError: null,
+    };
+    const unreadable = {
+      name: 'broken',
+      path: '/broken',
+      branch: null,
+      present: true,
+      operations: [],
+      unmerged: [],
+      readError: 'exit 129',
+    };
+    expect(findings([readable, unreadable])).toHaveLength(2);
+    expect(findings([unreadable])[0]).toMatchObject({ name: 'broken', readError: 'exit 129', destructive: false });
   });
 });
 
@@ -337,11 +494,27 @@ describe('findings separates the two shapes that need opposite remedies', () => 
     expect(findings([bisect])[0]).toMatchObject({ destructive: false });
   });
 
-  it('leaves a clean worktree and an unreadable one out of the findings', () => {
-    expect(findings([{ name: 'w', path: '/w', present: true, operations: [], unmerged: [] }])).toEqual([]);
-    expect(
-      findings([{ name: 'gone', path: '/gone', present: false, operations: [{ operation: 'merge' }], unmerged: ['a'] }])
-    ).toEqual([]);
+  it('leaves a clean worktree out of the findings', () => {
+    expect(findings([{ name: 'w', path: '/w', present: true, operations: [], unmerged: [], readError: null }])).toEqual(
+      []
+    );
+  });
+
+  it('keeps a registration whose directory is gone but whose merge is still recorded', () => {
+    // The reversal of the earlier behaviour, and the reason it is a finding at all:
+    // the worktree is unreadable AS A DIRECTORY, but its git directory still holds the
+    // `MERGE_HEAD` that `git worktree prune` is about to delete.
+    const gone = {
+      name: 'gone',
+      path: '/gone',
+      branch: null,
+      present: false,
+      operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'abc' }],
+      unmerged: [],
+      readError: null,
+    };
+    expect(findings([gone])).toHaveLength(1);
+    expect(findings([gone])[0]).toMatchObject({ destructive: true });
   });
 });
 
@@ -415,7 +588,7 @@ describe('the report says which remedy applies, and warns about the destructive 
     // The line NAMES the command while saying it will not work, so the assertion is
     // on the warning and the remedy block, not on the command being absent: naming
     // it is the useful part, because the reader's first instinct is to run it.
-    expect(r.err).toContain('will NOT clean this up');
+    expect(r.err).toContain('no `git merge --abort` will clean this up');
     expect(r.err).not.toContain('CAREFUL');
     expect(r.err).not.toContain('DISCARDS resolution state');
   });
