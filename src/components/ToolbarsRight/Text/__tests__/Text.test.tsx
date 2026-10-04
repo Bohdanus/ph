@@ -217,6 +217,10 @@ describe('Text toolbar', () => {
     // And from the other side: the old pair is gone, not merely outranked.
     expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
+    // `Deselect` is the name the selection bars now carry, so naming it here keeps this the
+    // negative assertion it was when the seven bars said `Clear`: without it the rename would
+    // leave the Text bar free to grow a deselect of its own and this would still pass.
+    expect(screen.queryByRole('button', { name: 'Deselect' })).not.toBeInTheDocument();
   });
 
   it('names the style toggles for assistive technology, not by their glyph', () => {

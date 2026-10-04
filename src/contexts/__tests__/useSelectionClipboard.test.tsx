@@ -217,7 +217,7 @@ describe('pasteSelectionClipboard', () => {
     });
   });
 
-  it('clamps a clipboard larger than the document to the document origin', async () => {
+  it('clamps a clipboard larger than the document to the document frame origin', async () => {
     storeState.documentFrame = { x: 12, y: 7, width: 100, height: 100 };
     storeState.selectionClipboard = createClipboard({
       bitmap: createMockImageBitmap(300, 400),

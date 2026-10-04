@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 196, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -331,7 +331,7 @@ one real entry through `commitSelection` / `clearSelections` / `appendSelectionC
 
 | gesture                                                          | append site                                                                                              |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Clear/Deselect control, and the tool switch                      | `clearSelections` / `appendSelectionClear` in `useSelectionHistory.ts`, and `goToTool` in `useApp.ts`    |
+| Deselect control, and the tool switch                            | `clearSelections` / `appendSelectionClear` in `useSelectionHistory.ts`, and `goToTool` in `useApp.ts`    |
 | magic-wand click                                                 | `handlePointerDown` in `MagicWandToolArea.tsx`                                                           |
 | rectangle drag end                                               | `onChangeEnd` in `RectangularSelectionToolArea.tsx`                                                      |
 | polygonal / freehand lasso close, feathered magnetic lasso close | `finishSelection` in `PolygonClickToolArea.tsx`, `finishSelection` in `FeatherMagneticLassoToolArea.tsx` |
@@ -2325,7 +2325,9 @@ persisted defaults for two live keys:
   `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
 - `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
   `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
-- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control.
+- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control for
+  `lineWidth` or `alpha`. Each does render one button, an app-invented `Mode` toggle that switches
+  between `Outline` and `Fill` — see §231 for why that button's argument reaches nothing.
 
 So deleting it is not a cleanup, it is a second defect: two persisted settings with no UI
 at all, and a settings bucket that round-trips values a user can no longer change. **The real
@@ -2445,7 +2447,7 @@ and `fixedHeight`, implemented in full in `ellipticalSelection.ts` — its `Marq
 `MARQUEE_SIZE_MIN`/`MAX` bounds.
 
 `RectangularSelection.tsx` is, in full, the literal string
-`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
+`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Deselect.
 
 Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
 `Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
@@ -5621,28 +5623,6 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
 
-## 208. A committed type layer cannot be entered again
-
-**Problem.** The Type tool now has edit mode, and it is unreachable for anything already committed.
-Clicking the canvas places a draft, the draft is an in-place editor, and the draft commits into a
-raster layer — and then there is no way back: no double-click on the layer re-enters, selecting the
-layer with the Type tool and clicking inside it does not, and there is no `T` control in the options
-bar for a selected text layer. Adobe offers all three
-(`https://helpx.adobe.com/photoshop/using/creating-type.html`), and the double-click one is the one
-users reach for first.
-
-**Affected.** `src/components/Main/TextEditOverlay.tsx` derives its edit session from the current tool
-args rather than from a layer, and `src/components/SidebarRight/LayersTab.tsx` has no `onDoubleClick`
-on a row.
-
-**What would close it.** Add an entry route for committed text sources: clicking inside a selected text
-layer, double-clicking its layer thumbnail, or double-clicking the layer with the Type tool should
-hydrate the source args into the contenteditable overlay, select the existing characters, and commit
-through `replaceLayerSource`. Preserve the existing `replace-layer-source` durable operation; do not
-create a replacement layer or rasterize the source. Note that `commitDirtyTool`'s in-place arm replaces
-the active layer when the draft's origin equals that layer's, so an entry route must carry the layer id
-rather than relying on the origin match.
-
 ## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
 
 **Problem.** `useRect`'s `drawMask` draws each corner and edge handle as a square CENTRED on the edge,
@@ -6028,10 +6008,22 @@ items by number, so the second heading overwrites or is dropped rather than repo
 item, titled `one`, with no warning and no entry in any diagnostics field.
 
 **Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
-case, so the suite is green on a document that has lost an entry. **There is no mechanical check
-anywhere**: `.skills/hard-merge.md` Phase 7.2 asserted one existed, which is false, and its own count
-sweep cannot catch it either — a duplicated number leaves `merged == ours + theirs − base` true. The
-only check is a set comparison between the two sides' number lists, run by hand.
+fixture, so the parser is not _directly_ tested for it — but the live-document assertions do
+catch the consequence. That file reads the real `HANDOFF.md`, and two of its cases fire on a
+duplicate: `keeps HANDOFF.md's own numbering, so every origin there is a number` asserts the
+origins are unique and ascending, and `produces one item per numbered heading, and no item for a
+prose section` asserts `items.length` equals the raw count of numbered headings. A merge that keeps
+both `## 79.` headings yields two headings and one item, so the count assertion fails. **The
+duplicate cannot reach `main` silently through `gate:push`.**
+
+What is still missing is narrower, and it is the two things the entry's own remedy names. The
+_parser_ has no diagnostic: `parseHandoffDoc()` discards the second heading and reports nothing, so
+the failure a human sees is an item count in a test rather than the number that collided. And
+**nothing compares a branch's numbers to `main`'s before the merge**, so the collision is only
+detected after it has been written; `.skills/hard-merge.md` Phase 7.2 gives a manual `comm -12` and
+`uniq -d` recipe for that comparison and asserts no automated gate, which is correct — its own count
+sweep cannot catch it either, because a duplicated number leaves `merged == ours + theirs − base`
+true.
 
 **What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding rather
 than resolving it silently, in the shape it already uses for a retired heading (`deadNumbers` and
@@ -6267,37 +6259,76 @@ different rule than the ants use.
 
 ---
 
-## 230. Seven selection options bars label a deselect `Clear`, and the word is Adobe's pixel eraser
+## 231. The lasso bars' Outline/Fill toggle persists a field that nothing reads
 
-**Problem.** The button that ends a selection is labelled `Clear` on every selection options bar:
-`RectangularSelection.tsx`, `EllipticalSelection.tsx`, `QuickSelection.tsx`, `MagicWand.tsx`,
-`FreehandLasso.tsx`, `FeatherMagneticLasso.tsx` and `SingleRowColumnMarquee.tsx` each render the
-label over a handler that calls `clearSelections()` (`useSelectionHistory.ts`), which publishes
-`appendSelectionClear()`. Nothing on that path deletes a pixel.
+**Problem.** The polygonal and freehand lasso bars each render one `Mode` button whose whole effect
+is to swap its own accessible name between `Outline` and `Fill` and write `fill: !isFill` back
+through `patchToolArgs`. Nothing reads it. The lasso's commit processor destructures `points`
+alone and hands them to `copyPolygonToCanvas()`, which takes a source canvas and a point list and
+no mode; the component that draws the trace passes no `metadata`; the selection metadata type
+carries no colour, width, alpha or fill field; and the preview's strokes are hardcoded. The same is
+true of `alpha`, `lineWidth` and `color` beside it — the only reader of those three is `Lasso.tsx`,
+a component with no production consumer, which is what §110 is about.
 
-`Clear` is not a neutral word here. In Photoshop it is `Edit > Clear`, which deletes the selected
-pixels, and none of the seven bars offers any other control that does — so a reader who knows the
-word reads this button as a destructive pixel operation on a bar that cannot perform one. Adobe
-names the deselect `Deselect` and puts it on `Ctrl+D`; no selection bar of Adobe's carries a
-`Clear`.
+**Affected.** `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx` and
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx` — `isFill`, `handleFillToggle()`, the label;
+`src/tools/polygonSelection.ts` — the `fill` field of `LassoToolArgs`; `src/tools/settings.ts` — the
+two lasso defaults that seed it; `src/tools/selection.ts` — the processor that ignores it.
 
-**It is a label defect and nothing else, which is why every gate passes.** The handler is right,
-the disabled conditions are right, and no test fails: nothing measures the word. The orphan branch
-`docs/handoff-reconcile-landed-and-new` filed it under `204`, a number this file has since
-tombstoned for an unrelated entry, so merging that branch would either resurrect `204` or lose this
-defect. It is recorded here under a number of its own instead.
+**What would close it.** Decide what `Mode` is, because the two answers are different jobs. If it is
+Photoshop's combination-mode control, that is a data-model change and not a wiring fix: `Selection`
+has no mode field, so New / Add To / Subtract From / Intersect need a committed selection model
+before any button can select one. If it stays an app-invented control, delete it from both bars and
+drop `fill` from `LassoToolArgs`, and land `e2e/freehand-lasso.spec.ts`'s `the bar toggles between
+Outline and Fill` and the two bars' `__tests__` in the same change. `docs/TOOLS.md` is generated
+from the description source and `scripts/__tests__/tool-descriptions.test.mjs` holds it byte-equal,
+so regenerate it rather than editing it.
 
-**What is needed.** Rename the label to `Deselect` in all seven bars, in the same change. The call
-sites that pin the word move with it: `getByRole('button', { name: 'Clear', exact: true })` in
-`e2e/freehand-lasso.spec.ts` and `e2e/selection-gestures.spec.ts`, and
-`screen.getByRole('button', { name: 'Clear' })` in the seven bars' `__tests__`. `src/tools/descriptions/`
-describes the control by the same word and `docs/TOOLS.md` is generated from it, so the description
-source moves too.
+**Files.** `src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`, `src/tools/polygonSelection.ts`,
+`src/tools/selection.ts`, `src/tools/settings.ts`
 
-**Files.** `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx`,
-`src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx`,
-`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx`,
-`src/components/ToolbarsRight/MagicWand/MagicWand.tsx`,
-`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
-`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
-`src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx`
+## 232. The interface has no size control, and a two-value theme toggle is the only appearance setting
+
+**Problem.** Adobe's appearance settings carry an interface-size control beside the colour scheme,
+so a user on a small display or a large one can change the scale of the whole interface. This app
+has `Theme = 'light' | 'dark'` and nothing else. `ThemeContextType` carries only `theme` and
+`toggleTheme`, and the two `localStorage` keys in `src/` are `theme` and `panelLayout` — there is no
+density, scale, zoom-level or interface-size setting anywhere, no Preferences surface to hold one,
+no root font size in any of the three stylesheets and no size custom property in `index.scss`. The
+only `density` identifiers in `src/` are brush-dab density. Every text size, control height and gap
+in the interface is therefore fixed, which is the half of Adobe's appearance surface the theme
+toggle covers and not the other half.
+
+**Affected.** `src/contexts/ThemeContext.tsx` — the two-value `Theme` union and the context type;
+`src/index.scss` — no size custom property and no `:root` font size.
+
+**What would close it.** Add the control, or state the gap where appearance is described.
+`docs/FEATURES.md` documents the theme toggle; an interface-size entry beside it that names what is
+missing is enough to stop the theme toggle reading as the whole of appearance. If the control is
+built, the property it writes has to reach every size the interface expresses — a root font size
+scales the rem-based type but not the fixed pixel control heights, so the honest first step is
+naming which of the two the control drives.
+
+**Files.** `src/contexts/ThemeContext.tsx`, `src/index.scss`, `docs/FEATURES.md`
+
+## 233. The paint cursor is a crosshair, so it carries neither the tip's position nor its width
+
+**Problem.** While a paint stroke is in progress the cursor is `cursor-draw`, whose only rule is
+`cursor: crosshair`. A crosshair is one of the browser's default cursors: it tells the user nothing
+about where the brush tip is or how wide it is, which for the one tool whose cursor carries
+information is the whole content of the cursor. `DrawToolArea.tsx` draws no outline of its own, and
+no modifier anywhere switches to a precise cursor — the class carries no precise variant and the
+component consults no modifier key. Sixteen other tool areas do set their own cursor, so this is not
+a general absence of per-tool cursors and must not be described as one; what is missing is the
+cursor for the tool whose cursor is load-bearing.
+
+**Affected.** `src/components/Main/DrawToolArea.tsx`; the cursor rules in
+`src/components/Main/Main.scss` for the precise variant.
+
+**What would close it.** A screen-space circle sized from the tip during a paint drag, and a modifier
+that swaps the crosshair for the precise crosshair. Both depend on the view transform, and `HANDOFF.md`
+§151 names a brush-tip circle as part of its own fix because that transform is commented out — so
+this closes with §151 rather than before it, and the entry stays until it does.
+
+**Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.scss`

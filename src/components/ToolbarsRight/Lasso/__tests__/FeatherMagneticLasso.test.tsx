@@ -23,7 +23,7 @@ const storeState = vi.hoisted(() => ({
   selections: [] as Selection[],
   totalSize: { width: 800, height: 600 },
   // An empty timeline at cursor -1 is what a store with nothing appended yet
-  // actually looks like, and it is what puts the Clear writer on the append
+  // actually looks like, and it is what puts the Deselect writer on the append
   // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
   // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
   // diagnostic instead of throwing on `undefined`, and the writer dispatches the
@@ -112,10 +112,10 @@ const LASSO_SELECTION: Selection = {
 };
 
 /**
- * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
  * edit that appends to history, so a deselect can be undone. The store mock has
  * to carry a live selection for the writer to read — an already-empty document
- * makes Clear a deliberate no-op, which is a different test.
+ * makes Deselect a deliberate no-op, which is a different test.
  *
  * The component's contract is to PLAN the append and DISPATCH the plan. Whether
  * the planned `durableEntry` is published is the STORE's decision, made in
@@ -260,7 +260,7 @@ describe('FeatherMagneticLasso toolbar', () => {
         getCheckbox(/Preview feather/),
         screen.getByRole('button', { name: 'Copy' }),
         screen.getByRole('button', { name: 'Paste' }),
-        screen.getByRole('button', { name: 'Clear' }),
+        screen.getByRole('button', { name: 'Deselect' }),
       ];
 
       expect(document.body).toHaveFocus();
@@ -277,13 +277,13 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(expectedStops[expectedStops.length - 1]).toHaveFocus();
     });
 
-    it('skips the disabled copy, paste, and clear buttons while tabbing', async () => {
+    it('skips the disabled copy, paste, and Deselect buttons while tabbing', async () => {
       render(<FeatherMagneticLasso />);
       const user = userEvent.setup();
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
 
       const expectedStops = [
         getInfoButton(),
@@ -425,7 +425,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(patchToolArgsMock).toHaveBeenLastCalledWith('feather-magnetic-lasso', { previewFeather: false });
     });
 
-    it('activates copy, paste, and clear with enter and space', async () => {
+    it('activates copy, paste, and Deselect with enter and space', async () => {
       const activeSelection = { id: 'sel-1', geometry: 'lasso' };
       setClipboardState({ activeSelection, hasClipboard: true });
       setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
@@ -434,7 +434,7 @@ describe('FeatherMagneticLasso toolbar', () => {
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      const clearButton = screen.getByRole('button', { name: 'Deselect' });
       expect(copyButton).toBeEnabled();
       expect(pasteButton).toBeEnabled();
       expect(clearButton).toBeEnabled();
