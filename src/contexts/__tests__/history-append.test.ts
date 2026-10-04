@@ -1240,16 +1240,15 @@ describe('decideDurableAppend: reorder entries', () => {
 });
 
 /**
- * Three known gaps in the publication preconditions, pinned exactly as the
- * boundary behaves today.
+ * Three guards on what the boundary publishes, each asserted as a REFUSAL.
  *
- * Each test asserts what the code DOES and names, in its own comment, the
- * precondition it does not have. They are tripwires, not endorsements: a fix
- * adds the named precondition, and the pin is deleted rather than relaxed. A
- * green run here is not evidence the boundary is safe — it is evidence the
- * defect has not been fixed yet.
+ * The first two were KNOWN-GAP pins — tests that asserted the boundary's defect on
+ * purpose, so a green run was evidence the defect was still there — and the two
+ * guards they named are now enforced, so each asserts the refusal and the absence
+ * of a publication instead. The third is not a gap: entry-id uniqueness is closed
+ * at the plan boundary, so a repeated id reaches this decision as a withheld plan.
  */
-describe('decideDurableAppend: known gaps in the publication preconditions', () => {
+describe('decideDurableAppend: publication preconditions at the base boundary', () => {
   const undoneFrame: DocumentFrame = { x: 0, y: 0, width: 640, height: 480 };
   const appendedFrame: DocumentFrame = { x: 0, y: 0, width: 200, height: 150 };
   const zeroFrame: DocumentFrame = { x: 0, y: 0, width: 0, height: 0 };
@@ -1316,24 +1315,10 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
     }
   };
 
-  // KNOWN GAP 1 — missing precondition: the base's own cursor. The guard list
-  // (`history-append.ts:590-610`) proves `documentId`, both revisions, the legacy
-  // tip, the length delta, the legacy cursor and the entry identity; it never
-  // proves that `base.cursor === base.history.length - 1`. The only cursor guard
-  // runs the wrong way for it — `cursor > next.cursor` (`history-append.ts:647`)
-  // catches a base that has too MANY entries, and a base that has too few slips
-  // through, because the published cursor is `base.history.length`
-  // (`history-append.ts:644`), not `base.cursor + 1`.
-  //
-  // User-visible failure: an entry the durable document had not reached (its own
-  // cursor sat below it — an undone edit) is inside the published cursor, so the
-  // published shadow replays an edit the user undid, and the redo-only state the
-  // base described is gone. Latent in the store today, because a mid-timeline
-  // base is only produced by a rebuild that maps the legacy cursor
-  // (`StoreContext.tsx:659-696`) and therefore arrives with a legacy prior that
-  // is not at its tip, which `history-append.ts:599` refuses first. Nothing in
-  // the boundary enforces the invariant; only that accident does.
-  it('publishes onto a base that is not at its own tip, turning a redo-only entry into an applied one', () => {
+  // The base's OWN cursor. `decideDurableAppend` proves `documentId`, both
+  // revisions, the legacy tip, the length delta, the legacy cursor and the entry
+  // identity — and the legacy cursor cannot speak for `base.cursor` at all.
+  it('refuses to publish onto a base that is not at its own tip, which would apply an undone entry', () => {
     const entry = cropEntryWith('crop-1', appendedFrame);
     const base = durableBase(
       [
@@ -1343,36 +1328,45 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
       0
     );
 
-    // Precondition for the pin: for this base, the crop at index 1 is redo-only.
+    // The precondition the guard reads: the base's own cursor sits below its own
+    // history, so the crop at index 1 is redo-only and the base replays the frame
+    // it started with.
     expect(base.cursor).toBe(0);
+    expect(base.history).toHaveLength(2);
     expect(replayDurableDocument(base).frame).toEqual(baselineFrame);
 
     const decision = decideCrop(base, entry, deriveSetDocumentFrameEntry(entry, baselineFrame));
 
-    expect(decision.outcome).toBe('published');
-    if (decision.outcome !== 'published') return;
-    expect(decision.document.history.map((candidate) => candidate.id)).toEqual(['baseline-0', 'undone-crop', 'crop-1']);
-    // The cursor advanced by TWO, from a base that was one behind its own history,
-    // and the entry the base had not reached is now below that cursor.
-    expect(decision.document.cursor).toBe(2);
-    expect(replayDurableDocument(decision.document, 1).frame).toEqual(undoneFrame);
+    expect(decision.outcome).toBe('preconditions');
+    if (decision.outcome === 'published') return;
+    expect(decision.reason).toBe('the durable document is not at the tip of its own history');
+    // No document at all: the refusal is the whole outcome, so nothing here can be
+    // replayed into a shadow describing a crop the user undid.
+    expect(decision).not.toHaveProperty('document');
+
+    // The legacy edit stands and the base is untouched — the boundary never rewrites
+    // what it was handed.
+    expect(entry.actionName).toBe(SET_DOCUMENT_FRAME_ACTION);
+    expect(base.history.map((candidate) => candidate.id)).toEqual(['baseline-0', 'undone-crop']);
+    expect(base.cursor).toBe(0);
+
+    // The control: the same plan onto the same history with the cursor moved to its
+    // tip publishes, so what the refusal above read is the base's cursor and nothing
+    // about the plan.
+    const atTip = durableBase(base.history, 1);
+    const control = decideCrop(atTip, entry, deriveSetDocumentFrameEntry(entry, baselineFrame));
+    expect(control.outcome).toBe('published');
+    if (control.outcome !== 'published') return;
+    // One step, from the base's own tip: `base.cursor + 1`, which is also
+    // `base.history.length`.
+    expect(control.document.cursor).toBe(2);
   });
 
-  // KNOWN GAP 2 — missing precondition: `isValidDocumentFrame` on the planned
-  // `next`. The frame branch of `validatePlannedDurableEntry`
-  // (`history-append.ts:486-498`) proves only that `planned.operation.next` equals
-  // `args.nextFrame` structurally (`sameFrame`, `history-append.ts:492`); it never
-  // asks whether either is a document frame. Every derivation that BUILDS such an
-  // entry refuses one (`history-adapter.ts:260`, which the plan calls at
-  // `history-append.ts:133`), so only a supplied entry reaches the gap.
-  //
-  // User-visible failure: durable replay applies `next` unvalidated
-  // (`durable-replay.ts:129-131`) and `documentFrameSize` clamps to a 1x1 minimum
-  // (`document-frame.ts:9-14`), so a published 0x0 crop makes the shadow describe
-  // a 1x1 document. The conversion route for the same item publishes nothing and
-  // reports the loss as a warning (`history-adapter.ts:662`), so the two routes
-  // now disagree about one legacy item and only one of them says so.
-  it('publishes a planned frame whose next frame is not a document frame, and the shadow replays it anyway', () => {
+  // The planned `next` re-validated as a DOCUMENT FRAME. The frame branch of
+  // `validatePlannedDurableEntry` proves only that `planned.operation.next` equals
+  // `args.nextFrame` structurally, so a 0x0 next frame matched a 0x0 legacy arg
+  // perfectly well; `isValidDocumentFrame` is now asked as well.
+  it('reports a mismatch for a planned frame whose next frame is not a document frame', () => {
     const entry = cropEntryWith('crop-zero', zeroFrame);
     const planned: DurableHistoryEntry = {
       id: entry.id,
@@ -1384,14 +1378,20 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
 
     const decision = decideCrop(base, entry, planned);
 
-    expect(decision.outcome).toBe('published');
-    if (decision.outcome !== 'published') return;
-    expect(replayDurableDocument(decision.document).frame).toEqual(zeroFrame);
-    // Every size the application reads off that frame is clamped, so the loss is
-    // not visible as a zero — it is visible as a document one pixel square.
-    expect(documentFrameSize(replayDurableDocument(decision.document).frame)).toEqual({ width: 1, height: 1 });
+    // A `mismatch` rather than a refusal, so the store records it, and the reason
+    // names the invalid frame itself: the planned next and the legacy arg are
+    // EQUAL here, which is precisely why the structural comparison could not see it.
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome !== 'mismatch') return;
+    expect(decision.reason).toBe('the durable next frame is not a document frame');
+    // No publication, so no frame is ever replayed and no size is clamped into
+    // existence. What the guard removes is that every size the application reads
+    // off this frame would be a one-pixel square rather than a degenerate zero.
+    expect(decision).not.toHaveProperty('document');
+    expect(documentFrameSize(zeroFrame)).toEqual({ width: 1, height: 1 });
 
-    // The same item on the other two routes, which is what makes this a divergence.
+    // The same item on the other two routes, so all three now agree. The derivation
+    // and the plan boundary already refused it; only the decision used to publish.
     expect(deriveSetDocumentFrameEntry(entry, baselineFrame)).toBeNull();
     const plan = planHistoryAppend({
       item: {

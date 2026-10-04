@@ -115,12 +115,11 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
  * The five figure entries above are the *second* selection surface for the figures
  * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
  * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
- * with, say, `toolName: 'rectangle'`, where its `toolName !== 'shape'` guard
- * (`Shape.tsx:32`) suppressed the store-colour publish: the colour well said red
- * and the shape committed `defaultSettings.rectangle.color`, black.
+ * with a figure-specific tool name, bypassing the shared shape-family route and
+ * leaving the panel's colour synchronization dependent on the wrong args shape.
  *
- * So route them through the same path the sidebar uses, which is what makes that
- * guard correct for every surface rather than special-casing this menu.
+ * So route them through the same path the sidebar uses, which keeps every surface
+ * on the shared shape-family state path rather than special-casing this menu.
  *
  * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
  * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.

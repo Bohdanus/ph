@@ -226,7 +226,6 @@ export const defaultSettings = {
     alpha: 1,
     color: '#000000',
     pos: { x: 0, y: 0 },
-    size: { width: 1, height: 1 },
     toolName: 'magic-eraser',
   } satisfies FillToolArgs,
   'paint-bucket': {
@@ -235,7 +234,6 @@ export const defaultSettings = {
     alpha: 1,
     color: '#000000',
     pos: { x: 0, y: 0 },
-    size: { width: 1, height: 1 },
     toolName: 'paint-bucket',
   } satisfies FillToolArgs,
   eyedropper: {

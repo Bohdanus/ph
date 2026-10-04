@@ -20,10 +20,11 @@
 # reports success while deleting another branch's work is worse than one that stops.
 #
 # WHAT IT CANNOT COVER, stated here so nobody relies on it:
-# - A FAST-FORWARD landing fires no hook at all. That path is safe by construction —
+# - A FAST-FORWARD landing fires no gating hook. That path is safe by construction —
 #   the branch tip contains main as an ancestor, so the result IS the branch tree and
 #   every difference from main is a change the branch made on purpose. Verified with
-#   raw git, not assumed.
+#   raw git, not assumed. Git still runs non-blocking `post-merge`, which releases the
+#   merged branch's claims if its worktree is clean and reports them as still held if not.
 # - `--no-verify` bypasses this, as it bypasses every other gate in this repository.
 #   CI is the backstop for that, and this is the floor under it rather than the ceiling.
 # - The incoming ref is read from GIT_REFLOG_ACTION because MERGE_HEAD is not yet

@@ -180,7 +180,7 @@ const base = {
     activeLayerId: null,
   },
   history: [],
-  cursor: 0,
+  cursor: -1,
 } as unknown as DurableDocument;
 
 function decide(

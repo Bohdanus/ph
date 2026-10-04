@@ -238,11 +238,14 @@ genuinely different layers.
 
 ## 3. Edit mode, commit, cancel
 
-**In this app there is no edit mode, and this revision did not change that.** `applyText`
-(`Text.tsx`) is the commit, and it is a one-shot "type into the textarea, press Apply, get a raster
-layer". There is no way back into a placed layer to change a character, and no way to cancel a
-partially-typed layer — `clear()` (`Text.tsx`) discards the pending draft. Nothing in §19 touched
-this section's rows.
+**In this app there is no Photoshop edit mode.** `applyText()` (`Text.tsx`) commits a one-shot
+"type into the textarea, press Apply" operation and rasterizes the presentation. The source
+arguments are retained, however: selecting an existing layer row with the Type tool active
+(`LayersTab.tsx` — `selectLayer()`) hydrates them, and `applyText()` can replace that layer through
+`replaceLayerSource()` when the new gesture starts at the layer's original position. A gesture away
+from that position creates a new layer. There is no on-canvas caret, character selection,
+double-click entry, or cancel for an already placed layer; `clear()` (`Text.tsx`) only discards the
+pending draft.
 
 One Adobe commit path _is_ already present: switching tools commits the draft implicitly, because
 `goToTool` calls `commitDirtyTool()` first (`src/hooks/useApp.ts` — `goToTool`).
@@ -286,8 +289,10 @@ route, which has no helpx citation, and what is Elements-only is the
 **Requirements**
 
 - `GAP` — edit mode as a state, with the Commit/Cancel pair appearing only inside it.
-- `GAP` — re-entering an existing type layer to change characters. **This is the blocking
-  requirement for everything in §4 and §6.**
+- `PARTIAL` — selecting an existing text row with the Type tool active can hydrate its source
+  arguments and `Apply` can replace it at the original position. The Photoshop requirement remains
+  a `GAP`: edit mode must be entered from the canvas or the layer's type thumbnail, without a
+  position-sensitive redraw gesture. This is the blocking requirement for everything in §4 and §6.
 - `GAP` — cancel of an in-progress edit.
 - `GAP` — `Ctrl/Cmd+Return`, keypad Enter, and Esc bound to commit/cancel. Note the app's own
   trap: the textarea holds focus as soon as the tool is selected (`TextToolArea.tsx` — the

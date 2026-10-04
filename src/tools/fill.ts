@@ -36,12 +36,12 @@ export type FillToolArgs = {
    * `apply-raster-processor` op replays from the stored args alone. */
   pos: Point;
   /**
-   * The layer size at the click. Every existing tool learns its size from the curried
-   * `ProcessorToolParams` instead and carries none in its args, so this is the first args type to
-   * declare one; it is written by the tool area beside `pos` and is the geometry a fill needs when
-   * the committed args are read back on their own.
+   * No `size`, and its absence is the same argument as `pos`'s presence inverted: both processors
+   * read the geometry from the curried `ProcessorToolParams`, and the durable call site passes
+   * `{ bitmap, size }` beside the stored args rather than inside them. A `size` here was written by
+   * the tool area and read by nothing, so a reader trusting it got the seeded `1x1` and a writer
+   * forgetting it produced a silently layer-sized fill.
    */
-  size: Size;
 };
 
 /** Read `bitmap` back at `size`. The same read `src/tools/transform.ts:87-94` performs. */
