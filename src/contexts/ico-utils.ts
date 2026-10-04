@@ -28,7 +28,10 @@ function assertWithinMaxEdge(width: number, height: number, action: 'open' | 'sa
   }
   if (width > MAX_EDGE || height > MAX_EDGE) {
     if (action === 'save') {
-      throw new Error('ICO dimensions cannot exceed 256 pixels');
+      // The wording is kept distinct from the open-side message rather than folded into it,
+      // because this is the path a user's own canvas reaches and `Save as ICO` is the control
+      // they pressed. The number comes from the constant so the two halves cannot disagree.
+      throw new Error(`ICO dimensions cannot exceed ${MAX_EDGE} pixels`);
     }
     throw new Error(`ICO image is too large to open (${width}×${height}). Maximum is ${MAX_EDGE} pixels per axis.`);
   }

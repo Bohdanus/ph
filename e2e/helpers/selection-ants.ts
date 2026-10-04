@@ -16,8 +16,9 @@ import type { CssBounds, CssBox } from './screenshot-scale';
  * prove the draft rather than the selection.
  *
  * This matters most for the FREEHAND lasso, which has no blue outline of its own at all:
- * `drawSelectionOutline` skips `sourceTool` 'freehand-lasso' and 'magic-wand'
- * (`src/util/selection.ts:198`), so a freehand selection is only ever observable here.
+ * `drawSelectionAnchors` and `findSelectionAnchorAtPoint` both skip `sourceTool`
+ * 'freehand-lasso' and 'magic-wand' (`src/util/selection.ts`), so a freehand selection is only
+ * ever observable here.
  *
  * The read is `getImageData` on the canvas's own context rather than a screenshot, for the same
  * reason `e2e/selection-marching-ants.spec.ts` does it that way: this canvas's backing store is
