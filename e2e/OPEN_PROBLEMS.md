@@ -306,50 +306,6 @@ The directory holds 17 files. Seven are read — the formats whose `verification
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
 
-## P3 — the artifact name is interpolated into a path unsanitised
-
-`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
-
-Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
-name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
-directory that was never created, and a name that traverses (`../escaped`) resolves
-outside `outputDir` — the file is written there, attached from there, and is not
-removed by anything that cleans the output dir. Severity is low only because
-`outputDir` is a throwaway per-test directory under `test-results/`.
-
-Fix: **reject, do not sanitise.** Validate that `name` is a single path component
-(no separator, not `.` or `..`) and throw an error naming the helper, for the same
-reason the `outputDir` guard throws: the caller passed something impossible, and
-silently rewriting it would attach the report under a name the test never asked
-for. Sanitising would also let two distinct names collide into one artifact.
-
-Pinned by `treats a name containing a path separator as a path, not a filename`
-and `writes outside the output directory when the name traverses out of it` in
-`e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
-pins in the same change; the first one's own comment names sanitisation as the
-shape a fix must not take.
-
-## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
-
-`e2e/helpers/cdp-helpers.ts` — the `outputDir` guard in `captureCanvasScreenshot()`
-
-The guard exists and is the same shape as the one at the top of
-`takeLineScreenshot()` in `canvas-helpers.ts`, but it is
-the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — the second
-statement of `captureCanvasScreenshot()` — uncovered, against 100% of its
-functions. The sibling guard is pinned by
-`it('names the helper and the missing field when testInfo has no output directory')`
-in `e2e/helpers/__tests__/canvas-interaction.unit.test.ts`, so nothing fails
-if this one is deleted, and the raw V8 failure it exists to replace
-(`The "path" argument must be of type string. Received undefined`) returns with it.
-
-Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
-`TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
-own message and that no CDP session was opened. `createTestInfoMock()`
-in `e2e/helpers/__tests__/canvas-helpers.fixtures.ts` already makes `outputDir`
-optional, so the double needs no change.
-
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
 `@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
@@ -737,8 +693,10 @@ record of what it was. The commit that carried them in is `4d47904`; the one tha
 them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
 
-**Four `## P…` entries appear below this line, and only two of them are those two.** The
-other two, `P3 — re-verification: the tablet band's option-row floor…` and
+**Four `## P…` entries appear below this line, and only two of them are those two** —
+`P2 — the visual baselines record no Chrome version, and a pin cannot be invented` and
+`P3 — no mobile or HiDPI project, and no touch anywhere`. The other two,
+`P3 — re-verification: the tablet band's option-row floor…` and
 `P2 — the mobile bottom bar scrolls 615px with no affordance…`, were filed by later passes
 against this tree and are not among the 33. They are here rather than above the section
 because they were raised while auditing the fixes, and moving them would break the audit
