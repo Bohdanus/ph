@@ -1,5 +1,5 @@
 import { flushSync } from 'react-dom';
-import { useHistory } from '../../contexts/useHistory.ts';
+import { useHistoryCommands } from '../../hooks/useHistoryCommands.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -118,7 +118,9 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 
 export const AppKeyboardShortcuts = () => {
   const [{ fileName, totalSize, documentFrame, hasImage, toolName }] = useStore();
-  const { canUndo, undo, canRedo, redo } = useHistory();
+  // The gesture-gated commands, not `useHistory` directly: a keyboard undo fired while a
+  // pointer gesture is open truncates the redo tail silently. See `useHistoryCommands.ts`.
+  const { canUndo, undo, canRedo, redo } = useHistoryCommands();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();

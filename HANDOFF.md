@@ -989,7 +989,7 @@ corrections to the research behind it, and the sequencing.
 **The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, same rendered
 names, same groups, same letters. A tool Photoshop does not have is **deleted, not relabelled** —
 the app already has the Brush, which is `draw`'s nearest. Adjustments and transforms are
-`Image ▸ Adjustments` and `Edit ▸ Transform` commands and leave the rail entirely. The registry
+`Image ▸ Adjustments` and `Edit ▸ Free Transform` commands and leave the rail entirely. The registry
 identifier stays free (`reposition` for the Move tool is fine); the **rendered label** does not.
 
 **Shape of the work: 41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete.**
@@ -1525,7 +1525,7 @@ several panels into one body, not moving a group.
 **7. There are no workspaces.** Adobe documents saving, switching, deleting and restoring them
 as four separate operations, and a workspace "remembers the size and position of panels". This
 app has one unnamed workspace persisted under one key, with a single hard-coded
-`Window > Reset Workspace` and no panel list to remove a panel from — "Select Window from the
+`Window > Workspace > Reset Essentials` and no panel list to remove a panel from — "Select Window from the
 menu bar. Select the panel name to remove it from the workspace", and the per-tab
 **Close / Close Tab Group** context menu, are both absent.
 
@@ -2417,11 +2417,15 @@ conclusion from a missing policy is that no policy was ever written down.
 { label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
 ```
 
-All four activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
-equivalent in `Mobile/mobile-tools.ts`, the `Image`/`Edit` menu dispatch in `DesktopHeader.tsx`, and
-the keyboard map in `AppKeyboardShortcuts.tsx` — and `useApp.ts` holds the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx` records that dispatching the
-key directly was a **bug they fixed**: it mounted the Shape panel where the
+All three activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
+equivalent in `Mobile/mobile-tools.ts` and the keyboard map in `AppKeyboardShortcuts.tsx` — and
+`useApp.ts` holds the only `SET_TOOL_NAME` dispatch
+in `src`, so the enumeration is complete. A fourth surface existed until 2026-10-02: the header's
+`Tools` menu, the one menu this app carried that Adobe does not have, and the menu bar's rebuild
+against Adobe's own list removed it. What that menu recorded about dispatching the key directly is
+still true of the three that remain, and it is why they dispatch `shape` plus the figure rather
+than the figure key: `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed** — it
+mounted the Shape panel where the
 `toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
 red and the shape committed black.
 
@@ -2486,28 +2490,30 @@ defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`
 rendered body, `src/tools/ellipticalSelection.ts` — `applyRatio()`,
 `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
 
-## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
+## 116. Three of the six pen tools have no shortcut, and Adobe's Pen flyout carries all six
 
 `AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so
 `P` / `Shift+P` cycle three of the six. `add-anchor-point`, `delete-anchor-point` and
-`convert-point` have **no keybinding** and no Tools-menu entry — `DesktopHeader.tsx`'s
-`TOOL_MENU_ITEMS` lists only the three pens. There is no standalone keymap table the enumeration
-could be incomplete against: the keymap _is_ the `useKeyDownShortcut({ key: … })` registrations in
-`AppKeyboardShortcuts.tsx`, and `grep -n "add-anchor-point\|delete-anchor-point\|convert-point"
-src/components/Common/AppKeyboardShortcuts.tsx` returns nothing —
-`toolbar-mapping.ts` declares the three without a `shortcut` as well, so no other surface declares a
-binding either. `selectPenTool()` is the only consumer of `penGroup`, and `useApp.ts`'s `goToTool()`
+`convert-point` have **no keybinding**, and no surface can be declaring one: all six are entries in
+`toolbar-mapping.ts` — the Pen group's six — and the three declare no `shortcut` field at all. There
+is no standalone keymap table the enumeration could be incomplete against: the keymap _is_ the
+`useKeyDownShortcut({ key: … })` registrations in
+`AppKeyboardShortcuts.tsx`, and none of them names one of the three.
+`selectPenTool()` is the only consumer of `penGroup`, and `useApp.ts`'s `goToTool()`
 is the only site in `src` that dispatches `SET_TOOL_NAME`, so a tool is reachable by key only
 through a registration calling one of those selectors.
 
 **Both other halves of the earlier version of this heading are wrong, and the rail never needed
 them.** The icons are **not** identical: `SidebarLeft/toolIcons.tsx`'s `freeform-pen` entry gives
 `freeform-pen` its own `FreeformPenIcon`, and `toolbar-mapping.ts`'s `toolbarMap` gives each of the
-six its own label. The Tools-menu absence is Adobe's own doing — Adobe's keyboard-shortcut reference
-(Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it costs" cites for its own shortcut
-list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor Point` or `Convert Point`, so a
-menu row for them would be a departure rather than a fix, and `docs/OVERRIDES.md` has no entry
-authorising one. What `docs/TOOLS.md` — "Freeform Pen Tool", "Curvature Pen Tool" and "Curvature
+six its own label. The missing shortcut is Adobe's own doing on one count and not on the other:
+Adobe's keyboard-shortcut reference (Adobe, primary, and the source `docs/PHOTOSHOP-UX.md` — "What it
+costs" cites for its own shortcut list) lists **no** shortcut for `Add Anchor Point`, `Delete Anchor
+Point` or `Convert Point`, so nothing here is missing that Adobe binds — and `docs/OVERRIDES.md` has
+no entry authorising inventing one. **Adobe's Tools panel does carry all three**, in the Pen flyout
+beside the three it groups here, so this is a keyboard question and the rail is not implicated: the
+rail matches Adobe's membership and not Adobe's bindings. What `docs/TOOLS.md` — "Freeform
+Pen Tool", "Curvature Pen Tool" and "Curvature
 Pen Tool" again — record is only that the shortcuts do not exist, which is what this entry says.
 
 **The rail half does not survive either.** `docs/PHOTOSHOP-UX.md` — "Open violations" states the six
@@ -2518,7 +2524,7 @@ pen family. So the "incomplete hiding" framing has no premise: nothing was hidde
 not add a shortcut here without asking.** What remains is a record, not a defect.
 
 **Files.** `src/components/Common/AppKeyboardShortcuts.tsx` — `penGroup` and `selectPenTool()`;
-`src/components/DesktopHeader/DesktopHeader.tsx` — `TOOL_MENU_ITEMS`;
+`toolbar-mapping.ts` — the Pen group's six entries, three of them without a `shortcut`;
 `src/components/SidebarLeft/SidebarLeft.tsx` — `RailGripIcon`;
 `src/components/SidebarLeft/toolIcons.tsx` — the `freeform-pen` entry; `docs/TOOLS.md` — "Freeform
 Pen Tool", "Shape Tool (the Tools panel group; no entry by that name)" and "Pen Tool";
@@ -4263,7 +4269,8 @@ header describes the state that commit fixed:
   four-violation attribution block under it, describe a red suite. `npm run test:e2e -- accessibility` is
   **3 passed, 0 violation(s)**.
 - The header's "Export menu" names a surface this app does not have — `DesktopHeader.tsx` renders
-  File (New/Open/Save) and Tools menus only.
+  Adobe's ten menus (`File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help`) and no
+  Export among them.
 - The header's "The scans are per-state, not per-app" bullet says the Save dialog is unscanned. It
   was measured here: 0 violations, 45 nodes, both
   themes. (Not added to the gate, so the header is still right about the gate and wrong about the
@@ -4478,13 +4485,14 @@ the frame a non-zero origin and an extent that disagrees with `size`.
 `src/contexts/StoreContext.tsx` (the `documentFrameSize()` call sites, `reducer()`'s `SET_SIZE`
 arm, and the commented-out `SET_SIZE` dispatch)
 
-## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
+## 167. `Edit ▸ Transform` renders six disabled mode rows, and every item in Adobe's submenu is blocked on the same two constraints
 
-**Problem.** `Edit` carries exactly one item, `Free Transform`
-(the `Edit` menu's only `<li>`, in `src/components/DesktopHeader/DesktopHeader.tsx`), because that
-is where Adobe puts it at
-the top level. Adobe's `Edit ▸ Transform` **submenu** is a different surface, it is unbuilt, and it is
-where a user who knows Photoshop looks for eleven commands. Adobe's own page enumerates them —
+**Problem.** `Edit` carries `Free Transform` at the top level, beside a `Transform` submenu whose six
+modes are all disabled (`DesktopHeader.tsx` — the `edit` entry of the `menus` array). **The placement
+is this app's own and it does not match Adobe**: Adobe nests `Free Transform` _inside_ `Transform`, and
+`DesktopHeader.tsx`'s comment above the `menus` array says exactly that while keeping the two apart
+here. So the submenu is unbuilt and is not even where a user who knows Photoshop looks for
+`Free Transform`. Adobe's own page enumerates the eleven commands in it —
 "You can find these commands under `Edit > Transform`" —
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>
 (fetched 200 on 2026-10-01 with a default `curl` User-Agent; it 403s a browser-shaped one):
@@ -4559,40 +4567,36 @@ its transient-preview comment, `handleRotateLeft`/`handleRotateRight`, the `180�
 `#rotate-slider` range input), `src/contexts/useCurrentTool.tsx` (`patchToolArgs`, `_setToolArgs`),
 `src/contexts/useLayer.ts` (`tempUpdateLayer`)
 
-## 169. Seven of Photoshop's eleven menus are still missing, so most of its commands have no menu surface at all
+## 169. Adobe's ten menus all render now, and most of the commands inside them are unbuilt
 
-**Problem.** The bar is **five** menus — File, Tools, Image, Edit, Window
-(the five `header-*-menu-button` triggers in `DesktopHeader.tsx`). Adobe's is eleven: File, Edit,
-Image, Layer,
-Type, Select, Filter, 3D, View, Window, Help. Two of the five that exist are nearly empty: `Edit` holds
-one item, and `Image` holds one submenu.
+**Problem.** The bar was **five** menus — File, Tools, Image, Edit, Window (the five
+`header-*-menu-button` triggers in `DesktopHeader.tsx`) — when this entry was written, against
+Adobe's File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help. The structural half of
+that gap is closed: the bar was rebuilt against Adobe's own list, so all ten render, the `Tools`
+menu Adobe does not have is gone, and a command this app cannot run renders `disabled` where the
+user looks for it. What is left is membership, and it is not cosmetic.
 
-The gap is not cosmetic. A user who knows Photoshop reaches for `Select > Deselect`,
-`Select > Modify > Feather`, `Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds
-nothing. Worse, several of those are **unreachable entirely**, not merely unreachable from a menu: the
-app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a selection
-(`src/util/selection.ts` exports no such function), and no adjustment layers at all
+A user who knows Photoshop reaches for `Select > Deselect`, `Select > Modify > Feather`,
+`Layer > New Adjustment Layer`, `View > Zoom In` and `Filter > …` and finds each row greyed. Worse,
+several of those commands are **unreachable entirely**, not merely unreachable from a menu: the
+app has no selection inverse, no morphological grow or shrink, and no blur-based feather over a
+selection (`src/util/selection.ts` exports no such function), and no adjustment layers at all
 (the unsupported-key warning list in `src/contexts/psd-utils.ts` names `adjustment`, `mask` and
 `clipping`, and says they are not preserved on import).
 
-**The documentation consequence is the part to fix first.** `docs/TOOLS-TOO-HARD.md` files the Select
-gaps as capability absences and justifies them with a menu that does not exist — "There is no menu
-surface that could host them". There **is** a menu bar now; there is no `Select` menu on it. Adding that
-menu is separable work from the selection-model work, and conflating the two is how a menu gap got filed
-as an algorithm gap in the first place.
+**The documentation consequence was the part to fix first, and it is fixed.**
+`docs/TOOLS-TOO-HARD.md` used to file the Select gaps as capability absences and justify them with a
+menu that did not exist — "There is no menu surface that could host them". There **is** a menu
+surface now, so those entries name the `Select` rows that host them and record that every one is
+greyed.
 
-**Fix.** Add the missing top-level menus in Adobe's order, each carrying the commands the app can
-already do and a **disabled** item for each it cannot — the shape `Image ▸ Adjustments` already uses
-(the `MenuHostItem` rule that an item is enabled by having a `toolName` and nothing else, applied by the
-`disabled={toolName === undefined}` attribute on the menu item button).
-Start with **`Select`**: its honest contents are the smallest, because Select All and Deselect are
-trivial and Feather / Grow / Modify / Inverse are `disabled` items until the model work lands. Then
-**`Layer`**, almost all of it disabled while adjustment layers do not exist. **`View`** and **`Filter`**
-follow the same rule. **`Type`** last of the plausible ones; **`3D`** is a candidate for never shipping
-at all, and should be decided rather than deferred.
+**Fix.** Build the commands, not the menus. The `Select` model work — an inverse, a morphological
+grow/shrink and a feather over a mask — is the substrate for five greyed `Select` rows, and
+adjustment layers are the substrate for the twenty greyed `Image ▸ Adjustments` rows. Adding rows to
+a menu without their computation widens the greyed surface without narrowing the gap.
 
-**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`MenuHostItem`, `ADJUSTMENTS_ITEMS`
-and their doc comments, and the five menu triggers), `src/util/selection.ts`,
+**Files.** `src/components/DesktopHeader/DesktopHeader.tsx` (`ADJUSTMENTS_ITEMS` and its doc comment,
+the `menus` array, and the ten menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
@@ -6331,3 +6335,26 @@ names a brush-tip circle as part of its own fix because that transform is commen
 closes with §151 rather than before it, and the entry stays until it does.
 
 **Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.scss`
+
+## 236. The tool rail patches a figure's args before selecting the tool, so the outgoing commit reads the wrong args
+
+**Problem.** `SidebarLeft`'s `selectTool` calls `patchToolArgs('shape', { figure })` and only then
+`goToTool(tool.name)`. `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, and that commit
+reads the outgoing args — so with the incoming figure already written into `currentArgs`, a figure
+picked from the rail commits the outgoing tool against the incoming tool's args. In the text case the
+commit takes its drop branch: `useLayer`'s text branch reads `args.text` and `args.rect`, finds
+neither on a shape args object, early-returns, and an unapplied text layer is dropped with nothing to
+undo. The inverse order is what `mobile-tools.ts`'s `makeSelectTool` already does, and what the
+header's figure rows used to do before the `Tools` menu was removed; the rail is the one caller left
+that does it the other way. Nothing pins either order: the header's own test for it was deleted with
+its surface, and no rail test asserts the sequence.
+
+**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; the surviving safe order is in
+`src/components/Mobile/mobile-tools.ts`.
+
+**What would close it.** Select first, then patch, in `SidebarLeft`, plus a test that asserts the
+order the way the header's asserted it: have `commitDirtyTool` record the args it sees and fail if
+they are the incoming figure's. Ordering it against `makeSelectTool` also removes the last place the
+two surfaces can disagree, which is how the sheet and the bar came to differ once already.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`

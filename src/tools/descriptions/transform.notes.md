@@ -1275,6 +1275,16 @@ menu's name. The extraction added an `Image ▸ Adjustments` submenu and reshape
 own single `Free Transform` item, and it removed `color`, `levels` and `transform` from the Tools
 menu in the same change. A test now pins that absence.
 
+**That last sentence is history, and the surface is gone.** The `Tools` menu itself was removed on
+2026-10-02, when the menu bar was rebuilt against Adobe's own list — `File, Edit, Image, Layer,
+Type, Select, Filter, View, Window, Help`, with no `Tools` among them, because Photoshop has no such
+menu and `docs/OVERRIDES.md` has never excused one. So there is no longer a second surface to keep
+in step, `TOOL_MENU_ITEMS` no longer exists, and the pin that named the absence has been replaced:
+`SidebarLeft/__tests__/toolbar-mapping.test.ts` now carries the invariant that every registered tool
+is a rail tile or is named in `toolbar-mapping.ts`'s `extraTools`. The reasoning above still stands —
+a tool list is not a single surface — and it is why that invariant lives against the registry rather
+than against a list of menu rows.
+
 What did survive is the reason the first surface was not the only one: a tool list is not a single
 surface, and "delete three rows from `toolbarMap`" was never going to be sufficient on its own.
 
