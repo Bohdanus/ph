@@ -9,6 +9,8 @@ import {
   getStrokeAnalysis,
   hasDarkPixels,
   hasRedPixels,
+  hasMagnetSnapPixels,
+  hasManualSnapPixels,
   type CaptureRegion,
   type ImageDataResult,
 } from '../canvas-helpers';
@@ -17,6 +19,7 @@ import {
   DARK_GRAY,
   RED,
   SPRAY_GRAY,
+  TRANSPARENT,
   WHITE,
   captureAtScale,
   captureRegionOf,
@@ -45,6 +48,12 @@ const CONSTANT_CONTRACT: [keyof typeof STROKE_ANALYSIS, number][] = [
   ['SELECTION_RED_MAX', 80],
   ['SELECTION_GREEN_MIN', 80],
   ['SELECTION_BLUE_MIN', 180],
+  ['MAGNET_SNAP_RED_MAX', 60],
+  ['MAGNET_SNAP_GREEN_MIN', 120],
+  ['MAGNET_SNAP_BLUE_MAX', 160],
+  ['MANUAL_SNAP_RED_MIN', 180],
+  ['MANUAL_SNAP_GREEN_MIN', 90],
+  ['MANUAL_SNAP_BLUE_MAX', 90],
   ['SPRAY_LUMINANCE_THRESHOLD', 200],
   ['SPRAY_SATURATION_THRESHOLD', 30],
   ['SPRAY_VERTICAL_SPREAD_THRESHOLD', 30],
@@ -257,6 +266,185 @@ describe('getStrokeAnalysis', () => {
     const image: ImageDataResult = { width: 0, height: 0, data: new Uint8ClampedArray([0, 0, 0, 255]) };
 
     expect(await getStrokeAnalysis(image, { width: 10, height: 10 })).toBeNull();
+  });
+});
+
+/**
+ * THE APP'S OWN WORKSPACE BACKDROP IS NOT INK.
+ *
+ * The classifier was asked to find a stroke and answer "is there one", with no notion of the
+ * page it was photographing. The workspace is a checkerboard (`Main.tsx:279` picks
+ * `.chessboard-light` or `.chessboard-dark`), the document is letterboxed inside it, and a clip
+ * that straddles the letterbox photographs the page's own background. `#f3f3f3` then reads as
+ * `spray`: it is not near-white (`> 250` is false at 243), it is above `SPRAY_LUMINANCE_THRESHOLD`
+ * at zero saturation, and it fills the clip from edge to edge, so a single column of backdrop
+ * produced `{ type: 'spray', segments: 1, verticalSpread: <the whole clip> }` with nothing
+ * drawn. `e2e/pen-types.spec.ts:37-40` polls for exactly that non-null shape, so its wait could
+ * be satisfied by the background and the spray assertions after it would be reading the
+ * checkerboard rather than the pen.
+ *
+ * THE FIX IS EXACT, and that is a decision rather than a shortcut. `LETTERBOX_LIGHT_CELL` and
+ * `LETTERBOX_DARK_CELL` match the two cell colours as RGB TRIPLES rather than as luminance
+ * bands, because every band wide enough to be worth having runs into a grey this suite already
+ * calls ink: `>= 243` swallows `grey(250)`, which the near-white table above pins as a stroke
+ * one level below the threshold, and admitting 18 downward swallows `DARK_GRAY` at 10, which is
+ * the ink of the dispatch table below and of two gap-threshold fixtures. So these cases pin the
+ * cell colours, and the JSDoc on the constants records the residual: the anti-aliased blend at a
+ * cell's diagonal edge, and the dark theme's `#000` gaps, are still read as ink.
+ */
+describe('getStrokeAnalysis on the workspace backdrop', () => {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+  /** The clip `pen-types.spec.ts` takes: 320x120 CSS px, captured at CSS scale so scale is 1. */
+  const REGION: CaptureRegion = { width: 320, height: 120 };
+  const CLIP: { width: number; height: number } = { width: 320, height: 120 };
+
+  /** The measured peak of one spray dab at the app's default spray preset. */
+  const APP_SPRAY_PEAK: Color = { red: 204, green: 204, blue: 204 };
+
+  /** A full-clip wash of `cell`, i.e. a capture with nothing drawn on it. */
+  function backdropOnly(cell: Color): ImageDataResult {
+    const image = createImageData(CLIP.width, CLIP.height);
+    fillAll(image, cell);
+    return image;
+  }
+
+  it('derives its palette from the app stylesheet rather than from a fixture', () => {
+    // `.chessboard-light` and `.chessboard-dark`, `src/index.scss:140-164`. If either cell
+    // colour moves, the exclusion stops matching and the cases below fail — which is the
+    // point of naming the source rather than the number.
+    expect(LETTERBOX_LIGHT_CELL).toEqual({ red: 0xf3, green: 0xf3, blue: 0xf3 });
+    expect(LETTERBOX_DARK_CELL).toEqual({ red: 0x12, green: 0x12, blue: 0x12 });
+  });
+
+  it('places the light cell inside the band that made it a false positive', () => {
+    // The arithmetic of the defect, restated so a reader does not have to re-derive it: 243 is
+    // below the near-white cut, above the spray luminance cut, and perfectly unsaturated.
+    expect(LETTERBOX_LIGHT_CELL.red).toBeLessThan(STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD);
+    expect(LETTERBOX_LIGHT_CELL.red).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD);
+    const level = LETTERBOX_LIGHT_CELL.red;
+    expect(
+      Math.max(LETTERBOX_LIGHT_CELL.red, LETTERBOX_LIGHT_CELL.green, LETTERBOX_LIGHT_CELL.blue) -
+        Math.min(LETTERBOX_LIGHT_CELL.red, LETTERBOX_LIGHT_CELL.green, LETTERBOX_LIGHT_CELL.blue)
+    ).toBeLessThan(STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD);
+
+    // And the reason a "no stroke" answer was the wrong one before: a full-clip wash has the
+    // largest vertical spread the classifier can see, so it was a spray on every axis it looks
+    // at, not merely on the colour.
+    expect(CLIP.height).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD);
+    expect(level).not.toBe(STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD);
+  });
+
+  it('returns null for a capture that is nothing but the light letterbox cell', async () => {
+    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION)).toBeNull();
+  });
+
+  it('returns null for a capture that is nothing but the dark letterbox cell', async () => {
+    // The other arm: 18 is below `DARK_THRESHOLD`, so before the exclusion this was reported
+    // as dark ink rather than as spray — two different wrong answers from one background.
+    expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_THRESHOLD);
+    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION)).toBeNull();
+  });
+
+  it('returns null for the light checkerboard itself, cells and #fff gaps alike', async () => {
+    // The 20px cells of `background-size: 20px 20px`, which is what a real capture of the
+    // letterbox is: half cell, half `#fff`. Both are excluded — the gap by `NEAR_WHITE_THRESHOLD`
+    // and the cell by the new exclusion — so the pair is what a straddling clip really holds.
+    const image = createImageData(CLIP.width, CLIP.height);
+    for (let y = 0; y < CLIP.height; y++) {
+      for (let x = 0; x < CLIP.width; x++) {
+        setPixel(image, x, y, (x + y) % 20 < 10 ? LETTERBOX_LIGHT_CELL : WHITE);
+      }
+    }
+
+    expect(await getStrokeAnalysis(image, REGION)).toBeNull();
+  });
+
+  it('still reads the app spray peak as spray, which is the margin the exclusion must leave', async () => {
+    // The load-bearing non-regression. `drawSpray` puts the tool's Opacity in its gradient's
+    // colour stop, and the default preset is Opacity 0.5 at `SPRAY_PEAK_ALPHA` 0.4 — so the
+    // measured core of one dab is rgb(204,204,204) (`src/util/draw.ts:156-171`). The exclusion
+    // is 243, so the brightest part of a real spray sits 39 levels BELOW it and clears
+    // `SPRAY_LUMINANCE_THRESHOLD` by 4. Both numbers are pinned so that widening the exclusion
+    // into a band, or moving the luminance cut, cannot pass unnoticed.
+    expect(APP_SPRAY_PEAK.red).toBe(204);
+    expect(LETTERBOX_LIGHT_CELL.red - APP_SPRAY_PEAK.red).toBe(39);
+    expect(APP_SPRAY_PEAK.red - STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD).toBeGreaterThan(0);
+
+    const image = createImageData(CLIP.width, CLIP.height);
+    fillAll(image, WHITE);
+    fillRect(image, { left: 0, top: 50, right: CLIP.width - 1, bottom: 90 }, APP_SPRAY_PEAK);
+
+    const analysis = await getStrokeAnalysis(image, REGION);
+
+    expect(analysis).toEqual({
+      type: 'spray',
+      segments: 1,
+      verticalSpread: 41,
+      pixelCount: 41 * CLIP.width,
+    });
+  });
+
+  it('classifies a spray stroke drawn across the light checkerboard, not over the paper', async () => {
+    // The case the defect would have produced a WRONG answer for: real ink over real backdrop.
+    // The stroke has to survive the exclusion, because the clip's own background is the cell
+    // colour and the ink is only 39 levels below it.
+    const image = createImageData(CLIP.width, CLIP.height);
+    for (let y = 0; y < CLIP.height; y++) {
+      for (let x = 0; x < CLIP.width; x++) {
+        setPixel(image, x, y, (x + y) % 20 < 10 ? LETTERBOX_LIGHT_CELL : WHITE);
+      }
+    }
+    fillRect(image, { left: 40, top: 50, right: 279, bottom: 90 }, SPRAY_GRAY);
+
+    const analysis = await getStrokeAnalysis(image, REGION);
+
+    expect(analysis).toEqual({
+      type: 'spray',
+      segments: 1,
+      verticalSpread: 41,
+      pixelCount: 41 * 240,
+    });
+  });
+
+  it('classifies a black pen stroke as solid over the dark cell, which is why that cell is a match and not a band', async () => {
+    // `#000000` at the pen preset's Opacity 0.9 over paper is rgb(26,26,26), and black is the
+    // app's default pen colour (`src/contexts/StoreContext.tsx:324`). A band admitting the dark
+    // cell downwards would swallow this stroke, and swallowing the `#000` gaps between the
+    // cells is what would swallow it; so the exclusion is a MATCH on 18, and the stroke's own
+    // bounds are what the classifier reports.
+    const image = createImageData(CLIP.width, CLIP.height);
+    fillAll(image, LETTERBOX_DARK_CELL);
+    fillRect(image, { left: 0, top: 50, right: CLIP.width - 1, bottom: 59 }, { red: 0, green: 0, blue: 0 });
+
+    const analysis = await getStrokeAnalysis(image, REGION);
+
+    expect(analysis).toEqual({
+      type: 'solid',
+      segments: 1,
+      verticalSpread: 10,
+      pixelCount: 10 * CLIP.width,
+    });
+  });
+
+  it("reads a pure #000 capture as ink, so the dark theme's gaps are the residual it leaves", async () => {
+    // The residual is not pinned here and there is deliberately no case that says a dark-theme
+    // checkerboard IS a stroke: that is not a fact anyone wants kept, and asserting it would
+    // forbid a later fix. What is pinned is the reason the residual exists — the `#000` gaps
+    // between dark cells are indistinguishable from the app's own black pen, so they cannot be
+    // excluded without excluding ink, and `#000000` is the default pen colour
+    // (`src/contexts/StoreContext.tsx:324`). Closing that gap is a decision about the app's
+    // palette, not a threshold; `e2e/OPEN_PROBLEMS.md` is where it belongs.
+    //
+    // `type: 'spray'` and not 'solid' is a second, independent rule and is pinned here too:
+    // admission and naming are decided separately, and a full-height wash is named by its SPREAD
+    // whatever its colour. Read as a colour test this looks wrong; read as the two rules it
+    // actually is, it is the shape `getDarkPixelBounds`/`hasDarkPixels` never needed to see.
+    expect(await getStrokeAnalysis(backdropOnly({ red: 0, green: 0, blue: 0 }), REGION)).toEqual({
+      type: 'spray',
+      segments: 1,
+      verticalSpread: CLIP.height,
+      pixelCount: CLIP.width * CLIP.height,
+    });
   });
 });
 
@@ -550,4 +738,87 @@ describe('Buffer input dispatch', () => {
       expect(fromBuffer).toEqual(fromDecoded);
     }
   );
+});
+
+/**
+ * The magnetic lasso paints its snapped preview path one of two colours and the COLOUR is the
+ * assertion — it is how a spec reads whether the edge detector engaged. `e2e/README.md`'s
+ * "house rule" applies with extra force here: a bound loose enough to accept the other branch,
+ * or the tool's own blue guide, would make the Alt contract pass against a build that never
+ * switched, so the discrimination is pinned here rather than discovered in a browser.
+ *
+ * Every colour below is the tool's nominal rgba composited at 0.95 over the suite's pinned
+ * LIGHT backdrop, which is what a capture actually contains:
+ *
+ *   green  rgba(0,170,90,0.95)   -> (13, 174, 98)   over #fff
+ *   orange rgba(230,130,0,0.95)  -> (231, 136, 13)  over #fff
+ *   guide  rgba(0,123,255,0.95)  -> (13, 129, 255)  over #fff
+ *
+ * The guide is the case that matters most: it shares this path's GEOMETRY, so a green bound
+ * without a red ceiling would match the blue line the tool draws along the same segment.
+ */
+const MAGNET_COMPOSITE_GREEN: Color = { red: 13, green: 174, blue: 98 };
+const MAGNET_COMPOSITE_ORANGE: Color = { red: 231, green: 136, blue: 13 };
+const MAGNET_COMPOSITE_GUIDE_BLUE: Color = { red: 13, green: 129, blue: 255 };
+
+const MAGNET_DISCRIMINATION_CASES: { name: string; color: Color; green: boolean; orange: boolean }[] = [
+  { name: 'the magnet-snapped preview path', color: MAGNET_COMPOSITE_GREEN, green: true, orange: false },
+  { name: 'the Alt-suppressed preview path', color: MAGNET_COMPOSITE_ORANGE, green: false, orange: true },
+  // The tool's own guide line, drawn along the same segment as the preview.
+  { name: "the tool's blue magnetic guide", color: MAGNET_COMPOSITE_GUIDE_BLUE, green: false, orange: false },
+  { name: 'the committed selection path', color: { red: 13, green: 129, blue: 255 }, green: false, orange: false },
+  { name: 'a black document stroke', color: black, green: false, orange: false },
+  // A red stroke is the case an orange bound loose enough to say "warm ink" would swallow:
+  // `e2e/layers.spec.ts` really does paint #ff0000, so if this read as orange a spec drawing
+  // red could satisfy a wait for the Alt-suppressed preview without Alt doing anything.
+  { name: 'a red document stroke', color: RED, green: false, orange: false },
+  { name: 'the white backdrop', color: WHITE, green: false, orange: false },
+  // Grey is the trap a bound loose enough to match "some ink" would fall into, and the range
+  // between the two composite greens is where an anti-aliased stroke fringe lands.
+  { name: 'a mid grey', color: gray(150), green: false, orange: false },
+  { name: 'a dark grey', color: gray(100), green: false, orange: false },
+  { name: 'the nominal green, uncomposited', color: { red: 0, green: 170, blue: 90 }, green: true, orange: false },
+  { name: 'the nominal orange, uncomposited', color: { red: 230, green: 130, blue: 0 }, green: false, orange: true },
+];
+
+describe('magnetic lasso preview path discrimination', () => {
+  it.each(MAGNET_DISCRIMINATION_CASES)(
+    'reads $name as magnet=$green manual=$orange',
+    async ({ color, green, orange }) => {
+      const image = await createTestImageData(color, 12, 12);
+      expect(await hasMagnetSnapPixels(image)).toBe(green);
+      expect(await hasManualSnapPixels(image)).toBe(orange);
+    }
+  );
+
+  it('never reports either colour on an empty capture', async () => {
+    const blank = await createTestImageData(WHITE, 20, 20);
+    expect(await hasMagnetSnapPixels(blank)).toBe(false);
+    expect(await hasManualSnapPixels(blank)).toBe(false);
+  });
+
+  it('skips a transparent pixel rather than reading it as black', async () => {
+    // A capture with nothing but alpha 0 is the checkerboard's own absence of ink. Read as
+    // 0,0,0 it would satisfy a green bound with no upper blue ceiling, so both predicates
+    // must skip it — which is also what every other predicate in this file does.
+    const transparent = await createTestImageData(WHITE, 8, 8);
+    fillAll(transparent, WHITE, TRANSPARENT);
+    expect(await hasMagnetSnapPixels(transparent)).toBe(false);
+    expect(await hasManualSnapPixels(transparent)).toBe(false);
+  });
+
+  it('finds the colour among surrounding document ink', async () => {
+    // The predicates scan a whole clip that also contains the artwork, so a green pixel has
+    // to survive being surrounded by black and red rather than sitting alone on white.
+    const mixed = await createTestImageData(WHITE, 30, 30);
+    fillRect(mixed, { left: 0, top: 0, right: 29, bottom: 29 }, black);
+    fillRect(mixed, { left: 0, top: 0, right: 14, bottom: 14 }, RED);
+    setPixel(mixed, 20, 20, MAGNET_COMPOSITE_GREEN);
+    expect(await hasMagnetSnapPixels(mixed)).toBe(true);
+    expect(await hasManualSnapPixels(mixed)).toBe(false);
+
+    setPixel(mixed, 20, 20, MAGNET_COMPOSITE_ORANGE);
+    expect(await hasMagnetSnapPixels(mixed)).toBe(false);
+    expect(await hasManualSnapPixels(mixed)).toBe(true);
+  });
 });
