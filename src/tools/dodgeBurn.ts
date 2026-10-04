@@ -226,18 +226,6 @@ const tipSettings = (args: DodgeBurnToolArgs): BrushTipSettings =>
   });
 
 /**
- * The stroke's per-pixel coverage field comes from `src/util/stroke-coverage.ts`.
- *
- * It used to be built here, privately, and moved out because the Sponge
- * (`src/tools/sponge.ts`) needs the identical field to scale chroma with and must not
- * carry a second copy of the same union-over-dabs loop. The reasoning that justified the
- * shape — this is where the shared brush engine is used as a GEOMETRY rather than as a
- * painter, so `stampBrushStroke` is deliberately not called; and dabs are UNIONED rather
- * than summed so a commit is idempotent under replay — moved with it and is recorded
- * there.
- */
-
-/**
  * Shift every painted channel towards white (dodge) or towards black (burn), in place.
  *
  * The two rules are the same line with the other endpoint, which is the whole reason one
@@ -293,6 +281,15 @@ const shiftPaintedChannels = (
  * is held, which is a per-frame effect with no single end value; a one-shot commit has
  * to be a pure function of its args instead, which is also what makes the registry's
  * `requiresRaster: true` replay reproduce the commit exactly.
+ *
+ * The stroke's per-pixel coverage field comes from `src/util/stroke-coverage.ts`.
+ * It used to be built here, privately, and moved out because the Sponge
+ * (`src/tools/sponge.ts`) needs the identical field to scale chroma with and must not
+ * carry a second copy of the same union-over-dabs loop. The reasoning that justified the
+ * shape — this is where the shared brush engine is used as a GEOMETRY rather than as a
+ * painter, so `stampBrushStroke` is deliberately not called; and dabs are UNIONED rather
+ * than summed so a commit is idempotent under replay — moved with it and is recorded
+ * there.
  */
 const applyDodgeBurn = (
   bitmap: BitmapSource,
