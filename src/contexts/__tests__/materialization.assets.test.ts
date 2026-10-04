@@ -5,6 +5,7 @@ import { AssetRegistry } from '../asset-registry.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
 import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
+import { MAX_AFFINE_PIXELS } from '../affine-transform.ts';
 import type { AssetId, DurableLayerSnapshot, DurableLayerSource, DurableOperation } from '../history-model.ts';
 import { createMaterializationKey, materializeDocument, materializeLayer } from '../materialization.ts';
 import type { MaterializationRequest } from '../materialization.ts';
@@ -795,6 +796,73 @@ describe('materialization ownership of borrowed rasters', () => {
     registry.shutdown();
     expect(close).toHaveBeenCalledTimes(1);
     result.lease.release();
+  });
+
+  // The presentation a raster source is published at is its own `pos`, and the
+  // final retained segment is SKIPPED when that extent exceeds the affine budget
+  // — `evaluatePresentation` refuses it, and a refusal would drop the layer from
+  // the document entirely. That skip is the only path on which the registry's
+  // borrowed bitmap survives as the materialization result, and the materializer
+  // released its lease on it before the cache published it.
+  const unevaluatedSide = Math.floor(Math.sqrt(MAX_AFFINE_PIXELS)) + 1;
+  const oversizedBounds = { x: 0, y: 0, width: unevaluatedSide, height: unevaluatedSide };
+
+  it('copies an unrendered borrowed raster so the cache never holds the baseline bitmap', async () => {
+    // One entry fits, so materializing a second layer is the pressure that evicts
+    // the first — the eviction path, not only the scope path, has to leave the
+    // baseline alone.
+    const registry = new AssetRegistry({ maxCacheEntries: 1 });
+    const { bitmap, close } = makeOwnedBitmap(unevaluatedSide, unevaluatedSide);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
+    const layer = makeLayer('layer-1', rasterSource(assetId, unevaluatedSide, unevaluatedSide), oversizedBounds);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+    const publishedClose = closeSpy(result.bitmap);
+
+    // The published bitmap is a copy the cache owns, not the asset itself, and
+    // its bounds are the layer's own — an unevaluated copy must not move them.
+    expect(result.bitmap).not.toBe(bitmap);
+    expect(result.bounds).toEqual(oversizedBounds);
+    expect(close).not.toHaveBeenCalled();
+    expect(publishedClose).not.toHaveBeenCalled();
+
+    // A live lease pins the entry, so the second layer cannot evict it yet.
+    const other = makeLayer('layer-2', blankSource(4, 4), { x: 0, y: 0, width: 4, height: 4 });
+    const otherResult = await materializeLayer(other, makeRequest(registry));
+    expect(publishedClose).not.toHaveBeenCalled();
+
+    // Eviction closes what the cache owns — the copy — and not the baseline the
+    // registry owns. One close each, and never the same object twice.
+    result.lease.release();
+    expect(publishedClose).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+
+    // Disposing the document still closes the adopted baseline exactly once
+    // after a materialization of it was evicted, and the materialization that
+    // is still published is untouched by the baseline's disposal.
+    registry.disposeDocument('test-doc');
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(closeSpy(otherResult.bitmap)).not.toHaveBeenCalled();
+
+    otherResult.lease.release();
+    expect(closeSpy(otherResult.bitmap)).toHaveBeenCalledTimes(1);
+    registry.shutdown();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes an unrendered blank source without the ownership copy', async () => {
+    const registry = new AssetRegistry();
+    const layer = makeLayer('layer-1', blankSource(unevaluatedSide, unevaluatedSide), oversizedBounds);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    // A source this function created is already owned, so the copy is not only
+    // unnecessary — it would be a second full-size raster per oversized layer.
+    expect(recordedBitmaps).toHaveLength(0);
+    expect(result.bitmap).toBeInstanceOf(RecordingOffscreenCanvas);
+    expect(result.bounds).toEqual(oversizedBounds);
+    result.lease.release();
+    registry.shutdown();
   });
 });
 

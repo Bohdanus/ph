@@ -423,8 +423,10 @@ export const useLayers = () => {
 
     // should mark layer dirty
     if (!tempUpdateLayer({ id, toolArgs })) return;
-    // should pick that dirty later and do all hardening
-    const committedLayers = commitDirtyTool(true);
+    // should pick that dirty later and do all hardening. `id` is the ownership scope: this
+    // function records ONE `TOOL_ACTION` entry, for ONE layer, so no other layer's pixels may
+    // ride out in the record it is about to publish.
+    const committedLayers = commitDirtyTool(true, id);
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
     if (!committedArgs) return;
     const item = { layerId: id, actionName: TOOL_ACTION, args: committedArgs } as const;
@@ -454,7 +456,20 @@ export const useLayers = () => {
   };
 
   // honestly, the only dirty tool that needs saving is text and maybe crop
-  const commitDirtyTool = (deferDispatch = false): LayersRecord => {
+  /**
+   * `ownedLayerId` is the ownership scope, and `undefined` is "every preview the map holds".
+   *
+   * The tool switch, the merge, the new-document and the export paths own no single layer and
+   * must land all of them, which is what an unscoped call means. A caller committing ONE layer's
+   * edit — only `updateLayerByTool` does, and it appends exactly one `TOOL_ACTION` entry for
+   * exactly one layer — names that layer instead. Folding the rest of the preview map into the
+   * record it publishes would put another layer's draft pixels into committed state that no
+   * history entry reproduces, and clearing that preview would make them unrecoverable: a later
+   * navigation clears the drafts and rebuilds every layer from the timeline, which names no
+   * change to the layer whose pixels were published. So a scoped call leaves every preview and
+   * every dirty cache it does not own exactly where it found them.
+   */
+  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId | null): LayersRecord => {
     // can be run safely if no dirty layer
 
     // special case
@@ -502,6 +517,10 @@ export const useLayers = () => {
 
     const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
+      // The ownership scope, ahead of the publication boundary below: a preview the caller does
+      // not own is still a draft, and a draft the caller did not stage must not become published
+      // state on this caller's history entry.
+      if (ownedLayerId && id !== ownedLayerId) continue;
       // The publication boundary, not a second copy of the preview guard: `commitDirtyTool` is
       // reached from the tool switch, the merge and the new-document paths as well as from
       // `updateLayerByTool`, so this is where a preview that no longer renders stops becoming a
@@ -521,10 +540,14 @@ export const useLayers = () => {
       }
       if (layer.tmpCanvas) pendingPresentations.set(id, layer);
     }
-    previewLayersRef.current = {};
+    // Only the previews this call consumed leave the map. A scoped commit must not discard a
+    // draft it declined to publish, or the pixels are gone from both the record and the map.
+    if (ownedLayerId) delete previewLayersRef.current[ownedLayerId];
+    else previewLayersRef.current = {};
 
     // Find any remaining dirty layer and save a detached copy.
     for (const layer of Object.values(committedLayers)) {
+      if (ownedLayerId && layer.id !== ownedLayerId) continue;
       if (layer.tmpCanvas) {
         const detachedLayer = { ...layer, pos: { ...layer.pos } };
         pendingPresentations.set(detachedLayer.id, detachedLayer);
