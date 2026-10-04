@@ -3,7 +3,15 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Shape from '../Shape.tsx';
 import { isFigureType, type FigureType } from '../../../../tools/shape.ts';
-import { savedArgsPerFigure } from '../../../../tools/settings.ts';
+import { defaultSettings, savedArgsPerFigure } from '../../../../tools/settings.ts';
+
+/**
+ * The tool names this panel is mounted under, as an INDEPENDENT literal rather than an import:
+ * the component keeps its membership list module-local, and a sweep built from the component's own
+ * list would shrink with it. Cross-checked against `defaultSettings` in the test below, so the two
+ * vocabularies cannot drift apart unnoticed.
+ */
+const FAMILY_TOOL_NAMES = ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
 
 const containerRef = { current: null as HTMLDivElement | null };
 const storeState = {
@@ -489,6 +497,64 @@ describe('Shape toolbar', () => {
   });
 
   describe('colour synchronisation', () => {
+    /**
+     * Swept over the family list rather than asserted once, because a test that names only `shape`
+     * passes with the `args.toolName === 'shape'` guard in place — which is how all five figure
+     * tools kept the black `defaultSettings` seeds for their `color` however the foreground swatch
+     * was set, while the preview (which reads the store colour directly) showed the right outline.
+     */
+    const withToolName = (toolName: string) => {
+      (baseToolArgs as { toolName: string }).toolName = toolName;
+    };
+
+    it('sweeps exactly the tools the seeded defaults give a figure', () => {
+      // The cross-check that makes the sweeps below mean something. A `figure` of its own is what
+      // marks a default as a shape tool, and the membership list this panel gates on has to be the
+      // same six: a name added to one list and not the other is a tool whose colour never arrives.
+      const seededShapeTools = Object.entries(defaultSettings)
+        .filter(([, args]) => 'figure' in args)
+        .map(([name]) => name)
+        .sort();
+
+      expect(seededShapeTools).toEqual([...FAMILY_TOOL_NAMES].sort());
+      expect(seededShapeTools).toHaveLength(6);
+    });
+
+    it.each(FAMILY_TOOL_NAMES)('adopts the store stroke colour for %s, not its seeded black', (toolName) => {
+      withToolName(toolName);
+      storeState.color = '#ff0000';
+      const view = render(<Shape />);
+
+      expect(setToolArgsMock, toolName).toHaveBeenCalled();
+      expect(lastCallArgs(setToolArgsMock), toolName).toMatchObject({ toolName, color: '#ff0000' });
+      view.unmount();
+    });
+
+    it.each(FAMILY_TOOL_NAMES)('adopts the store background colour for %s as its fill colour', (toolName) => {
+      withToolName(toolName);
+      storeState.backgroundColor = '#00ff00';
+      const view = render(<Shape />);
+
+      expect(lastCallArgs(setToolArgsMock), toolName).toMatchObject({ toolName, backgroundColor: '#00ff00' });
+      view.unmount();
+    });
+
+    it.each(FAMILY_TOOL_NAMES)(
+      'republishes nothing for %s once its args already carry the store colours',
+      (toolName) => {
+        withToolName(toolName);
+        baseToolArgs.color = storeState.color;
+        baseToolArgs.backgroundColor = storeState.backgroundColor;
+        const view = render(<Shape />);
+
+        // The equality half of the guard, swept per tool: without it the effect republishes on every
+        // render, so the mirror would churn tool args that no swatch moved.
+        expect(setToolArgsMock, toolName).not.toHaveBeenCalled();
+        view.unmount();
+        baseToolArgs.color = '#000000';
+      }
+    );
+
     it('adopts the store stroke and background colours when they diverge', () => {
       storeState.color = '#ff0000';
       storeState.backgroundColor = '#00ff00';
@@ -510,17 +576,34 @@ describe('Shape toolbar', () => {
       expect(setToolArgsMock).not.toHaveBeenCalled();
     });
 
-    it('does not publish anything for args that belong to a different tool (Shape.tsx:32)', () => {
-      (baseToolArgs as { toolName: string }).toolName = 'draw';
+    it.each(['draw', 'brush', 'eraser', 'text', 'custom-shape'])(
+      'does not publish anything for args that belong to a different tool (%s)',
+      (toolName) => {
+        withToolName(toolName);
+        storeState.color = '#ff0000';
+        // No inline restore: `afterEach` puts `toolName` back, so this test cannot leave
+        // the module-scoped args naming another tool for the line-cap suite below.
+        const view = render(<Shape />);
+
+        // The membership half of the guard, and it is load-bearing rather than tidiness: the args
+        // under a panel are whatever the current tool carries, so a panel mounted with a seventh
+        // tool's arguments must not overwrite them with the shape family's colours.
+        expect(setToolArgsMock, toolName).not.toHaveBeenCalled();
+        view.unmount();
+      }
+    );
+
+    it("leaves a non-family tool's own colour arguments alone even when it declares a figure", () => {
+      // A `figure` key is not a family membership: only the tool name decides, so an argument object
+      // that carries a figure while naming another tool is still left alone.
+      withToolName('draw');
+      (baseToolArgs as { figure: string }).figure = 'oval';
       storeState.color = '#ff0000';
-      // No inline restore: `afterEach` puts `toolName` back, so this test cannot leave
-      // the module-scoped args naming another tool for the line-cap suite below.
       const view = render(<Shape />);
 
-      // The guard is the `args.toolName !== 'shape'` half: a shape toolbar mounted with another
-      // tool's args must not overwrite them with the store colours.
       expect(setToolArgsMock).not.toHaveBeenCalled();
       view.unmount();
+      (baseToolArgs as { figure: string }).figure = 'rectangle';
     });
   });
 

@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 48-54, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 200 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -523,46 +523,6 @@ again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it 
 
 ---
 
-## 47. `FillToolArgs.size` is written by the tool area and read by nothing
-
-`src/tools/fill.ts` — `FillToolArgs` declares `size: Size`,
-with the comment that a fill needs its layer geometry in the committed args. The seeded defaults are
-`{ width: 1, height: 1 }` (`src/tools/settings.ts` — the `'magic-eraser'` and `'paint-bucket'`
-defaults), and the two fill processors take the real
-size from the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` in `fill.ts`,
-and never
-reads `args.size`. `pos` is genuinely required, because a durable `apply-raster-processor` op replays
-from the stored args alone (`materialization.ts` — `materializeLayer()`); `size` is not, because the
-same call site passes `{ bitmap, size }` separately.
-
-So the field is a write-only trap: a tool area that forgets to write it produces a layer-sized fill
-with no error, and a reader that trusts `args.size` gets `1x1`. It is also the only tool args in
-the repository that carries a size — every other tool learns it from `params`.
-
-**Fix.** Either drop `size` from `FillToolArgs` and keep only `pos`, or make the processors read
-`args.size` and assert in `src/tools/__tests__/fill.test.ts` that a `pos`/`size` pair in the args
-governs the raster, so the field cannot be write-only. Do not leave it as it is.
-
-**Files.** `src/tools/fill.ts` — `FillToolArgs`, `src/tools/settings.ts` (the two
-`size: { width: 1, height: 1 }`
-defaults)
-
----
-
----
-
----
-
----
-
----
-
----
-
----
-
----
-
 ## 55. The `EXCLUDED-touched-by-prior-campaigns` manifest is not a safe boundary
 
 **Problem.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` is
@@ -956,49 +916,6 @@ returns, which is a product decision rather than a test one.
 
 ---
 
-## 67. Five of the six shape-family tools never receive the store colour
-
-**Problem.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape`'s store-mirroring
-`useEffect` — mirrors the foreground and
-background swatches into the tool's args, but gates the mirror on `args.toolName === 'shape'`
-(the test is in that same effect). `src/tools/toolsMap.ts` routes all six shape-family tools to that
-one component — `shape` in its own `toolProcessors.shape` entry, and `rectangle`, `ellipse`,
-`triangle`, `polygon`, `line` in their five entries below it — while `src/tools/settings.ts` gives
-each of those five its own `toolName` in its
-default args: the `'rectangle'`, `'ellipse'`, `'triangle'`, `'polygon'` and `'line'` seeded defaults.
-The guard therefore returns for every one of
-them, and their args stay frozen on the hardcoded `color: '#000000'`. Only `shape` itself, whose
-default is `toolName: 'shape'` in `src/tools/settings.ts`'s `shape` block, passes. Moving the
-foreground swatch
-therefore changes the toolbar preview for `shape` and nothing at all for the other five, and the
-committed layer is black in all five cases.
-
-The fill half is the mirror's own doing, and it is the more visible half. For the one tool the
-effect does run on it mirrors **both** swatches, and `src/tools/shape.ts` — `setShapeCtx()` fills with
-`backgroundColor` — `if (hasFill && backgroundColor) { ctx.fillStyle = backgroundColor; }` — where
-the store's background swatch defaults to `'#ffffff'` (`StoreContext.tsx` — `initialState`). So
-ticking "Filled" paints white, and the shape reads as an outline with a transparent interior on a
-white document. The only way to change the fill colour is to move the **background** swatch, which
-is shared with the eraser, the bucket and every other tool that uses it.
-
-`ShapeToolArea`'s preview draws from these same args, so a swatch that never arrives shows as a
-wrong preview before the commit as well as a wrong layer after it.
-
-**Fix.** Decide what a filled shape should fill with, then make the guard match. The obvious shape
-is to drop the `args.toolName === 'shape'` condition and mirror on `args.toolName` membership in
-the six-tool set, and to give the fill its own control rather than borrowing the background swatch.
-The second half is a product decision, not a bug fix — the operator has already ruled that shape
-fill should follow Photoshop's model, which is a dedicated Fill swatch, so this item reduces to
-implementing that and then widening the guard.
-
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape`,
-`src/tools/toolsMap.ts` — the six shape-family entries,
-`src/tools/settings.ts` — the `shape` block and the five seeded shape defaults,
-`src/tools/shape.ts` — `setShapeCtx()`,
-`src/contexts/StoreContext.tsx` — `initialState`
-
----
-
 ## 68. A committed shape is painted twice, and nothing removes the overlay
 
 **Problem.** `src/components/Main/ShapeToolArea.tsx` never clears the tool overlay during a gesture,
@@ -1074,73 +991,6 @@ the current numbering.
 
 Fix is deleting the second `/**` in `src/tools/draw.ts`, then re-deriving any citation into that file
 below it.
-
----
-
-## 73. Two Colors sliders moved in one frame: the first change is silently dropped
-
-**Problem.** `Color.tsx`'s `throttledOnChange` (`src/components/ToolbarsRight/Colors/Color.tsx` —
-`throttledOnChange()`)
-stashes the whole args object in `pendingUpdateRef` and writes it from a
-`requestAnimationFrame` callback. Each of the three handlers builds that object from
-the **render-time** `args` closure — `handleGrayscaleChange`, `handleSepiaChange` and
-`handleSaturationChange` in the same component — and none of
-them reads the pending value. So two slider changes that land in the same frame are
-both built from the same stale `args`: the second object carries the new second
-value over the **old** first value, and the first change is gone. The rAF does not
-queue, so nothing merges them either.
-
-Reproduced in a real browser as well, but that reproduction is not the evidence —
-it is a single observation, not a deterministic one. Two `page.locator().fill()`
-calls on a range input are two CDP round trips, so whether a frame lands between
-them is timing, and a run that happens to straddle one will not lose the edit. In
-one measured run the first pass lost the grayscale value and the second and third
-kept it, which is the shape a race has and is worth knowing for. **The evidence is
-the jsdom tests below**, which drive the handlers directly and cannot miss it.
-
-**The behaviour is already pinned, and pinned on purpose.** Two tests in
-`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` assert the loss:
-
-- the `it('coalesces a burst of changes across different sliders into one frame')`
-  title in `Color.test.tsx` fires all three sliders before the stubbed rAF and
-  expects
-  `{ grayscale: 0, sepia: 0, saturation: 30 }` — the first two gone. Its own
-  comment says this documents the lost-update behaviour "rather than a merge".
-- the `it('drops the earlier in-frame edit when two different sliders move before
-the frame runs')` title in the same file fires grayscale and sepia and expects
-  `{ grayscale: 0, sepia: 20 }`.
-
-So **fixing this turns both tests red, and flipping those two assertions is part
-of the fix rather than a gate being weakened** — they currently encode the defect
-as the expected result, which is what a characterisation test does. Whoever does
-this should say so in the commit, because "two unrelated Colors tests started
-failing" otherwise reads as a regression.
-
-**Fix.** Make the pending object the source of truth for the next one, rather than
-the render closure:
-
-```ts
-const base = pendingUpdateRef.current ?? args;
-pendingUpdateRef.current = { ...base, grayscale };
-```
-
-Every handler builds on `base`, so a second change in the same frame inherits the
-first instead of discarding it. `pendingUpdateRef.current` is cleared inside
-`throttledOnChange()`'s own rAF callback and in `discardAdjustment()`, so it holds exactly the
-unpublished edits, and `args` is the right fallback for the first change of a
-frame. `Blur.tsx` and `Levels.tsx` were checked for this same shape and are both
-clean: `Levels.tsx`'s `throttledOnChange()` already merges from the pending value,
-and `Blur.tsx` carries one mutable field, so nothing can be lost there.
-
-**Test that fails without the fix.** The two above. A test that waits on each
-control's accessible name between the two changes cannot see this, and must not:
-it is a race, and the test for a race is the one that does not wait.
-
-**Files.** `src/components/ToolbarsRight/Colors/Color.tsx` — `throttledOnChange()`,
-`handleGrayscaleChange()`, `handleSepiaChange()`, `handleSaturationChange()` and `discardAdjustment()`,
-`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` — the
-`it('coalesces a burst of changes across different sliders into one frame')` and
-`it('drops the earlier in-frame edit when two different sliders move before the frame runs')` titles
 
 ---
 
@@ -1812,110 +1662,6 @@ have to be updated in the same change.
 `src/components/Main/TextToolArea.tsx` — `TextToolArea`; `src/hooks/useSelectionAnts.ts` —
 `useSelectionMarchingAnts()`; `src/hooks/__tests__/useRect.drag.test.ts` — the two `setLineDash`
 titles named above
-
-## 87. The append boundary never checks that its base is at its own tip
-
-**Problem.** `decideDurableAppend` (`history-append.ts` — `decideDurableAppend()`) proves
-`documentId`, both revisions,
-the legacy tip, the length delta, the legacy cursor and the appended entry's identity
-— and never proves `base.cursor === base.history.length - 1`. The published cursor is
-`base.history.length`, not `base.cursor + 1`, so a base sitting below its own history
-publishes a cursor **past** the entries it had not reached. The one cursor guard that looks related
-runs the other way: `cursor > next.cursor` catches a base with too MANY entries, and a base
-with too few slips straight through.
-
-**User-visible failure.** An edit the user undid comes back as applied. The entries between the
-base's cursor and its tip are below the published cursor, so the shadow now replays a crop the user
-undid, and the redo-only state the base described is gone — with no diagnostic, because the base
-satisfies every precondition.
-
-**Reachable only by accident today.** A mid-timeline base is produced by a rebuild, and
-`buildDurableDocument` derives the shadow cursor from the **legacy** cursor
-(`StoreContext.tsx` — `buildDurableDocument()`, at its
-`converted.legacyCursorToDurableCursor[historyCursor] ?? -1`) — so the
-same rebuild also hands the boundary a `prior` that is not at its tip, which `decideDurableAppend()`
-refuses before
-this gap is reachable. Nothing in the boundary enforces the invariant; only that coupling does, and
-it is one refactor away from not holding.
-
-**Fix.** Add `if (base.cursor !== base.history.length - 1)` to the precondition list, next to the
-legacy tip check in `decideDurableAppend()`, with the same `preconditions` outcome. Pinned as a
-KNOWN-GAP pin as the `it('publishes onto a base that is not at its own tip, turning a redo-only
-entry into an applied one')` title in `history-append.test.ts`; the fix must re-point it in the
-same change.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
-
----
-
-## 88. The append boundary never re-validates a planned frame's `next`
-
-**Problem.** `validatePlannedDurableEntry`'s frame branch (`history-append.ts` —
-`validatePlannedDurableEntry()`) proves only
-that `planned.operation.next` equals the legacy `args.nextFrame` structurally (`sameFrame`) and
-that `nextFrame` is present. It never asks whether either is a **document frame** —
-`isValidDocumentFrame` is not called anywhere in the boundary. The shared derivation the boundary
-relies on does call it (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, reached from
-`history-append.ts` — `translate()`), so the two
-routes disagree about one legacy item by construction.
-
-**User-visible failure.** A published `0x0` crop. Durable replay applies `next` with no validation
-at all (the `'set-document-frame'` case in `durable-replay.ts`) and `documentFrameSize()` in
-`document-frame.ts` clamps to a 1×1 minimum,
-so the shadow comes to describe a **one-pixel-square document** rather
-than a zero — the loss is invisible as a degenerate size. The conversion route for the same item
-publishes nothing and names the loss (the `SET_DOCUMENT_FRAME_ACTION` arm of
-`legacyHistoryToDurable()`, whose `invalid-history-entry` **warning** says the entry was not
-published), so of the two routes only one
-says anything.
-
-**Latent.** Only a **supplied** entry reaches it: every production `durableEntry` is
-`planHistoryAppend`'s output, which refuses the frame in `history-append.ts` — `translate()`, or
-`deriveReorderLayersEntry()`, which is not a frame action (`StoreContext.tsx` — its
-`deriveReorderLayersEntry()` call).
-
-**Fix.** In the frame branch, reject a `planned.operation.next` that fails `isValidDocumentFrame`
-before comparing it to the legacy arg, and treat the refusal as a `mismatch` so the store records
-it. Pinned as a KNOWN-GAP pin as the `it('publishes a planned frame whose next frame is not a
-document frame, and the shadow replays it anyway')` title in `history-append.test.ts`; the fix must
-re-point it.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
-
----
-
-## 89. The baseline document source's id is not in the duplicate-id set
-
-**Problem.** The duplicate-id guard records an id only when an entry is actually published
-(the `publishedEntryIds` check inside `legacyHistoryToDurable()` in `history-adapter.ts`). The
-baseline document source is adopted, not published: its branch
-`continue`s — pushing cursor `-1` — long before the publication guard,
-so the baseline's id never reaches `publishedEntryIds` and a later entry reusing it
-is published as a first occurrence. No diagnostic is raised, and the two id-based resolvers now
-disagree: `updateHistoryTimeline` finds the **first** match in the legacy timeline
-(`history-timeline.ts` — `updateHistoryTimeline()`) while `toggleDurableEntry()` in
-`history-adapter.ts` finds the first in the durable document,
-so one History-panel eye click disables a different edit in each model.
-
-**User-visible failure.** A click that toggles the wrong row, and a durable document whose entries
-carry an id the legacy timeline already used. Silent: `status` stays `current` and no diagnostic
-names the id.
-
-**Reachable only by accident today.** Production mints a fresh `uuidv4()` per commit
-(`history-utils.ts` — `createHistoryItem()`, whose `id` parameter defaults to `uuidv4()`), so the
-baseline id and a later entry's id are unrelated values. Note that
-this is the one hole where the "does not consume its id" rule is **not** a safe answer, unlike the
-refused replacement and the entry that threw: the baseline id is not a durable entry, so this set
-structurally cannot see it, while the legacy timeline still holds it.
-
-**Fix.** Add the baseline's id to `publishedEntryIds` when it is adopted, or widen the guard to
-compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin as the
-`it('reports a later entry that reuses the baseline open-document id')` title in
-`history-adapter.diagnostics.test.ts`; the fix must delete or re-point it.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.diagnostics.test.ts`
-
----
 
 ## 91. The durable baseline's bedrock frame rule is implemented and no test reaches it at index 0
 
@@ -2684,43 +2430,6 @@ are behaviour the live panels do not document, so carry them across too.
 `src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts` — the three
 lasso defaults
 
-## 112. Freeform Pen and Curvature Pen render the standard Pen's chip list, and a test documents the wrong config as expected
-
-`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` — its `pen`, `freeform-pen` and
-`curvature-pen` entries — defines:
-
-```ts
-pen:             ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operations', 'Alignment', 'Auto Add/Delete'],
-'freeform-pen':  ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
-'curvature-pen': ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],
-```
-
-but the `placeholderTool(...)` calls for `freeform-pen` and `curvature-pen` in
-`src/tools/toolsMap.ts` both name the **`pen`** config key, so
-`freeform-pen` and `curvature-pen` render the standard Pen's seven chips. **Magnetic and Curve
-Fit are the two controls that are the entire reason those two tools exist** — a Freeform Pen
-tool without Magnetic, and a Curvature Pen without Curve Fit, are the Pen under another name
-(`src/tools/descriptions/pen.notes.md`, `docs/TOOLS.md` §"Pen and path" and §"Pen Tool").
-
-The `it('documents the config groups that no tool consumes')` title in `ToolbarPlaceholder.test.tsx`
-asserts the resulting dead config is
-`expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle'])` and the
-comment is explicit that the list is _meant_ to be short. So this test is **half a pin**: it is
-doing its stated job against a growing pile, and it will fail the moment the wiring is fixed.
-The fix and the test must land together, with the list shrinking to `['rectangle']`.
-
-`rectangle` is the third unreachable group and is **correct** to be there: `rectangle` is a
-registry id the rail never names (see §114), so it renders the real `Shape` bar.
-
-**Fix.** Pass `'freeform-pen'` and `'curvature-pen'` as the second argument of their
-`placeholderTool(...)` calls in `toolsMap.ts`, and update the expected array in the same
-change.
-
-**Files.** `src/tools/toolsMap.ts` — the two `placeholderTool` calls named above,
-`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` — its `freeform-pen` and `curvature-pen`
-entries,
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named above
-
 ## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
 
 `docs/TOOLS-TOO-HARD.md` §"The Pen family":
@@ -3343,46 +3052,6 @@ rider survives.
 **Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`;
 `src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
-
-## 128. `scripts/lib/agent-board/db.mjs` carries two raw NUL bytes, at 90 KB in
-
-**Problem.** `scripts/lib/agent-board/db.mjs` is 90,036 bytes and contains **two raw NUL bytes** (byte
-offsets 44860 and 44978), inside the `Map` key of `Board.locksFor()`:
-
-```js
-const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path}<NUL>${lock.agent_id}`, lock]));
-```
-
-That file is the coordination database every worktree shares, so the blast radius is every tool that
-sniffs for NUL before treating a file as text.
-
-**Reproduce.**
-
-```bash
-perl -0777 -ne '$c = () = /\x00/g; print "$c\n"' scripts/lib/agent-board/db.mjs   # 2
-perl -0777 -ne 'while (/\x00/g) { printf "%d\n", pos() - 1 }' scripts/lib/agent-board/db.mjs
-LC_ALL=C tr -dc '\000' < scripts/lib/agent-board/db.mjs | wc -c                  # 2
-```
-
-**A detection trap worth knowing.** `grep -aob $'\000'` **cannot** find these: zsh truncates NUL in
-`argv`, so the pattern arrives empty and the command reports nothing found on a file that has two.
-That is a false negative produced by the tool, not by the file. Use the `perl` count above, or the
-`tr` one, both via a pipeline rather than an argument.
-
-**Fix.** Replace the literal NUL separator with a printable one that cannot occur in a path or an
-agent id, and note the choice in a comment — the obvious fix is to write `'\0'` in the source, which
-keeps the byte out of the file while a reader still sees an escape. The working replacement is
-already implemented on branch `fix/swarm-lock-identity` (commit `8c4316cf`), which folds the pair into
-a single `holdingKey` helper for exactly this reason.
-
-**One scoping correction to the earlier version of this heading.** It claimed the file "reads as
-binary", and that is true of `file(1)` (which reads all 90 KB) but **not** of git: git's binary
-sniff inspects only the first 8,000 bytes, and both NULs sit far past that. So `git diff` and both
-`git grep` and `git grep -I` still find `liveLocks` in the file. The defect is real and the fix
-stands; what is overstated is the set of tools it breaks, and anyone who checks with `git grep -I`
-will conclude the file is clean and think the entry wrong.
-
-**Files.** `scripts/lib/agent-board/db.mjs` — `Board.locksFor()`
 
 ## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
 
@@ -5780,30 +5449,6 @@ and this runner out of production until that surface is staged and failure-safe.
 `src/contexts/replay-coordinator.ts` — retired reference only;
 `src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
 and the empty-history/baseline tests.
-
-## 200. The Size field cannot be retyped, because it publishes every intermediate value
-
-**Problem.** `Text.tsx`'s size input is controlled by `value={style.fontSize}` and its `onChange`
-publishes whatever is in range. So typing a size from scratch publishes each keystroke: typing `64`
-over an existing `32` requires the field to pass through `6`, which is in range, so `6` is published
-and the field rewrites itself to `6` before the `4` lands. Typing `0` first is worse — `0` clamps to
-`FONT_SIZE_MIN`, so the field becomes `0.01` mid-edit.
-
-The empty-field half is fixed: an empty value publishes nothing, and the controlled restore puts the
-last good size back, which `e2e/text-tool.spec.ts` pins. This entry is about what that does NOT fix —
-select-all-and-retype works, and backspacing works, but typing through intermediate values does not.
-
-**Affected.** `src/components/ToolbarsRight/Text/Text.tsx` — the size field's `onChange`.
-
-**What would close it.** Local draft state: a `useState<string>` holding what the user has typed,
-synced from `toolArgs` only when the published value changes for a reason other than typing, and
-committed on blur or Enter. That is the only shape in which "the field shows what I typed until I am
-done" is true. It is a behaviour change to a control, and it is the reason it was not done inside the
-guard fix rather than alongside it.
-
-**Provenance.** Found by review. An earlier correction in this area added a blur handler that turned
-out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
-establishing that it was dead, the intermediate-value problem became visible.
 
 ## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
 

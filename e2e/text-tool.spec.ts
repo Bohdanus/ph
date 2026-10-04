@@ -1873,19 +1873,26 @@ test.describe('Text tool', () => {
   /**
    * The font-size field clamps, and the clamp is visible in the field rather than in a refusal.
    *
-   * `handleFontSizeChange` is `Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested))`
-   * (`Text.tsx:54-62`), so typing above the maximum CLAMPS and typing below the minimum clamps
+   * `handleFontSizeCommit` is `Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested))` in
+   * `Text.tsx`, so committing above the maximum CLAMPS and committing below the minimum clamps
    * too. Adobe's bound is on the field — `CharacterStyle.size` is `0.01..1296` "in pixels for
    * a 72ppi document" (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle)
    * — and `min`/`max` on a number input do not stop a value being typed, they only mark it
-   * `:invalid`, so the clamp in the handler is the rule rather than a duplicate of the
+   * `:invalid`, so the clamp in the commit is the rule rather than a duplicate of the
    * attribute. Which of the two it is matters: a refusal would leave the field at 5000 and put
    * nothing in `toolArgs`, and this test is what says which of those the app does.
    *
-   * The field is a CONTROLLED input — `value={style.fontSize}` with no local state — so what it
-   * reads IS what the renderer will draw with, and that is why the field is the evidence rather
-   * than a proxy for it. The pixels then carry what the field cannot, and the arithmetic is
-   * worth setting out because the two sizes are so far apart.
+   * The field commits on blur or Enter rather than per keystroke, so EVERY `fill` of a size in
+   * this test is followed by an explicit `press('Enter')` before the value is asserted on.
+   * `fill` dispatches an `input` event and nothing else — the field keeps the draft it was
+   * handed, and `toolArgs` still holds the size published before it — so without the commit
+   * these assertions would be reading the draft rather than the style.
+   *
+   * After the commit the field reads what the renderer will draw with: it is
+   * `value={fontSizeDraft ?? String(style.fontSize)}`, so dropping the draft puts the published
+   * size back in the control. That is why the field is the evidence rather than a proxy for it.
+   * The pixels then carry what the field cannot, and the arithmetic is worth setting out because
+   * the two sizes are so far apart.
    *
    * `renderText` puts a line's baseline at `rect.y1 + TEXT_PADDING + ascent`
    * (`src/tools/text.ts:308`) and the cap top a cap height above that, and only the last two of
@@ -1905,48 +1912,63 @@ test.describe('Text tool', () => {
     const box = await canvasBox(page);
 
     // The upper bound, and it is a clamp rather than a refusal: the field comes back reading
-    // 1296, which is the value `toolArgs.fontSize` now holds.
+    // 1296, which is the value `toolArgs.fontSize` now holds. Enter is what makes it come back —
+    // `fill` alone leaves 5000 sitting in the field as an uncommitted draft.
     await size.fill('5000');
+    await size.press('Enter');
     await expect(size, 'a size above the Adobe maximum was not clamped').toHaveValue('1296');
     // The lower bound, from both directions: a zero and a negative size are both outside the range,
-    // so the handler's `Math.max` is what each of these lands on.
+    // so the commit's `Math.max` is what each of these lands on.
     await size.fill('0');
+    await size.press('Enter');
     await expect(size, 'a zero size was not clamped up to the Adobe minimum').toHaveValue('0.01');
     await size.fill('-40');
+    await size.press('Enter');
     await expect(size, 'a negative size was not clamped up to the Adobe minimum').toHaveValue('0.01');
 
     // And a value inside the range is taken, so the field is not simply refusing everything:
     // this is what the commits below are measured at.
     await size.fill('32');
+    await size.press('Enter');
     await expect(size, 'a size inside the range was not taken').toHaveValue('32');
 
     // An EMPTIED field, and this comment used to claim it was unreachable. It is reachable — and
-    // the old reasoning was wrong by one operator: `Number('')` is `0`, not `NaN`, so the handler's
+    // the old reasoning was wrong by one operator: `Number('')` is `0`, not `NaN`, so the commit's
     // `Number.isFinite` guard ADMITTED it and the clamp turned a size the user was halfway through
     // retyping into 0.01. `fill` cannot produce that state on its own; pressing BACKSPACE can, and a
     // two-digit size cannot be typed from scratch without passing through empty.
     //
-    // The field publishes nothing while empty. It is a CONTROLLED input, so the assertion is that
-    // the last good value is still standing — not that the field shows nothing, which no controlled
-    // input can do — and the value it must keep is 32, set immediately above. Under the old guard
-    // this read 0.01.
+    // The field publishes nothing while empty, and while the draft is in the field the field SHOWS
+    // that draft rather than the published size — that is what a draft is, and it is the assertion
+    // below. What proves nothing was published is the blur after it: the last good value, 32 from
+    // immediately above, is still standing. Under the old guard this read 0.01.
     await size.fill('');
-    await expect(size, 'a cleared field published a size instead of keeping the last one').toHaveValue('32');
-    // The restore is React re-rendering the CONTROLLED `value={style.fontSize}` — there is no blur
-    // handler, and an earlier version of this file asserted one that was dead code: its guard tested
-    // a value `resolveTextStyle` had already clamped, so the body could never run. Blurring changes
-    // nothing, and this asserts exactly that: the value is the same with or without it.
+    await expect(size, 'an empty draft was resolved into a size before the edit ended').toHaveValue('');
+    // The blur is the commit, and for an empty draft it publishes NOTHING: `handleFontSizeCommit`
+    // returns on the empty string, so the restore below is React dropping the draft and the
+    // controlled `value={fontSizeDraft ?? String(style.fontSize)}` showing the published size again.
+    // That is the whole of the evidence that an abandoned retyping did not become 0.01.
     await size.blur();
-    await expect(size, 'blurring a cleared field changed the value it had already restored').toHaveValue('32');
+    await expect(size, 'blurring a cleared field changed the size it had already published').toHaveValue('32');
 
     // Half the size is half the ink, which is the pixel statement that the clamped value above
     // is the one the renderer drew with rather than a number sitting in a field. Measured at
-    // 64px: 'X' is 40 x 44 CSS px with 623 red pixels; at 32px, 19 x 21 with 150 — 0.475 and
-    // 0.477 of the width and the height, and 0.241 of the ink, against the 0.25 that halving
-    // the size in both axes predicts. Asserted at 0.6 on the extents against a measured 0.476.
+    // 64px: 'X' is 39 x 44 CSS px with 629 red pixels; at 32px, 19 x 21 with 150 — 0.487 and
+    // 0.477 of the width and the height, and 0.238 of the ink, against the 0.25 that halving
+    // the size in both axes predicts. Asserted at 0.6 on the extents against a measured 0.48.
+    // Committed here for the same reason as the field assertions above: a `fill` with no commit leaves
+    // the published size at 32, and the second series commit would then be measured against the same
+    // 32px as the first and every ratio below would be a comparison of a thing with itself.
     const [small, large] = await commitStyledSeries(page, testInfo, box, 'X', [
       { name: 'text-size-32', rect: DRAFT_RECT, apply: async () => undefined },
-      { name: 'text-size-64', rect: SECOND_DRAFT_RECT, apply: async () => size.fill('64') },
+      {
+        name: 'text-size-64',
+        rect: SECOND_DRAFT_RECT,
+        apply: async () => {
+          await size.fill('64');
+          await size.press('Enter');
+        },
+      },
     ]);
     expect(small.width, 'halving the size did not halve the width').toBeLessThanOrEqual(large.width * 0.6);
     expect(small.height, 'halving the size did not halve the height').toBeLessThanOrEqual(large.height * 0.6);
@@ -1969,7 +1991,10 @@ test.describe('Text tool', () => {
     const commit = commitButton(page);
     const box = await canvasBox(page);
 
+    // The same commit the clamp test makes, and for the same reason: the commit is what puts 1296 in
+    // `toolArgs`, and this test's whole claim is that the text below was laid out with it.
     await size.fill('5000');
+    await size.press('Enter');
     await expect(size, 'a size above the Adobe maximum was not clamped').toHaveValue('1296');
     await setTextToolColor(page, TEXT_COLOR);
     await dragDraftRect(page, box, DRAFT_RECT);
