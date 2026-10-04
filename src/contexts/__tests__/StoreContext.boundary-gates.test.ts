@@ -279,15 +279,37 @@ function resolveSpecifier(fromPath: string, specifier: string, walked: ReadonlyS
 }
 
 /**
- * Memoised because it walks every module under `src/` INCLUDING the test suites,
- * masking comments as it goes, and the three cases that need it would otherwise pay
- * for that walk three times over — which measured as a timeout, not as slowness.
+ * `IMPORT_SPECIFIER` throws the `type` keyword away, so it cannot tell
+ * `import type { X } from './y.ts'` from `import { X } from './y.ts'` — and the
+ * difference is the whole question here. This captures it: the second group is the
+ * specifier, and the first group's presence means the statement began with
+ * `import type`. An inline specifier (`import { value, type Shape }`) counts as a
+ * VALUE import, because it binds a value too.
+ */
+const TYPED_IMPORT = /(^|\n)[ \t]*import\s+(type\s+)?[^;\n]*?\bfrom\s+['"]([^'"]+)['"]/g;
+
+type ImportEdge = Readonly<{ file: string; specifier: string; typeOnly: boolean }>;
+
+type ModuleGraph = Readonly<{
+  walked: ReadonlySet<string>;
+  /** Every module some module names, as a repo-relative path. */
+  imported: ReadonlySet<string>;
+  /** Everything ONE module names, with the kind of each naming. */
+  outEdges: ReadonlyMap<string, readonly Omit<ImportEdge, 'file'>[]>;
+}>;
+
+/**
+ * ONE pass over `src/`, memoised, because the unimported-module scan and the typed
+ * edge index both need every module's imports and masking a file's comments is the
+ * expensive half. Sharing the pass took this suite from two full walks to one; run
+ * separately they did not fit the per-test timeout at all under a full-suite run.
+ *
  * The tree cannot change while one test file runs, so a single scan is exact.
  */
-let importedModulesCache: Set<string> | null = null;
+let moduleGraphCache: ModuleGraph | null = null;
 
-function importedModules(): ReadonlySet<string> {
-  if (importedModulesCache) return importedModulesCache;
+function moduleGraph(): ModuleGraph {
+  if (moduleGraphCache) return moduleGraphCache;
 
   const walked = new Set(
     [...sourceModulesUnder(srcDir), join(repoRoot, 'toolbar-mapping.ts')]
@@ -296,19 +318,46 @@ function importedModules(): ReadonlySet<string> {
   );
 
   const imported = new Set<string>();
-  for (const path of walked) {
-    const source = readFileSync(join(repoRoot, path), 'utf8');
-    const masked = maskCommentsPreservingImportSpecifiers(source);
+  const outEdges = new Map<string, Omit<ImportEdge, 'file'>[]>();
+
+  for (const file of walked) {
+    const masked = maskCommentsPreservingImportSpecifiers(readFileSync(join(repoRoot, file), 'utf8'));
+    const edges: Omit<ImportEdge, 'file'>[] = [];
     for (const pattern of [IMPORT_SPECIFIER, MOCK_SPECIFIER]) {
       for (const match of masked.matchAll(pattern)) {
-        const resolved = resolveSpecifier(path, match[1], walked);
+        const resolved = resolveSpecifier(file, match[1], walked);
         if (resolved) imported.add(resolved);
       }
     }
+    for (const match of masked.matchAll(TYPED_IMPORT)) {
+      edges.push({ specifier: match[3], typeOnly: match[2] !== undefined });
+    }
+    outEdges.set(file, edges);
   }
-  importedModulesCache = imported;
-  return imported;
+
+  moduleGraphCache = { walked, imported, outEdges };
+  return moduleGraphCache;
 }
+
+/** Everything ONE module names, with the kind of each naming. */
+function outboundImportsOf(file: string): readonly Omit<ImportEdge, 'file'>[] {
+  return moduleGraph().outEdges.get(file) ?? [];
+}
+
+/** Every module that names `target`, with the kind of each naming. */
+function importEdges(target: string): ImportEdge[] {
+  const { walked, outEdges } = moduleGraph();
+  const edges: ImportEdge[] = [];
+  for (const [file, out] of outEdges) {
+    for (const edge of out) {
+      if (resolveSpecifier(file, edge.specifier, walked) === target) edges.push({ file, ...edge });
+    }
+  }
+  return edges;
+}
+
+const FILE_IO_LEAF = 'src/contexts/file-types.ts';
+const FILE_IO_PROVIDER = 'src/contexts/useFile.tsx';
 
 /**
  * A production module no module in the repository names.
@@ -331,7 +380,7 @@ const ALLOWED_UNIMPORTED_MODULES = new Map<string, string>([
 ]);
 
 function unimportedProductionModules(): string[] {
-  const imported = importedModules();
+  const imported = moduleGraph().imported;
   return walkedProductionModules().filter((path) => !imported.has(path));
 }
 
@@ -525,7 +574,11 @@ describe('StoreContext boundary gates', () => {
   // seconds and does not fit the per-test timeout. It runs in `beforeAll` so the cost
   // is paid once and the assertions below stay ordinary.
   beforeAll(() => {
-    importedModules();
+    // Two full passes over `src/`: one for the unimported-module scan and one for
+    // the typed-edge index the cycle cases read. Both mask comments per file, which
+    // costs several seconds and does not fit the per-test timeout — and the cycle
+    // cases only pass when `beforeAll` has already paid it.
+    moduleGraph();
   }, 60_000);
 
   it('finds the importers of a module the scan could otherwise miss', () => {
@@ -534,7 +587,7 @@ describe('StoreContext boundary gates', () => {
     // then be an allow-list that happens to be short. Asserting known importers first
     // means a broken scan fails here, where the message can say what it found, rather
     // than in the next case behind a list of paths nobody can interpret.
-    const imported = importedModules();
+    const imported = moduleGraph().imported;
 
     expect(imported.has('src/contexts/StoreContext.tsx')).toBe(true);
     expect(imported.has('src/hooks/useRect.ts')).toBe(true);
@@ -550,7 +603,7 @@ describe('StoreContext boundary gates', () => {
   });
 
   it('holds no allow-list entry for a module that now has an importer', () => {
-    const imported = importedModules();
+    const imported = moduleGraph().imported;
     const stale = [...ALLOWED_UNIMPORTED_MODULES.keys()].filter((path) => imported.has(path));
 
     expect(stale).toEqual([]);
@@ -560,6 +613,50 @@ describe('StoreContext boundary gates', () => {
     const unexplained = [...ALLOWED_UNIMPORTED_MODULES].filter(([, reason]) => !reason.trim()).map(([path]) => path);
 
     expect(unexplained).toEqual([]);
+  });
+
+  it('takes the file I/O shapes from a leaf, so no component imports back into the provider module', () => {
+    // `useFile.tsx` renders the dialogs it owns, so it is the one context module a
+    // component must not reach back into for a type: that closes a cycle between the
+    // provider and the dialog it mounts. Calling `useFile()` is the intended
+    // direction and stays legal, which is why this names the TYPE-only edges rather
+    // than every edge.
+    const typeOnly = importEdges(FILE_IO_PROVIDER).filter((edge) => edge.typeOnly);
+
+    expect(typeOnly.map(({ file, specifier }) => ({ file, specifier }))).toEqual([]);
+  });
+
+  it('keeps every module that mounts a dialog importing the provider for its hook, never for a shape', () => {
+    // The positive half of the case above. Without it, a resolver that resolved
+    // nothing would report zero type-only edges and pass.
+    const valueEdges = importEdges(FILE_IO_PROVIDER).filter((edge) => !edge.typeOnly);
+
+    expect(valueEdges.map(({ file }) => file).sort()).toEqual([
+      'src/App.tsx',
+      'src/components/Common/AppKeyboardShortcuts.tsx',
+      'src/components/DesktopHeader/DesktopHeader.tsx',
+      'src/components/Main/Main.tsx',
+      'src/components/Mobile/MobileHeader.tsx',
+      'src/components/Mobile/MobileMenuDrawer.tsx',
+      'src/contexts/__tests__/useFile.test.tsx',
+    ]);
+  });
+
+  it('keeps the file I/O leaf free of value imports, so a shape cannot smuggle a runtime edge back', () => {
+    // The leaf's four edges are all `import type`, which is what makes it add
+    // nothing at runtime. Promoting one to a value import would pull a codec's
+    // module graph into every dialog that names a shape, so the out-edges are
+    // pinned as an exact list with their kinds rather than counted.
+    const edges = outboundImportsOf(FILE_IO_LEAF)
+      .map(({ specifier, typeOnly }) => ({ specifier, typeOnly }))
+      .sort((left, right) => left.specifier.localeCompare(right.specifier));
+
+    expect(edges).toEqual([
+      { specifier: './document-frame.ts', typeOnly: true },
+      { specifier: './general-types.ts', typeOnly: true },
+      { specifier: './layer-types.ts', typeOnly: true },
+      { specifier: './psd-utils.ts', typeOnly: true },
+    ]);
   });
 
   it('keeps the public action union exhaustive and rejects internal actions', () => {
