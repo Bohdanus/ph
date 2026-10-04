@@ -25,9 +25,12 @@ export type PaintToolName = 'brush' | 'pencil';
  * and this list is the sixteen of them a canvas can express. The thirteen it leaves out
  * are Dissolve, Linear Burn, Darker Color, Linear Dodge (Add), Lighter Color, Vivid Light,
  * Linear Light, Pin Light, Hard Mix, Subtract and Divide, plus Behind and Clear. Each of
- * those is one this renderer cannot express: the canvas `GlobalCompositeOperation` set has
- * no equivalent, and `ctx.globalCompositeOperation = 'dissolve'` is silently ignored by the
- * browser rather than erroring, so offering it would ship a dead option.
+ * those is one this renderer cannot express EXACTLY: the canvas `GlobalCompositeOperation`
+ * set has no equivalent for most of them, and `ctx.globalCompositeOperation = 'dissolve'`
+ * is silently ignored by the browser rather than erroring, so offering it would ship a
+ * dead option. Linear Dodge (Add) is the one to read carefully — `plus-lighter` is a real
+ * value and for opaque pixels computes `src + dst`, which is what the mode does, so it
+ * diverges only where a translucent stroke makes the two disagree.
  * `src/contexts/layer-utils.ts` also has to read a value back off stored history, which is
  * why the list is a closed literal union rather than a free string.
  *

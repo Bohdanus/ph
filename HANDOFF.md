@@ -5144,36 +5144,47 @@ Clear". That is twenty-nine. `Paint.tsx` renders `{PAINT_BLEND_MODES.map(...)}`,
 values it does not, and the row is data — `npm run docs:tools` renders it into `docs/TOOLS.md`, so the
 generated per-tool specification carries the overcount as the app's own description of its bar.
 
-The source comment on `PAINT_BLEND_MODES` makes a smaller version of the same mistake. It says
-"Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind,
-Clear)" — thirteen absent values, of which it names eight. The five it omits are Darker Color, Lighter
-Color, Linear Dodge (Add), Linear Light and Hard Mix. None appears in the comment, and none is an alias
-of a name that does, so the omission is not a naming choice. `brush.test.ts` pins the sixteen values and
-not this sentence, so nothing catches the enumeration drifting.
+**The comment on `PAINT_BLEND_MODES` states the counts and names all thirteen, and nothing checks
+them.** It is a comment, so `brush.test.ts` — which pins the sixteen values exhaustively — cannot see
+it, and a mode added to the array would leave the comment quietly wrong. The array is a closed literal
+union precisely because `src/contexts/layer-utils.ts` reads a value back off stored history, but
+nothing requires a new member to be one Photoshop lists or one a canvas can express. That gap is the
+whole of what is left on this side, and it is a documentation check rather than a code one.
+
+One of the thirteen needs a caveat a future editor could get wrong. `plus-lighter` **is** a canvas
+value, and for opaque pixels it computes `src + dst`, which is what Linear Dodge (Add) does — it
+diverges only for translucent strokes. The comment's claim is that there is no _exact_ equivalent,
+which holds; a reader who takes it as "no such value exists" would be wrong.
 
 **What is already right.** The Brush's `appNotes` in the same file state the shortfall correctly —
 "sixteen canvas compositing operations rather than Photoshop's 29 for this tool" — and the reasoning
 beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
 would ship a dead option.
 
-**Fixed in `src/tools/brush.ts`, owned on the rest.** The doc comment on `PAINT_BLEND_MODES` now
-states the counts (twenty-nine offered, sixteen expressible, thirteen left out) and names all
-thirteen — Dissolve, Linear Burn, Darker Color, Linear Dodge (Add), Lighter Color, Vivid Light,
-Linear Light, Pin Light, Hard Mix, Subtract and Divide, plus Behind and Clear — so the enumeration is
-checkable rather than a partial list. Its "in the order Photoshop's `Mode` dropdown lists them" claim
-holds: filtering Photoshop's twenty-seven layer blend modes down to these sixteen reproduces the
-array's order exactly. Nothing enforces the comment staying in step with the array, and the comment
-says so rather than implying a check that does not exist.
+**Owned, so recorded not fixed: the four blend-mode `Mode` rows.** `src/tools/descriptions/paint.ts`
+carries the twenty-seven phrasing in four rows — the Brush, the Pencil, the Paint Bucket and the Clone
+Stamp — and the Brush's additionally promises Behind, so it is the only one of the four whose
+"offering" sentence is a pure overcount. Each is correct about what Photoshop offers and silent about
+what the bar renders, and the Brush's `appNotes` in the same file already says sixteen correctly, so
+the row contradicts a sentence beside it. Correcting all four means stating the sixteen the component
+actually renders and keeping `appNotes` as the statement of the shortfall.
 
-**Owned, so recorded not fixed:** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose
-"offering" sentence is the overcount and whose `appNotes` is the correct statement it contradicts.
-That row is data, it regenerates into `docs/TOOLS.md`, and both files are claimed by work in flight.
-Correcting it to say the bar offers the sixteen the component actually renders keeps the `appNotes`
-sentence as the statement of the shortfall; the other three `Mode` rows in the same file carry the
-same twenty-seven phrasing and need the same pass.
+**That is filed rather than fixed because the row is data and the generated file is spoken for.**
+`npm run docs:tools` renders these rows into `docs/TOOLS.md`, and both files are claimed by work in
+flight — `src/tools/descriptions/paint.ts` by `fix/rail-drop-draw`. Editing the source without
+regenerating leaves the two inconsistent, and regenerating rewrites a file another branch is editing.
 
-**Affected.** `src/tools/descriptions/paint.ts` — four `Mode` rows, the Brush's being the one that
-also promises Behind; `docs/TOOLS.md`, which regenerates from them.
+**Related, and the same phrase in a third file.** `src/tools/descriptions/paint.notes.md` cites the UXP
+`BlendMode` enum to establish that Dissolve is one of the twenty-seven, and writes it as "`DISSOLVE` in
+the list at the UXP constants reference, alongside `PASSTHROUGH` and the 25 others". The enum has
+**twenty-eight** members — the twenty-seven real modes plus `PASSTHROUGH`, which the Layers panel lists
+separately — so "the 25 others" is twenty-six. The same file gets the count right further down, where
+it calls `PASSTHROUGH` "a twenty-eighth entry", so the file contradicts itself. It is the very phrase
+the four rows above are told to propagate, so it is fixed in the same pass. That file is claimed too.
+
+**Affected.** `src/tools/descriptions/paint.ts` — the Brush, Pencil, Paint Bucket and Clone Stamp
+`Mode` rows; `src/tools/descriptions/paint.notes.md` — the enum citation; `docs/TOOLS.md`, which
+regenerates from the first.
 
 ## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
 
