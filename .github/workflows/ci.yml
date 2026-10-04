@@ -95,12 +95,17 @@ jobs:
       - name: Upload app coverage
         # The report is the point of `--coverage`; without an upload the run
         # computes lcov and throws it away, and a coverage regression can only be
-        # noticed by re-running the suite locally. `!cancelled()` so a failed run
-        # still publishes the partial report that explains the failure.
+        # noticed by re-running the suite locally. `always()` so a failed run still
+        # publishes the partial report that explains the failure.
+        #
+        # `always()` rather than `!cancelled()`, for the reason the `e2e` job's
+        # report upload below states in full: `cancel-in-progress: true` at the top
+        # makes a SUPERSESSION a cancellation, so `!cancelled()` is false in exactly
+        # the case that throws evidence away.
         #
         # Not a gate. vitest.config.ts declares no `thresholds`, so this step can
         # only fail by finding no report at all.
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: app-coverage
@@ -164,7 +169,8 @@ jobs:
         run: npm run test:e2e:unit:coverage
 
       - name: Upload e2e helper coverage
-        if: ${{ !cancelled() }}
+        # `always()`, for the reason the `e2e` job's report upload states in full.
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: e2e-helper-coverage
@@ -256,7 +262,34 @@ jobs:
         run: npx playwright test
 
       - name: Upload Playwright report
-        if: ${{ !cancelled() }}
+        # `always()`, and NOT `!cancelled()`. `cancel-in-progress: true` at the top
+        # of this file means the most common cancellation is a SUPERSESSION — this
+        # run was replaced by a newer push — and `!cancelled()` is false in exactly
+        # that case. The old gate therefore discarded the evidence of precisely the
+        # runs most worth reading: one cancelled mid-suite, whose `test-results/`
+        # already holds the failing screenshot and the first-retry trace of whatever
+        # was running when it was superseded. `always()` is the only status function
+        # that is true under a cancellation; `success() || failure()` is
+        # `!cancelled()` spelled out.
+        #
+        # It does NOT rescue a job GitHub killed for exceeding `timeout-minutes`:
+        # the remaining steps do not run at all, whatever their `if:` says. That is
+        # why `playwright.config.ts` carries a `globalTimeout` STRICTLY BELOW this
+        # job's `timeout-minutes: 30` — Playwright trips its own deadline first,
+        # writes the report, and exits 1, so a hang arrives here as an ordinary
+        # failed step with its artifacts already on disk. The two settings are ONE
+        # mechanism and neither is sufficient alone.
+        #
+        # The cost, stated rather than discovered later: a superseded run that had not
+        # yet failed anything has only EMPTY per-test directories under
+        # `test-results/`, and no `playwright-report/` either, because the HTML
+        # reporter writes in `onEnd` at the very end of a run. With
+        # `if-no-files-found: error` below, that step goes red. The RUN's conclusion
+        # is still `cancelled` — GitHub decides that, not the step — and a superseded
+        # run is by definition not the latest run, which is the one a required status
+        # check reads. So the new red lands on a run nobody reads, and it is a true
+        # statement about it: that run produced no report.
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
@@ -264,4 +297,9 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
-          if-no-files-found: ignore
+          # `error`, NOT `ignore`. `ignore` makes a run that wrote NO report at all a
+          # GREEN upload step, which is the same hole `failOnFlakyTests` closes on the
+          # exit code: the evidence is missing and nothing says so. The report is the
+          # only record of what the suite actually did, and the two other uploads in
+          # this workflow already treat a missing report as an error.
+          if-no-files-found: error
