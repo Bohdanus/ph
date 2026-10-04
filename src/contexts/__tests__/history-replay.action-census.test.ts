@@ -26,7 +26,16 @@
  * What this does NOT pin: that a given action produces a given layer state. The
  * per-arm suites own that. This owns only the closure property — every action the
  * union can name is accounted for.
+ *
+ * The projection in `replayedStateOf` is the limit on that property, so it has to
+ * observe every field a replay arm can write. It did not: it dropped `opacity`, the
+ * field `LAYER_TRANSPARENCY_ACTION` is named for, so a CORRECT arm for that action
+ * read as `applied:false, reported:false` and this suite failed on the fix it
+ * exists to enable. A census that cannot see the change it censuses is worse than
+ * none, because it looks like coverage.
  */
+import { isDeepStrictEqual } from 'node:util';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
@@ -105,6 +114,13 @@ function createTestLayer(id: string, overrides: Partial<Layer> = {}): Layer {
  * `NewLayerData` is a union, so `pos` is narrowed explicitly rather than trusted —
  * a bedrock source carries `size` instead, and reading `pos` off it would be the
  * mistake `history-append.ts` documents at its own narrowing site.
+ *
+ * `applyRasterTool` is where every `commit: 'raster' | 'source' | 'selection'`
+ * tool ends up: `replayHistory` stores its return value as the layer record
+ * verbatim, so a stub that returned the layer unchanged made the whole raster path
+ * invisible and no such action could ever be reported as applied. `name` is the
+ * sentinel this repository already uses for that, in `history-replay.branches`
+ * and `history-replay.frame-invariance`.
  */
 function createDependencies(): HistoryReplayDependencies {
   return {
@@ -114,7 +130,7 @@ function createDependencies(): HistoryReplayDependencies {
         source: input.source,
       })
     ),
-    applyRasterTool: vi.fn((layer: Layer) => layer),
+    applyRasterTool: vi.fn((layer: Layer) => ({ ...layer, name: 'rasterized' })),
   };
 }
 
@@ -142,30 +158,55 @@ const hideEntry = (): HistoryItem => entry({ id: 'hide-prefix', actionName: HIDE
 const showEntry = (): HistoryItem => entry({ id: 'show-entry', actionName: SHOW_LAYER_ACTION });
 
 /**
- * The replayed state, reduced to what an entry can change. Bitmaps and temp
- * canvases are dropped because they are not JSON-comparable and no action's
- * presence or absence turns on them.
+ * The replayed state, reduced to what an entry can change.
+ *
+ * It covers every `Layer` field a replay arm writes, because the census's whole
+ * claim is bounded by what this can see: a field dropped here is an action the
+ * census reports as not-applied. `bitmap` and `tmpCanvas` are recorded as presence
+ * booleans — they are not JSON-comparable and no action's presence or absence turns
+ * on their identity — and layer ids are SORTED so the comparison is not sensitive to
+ * the order `replayHistory` happened to insert them in.
+ *
+ * This is an object, not a string. A `JSON.stringify` comparison drops `undefined`
+ * (so an absent `lastHistoryId` and an `undefined` one are the same reading) and
+ * renders `NaN` as `null`; both fail OPEN, which is the wrong direction for a gate.
  */
-function replayedStateOf(result: HistoryReplayResult): string {
+function replayedStateOf(result: HistoryReplayResult): unknown {
   const layers = Object.fromEntries(
-    Object.entries(result.layers).map(([id, layer]) => [
-      id,
-      {
-        name: layer.name,
-        visible: layer.visible,
-        order: layer.order,
-        pos: layer.pos,
-        operationKinds: layer.operations.map((operation) => operation.kind),
-        sourceKind: layer.source?.kind ?? null,
-      },
-    ])
+    Object.entries(result.layers)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, layer]) => [
+        id,
+        {
+          name: layer.name,
+          isBedrock: layer.isBedrock,
+          visible: layer.visible,
+          opacity: layer.opacity,
+          locked: layer.locked,
+          blendMode: layer.blendMode,
+          order: layer.order,
+          pos: layer.pos,
+          lastHistoryId: layer.lastHistoryId ?? null,
+          hasBitmap: layer.bitmap !== null,
+          hasTempCanvas: layer.tmpCanvas !== null,
+          sourceKind: layer.source?.kind ?? null,
+          operations: layer.operations.map((operation) => ({
+            id: operation.id,
+            kind: operation.kind ?? null,
+            enabled: operation.enabled,
+            // `LayerOperation` is a union, so the payload field is narrowed rather
+            // than assumed: a filter operation carries `args`, an affine one `transform`.
+            payload: 'args' in operation ? { args: operation.args } : { transform: operation.transform },
+          })),
+        },
+      ])
   );
-  return JSON.stringify({
+  return {
     layers,
     documentFrame: result.documentFrame,
     selections: result.selections,
     activeSelectionId: result.activeSelectionId,
-  });
+  };
 }
 
 type CensusCase = Readonly<{
@@ -210,7 +251,7 @@ const CENSUS: Record<ActionType, CensusCase> = {
     }),
   },
   [TOOL_ACTION]: {
-    label: 'a raster tool',
+    label: 'a layer-operation tool, which appends an operation instead of rasterizing',
     prefix: oneLayerDocument(),
     entry: entry({ id: 'tool-entry', actionName: TOOL_ACTION, args: { toolName: 'blur', radius: 2 } }),
   },
@@ -278,6 +319,18 @@ const CENSUS: Record<ActionType, CensusCase> = {
 
 const CASES = Object.entries(CENSUS) as [ActionType, CensusCase][];
 
+/**
+ * Rows for `it.each`, with the LABEL lifted into its own column.
+ *
+ * `it.each` formats each `%s` from a column of the row array, so the original
+ * two-column row printed the whole `CensusCase` object for the second placeholder —
+ * a failure read `{ …(3) }`, and the field that exists to name the situation was
+ * never shown. The label is also passed to `expect` as its MESSAGE argument rather
+ * than as a payload field, because a payload field comparing to itself asserts
+ * nothing.
+ */
+const ROWS = CASES.map(([actionName, censusCase]) => [actionName, censusCase.label, censusCase] as const);
+
 afterEach(() => {
   overrideCanvasFilterSupport(null);
 });
@@ -310,47 +363,101 @@ describe('replayHistory accounts for every action the union can name', () => {
    * `reported` is a diagnostic the appended entry produced that the prefix did not.
    */
   function accountingFor(censusCase: CensusCase): { applied: boolean; reported: boolean } {
-    const dependencies = createDependencies();
-    const before = replayHistory([...censusCase.prefix], censusCase.prefix.length - 1, initialSize, dependencies);
+    const before = replayHistory(
+      [...censusCase.prefix],
+      censusCase.prefix.length - 1,
+      initialSize,
+      createDependencies()
+    );
     const after = replayHistory(
       [...censusCase.prefix, censusCase.entry],
       censusCase.prefix.length,
       initialSize,
-      dependencies
+      createDependencies()
     );
     return {
-      applied: replayedStateOf(after) !== replayedStateOf(before),
+      // `isDeepStrictEqual`, not `!==`: the projection is an object, so reference
+      // inequality would read every action as applied and the census would pass on a
+      // replay that changed nothing.
+      applied: !isDeepStrictEqual(replayedStateOf(after), replayedStateOf(before)),
       reported: after.diagnostics.length > before.diagnostics.length,
     };
   }
 
-  it.each(CASES)('%s applies or reports %s, and never drops it in silence', (actionName, censusCase) => {
+  it.each(ROWS)('%s applies or reports %s, and never drops it in silence', (actionName, label, censusCase) => {
     // `blur` is the only case that needs a capability, and its arm refuses without
     // one — which would report rather than apply, so the assertion still holds.
     overrideCanvasFilterSupport(true);
 
     const { applied, reported } = accountingFor(censusCase);
 
-    // The disjunction IS the contract; `applied` and `reported` ride along so a
-    // failure names the action that vanished and says which half was missing.
-    expect({ actionName, applied, reported, accountedFor: applied || reported }).toEqual({
-      actionName,
-      applied: expect.any(Boolean),
-      reported: expect.any(Boolean),
-      accountedFor: true,
-    });
+    // The disjunction IS the contract, and `toContain(true)` is the only form of it
+    // that fails CLOSED: `[applied, reported]` is an array, so a failure prints
+    // `[ false, false ]` and names which half was missing. The previous payload —
+    // `actionName` comparing to itself plus two `expect.any(Boolean)` fields — could
+    // only ever bite on its last element.
+    expect([applied, reported], `${actionName} (${label}) was neither applied nor reported`).toContain(true);
   });
 
-  it('refuses only the action no production code dispatches, so a deleted arm cannot hide as a refusal', () => {
+  it('applies a raster-commit tool through the dependency that owns the raster path', () => {
+    // `commit: 'raster' | 'source' | 'selection'` never reaches an arm by name in
+    // `replayHistory`; it lands on `dependencies.applyRasterTool`, whose return value
+    // becomes the layer record verbatim. That is why this cannot be a `CENSUS` case:
+    // `CENSUS` is keyed by action NAME and `TOOL_ACTION` is already taken, so a second
+    // key would be a duplicate-key error rather than a second situation. Without this
+    // case, `createDependencies`'s raster stub would be inert and the census would
+    // claim coverage it does not have.
+    overrideCanvasFilterSupport(true);
+
+    const rasterTool = entry({
+      id: 'raster-tool-entry',
+      actionName: TOOL_ACTION,
+      args: { toolName: 'gradient', gradientType: 'linear', angle: 90 },
+    });
+    const prefix = oneLayerDocument();
+    const applied = accountingFor({ label: 'a raster-commit tool', prefix, entry: rasterTool });
+
+    expect(applied.applied, `TOOL_ACTION (a raster-commit tool) was not applied`).toBe(true);
+  });
+
+  it('reports an entry that carries no action name, rather than skipping it in silence', () => {
+    // `HistoryItem['actionName']` is a required `ActionType`, so no production writer
+    // produces this — but nothing enforces it at runtime, and an entry the loop cannot
+    // name is the most reportable thing it can meet: `historyId` and timeline position
+    // are the only trace of it. Skipping it would restore the silent skip this file
+    // exists to close, so the branch REPORTS and only the message needs a fallback.
+    overrideCanvasFilterSupport(true);
+
+    const nameless = entry({ id: 'nameless-entry', actionName: undefined as unknown as ActionType });
+    const result = replayHistory(
+      [...oneLayerDocument(), nameless],
+      oneLayerDocument().length,
+      initialSize,
+      createDependencies()
+    );
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'unhandled-action', historyId: 'nameless-entry', actionName: undefined }),
+    ]);
+    expect(String((result.diagnostics[0].error as Error).message)).toContain('(no action name)');
+  });
+
+  it('lets no other union member report, so a member cannot hide by turning into a refusal', () => {
     // The disjunction above is deliberately permissive — a refusal is a legitimate
-    // outcome — but that permissiveness has a cost: deleting an arm wholesale turns
-    // "applied" into "reported" and the census stays green. This is the leg that
-    // costs it back, by naming the ONE member that reports today.
+    // outcome — and that permissiveness has a cost: this file cannot then tell "an
+    // action legitimately refuses" from "an arm stopped applying and started
+    // reporting". This pins the NEGATIVE SPACE: exactly one member reports today.
+    // Nothing else in the repository asserts that, because the per-arm suites all pin
+    // APPLIED state, which stays correct when an arm is deleted only if the deletion
+    // also fails the applied-state expectation — which it does, but not for this
+    // reason.
     //
-    // `LAYER_TRANSPARENCY_ACTION` is in the union with no replay arm and no
-    // production dispatch site, so a minimal entry for it can only be refused. When
-    // that gap is closed — an arm, or retirement from the union — this list changes
-    // and the reason here changes with it.
+    // `LAYER_TRANSPARENCY_ACTION` is in the union with no replay arm and no production
+    // dispatch site, so a minimal entry for it can only be refused. Closing that gap
+    // — an arm, or retirement from the union — makes THIS case red, and it must also
+    // make `replayedStateOf` observe whatever the arm writes. Today that would be
+    // `opacity`, which the projection dropped, so the suite failed on the correct
+    // fix; the projection now carries it and the two must change together.
     overrideCanvasFilterSupport(true);
 
     const refused = CASES.filter(([, censusCase]) => accountingFor(censusCase).reported).map(
@@ -393,15 +500,25 @@ describe('replayHistory accounts for every action the union can name', () => {
     expect(result.diagnostics[0].historyId).toBe('bare-open-document');
   });
 
-  it('keeps reporting nothing for a timeline that replays cleanly', () => {
-    // The refusal arm must not become a report for every entry: a clean timeline
-    // reaching the new branch at all would mean the arms above stopped matching.
-    overrideCanvasFilterSupport(true);
+  it.each(ROWS)(
+    'reports nothing for %s alone, so no prefix has become a silent skip',
+    (actionName, _label, censusCase) => {
+      // Every other case needs its prefix to be clean, or "applied" would be measuring
+      // the prefix's refusal instead of the entry's. This ran against ONE prefix, which
+      // is a spot check; running every case's own prefix turns it into the statement it
+      // was always reaching for, and it is the only leg that would notice a refusal
+      // moving INTO a prefix -- where the per-arm suites would not, because they all
+      // assert on applied state.
+      overrideCanvasFilterSupport(true);
 
-    const censusCase = CENSUS[REMOVE_ACTION];
-    const prefix = censusCase.prefix;
-    const result = replayHistory([...prefix], prefix.length - 1, initialSize, createDependencies());
+      const result = replayHistory(
+        [...censusCase.prefix],
+        censusCase.prefix.length - 1,
+        initialSize,
+        createDependencies()
+      );
 
-    expect(result.diagnostics).toEqual([]);
-  });
+      expect(result.diagnostics, `${actionName}'s prefix reported something`).toEqual([]);
+    }
+  );
 });
