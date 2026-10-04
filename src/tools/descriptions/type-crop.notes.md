@@ -684,8 +684,8 @@ did. The composer is greedy first-fit and nothing in Adobe's documentation descr
 
 **`T`, and only `T`.** The complete key table is
 `src/components/Common/AppKeyboardShortcuts.tsx` — its `useKeyDownShortcut` registrations cover
-`z`, `y`, `c`, `v`, `i`, `j`, `b`, `u`, `t`, `l`, `w`, `g`, `o`, `e`, `s`, `m`, `p` and their
-shift/mod variants — plus three `Escape`/`Enter`/`Backspace`/`Delete` registrations in each of
+`z`, `y`, `c`, `v`, `i`, `j`, `b`, `u`, `t`, `l`, `w`, `g`, `o`, `e`, `s`, `m`, `p`, `d` and their
+shift/mod variants — plus four `Escape`/`Enter`/`Backspace`/`Delete` registrations in each of
 the two lasso tool areas (`PolygonClickToolArea` and `FeatherMagneticLassoToolArea`) and one
 `Escape` registration in `FontSelect`'s font popup. Those are every call site of that hook in
 `src/`; the raw `onKeyDown`
@@ -1218,9 +1218,10 @@ Neither entry changes a claim in `type-crop.ts`, and neither is a live crop defe
 **`C` from the shared table, plus `Enter` and `Esc` from a raw window listener inside the tool
 area.** The second clause is new on this pass and it reverses what this file previously said.
 The `useKeyDownShortcut` table is the one given for the type tool above —
-`AppKeyboardShortcuts.tsx` (letters only: `b c e g i j l m o p s t u v w y z`, plus shift and mod
+`AppKeyboardShortcuts.tsx` (letters only: `b c d e g i j l m o p s t u v w y z`, plus shift and mod
 variants), the two lasso tool areas and the font popup, and those are every call site of that
-hook in `src/`. **It is not the whole of the app's key handling**, and for the crop specifically
+hook in `src/`. The `d` entry is bound only as `Shift+Alt+D`; a bare `d` selects nothing.
+**It is not the whole of the app's key handling**, and for the crop specifically
 it is the wrong place to look: `CropToolArea`'s own raw `window` `keydown`
 effect attaches its listener and handles `Enter` and `Escape` there, with the reason written out
 in the doc comment above its `cropKeysRef` —

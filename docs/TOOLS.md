@@ -8,7 +8,7 @@ Every tool in this editor, described against Adobe Photoshop.
 The prose below is generated from `src/tools/descriptions/`, which is the single source of
 truth. Each tool carries what Photoshop does with it, what this editor does with it, and the
 option controls Photoshop puts in its options bar with each one’s status here — `present`,
-`partial`, `inert` (declared in the settings but rendered by no component) or `missing`.
+`partial`, `inert` (declared or displayed, and nothing wired behind it) or `missing`.
 Every Photoshop claim is sourced; the per-family notes files carry the long-form research and
 the list of what could not be verified.
 

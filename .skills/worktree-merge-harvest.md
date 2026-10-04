@@ -343,8 +343,9 @@ npm run test:e2e          # headless; starts its own dev server on its own port
 
 - **`npm run tsc` is not `npx tsc --noEmit`.** `tsc -b` covers
   `tsconfig.app/node/e2e.json` and therefore the specs and test files. The
-  `--noEmit` form resolves the app config alone, excludes tests, and exits 0
-  while the tests do not compile.
+  `--noEmit` form resolves the root solution stub and type-checks ZERO files; it does
+  not fall back to the app config, and `tsconfig.app.json` has no `exclude`, so it
+  pulls `src/**/__tests__` in anyway.
 - **`npm run test:e2e` only where the change is observable in a browser.** A
   change to a script or a stylesheet does not need a seven-minute suite; a change
   to a tool, a panel, or anything with pixels does. Say which you ran and why.
@@ -533,8 +534,8 @@ skipped its own safety steps.
 - **Weaken a gate.** See step 5.
 - **Open a browser window.** See step 5.
 - **Fan out from the main checkout.** A `task` subagent inherits the working
-  directory; 1,398 of them wrote into `main` in seven days. Create the worktree
-  first and put its absolute path in the brief.
+  directory; 1,398 of them ran with `main` as their working directory in seven days.
+  Create the worktree first and put its absolute path in the brief.
 - **Let a review finding be fixed after the merge.** Then it is a change on `main`
   that no worktree owns.
 

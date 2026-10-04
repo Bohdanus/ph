@@ -106,9 +106,9 @@ violations on `main`.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
-  in `" Tool"`. Scanning all **37** `label:` entries in `toolbarMap` (the five
+  in `" Tool"`. Scanning all **40** `label:` entries in `toolbarMap` (the five
   `shape` figures and the six Pen-family entries each carry their own label, so the
-  entry count is 37 and not the tile count): **none lack the suffix**. It used to be
+  entry count is 40 and not the tile count): **none lack the suffix**. It used to be
   exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
   entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
   rather than tools; `extraTools` (`toolbar-mapping.ts`) is the list that now records
@@ -244,7 +244,7 @@ Adding a tool means updating every hand-written registry list, including
 `dispatchTable`, `icons`, and `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`.
 The hand-copied lists in the tests are the expensive part.
 `toolIconNames` in `src/components/SidebarLeft/__tests__/toolIcons.test.tsx` carries a
-**46-name** union by hand (46 = the 41 `ToolName`s plus 5 `shape-*` figure icons),
+**49-name** union by hand (49 = the 44 `ToolName`s plus 5 `shape-*` figure icons),
 byte-identical and in the same order to `ToolIconName` in
 `src/components/SidebarLeft/types.ts`; **keep it that way**.
 
@@ -257,5 +257,5 @@ radius** — it enumerates the hand-copied lists and the tests that pin tool nam
 `src/components/Common/AppKeyboardShortcuts.tsx`). **`HANDOFF.md` §68
 is not this**: it is about a committed shape being painted twice, and
 its pointer here was wrong. Count the lists yourself before estimating an edit rather
-than trusting a number written anywhere — including the 46 and the 41 above, which are
+than trusting a number written anywhere — including the 49 and the 44 above, which are
 cheap to re-derive with `grep -c` and a line count.
