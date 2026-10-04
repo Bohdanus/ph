@@ -29,12 +29,17 @@ function assertPixelBudget(width: number, height: number, action: 'open' | 'save
   }
 }
 
-function assertByteBudget(bytes: number | null, width: number, height: number, action: 'open' | 'save') {
+/**
+ * Decode-side only: this is the budget for a buffer `UTIF.decodeImage` is about to build from a
+ * file's own tags, so there is no `save` to name. `encodeTiff` is bounded by the pixel ceiling
+ * instead — see the comment above its call.
+ */
+function assertByteBudget(bytes: number | null, width: number, height: number) {
   // `null` is "the IFD does not yield a finite prediction", which is not evidence of a small
   // image, so it is refused on the same terms as one over the ceiling.
   if (bytes === null || bytes > MAX_TIFF_BYTES) {
     throw new Error(
-      `TIFF image is too large to ${action} (${width}×${height}). ` +
+      `TIFF image is too large to open (${width}×${height}). ` +
         `Decoding it would need more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
     );
   }
@@ -72,20 +77,30 @@ function assertSamplesAgree(page: IfdTags) {
 }
 
 /**
- * The exact `new Uint8Array` size `UTIF.decodeImage` reaches at `UTIF.js:125`, from the fields
- * it reads:
+ * The exact `new Uint8Array` sizes `UTIF.decodeImage` reaches at `UTIF.js:125` and `:132`, from
+ * the fields it reads:
  *
  *   bipp  = t258 ? Math.min(32, t258[0]) * t258.length : (t277 ? t277[0] : 1)
  *   bipp  = Math.round(t279[0] * 8 / (width * t278[0]))   // uncompressed, t262 === 32803
  *   bipl  = Math.ceil(width * bipp / 8) * 8
  *   bytes = height * (bipl >>> 3)
+ *   tiles = Math.ceil(t322[0] * t323[0] * bipp / 8)        // only when t322 is present
  *
  * `bipl` is divided in floating point rather than with UTIF's `>>> 3`. That is the same value
  * while `bipl` fits in 32 bits, and the 32-bit shift wraps *downwards* above that, so the
  * prediction is never smaller than the allocation that will be attempted.
  *
+ * `tiles` is a **second buffer**, not an alternative to `bytes`: a tiled page allocates the
+ * page-sized `bytes` first and the tile-sized `tbuff` beside it, and both are live while the
+ * tiles are copied in, so the peak this has to cover is their **sum**. A page whose own geometry
+ * is trivial can therefore ask for an enormous tile buffer — `{t256:[1000], t257:[1000],
+ * t258:[8,8,8,8], t322:[23170], t323:[23170]}` is 1000×1000, so the page term is 4 MB and passes
+ * every pixel check, while `tbuff` alone is `ceil(23170² × 4)` = 2,147,395,600 bytes against a
+ * 1.6 GB ceiling, out of a ~200-byte file. UTIF's `|0` on that expression wraps rather than
+ * throwing, so nothing downstream reports it; refusing it here is the only thing that does.
+ *
  * Returns `null` when the tags do not yield a finite size, which is a malformed page rather
- * than a small one.
+ * than a small one — including `t322` with no `t323`, where UTIF would read `undefined[0]`.
  */
 function predictDecodeBytes(page: IfdTags, width: number, height: number): number | null {
   const bitsPerSample = Array.isArray(page.t258) ? page.t258 : undefined;
@@ -100,7 +115,16 @@ function predictDecodeBytes(page: IfdTags, width: number, height: number): numbe
     bitsPerPixel = Math.round((stripBytes * 8) / (width * rowsPerStrip));
   }
 
-  const bytes = height * Math.ceil((width * bitsPerPixel) / 8);
+  const pageBytes = height * Math.ceil((width * bitsPerPixel) / 8);
+  const tileWidth = tagValue(page, 't322');
+  if (tileWidth === undefined) {
+    return Number.isFinite(pageBytes) ? pageBytes : null;
+  }
+  const tileLength = tagValue(page, 't323');
+  if (tileLength === undefined) {
+    return null;
+  }
+  const bytes = pageBytes + Math.ceil((tileWidth * tileLength * bitsPerPixel) / 8);
   return Number.isFinite(bytes) ? bytes : null;
 }
 
@@ -111,7 +135,7 @@ function predictDecodeBytes(page: IfdTags, width: number, height: number): numbe
 function assertIfdWithinBudget(page: IfdTags, width: number, height: number) {
   assertPixelBudget(width, height, 'open');
   assertSamplesAgree(page);
-  assertByteBudget(predictDecodeBytes(page, width, height), width, height, 'open');
+  assertByteBudget(predictDecodeBytes(page, width, height), width, height);
 }
 
 /**
@@ -166,14 +190,15 @@ export async function loadTiffFile(file: Blob): Promise<HTMLImageElement> {
 }
 
 export async function encodeTiff(canvas: HTMLCanvasElement): Promise<Blob> {
-  // The same budget the loader applies, and on the same reasoning: whatever this build writes,
-  // it has to be able to read back. A canvas the app will not create is refused here rather
-  // than saved into a file `loadTiffFile` then rejects. `getImageData` below hands UTIF four
-  // bytes per pixel and UTIF's own IFD declares `t258: [8, 8, 8, 8]`, so the raster the
-  // encoder builds is exactly `width * height * 4` — a quarter of the byte ceiling, which is
-  // why the pixel ceiling is what binds here.
+  // The pixel ceiling is the whole of the save-side budget, and this is the only place that
+  // says so. The same reasoning as the loader: whatever this build writes, it has to be able to
+  // read back, so a canvas the app will not create is refused here rather than saved into a file
+  // `loadTiffFile` then rejects. `getImageData` below hands UTIF four bytes per pixel and UTIF's
+  // own IFD declares `t258: [8, 8, 8, 8]`, so the raster the encoder builds is exactly
+  // `width * height * 4` — and at the pixel ceiling that is `MAX_TIFF_PIXELS * 4`, half of
+  // `MAX_TIFF_BYTES`, so the byte ceiling provably cannot bind and a second guard on it would
+  // be a check no input can fail.
   assertPixelBudget(canvas.width, canvas.height, 'save');
-  assertByteBudget(canvas.width * canvas.height * 4, canvas.width, canvas.height, 'save');
 
   const context = canvas.getContext('2d');
   if (!context) {

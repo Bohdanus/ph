@@ -3,6 +3,15 @@ import { canvasToPngBlob, imageDataToImage } from './raster-utils.ts';
 
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+/**
+ * The largest edge an ICO can express. A directory entry stores each axis in one byte, where a
+ * stored `0` means 256 rather than 0, so 256 is the format's own maximum and not a round number
+ * this app chose. It is declared once because both halves of the format have to agree on it: an
+ * entry that opens at 512×512 and then cannot be saved back is a file the app accepts and then
+ * refuses to write.
+ */
+const MAX_EDGE = 256;
+
 function isPng(data: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => data[index] === byte);
 }
@@ -23,9 +32,16 @@ function decodeBmpIcon(data: Uint8Array): ReturnType<typeof decodeBmp> {
   if (dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0) {
     throw new Error('Invalid ICO bitmap dimensions');
   }
+  // The geometry a BMP-shaped DIB decodes to, against the same ceiling `encodeIco` enforces on
+  // the way out. Checked on the declared axes rather than on the directory entry, because the
+  // entry's zero-byte-means-256 convention is a property of the *directory* — a DIB declares
+  // real dimensions, and it is those that reach `decodeBmp`.
+  const height = rawHeight / 2;
+  if (width > MAX_EDGE || height > MAX_EDGE) {
+    throw new Error(`ICO image is too large to open (${width}×${height}). Maximum is ${MAX_EDGE} pixels per axis.`);
+  }
 
   const paletteCount = bitsPerPixel <= 8 ? colorsUsed || 1 << bitsPerPixel : 0;
-  const height = rawHeight / 2;
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
   const xorSize = rowStride * height;
   const maskStride = Math.ceil(width / 8) * 4;
@@ -111,11 +127,16 @@ export async function loadIcoFile(file: Blob): Promise<HTMLImageElement> {
 }
 
 export async function encodeIco(canvas: HTMLCanvasElement): Promise<Blob> {
-  const png = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer());
+  // Before the encode, not after it: `canvasToPngBlob` rasterises the whole canvas through
+  // `toBlob`, so `Save as ICO` on a 10000×10000 document would pay a full PNG encode of a 400 MP
+  // raster — and allocate it — only to be refused by the geometry check below. The canvas
+  // carries its own geometry, so the guard costs two comparisons.
   const { width, height } = canvas;
-  if (width < 1 || height < 1 || width > 256 || height > 256) {
+  if (width < 1 || height < 1 || width > MAX_EDGE || height > MAX_EDGE) {
     throw new Error('ICO dimensions cannot exceed 256 pixels');
   }
+
+  const png = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer());
 
   const headerSize = 6;
   const directorySize = 16;

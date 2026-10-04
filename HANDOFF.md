@@ -355,7 +355,7 @@ replay authority.
 
 ---
 
-## 45. The codecs' raster ceilings disagree, and four of six have no budget at all
+## 45. The codecs' raster ceilings disagree, and two of six have no budget at all
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
 all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
@@ -373,8 +373,8 @@ Adobe rather than this. The remaining work is the other-format gap below, not th
 or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
 rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
 `MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
-`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample, in
-`UTIF.js` — `UTIF.decodeImage()`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at
+`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample, times
+the four samples an RGBA page carries) — and `MAX_TIFF_PIXELS` is that same budget read at
 8 bytes per pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
 different number defensible if the ceiling is ever revisited.
 
@@ -391,71 +391,58 @@ different number defensible if the ceiling is ever revisited.
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
 as PSD — and the PSD cap is recorded nowhere. "One exported `MAX_RASTER_PIXELS`" would have to
-reconcile **five** constants, not one.
+reconcile **five** constants, not one, and that reconciliation is the reason the BMP ceiling below
+is filed rather than fixed: choosing a number is cheap, and choosing it in one place is the decision
+nobody has taken.
 
-**And four of the six codecs have no budget at all, or check theirs too late.**
+**Every encoder budget is now consulted before the allocation it bounds.** That was the shape of the
+defect this item used to carry in three codecs at once — a guard that runs after the raster is built
+refuses a file it has already paid for — so the column that matters is the third one:
 
-| codec | loader budget                   | encoder budget            | check before the allocation?                 |
-| ----- | ------------------------------- | ------------------------- | -------------------------------------------- |
-| avif  | yes                             | yes                       | yes                                          |
-| tiff  | yes (pixels + bytes)            | yes (+ a dead byte check) | yes — the only genuine pre-decode load check |
-| bmp   | **none** — bounded by file size | **none**                  | n/a                                          |
-| gif   | **none**                        | 65535/axis                | **no**                                       |
-| ico   | **none**                        | 1..256/axis               | **no**                                       |
-| svg   | **none**                        | **none**                  | n/a                                          |
-| psd   | yes                             | yes                       | yes — the reference implementation           |
+| codec | loader budget                              | encoder budget | check before the allocation?                 |
+| ----- | ------------------------------------------ | -------------- | -------------------------------------------- |
+| avif  | yes                                        | yes            | yes                                          |
+| tiff  | yes (pixels + bytes, tiled pages included) | yes (pixels)   | yes — the only genuine pre-decode load check |
+| bmp   | **none** — bounded by file size            | **none**       | n/a                                          |
+| gif   | **none** — bounded by the load path below  | 65535/axis     | yes                                          |
+| ico   | 256/axis, read off the DIB                 | 1..256/axis    | yes                                          |
+| svg   | **none** — bounded by the load path below  | **none**       | n/a                                          |
+| psd   | yes                                        | yes            | yes — the reference implementation           |
 
-The three that are actionable without an architecture decision, all in files no campaign owns:
+The TIFF loader's byte predictor has to cover the tile buffer as well as the page buffer, and they
+are **added rather than alternatives**: `UTIF.decodeImage` allocates the page-sized buffer first and
+then a second, tile-sized one, and copies tile by tile with both live. So the budget is the sum, and
+a tile is a tag pair — `t322` and `t323` — which means a ~200-byte file chooses its size
+independently of the page geometry it also declares. `{t256:[1000], t257:[1000], t258:[8,8,8,8],
+t322:[23170], t323:[23170]}` is 1000×1000, so the page term is 4 MB and passes every other check,
+while the tile term alone is 2,147,395,600 bytes against a 1.6 GB ceiling. UTIF's `|0` on that
+expression wraps rather than throwing, so nothing downstream of the allocation reports it. A present
+`t322` with a missing `t323` is a `null` prediction rather than a small one, for the same reason an
+unreadable bit depth is: a budget that cannot read the value is not evidence of a small image.
 
-- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts` —
-  `predictDecodeBytes()` is the whole predictor and never reads `t322` (TileWidth) or `t323`
-  (TileLength), but `UTIF.js` — `UTIF.decodeImage()` allocates a **separate** per-tile buffer for a
-  tiled page. The page
-  `{t256:[1000], t257:[1000], t258:[8,8,8,8], t322:[23170], t323:[23170]}` predicts 4,000,000 bytes
-  — comfortably inside the 1.6 GB ceiling — while UTIF allocates **2,147,395,600 (2.15 GB)**. A
-  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism the doc comment above
-  `tiff-utils.ts` — `predictDecodeBytes()` documents as the module's reason for existing. Fix: also
-  predict
-  `Math.ceil(t322[0] * t323[0] * bitsPerPixel / 8)` and return the larger; a present `t322` with a
-  missing `t323` should return `null`, which `tiff-utils.ts` — `assertByteBudget()` already refuses
-  like over-ceiling.
-- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts` — `encodeGif()` runs
-  `getCanvasImageData(canvas)` before its own `65535` check, so a 70000×100000 canvas allocates
-  28 GB before the line that would refuse it — the same ordering defect this item's AVIF half had.
-  `gif-utils.test.ts` — the `it('rejects canvases that exceed the 65535 pixel limit')` title cannot
-  catch it: it mocks `getContext` to report a width no real canvas has and never asserts
-  `getImageData` was not called. Fix: hoist both checks above the `getCanvasImageData(canvas)` call.
-- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts` — `encodeIco()`
-  runs `canvasToPngBlob` before its 256 check, so `Save as ICO` on a 10000×10000 document pays a full
-  PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte blob,
-  so nothing detects it. Fix: move the 256 check above the `canvasToPngBlob(canvas)` call.
+**A save-side ceiling that cannot bind is worse than none, because it reads as coverage.** TIFF's
+`encodeTiff` used to carry `assertByteBudget(canvas.width * canvas.height * 4, …)` beside the pixel
+guard that actually refuses: at the pixel ceiling the raster is `MAX_TIFF_PIXELS * 4`, exactly half
+`MAX_TIFF_BYTES`, so no input could fail it. Nothing detects adding a dead guard back — reverting the
+removal leaves every test green — which is the argument for keeping the boundary case that shows the
+pixel ceiling is the binding one, rather than a test that merely counts the guards.
 
-**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts` — `decodeBmpIcon()`) validates only
-`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling in
-`ico-utils.ts` — `loadIcoFile()` is used for **entry selection** only, and the geometry actually
-decoded is read from the DIB in `ico-utils.ts` — `decodeBmpIcon()` and never compared to 256.
-**A file that opens cannot be saved back.**
-
-**BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
-byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
-`32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
-absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 7×4, so no
-test can reach an interesting ratio.
+**BMP is the worst amplification, and it is the open half of this item.** `bmp-utils.ts` —
+`decodeBmp()` bounds the input by its on-disk byte length and then allocates `width * height * 4`
+regardless of depth, so the ratio is exactly `32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB
+on disk and allocates **3.2 GB**, with no absolute pixel ceiling anywhere in the file.
+`bmp-utils.test.ts`'s largest geometry is 7×4, so no test can reach an interesting ratio. The fix is
+one comparison before the `width * height * 4` allocation; the open question is the number, and it
+has to be one of the five above rather than a sixth.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
-`new Image()`. That is where a shared load-side ceiling would have to live for those two formats.
-Separately, TIFF's save-side byte check in `tiff-utils.ts` — `encodeTiff()` is provably dead
-(`MAX_TIFF_PIXELS * 4` is always below
-`MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
-finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
-`createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
+`new Image()`. That is where a shared load-side ceiling would have to live for those two formats, and
+it is the same place a BMP ceiling would have to be reconciled against.
 
-**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
-`src/contexts/bmp-utils.ts`, `src/contexts/gif-utils.ts`,
-`src/contexts/ico-utils.ts`,
-`src/contexts/image-load-save-utils.ts`, `src/contexts/affine-transform.ts`,
-`src/contexts/psd-utils.ts`
+**Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
+`src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
+`src/contexts/affine-transform.ts`, `src/contexts/psd-utils.ts`
 
 ---
 

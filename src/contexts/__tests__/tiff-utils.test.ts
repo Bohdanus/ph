@@ -462,6 +462,104 @@ describe('TIFF raster byte budget', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
+  /**
+   * A tiled page is the one shape `predictDecodeBytes` used to miss entirely. `UTIF.decodeImage`
+   * allocates the page-sized buffer first and then, in its `t322 != null` branch, a SECOND buffer
+   * sized by the *tile* (`Math.ceil(tw*th*bipp/8)`) and copies tile by tile with both live. So the
+   * tile buffer is added to the page buffer, not an alternative to it — and a tile is a tag pair,
+   * so a ~200-byte file gets to choose its size independently of the page's geometry.
+   */
+  describe('the tile buffer of a tiled page', () => {
+    it('refuses a tiled page whose tile buffer alone runs past the byte budget', async () => {
+      // 1000×1000 is 1/200th of the pixel cap and its page buffer is 4 MB, so neither the pixel
+      // budget nor the page-size prediction touches this. The tile is `ceil(23170² × 4)` =
+      // 2,147,395,600 bytes against a 1.6 GB ceiling — and UTIF's `|0` on that expression wraps
+      // rather than throwing, so nothing downstream of the allocation would report it.
+      decode.mockReturnValue([
+        {
+          t256: [1000],
+          t257: [1000],
+          t258: [8, 8, 8, 8],
+          t277: [4],
+          t259: [1],
+          t262: [2],
+          t322: [23170],
+          t323: [23170],
+        },
+      ]);
+
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+        'TIFF image is too large to open (1000×1000). ' +
+          'Decoding it would need more than 1600 MB, over the TIFF budget.'
+      );
+      expect(decodeImage).not.toHaveBeenCalled();
+      expect(toRGBA8).not.toHaveBeenCalled();
+    });
+
+    it('counts the tile buffer on top of the page buffer rather than against it', async () => {
+      // 10000×8000 8-bit RGBA is 320 MB as a page buffer, and an 18000×18000 tile is 1.296 GB as
+      // a tile buffer. Either one alone is inside the 1.6 GB ceiling; together they are 1.616 GB.
+      // A rule that returned the larger of the two would admit this file.
+      decode.mockReturnValue([
+        {
+          t256: [10000],
+          t257: [8000],
+          t258: [8, 8, 8, 8],
+          t277: [4],
+          t259: [1],
+          t262: [2],
+          t322: [18000],
+          t323: [18000],
+        },
+      ]);
+
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+        /Decoding it would need more than 1600 MB/
+      );
+      expect(decodeImage).not.toHaveBeenCalled();
+    });
+
+    it('decodes an ordinary tiled page, because tiles are usually small', async () => {
+      // The control for the two cases above: 256×256 tiles over a full-size document is the shape
+      // a real tiled TIFF has, and it must not be refused by a rule built for the pathological one.
+      installImageHarness();
+      const page = {
+        width: 10000,
+        height: 10000,
+        t256: [10000],
+        t257: [10000],
+        t258: [8, 8, 8, 8],
+        t277: [4],
+        t259: [1],
+        t262: [2],
+        t322: [256],
+        t323: [256],
+      };
+      decode.mockReturnValue([page]);
+      toRGBA8.mockReturnValue(new Uint8Array(4));
+
+      const pending = loadTiffFile(new Blob(['tiff']));
+      await vi.waitFor(() => expect(imageStub).not.toBeNull());
+      imageStub!.onload!.call(imageStub!, new Event('load'));
+
+      await expect(pending).resolves.toBe(imageStub);
+      expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
+    });
+
+    it('refuses a tiled page that declares only half its tile geometry', async () => {
+      // `t322` with no `t323` makes `UTIF.decodeImage` read `img["t323"][0]` off `undefined` and
+      // throw a TypeError with no mention of TIFF geometry. It has to be refused as an undecidable
+      // size instead — which is the same `null` an unreadable bit depth produces, and equally not
+      // evidence of a small image. Paired with the 256×256-tile case above, which has both tags.
+      decode.mockReturnValue([
+        { t256: [1000], t257: [1000], t258: [8, 8, 8, 8], t277: [4], t259: [1], t262: [2], t322: [256] },
+      ]);
+
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(/over the TIFF budget/);
+      expect(decodeImage).not.toHaveBeenCalled();
+    });
+  });
+
   it('leaves an IFD without usable geometry tags to the post-decode guard', async () => {
     // `UTIF.decode` always writes t256/t257, but a page the mock hands over without them
     // must not be rejected for the budget — only for the dimensions.
@@ -507,6 +605,21 @@ describe('TIFF raster byte budget', () => {
         `TIFF image is too large to save (${width}×${height}). Maximum is 200000000 pixels.`
       );
       expect(encodeImage).not.toHaveBeenCalled();
+    });
+
+    it('encodes a canvas sitting exactly on the pixel cap, which is what makes the byte cap unreachable here', async () => {
+      // The pixel cap is `MAX_CREATABLE_DOCUMENT_PIXELS × 2`. A canvas on it rasterises to
+      // `200000000 × 4` = 800 MB, which is *half* the 1.6 GB byte cap — so a save-side byte guard
+      // would be a check no input can fail, and this case is the one that shows it: the ceiling
+      // that refuses is the pixel one, one order of magnitude below the byte one.
+      encodeImage.mockReturnValue(new ArrayBuffer(4));
+
+      const blob = await encodeTiff(canvasOf(20000, 10000));
+
+      expect(encodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(Uint8ClampedArray), 20000, 10000, {
+        t338: [2],
+      });
+      expect(blob.type).toBe('image/tiff');
     });
   });
 });

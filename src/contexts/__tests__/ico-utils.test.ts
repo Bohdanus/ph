@@ -248,6 +248,25 @@ describe('ICO encoding', () => {
   ])('rejects a degenerate $width x $height canvas', async ({ width, height }) => {
     await expect(encodeIco(canvasOf(width, height))).rejects.toThrow('ICO dimensions cannot exceed 256 pixels');
   });
+
+  it.each([
+    { width: 257, height: 1 },
+    { width: 1, height: 257 },
+    { width: 10000, height: 10000 },
+  ])('refuses a $width x $height canvas without PNG-encoding it first', async ({ width, height }) => {
+    // `canvasToPngBlob` rasterises the whole canvas through `toBlob`, so a guard that runs after
+    // it has already paid for — and allocated — the encode of a raster it is about to refuse. On
+    // the 10000×10000 case that is a full PNG encode of 400 MP before the throw.
+    const png = new Blob(['png'], { type: 'image/png' });
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const toBlob = vi.fn().mockImplementation((callback: BlobCallback) => callback(png));
+    vi.spyOn(canvas, 'toBlob').mockImplementation(toBlob);
+
+    await expect(encodeIco(canvas)).rejects.toThrow('ICO dimensions cannot exceed 256 pixels');
+    expect(toBlob).not.toHaveBeenCalled();
+  });
 });
 
 describe('ICO decoding of 32-bit DIB entries', () => {
@@ -627,6 +646,43 @@ describe('ICO malformed DIB entries', () => {
     corrupt(dib);
 
     await expect(loadIcoFile(new Blob([icon(dib, 1, 1)]))).rejects.toThrow('Invalid ICO bitmap dimensions');
+  });
+
+  it.each([
+    {
+      axis: 'width',
+      dib: () => buildDib({ width: 300, height: 1, rows: [{ rgba: new Array(1200).fill(255) }] }),
+      entry: [300, 1],
+    },
+    {
+      axis: 'height',
+      dib: () =>
+        buildDib({ width: 1, height: 300, rows: Array.from({ length: 300 }, () => ({ rgba: [1, 2, 3, 255] })) }),
+      entry: [1, 300],
+    },
+  ])(
+    'rejects a DIB whose $axis exceeds the ICO maximum, which Save as ICO would then refuse',
+    async ({ dib, entry }) => {
+      // A file that opens and then cannot be saved back is the round-trip asymmetry: `encodeIco`
+      // enforces the 256 ceiling on the way out, and nothing on the way in enforced it here, so the
+      // document reached the Save dialog already larger than the format it was about to be written
+      // in. The two halves have to read the same number.
+      await expect(loadIcoFile(new Blob([icon(dib(), entry[0], entry[1])]))).rejects.toThrow(
+        'ICO image is too large to open'
+      );
+    }
+  );
+
+  it('still opens a DIB sitting exactly on the ICO maximum', async () => {
+    // The ceiling is `> 256`, not `>= 256`: an ICO directory entry stores 256 as a zero byte, so
+    // 256 is the format's own largest geometry and `encodeIco` writes it (its `width === 256 ? 0`
+    // branch). A guard that refused it would make the largest legal icon unsavable.
+    installImageHarness();
+    const dib = buildDib({ width: 256, height: 1, rows: [{ rgba: new Array(1024).fill(255) }] });
+
+    const image = await resolveIco(icon(dib, 256, 1));
+
+    expect(image).toBe(imageStub);
   });
 
   it('rejects a DIB colour depth the BMP decoder behind it cannot read', async () => {
