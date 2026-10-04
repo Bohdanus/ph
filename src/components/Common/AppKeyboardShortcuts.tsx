@@ -6,6 +6,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
 import type { SpongeMode } from '../../tools/sponge.ts';
+import type { FigureType } from '../../tools/shape.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 
 /**
@@ -129,21 +130,37 @@ export const AppKeyboardShortcuts = () => {
 
   const selectShapeTool = (shiftKey = false) => {
     if (shiftKey) {
-      // The cycle must be expressed in real FigureType values. Matching the
-      // display name 'ellipse' against the stored figure 'oval' made
-      // indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle
-      // instead of advancing to Line.
+      // The cycle IS the flyout, in the rail's own order: `toolbar-mapping.ts` —
+      // `toolbarMap`'s five `shape`-named entries. The Custom Shape tool is the sixth step of
+      // that same group rather than a figure, because it carries its own `toolName`, so one
+      // index past the last figure selects it and the modulus spans all six entries.
+      //
+      // The list holds real `FigureType` values, and an unlisted value has to be absent from
+      // the list for the wrong reason only. Matching the display name 'ellipse' against the
+      // stored figure 'oval' made indexOf() return -1, so Shift+U from Ellipse wrapped back to
+      // Rectangle instead of advancing to Line; the Triangle and the Polygon were missing from
+      // the list outright, and `(-1 + 1) % 4 === 0` is the same restart — Shift+U from either
+      // of them landed on the Rectangle rather than advancing. `-1 + 1 === 0` is what still
+      // starts an unknown figure at the head of the group, which is the branch a non-shape
+      // tool takes too, having fallen back to the Rectangle first.
+      const orderedFigures = [
+        'rectangle',
+        'oval',
+        'line',
+        'triangle',
+        'polygon',
+      ] as const satisfies readonly FigureType[];
       const currentFigure = toolArgs.toolName === 'shape' ? toolArgs.figure : 'rectangle';
-      const orderedFigures = ['rectangle', 'oval', 'line', 'custom-shape'] as const;
-      const currentIndex = orderedFigures.indexOf(currentFigure as (typeof orderedFigures)[number]);
-      const nextFigure = orderedFigures[(currentIndex + 1) % orderedFigures.length];
+      const currentIndex = orderedFigures.indexOf(currentFigure);
+      const nextIndex = (currentIndex + 1) % (orderedFigures.length + 1);
 
-      if (nextFigure === 'custom-shape') {
+      if (nextIndex === orderedFigures.length) {
         goToTool('custom-shape');
-      } else {
-        patchToolArgs('shape', { figure: nextFigure });
-        goToTool('shape');
+        return;
       }
+
+      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
+      goToTool('shape');
       return;
     }
 

@@ -1243,9 +1243,8 @@ the exact expected order and shape')` title compares a hand-copied
 expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
 `AppKeyboardShortcuts.tsx` — the doc comment above `brushGroup` asserts in prose that its cycle
 groups match the mapping's groups;
-**three of its seven do not** — the Pen tile is six wide and its cycle is three, the shape tile is
-six wide and its `Shift+U` cycle is four, and `Shift+U` from the Triangle or Polygon does not skip
-them but **restarts** at the rectangle. Nothing tests that claim. And `availableTools` /
+**one of its seven does not** — the Pen tile is six wide and its cycle is three. Nothing tests that
+claim. And `availableTools` /
 `extraTools` have **no production consumer at all** — only tests read them — so a silent omission
 there produces three green tests over an incomplete app.
 
