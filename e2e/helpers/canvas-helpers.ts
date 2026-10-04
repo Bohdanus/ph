@@ -1249,6 +1249,18 @@ export interface CaptureRegion {
 }
 
 /**
+ * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
+ * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
+ */
+function isLetterboxCell(red: number, green: number, blue: number): boolean {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+  return (
+    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
+    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
+  );
+}
+
+/**
  * Device pixels per CSS pixel on each axis of a capture of `region`, from the decoded
  * image's own dimensions.
  *
@@ -1271,18 +1283,6 @@ export interface CaptureRegion {
  * `__tests__/canvas-stroke-analysis.unit.test.ts` carries the rule at a divergence no real
  * capture produces for exactly that reason.
  */
-/**
- * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
- * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
- */
-function isLetterboxCell(red: number, green: number, blue: number): boolean {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-  return (
-    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
-    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
-  );
-}
-
 function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
     !(region.width > 0) ||

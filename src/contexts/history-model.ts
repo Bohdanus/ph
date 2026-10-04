@@ -522,9 +522,16 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
  * `cursor` is REQUIRED, and that is the load-bearing part of this shape. `history`
  * stays optional because a cursor move passes none and must allocate nothing
  * proportional to the timeline — but a caller that replaces `history` while
- * omitting `cursor` would silently keep the old one, producing a document whose
- * cursor disagrees with its own entries. Nothing downstream reads that as an
- * error, so the type refuses the combination instead of the review catching it.
+ * omitting `cursor` would silently keep the old one, and a truncated history
+ * rewound to its new tip is how an undone edit comes back. Nothing downstream reads
+ * that as an error, so the type refuses the combination instead of the review
+ * catching it.
+ *
+ * What this does NOT buy: a *corresponding* cursor. `{ history: base.history.slice(0, 2),
+ * cursor: base.cursor }` type-checks and still lands on a silently clamped position. The
+ * type turns an OMISSION into a compile error; a STALE cursor stays silent, and only the
+ * caller can rule that out. If `cursor` is nullish anyway — a cast, or a plain-JS caller —
+ * both branches clamp it to `-1`, which is the baseline-only position rather than a throw.
  */
 export type DurableDocumentRefreeze = Readonly<{
   cursor: number;
