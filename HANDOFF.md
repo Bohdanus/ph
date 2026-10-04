@@ -5847,3 +5847,51 @@ contribution is the boundary and not the shape.
 **Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
 travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
 This entry is only the part that did not.
+
+## 202. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
+
+**Problem.** A mutation-checked hardening pass over the suite removed 96 cannot-fail assertions and
+added 96 tests, but four classes of defect remain, and one of them is a source bug the tests can now
+prove.
+
+`PanelGroup.tsx` emits `aria-controls={panel-body-<id>}` unconditionally while the body it names is
+rendered only when the panel is not rolled up. A collapsed panel therefore points at an id that is not
+in the tree, and `aria-expanded="false"` beside a reference to nothing is the pair the panel's own
+accessibility test claims is dishonest. The new suite asserts the truth and the attribute cannot be
+removed by a test edit.
+
+**Affected.** `src/components/SidebarRight/PanelGroup.tsx` for the dangling reference.
+
+**What would close it.** Make the attribute conditional on the same expression that renders the body,
+and keep the paired assertions in `src/components/SidebarRight/__tests__/PanelGroup.test.tsx`.
+
+The three remaining test defects, each with the fix that was proven to work:
+
+- `src/components/SidebarLeft/__tests__/SidebarLeft.flyout-hardening.test.tsx` addresses flyout rows by
+  position — `screen.getAllByRole('menuitemradio')[0].focus()` and an `items[0]` → `items[1]` pair.
+  Insert a tool at the top of the brush group and both assertions silently check a different element
+  and still pass. The sibling `SidebarLeft.keyboard.test.tsx` now addresses the same rows by their
+  `aria-label`, which is the tool's own label from `toolbar-mapping.ts`, so the replacement is copied
+  from there; the source also renders `data-testid="tool-flyout-item-<name>-<slug>"` already.
+- About 90 layout assertions in eight files assert a Tailwind class string through `toHaveClass`,
+  concentrated in `HistoryTab.test.tsx`, `LayersTab.test.tsx`, `ToolbarHorizontal.test.tsx`,
+  `SidebarLeft.tablet.test.tsx`, `SidebarRight.test.tsx`, `SidebarLeft.workspace.test.tsx`,
+  `SidebarLeft.flyout-hardening.test.tsx` and `ToolTooltip.test.tsx`. jsdom applies no stylesheet, so
+  each claim is that a token is present in the class attribute; two visually identical states can carry
+  different tokens and two visually different states can carry none. `ToolTooltip.test.tsx` is the
+  extreme case: its entire content is class-token assertions. Where the source exposes state — an
+  `aria-expanded`, an `aria-selected`, a `hidden` attribute — assert that instead. Where it exposes
+  nothing, the class string is the only observable and the entry should be closed as a source gap
+  rather than a test gap.
+- `src/__tests__/fixtures/canvas.ts` exports a third `createMockCanvasContext` under the same name as
+  the one in `src/test/setup.ts`, and it is the weaker of the two: no `filter`, no `getImageData`,
+  `putImageData` or `createImageData`, no `quadraticCurveTo`. Eight consumers call it without a
+  `filter` key, so a `ctx.filter` or read-back assertion added to one of them tomorrow silently
+  compares against `undefined`. Aligning it with `src/test/setup.ts` is the fix, and it is not free:
+  adding `getImageData` changes what the production code believes a canvas can do, so each of those
+  eight consumers has to be re-run and read.
+
+**Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
+file, then confirmed by mutating each new assertion and watching it fail. The dangling reference and
+the fixture divergence were both reported by the subagents that wrote the new suites and were left
+unfixed here because the mandate was test files only.

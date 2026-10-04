@@ -1184,6 +1184,10 @@ describe('ShapeToolArea', () => {
     it('cancels a pending animation frame on pointer up', () => {
       vi.useFakeTimers();
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
+      // The handle is read off the scheduler the component itself calls, so the claim is "the frame
+      // THIS drag queued" and not merely "some id reached `cancelAnimationFrame`" — a cancel of an
+      // unrelated id, or of nothing at all, satisfies a bare call count.
+      const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -1193,12 +1197,25 @@ describe('ShapeToolArea', () => {
       act(() => {
         fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
+      expect(rafSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+      const pendingFrame = rafSpy.mock.results[0].value as number;
 
       act(() => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
 
-      expect(cancelSpy).toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(pendingFrame);
+      // The cancelled frame is replaced by a synchronous flush, not dropped: the payload is the
+      // final drag's, so a commit that lost its preview is visible here.
+      expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
+        storeMocks.ctx,
+        expect.objectContaining({
+          toolName: 'shape',
+          figure: 'rectangle',
+          start: { x: 10, y: 20 },
+          end: { x: 50, y: 60 },
+        })
+      );
     });
 
     it('falls back to documentFrameFromSize when currentFrame is null', () => {
@@ -1244,7 +1261,20 @@ describe('ShapeToolArea', () => {
       act(() => {
         vi.advanceTimersByTime(20);
       });
-      expect(drawShapeMock).toHaveBeenCalled();
+      expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
+        storeMocks.ctx,
+        expect.objectContaining({
+          toolName: 'shape',
+          figure: 'rectangle',
+          start: { x: 10, y: 20 },
+          end: { x: 50, y: 60 },
+          lineWidth: 2,
+          cornerRadius: 0,
+          color: '#000000',
+          backgroundColor: null,
+          alpha: 1,
+        })
+      );
 
       vi.mocked(storeMocks.ctx.clearRect).mockClear();
       view.unmount();
@@ -1300,7 +1330,22 @@ describe('ShapeToolArea', () => {
       // now a layer AND is painted twice, and the overlay keeps painting over the next tool's
       // document because toggling `display` never touches a backing store.
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
-      expect(drawShapeMock).toHaveBeenCalled();
+      // The queued frame fired, so exactly one paint: it is the payload the commit then leaves on
+      // the overlay, and the layer is committed from the same geometry.
+      expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
+        storeMocks.ctx,
+        expect.objectContaining({
+          toolName: 'shape',
+          figure: 'rectangle',
+          start: { x: 10, y: 20 },
+          end: { x: 50, y: 60 },
+          lineWidth: 2,
+          cornerRadius: 0,
+          color: '#000000',
+          backgroundColor: null,
+          alpha: 1,
+        })
+      );
 
       vi.mocked(storeMocks.ctx.clearRect).mockClear();
       view.unmount();
@@ -1618,6 +1663,9 @@ describe('ShapeToolArea', () => {
     // about to paint into, with a shape this component never released.
     it('cancels the pending frame on unmount, so no shape is painted afterwards', () => {
       vi.useFakeTimers();
+      // Spying the scheduler too is what makes the cancel claimable: the handle the teardown
+      // cancels must be the one THIS drag queued, so a cancel of an unrelated or stale id fails.
+      const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
       const { container, unmount } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -1627,6 +1675,10 @@ describe('ShapeToolArea', () => {
       act(() => {
         fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
+      expect(rafSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+      const pendingFrame = rafSpy.mock.results[0].value as number;
+
+      // Spied after the drag, so the only cancel it can see is the teardown's.
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
 
       unmount();
@@ -1634,7 +1686,7 @@ describe('ShapeToolArea', () => {
         vi.advanceTimersByTime(20);
       });
 
-      expect(cancelSpy).toHaveBeenCalled();
+      expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(pendingFrame);
       expect(drawShapeMock).not.toHaveBeenCalled();
     });
 

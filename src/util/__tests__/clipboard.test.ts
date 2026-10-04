@@ -204,3 +204,207 @@ describe('copyRectToClipboard', () => {
     expect(result).toBe(false);
   });
 });
+
+/**
+ * `copyRectToClipboard` takes both collaborators as DEFAULT PARAMETERS whose expressions
+ * read the real environment:
+ *
+ *   clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null,
+ *   ClipboardItemCtor = typeof window !== 'undefined' ? window.ClipboardItem : null,
+ *
+ * Every case above passes BOTH explicitly, so not one of them evaluates either expression.
+ * The defaults are therefore read fresh on every CALL, but a fresh module evaluation is
+ * still what makes them observable: this file's static import captured whatever jsdom had
+ * when the module body first ran, so arranging the globals afterwards cannot reach it.
+ */
+async function importFreshClipboard(): Promise<typeof copyRectToClipboard> {
+  vi.resetModules();
+  const fresh = await import('../clipboard.ts');
+  return fresh.copyRectToClipboard;
+}
+
+describe('copyRectToClipboard module defaults', () => {
+  // `rect {5,5,15,15}` in a 100x100 image trims to x 5, y 5, 10x10 — the same rect the
+  // explicit-path success case uses, so the two paths are comparable argument for argument.
+  const RECT = { x1: 5, y1: 5, x2: 15, y2: 15 };
+  const IMAGE_SIZE = { width: 100, height: 100 };
+
+  // One blob instance per test, so a comparison between the default path and the explicit
+  // path is a comparison of plumbing and never of which PNG object happened to be handed out.
+  let pngBlob: Blob;
+
+  beforeEach(() => {
+    pngBlob = makeBlob();
+    vi.clearAllMocks();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
+      return { ...mockContext, canvas: this } as unknown as CanvasRenderingContext2D;
+    });
+    // The source keys the `ClipboardItem` by the blob's OWN `type` (`[blob.type]: blob`), and
+    // asks `toBlob` for `'image/png'`, so the key a real browser produces is `'image/png'`.
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (
+      this: HTMLCanvasElement,
+      cb: (b: Blob | null) => void
+    ) {
+      cb(pngBlob);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  /**
+   * The `vi.fn()` fake the cases above use, with the one addition they never needed: the
+   * `returns false when clipboard.write throws` case already returns a plain object from the
+   * mock so that `new` yields something, and echoing the argument back makes the payload
+   * visible in what reaches `clipboard.write` — the only place the constructor's output is
+   * observable. The raw `vi.fn()` is returned alongside because `ClipboardItemCtor` is typed
+   * as the DOM constructor, which carries no assertion methods.
+   */
+  function makeClipboardItemCtor() {
+    const ctorMock = vi.fn().mockImplementation(function (items: Record<string, Blob>) {
+      return { items };
+    });
+    return { ctorMock, ClipboardItemCtor: ctorMock as unknown as typeof ClipboardItem };
+  }
+
+  /**
+   * Blobs compare by IDENTITY, so comparing two `write` call records directly would pass on
+   * the shared instance alone and prove nothing. Reducing each written item to the
+   * `type`/`size` of every entry compares the PAYLOAD each path actually produced.
+   */
+  function writtenPayloads(calls: unknown[][]) {
+    return calls.map(([items]) =>
+      (items as { items: Record<string, Blob> }[]).map((item) =>
+        Object.fromEntries(
+          Object.entries(item.items).map(([type, blob]) => [type, { size: blob.size, type: blob.type }])
+        )
+      )
+    );
+  }
+
+  it('writes the trimmed rect through navigator.clipboard and window.ClipboardItem with no overrides', async () => {
+    const writeMock = vi.fn().mockResolvedValue(undefined);
+    const { ctorMock, ClipboardItemCtor } = makeClipboardItemCtor();
+
+    vi.stubGlobal('navigator', { clipboard: { write: writeMock } });
+    // jsdom's `window` IS this test's `globalThis`, so this is the very property the default
+    // expression reads. Asserted rather than assumed, because a stub on the wrong object
+    // would leave `window.ClipboardItem` undefined and the whole case silently vacuous.
+    vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
+    expect(window.ClipboardItem).toBe(ClipboardItemCtor);
+
+    const copyRect = await importFreshClipboard();
+    const canvas = makeSourceCanvas(100, 100);
+
+    const result = await copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE });
+
+    expect(result).toBe(true);
+    expect(ctorMock).toHaveBeenCalledExactlyOnceWith({ 'image/png': pngBlob });
+    expect(writeMock).toHaveBeenCalledExactlyOnceWith([{ items: { 'image/png': pngBlob } }]);
+    // The defaults are the only injection point exercised here, so the crop is asserted too:
+    // a default that resolved to something inert would fail the write assertions above, and
+    // a default that resolved to the RIGHT object while the rect maths drifted would pass
+    // them.
+    expect(mockContext.drawImage).toHaveBeenCalledExactlyOnceWith(canvas, 5, 5, 10, 10, 0, 0, 10, 10);
+  });
+
+  it('writes the same ClipboardItem payload with the defaults and with explicit overrides', async () => {
+    const defaultWrite = vi.fn().mockResolvedValue(undefined);
+    const defaultCtor = makeClipboardItemCtor();
+    vi.stubGlobal('navigator', { clipboard: { write: defaultWrite } });
+    vi.stubGlobal('ClipboardItem', defaultCtor.ClipboardItemCtor);
+
+    const copyRect = await importFreshClipboard();
+    const defaultCanvas = makeSourceCanvas(100, 100);
+    expect(await copyRect({ sourceCanvas: defaultCanvas, rect: RECT, imageSize: IMAGE_SIZE })).toBe(true);
+
+    const explicitWrite = vi.fn().mockResolvedValue(undefined);
+    const explicitCtor = makeClipboardItemCtor();
+    const explicitCanvas = makeSourceCanvas(100, 100);
+    expect(
+      await copyRect({
+        sourceCanvas: explicitCanvas,
+        rect: RECT,
+        imageSize: IMAGE_SIZE,
+        clipboard: { write: explicitWrite },
+        ClipboardItemCtor: explicitCtor.ClipboardItemCtor,
+      })
+    ).toBe(true);
+
+    // Both paths run the SAME function object; the only difference is whether the two default
+    // expressions were allowed to run, which is the whole claim.
+    expect(defaultCtor.ctorMock.mock.calls).toEqual(explicitCtor.ctorMock.mock.calls);
+    expect(writtenPayloads(defaultWrite.mock.calls)).toEqual(writtenPayloads(explicitWrite.mock.calls));
+    expect(writtenPayloads(defaultWrite.mock.calls)).toEqual([
+      [{ 'image/png': { size: pngBlob.size, type: 'image/png' } }],
+    ]);
+  });
+
+  it('returns false instead of throwing when the default navigator is absent', async () => {
+    const { ctorMock, ClipboardItemCtor } = makeClipboardItemCtor();
+    // The `typeof navigator !== 'undefined'` arm: a property whose value is `undefined` is
+    // exactly what that guard tests, and an unguarded `navigator.clipboard` read here is a
+    // `TypeError` rather than a `false`.
+    vi.stubGlobal('navigator', undefined);
+    vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
+
+    const copyRect = await importFreshClipboard();
+    const canvas = makeSourceCanvas(100, 100);
+
+    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    expect(ctorMock).not.toHaveBeenCalled();
+    expect(mockContext.drawImage).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the default navigator carries no clipboard', async () => {
+    const { ctorMock, ClipboardItemCtor } = makeClipboardItemCtor();
+    // The other half of the first default: `navigator` exists, `navigator.clipboard` does
+    // not. jsdom itself is in this state, which is why the fallback exists at all.
+    vi.stubGlobal('navigator', {});
+    vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
+
+    const copyRect = await importFreshClipboard();
+    const canvas = makeSourceCanvas(100, 100);
+
+    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    expect(ctorMock).not.toHaveBeenCalled();
+    expect(mockContext.drawImage).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the default clipboard object has no write method', async () => {
+    const { ctorMock, ClipboardItemCtor } = makeClipboardItemCtor();
+    // `!clipboard?.write` is a two-part guard, and the explicit-path case only ever supplies
+    // `null` — which never reaches the `?.write` half. A permission-gated browser exposes a
+    // `navigator.clipboard` object that can lack `write`, so the default can land here too.
+    vi.stubGlobal('navigator', { clipboard: {} });
+    vi.stubGlobal('ClipboardItem', ClipboardItemCtor);
+
+    const copyRect = await importFreshClipboard();
+    const canvas = makeSourceCanvas(100, 100);
+
+    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    expect(ctorMock).not.toHaveBeenCalled();
+    expect(mockContext.drawImage).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the default window.ClipboardItem is absent', async () => {
+    const writeMock = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { write: writeMock } });
+    // The second default's `null` arm. A non-secure context and every browser without the
+    // async clipboard API land here, and jsdom is in this state by default.
+    vi.stubGlobal('ClipboardItem', undefined);
+    expect(window.ClipboardItem).toBeUndefined();
+
+    const copyRect = await importFreshClipboard();
+    const canvas = makeSourceCanvas(100, 100);
+
+    await expect(copyRect({ sourceCanvas: canvas, rect: RECT, imageSize: IMAGE_SIZE })).resolves.toBe(false);
+    expect(writeMock).not.toHaveBeenCalled();
+    // The guard returns before the crop, so nothing was rasterised: a default that resolved
+    // to a real constructor anyway would get this far and write.
+    expect(mockContext.drawImage).not.toHaveBeenCalled();
+  });
+});

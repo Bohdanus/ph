@@ -144,6 +144,17 @@ const toolAreaTestId = () => {
   return TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
 
+/**
+ * The index the routing table expects, so a routing row can assert WHICH area mounted.
+ *
+ * `screen.getByTestId(...)` already throws when the named marker is absent, so `.toBeTruthy()` on
+ * its result was an unreachable failure — and it passed just as happily when `Main` mounted a
+ * SECOND area beside the right one. Comparing the index `toolAreaTestId()` actually found against
+ * the one the table names pins the whole marker list, so a wrong neighbour or a doubled mount
+ * both fail.
+ */
+const expectedToolAreaIndex = (name: string) => TOOL_AREA_IDS.findIndex((id) => id === name);
+
 const canvases = (container: HTMLElement) => Array.from(container.querySelectorAll('canvas'));
 
 beforeEach(() => {
@@ -213,7 +224,10 @@ describe('Main tool-area routing', () => {
 
     render(<GuardedMain />);
 
-    expect(screen.getByTestId(`tool-area-${expected}`)).toBeTruthy();
+    // The query is the presence probe — it throws when the area is absent — and the index is the
+    // claim: the ONE marker `Main` mounted is the one this row names, not also a neighbour's.
+    expect(screen.getByTestId(`tool-area-${expected}`)).toBeInTheDocument();
+    expect(toolAreaTestId(), toolName).toBe(expectedToolAreaIndex(expected));
   });
 
   it('mounts exactly one tool area for every tool that has one', () => {
@@ -358,7 +372,13 @@ describe('Main tool-area routing', () => {
     render(<GuardedMain />);
 
     expect(toolAreaTestId()).toBe(-1);
-    expect(screen.getByRole('button', { name: 'Open File' })).toBeTruthy();
+    // The empty state is not just non-empty of tool areas: its one affordance is a LIVE control.
+    // The three click paths on this button are already driven further down by
+    // `opens a file through the dialog and uploads it`, `does not upload when the file dialog is
+    // dismissed` and `reports the failure through console.error when the file dialog rejects`, so
+    // the claim kept here is the one none of them makes — the control is not disabled, which is
+    // what a `disabled` empty state would satisfy `.toBeTruthy()` on just as well.
+    expect(screen.getByRole('button', { name: 'Open File' })).toBeEnabled();
   });
 
   it('hides the canvas stack while no image is open', () => {
@@ -491,7 +511,11 @@ describe('Main tool-area routing', () => {
     storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
     rerender(<GuardedMain />);
 
-    expect(drawAllLayers).toHaveBeenCalled();
+    // `Main` calls `drawAllLayers()` from a `[documentFrame, drawAllLayers, layers]` effect, so
+    // the repaint is triggered BY THE FRAME and carries no argument of its own. The bare
+    // `toHaveBeenCalled()` accepted any argument list and any number of repaints; this names the
+    // zero-argument call and the single repaint a frame change owes the document.
+    expect(drawAllLayers).toHaveBeenCalledExactlyOnceWith();
     storeState.documentFrame = previousFrame;
   });
 
@@ -524,7 +548,10 @@ describe('Main empty-document actions', () => {
     render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
-    await vi.waitFor(() => expect(openLoadImageDialog).toHaveBeenCalled());
+    // `Main` reads the dialog with `const data = await openLoadImageDialog();` — the click opens
+    // it and nothing else, so the handler makes exactly that one argument-less call. The bare
+    // form could not tell that from a handler that passed a path, a filter or the click event on.
+    await vi.waitFor(() => expect(openLoadImageDialog).toHaveBeenCalledExactlyOnceWith());
 
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
@@ -577,7 +604,9 @@ describe('Main empty-document actions', () => {
     render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
-    await vi.waitFor(() => expect(openNewImageDialog).toHaveBeenCalled());
+    // The mirror of the load dialog above: `const data = await openNewImageDialog();`, one
+    // argument-less call for one click.
+    await vi.waitFor(() => expect(openNewImageDialog).toHaveBeenCalledExactlyOnceWith());
 
     expect(setBlankImage).not.toHaveBeenCalled();
   });
@@ -725,7 +754,10 @@ describe('Main file drop', () => {
     // is nothing to spy on, so the claim becomes the observable one: the load went all the way
     // through, and no prompt is mounted at the end of it. Checking only after the load is enough
     // because nothing else dismisses that dialog — one that had appeared would still be up.
-    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    // The payload is what the drop actually publishes: `setImageFromUpload(await loadDocumentFile(file))`,
+    // and the decoder resolves the document `beforeEach` installed, so a handler that published
+    // the `File`, a name string or the frame instead would fail here.
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalledExactlyOnceWith({ fileName: 'photo.png' }));
     expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 
@@ -742,7 +774,9 @@ describe('Main file drop', () => {
     expect(screen.getAllByTestId('confirm-dialog')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
 
-    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    // The published payload is the decoded document, not the dropped `File`: accepting the prompt
+    // unblocks one `setImageFromUpload(await loadDocumentFile(file))`, so one drop publishes once.
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalledExactlyOnceWith({ fileName: 'photo.png' }));
     await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
   });
 
