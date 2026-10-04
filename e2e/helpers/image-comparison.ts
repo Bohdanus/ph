@@ -25,9 +25,48 @@ export interface ChannelDelta {
 /** The four channels of a decoded RGBA buffer, in the order they sit in it. */
 export type ChannelName = 'r' | 'g' | 'b' | 'a';
 
+/**
+ * One decoded capture's own size, in its own pixels. `[IMAGE]` — no CSS and no viewport in
+ * it, because it is read off the PNG and not off anything the caller measured.
+ */
+export interface CaptureSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * The two sides of a comparison that compared no pixel, each named by the ARGUMENT it came
+ * from: `actual` is the first, `expected` the second.
+ *
+ * Named, and not reported as a bare pair of numbers, because "the two sizes" is not the
+ * diagnosis — WHICH side moved is. A capture that comes back 87 pixels short is a different
+ * defect from a baseline that was re-recorded at a different size, and an unordered
+ * `{width, height}` pair leaves the reader to work out which of the two happened by
+ * comparing them against each other.
+ */
+export interface CaptureSizePair {
+  /** The size of `actual`, the first argument to `compareScreenshots`. */
+  actual: CaptureSize;
+  /** The size of `expected`, the second argument to `compareScreenshots`. */
+  expected: CaptureSize;
+}
+
+/**
+ * A verdict. Its four figures are MEASURED when `sizeMismatch` is absent, and are sentinels
+ * when it is present — so `sizeMismatch` is the field that says which of the two a caller is
+ * holding, and it is the one thing here that is not a number.
+ *
+ * `channelDelta` is present on every verdict including the size-mismatch one, where it is
+ * `Infinity` because no channel was measured.
+ */
 export interface CompareResult {
   matches: boolean;
+  /**
+   * Differing pixels. A measured count whenever `sizeMismatch` is absent; on a size mismatch
+   * it is `Number.MAX_SAFE_INTEGER`, a sentinel rather than a count — see `sizeMismatch`.
+   */
   diffPixels: number;
+  /** Differing pixels over the image's pixel total, on the same terms as `diffPixels`. */
   diffRatio: number;
   /**
    * Per-channel movement, which `diffPixels` is structurally blind to — see the note on
@@ -35,6 +74,21 @@ export interface CompareResult {
    * where it is `Infinity` because no channel was measured.
    */
   channelDelta: Record<ChannelName, ChannelDelta>;
+  /**
+   * The two captures' real dimensions, PRESENT ONLY when they differ, and ABSENT — not null,
+   * not `{0,0}` — on every comparable comparison.
+   *
+   * Absent rather than always-present so that a comparable comparison's own keys stay
+   * exactly the four it has always reported: a result object that grew a filler field on the
+   * path every caller depends on would change what a matching comparison reports in order to
+   * describe a case that is not one.
+   *
+   * Its presence is what makes the other three figures honest. A size mismatch reports
+   * `matches: false`, `diffPixels: Number.MAX_SAFE_INTEGER` and `diffRatio: 1`, which is a
+   * budget check that cannot be argued with; a reader holding this field knows those are not
+   * measurements and can go to the two numbers that are the actual diagnosis.
+   */
+  sizeMismatch?: CaptureSizePair;
 }
 
 /**
@@ -149,12 +203,36 @@ export async function compareScreenshots(
   const { data: actualData, info: actualInfo } = actualDecoded;
   const { data: expectedData, info: expectedInfo } = expectedDecoded;
 
+  // THE SIZE MISMATCH, and the one case where the sizes are the whole diagnosis.
+  //
+  // pixelmatch needs both buffers to be the same size, so the comparison below cannot run at
+  // all here and every figure in the returned object is a sentinel rather than a measurement.
+  // The sentinels are load-bearing and stay: `diffPixels: Number.MAX_SAFE_INTEGER` is
+  // consulted BEFORE the `maxDiffPixels` budget, which is what makes a capture that came
+  // back a different size fail loudly on the first run rather than degrade into a quiet
+  // "close enough" — and `diffRatio: 1` keeps it failing for a caller that reads only the
+  // ratio.
+  //
+  // What used to be missing is the reason. This branch returned `matches: false` and
+  // nothing about either image, so a capture 87 pixels short — the drift
+  // `e2e/OPEN_PROBLEMS.md` records against `captureCanvasScreenshot`, where the page came
+  // back 87 CSS px shorter than the one the caller measured — reported "every pixel is
+  // different" and never said so. The two images were never comparable, so reporting their
+  // difference as a pixel count was the one thing a size mismatch must not do; naming both
+  // sides' dimensions is what turns the sentinel back into a diagnosis. `sizeMismatch` is
+  // also what says the figures beside it are not measurements, and the matching path below
+  // does not carry it at all, so its presence is the whole difference between a count and a
+  // sentinel.
   if (actualInfo.width !== expectedInfo.width || actualInfo.height !== expectedInfo.height) {
     return {
       matches: false,
       diffPixels: Number.MAX_SAFE_INTEGER,
       diffRatio: 1,
       channelDelta: unmeasuredChannelDelta(),
+      sizeMismatch: {
+        actual: { width: actualInfo.width, height: actualInfo.height },
+        expected: { width: expectedInfo.width, height: expectedInfo.height },
+      },
     };
   }
 
