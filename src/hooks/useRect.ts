@@ -289,18 +289,26 @@ export function useRect({
       const { x1, y1, x2, y2 } = _initialRect;
       const { scale } = dimensionsRef.current;
       const h2 = HANDLE_SIZE / scale / 2;
+      // A corner grip is PAINTED over `[corner − h1, corner]` when `handlesOutside` is set, and the
+      // painted square is `h1` wide — twice the reach the ±`h2` hit test has always used. So three of
+      // its four quadrants fell through every test below, returned `null`, and `TextToolArea` read
+      // `null` as "this press placed a box": clicking a blue grip committed the open draft and
+      // published a fresh placeholder box under the pointer. The hit region therefore has to be the
+      // PAINTED region, which for the other three consumers is unchanged because they do not set the
+      // flag and keep the centred grip the ±`h2` band already described exactly.
+      const hc = handlesOutside ? HANDLE_SIZE / scale : h2;
 
       // check for tops
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+      if (point.x >= x1 - hc && point.x <= x1 + h2 && point.y >= y1 - hc && point.y <= y1 + h2) {
         return 'top-left';
       }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+      if (point.x >= x2 - h2 && point.x <= x2 + hc && point.y >= y1 - hc && point.y <= y1 + h2) {
         return 'top-right';
       }
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+      if (point.x >= x1 - hc && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + hc) {
         return 'bottom-left';
       }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+      if (point.x >= x2 - h2 && point.x <= x2 + hc && point.y >= y2 - h2 && point.y <= y2 + hc) {
         return 'bottom-right';
       }
 

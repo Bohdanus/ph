@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
 import type { Layer } from '../../contexts/layer-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
-import type { ImageUploadResponse } from '../../contexts/useFile.tsx';
+import type { ImageUploadResponse } from '../../contexts/file-types.ts';
 
 const harness = vi.hoisted(() => {
   const events: string[] = [];

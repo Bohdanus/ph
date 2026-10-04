@@ -199,7 +199,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleClear = () => {
+  const handleDeselect = () => {
     clearSelections();
   };
 
@@ -364,8 +364,8 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
           <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
             Paste
           </button>
-          <button className={SECONDARY_BUTTON} disabled={!hasActiveSelection} onClick={handleClear}>
-            Clear
+          <button className={SECONDARY_BUTTON} disabled={!hasActiveSelection} onClick={handleDeselect}>
+            Deselect
           </button>
         </div>
       </div>
