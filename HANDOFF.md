@@ -6312,3 +6312,38 @@ names a brush-tip circle as part of its own fix because that transform is commen
 closes with §151 rather than before it, and the entry stays until it does.
 
 **Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/Main.scss`
+
+## 236. The inventory reports a dirty main checkout as clean, and an attempt to fix it destabilised a load-fragile test
+
+**Problem.** `classify()` in `scripts/lib/worktree-inventory/classify.mjs` assigns
+`STATUS.LANDED` for `wt.isPrimary` BEFORE it tests `uncommitted`, so the main checkout is reported
+`LANDED` with the single reason `this is the main worktree` whether or not its tree holds changes.
+A reader is told `LANDED` and infers a clean tree. The status itself is right — the main checkout IS
+the landing site and its commits are on `main` by definition — so this is a missing reason, not a
+wrong status. It is also **not** a safety hole: the recommendation is computed under a second
+`if (wt.isPrimary)` that no-ops before any prune advice, so no dirty primary can be advised for
+deletion.
+
+**What makes this an entry rather than a two-line edit.** Adding the two missing reasons —
+`if (uncommitted)` and `if (unmerged)` inside that branch — reproducibly turned
+`the curated table > never asks the table to protect a worktree whose protection is derived` from
+green to a 60s timeout, five runs out of five, at durations of 67s, 86s, 107s, 155s and 200s. The
+same test passed at 13s, 22s, 24s, 29s, 43s and 47s with `classify.mjs` at `HEAD`, with an inert
+comment appended to the file, and with an inert comment inside that exact branch carrying this
+entry's own wording. The two statements cost nothing measurable: `uncommitted` and `unmerged` are
+both computed before the branch chain, and the test filters on raw git facts (`ahead`,
+`mergedIntoMain`, `dirty`, `untracked`) and never reads `reasons`. **So the cause was not found and
+the change was reverted rather than landed unexplained.** Do not re-add these two lines before the
+timeout itself is understood; the fragility is a known property of that test, which reads git in
+every worktree in the repository against a fixed budget.
+
+**What would close it.** Fix the budget first, then the reason. The test's own comment names the
+cost — "this reads git in every worktree in the repository" — and the fleet is past 150 worktrees, so
+its 60s budget is a function of the fleet rather than of the code under test. Once that is not the
+thing standing in the way, the fix is the two pushes above, plus a unit test over a synthetic
+primary worktree fact set asserting that a dirty primary's `reasons` carry the uncommitted line. A
+synthetic fact set is what makes it safe: the real inventory cannot exercise the case without a
+dirty main checkout.
+
+**Files.** `scripts/lib/worktree-inventory/classify.mjs`,
+`scripts/__tests__/worktree-inventory.test.mjs`

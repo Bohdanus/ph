@@ -518,10 +518,17 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
  * The changes `refreezeDurableDocument` accepts. Scoped to the four scalars plus
  * `history` on purpose: a baseline is NOT expressible here, so no caller can reach
  * the reuse path while replacing the structure the reuse depends on.
+ *
+ * `cursor` is REQUIRED, and that is the load-bearing part of this shape. `history`
+ * stays optional because a cursor move passes none and must allocate nothing
+ * proportional to the timeline — but a caller that replaces `history` while
+ * omitting `cursor` would silently keep the old one, producing a document whose
+ * cursor disagrees with its own entries. Nothing downstream reads that as an
+ * error, so the type refuses the combination instead of the review catching it.
  */
 export type DurableDocumentRefreeze = Readonly<{
+  cursor: number;
   history?: readonly DurableHistoryEntry[];
-  cursor?: number;
   documentRevision?: number;
   branchRevision?: number;
   durableRevision?: number;
@@ -578,7 +585,7 @@ function freezeDurableHistory(
  */
 export function refreezeDurableDocument(base: DurableDocument, changes: DurableDocumentRefreeze): DurableDocument {
   const history = changes.history ?? base.history;
-  const cursor = changes.cursor ?? base.cursor;
+  const cursor = changes.cursor;
   if (!ownDeepFrozenCopies.has(base)) {
     return freezeDurableDocument({ ...base, ...changes, history, cursor });
   }

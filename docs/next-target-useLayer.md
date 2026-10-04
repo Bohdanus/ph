@@ -242,7 +242,11 @@ Key constraints that affect testing:
 
 Follow patterns from existing passing test files:
 
-- **`history-append.test.ts`**: Uses `vi.fn()` for injected collaborators, asserts on the decision shape a refusal returns
+- **`history-append.test.ts`**: Mocks nothing — it drives the real timeline transition and the real
+  publication decision, and asserts on the decision shape a refusal returns. Its own comment says
+  why: the React wrapper that dispatches `COMMIT_DOCUMENT_EDIT` and reads the result back lives in
+  `useLayer.commit.test.tsx`, which mocks this module, so reproducing the dispatch here would
+  exercise the mock rather than this boundary
 - **`ShapeToolArea.test.tsx`**: Mocks `useStore`, uses `vi.useFakeTimers()` for RAF-related async
 - **`useDrag.test.ts`**: `renderHook` pattern for hook-only testing, `pointerState` hoisted mutable object for mock state
 - **`useCurrentTool.test.tsx`**: `renderHook` with `CurrentToolProvider` wrapper, `lastSavedSettings` reset in `beforeEach`
