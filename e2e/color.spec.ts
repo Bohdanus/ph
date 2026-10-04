@@ -71,10 +71,14 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // `tool-button-draw` element.
   await expectToolSelected(page, 'draw');
 
-  // Measured AFTER the tool switches, not before: a tool change swaps the options
-  // bar, which can move the canvas, and `drawLine` takes box-relative offsets. A box
-  // measured before would stroke - and then sample - somewhere the geometry no longer
-  // describes. The two clicks above are what makes this ordering load-bearing.
+  // Measured AFTER the tool switches, not before, and `drawLine` takes box-relative
+  // offsets, so the box has to be the one the finished layout produced. It is NOT read
+  // after the switch because a tool change moves the canvas: it cannot. The options bar
+  // mounts in the toolbar row, which `TOOLBAR_BASE_CLASS` fixes at 50px, and the canvas is
+  // in the main area, a different row in `App.tsx`. Read after the switch, this box is
+  // right whether or not that holds, and a layout that made a tool resize the workspace
+  // would not silently aim the stroke somewhere else.
+  // The two clicks above are what makes this ordering load-bearing.
   const box = await canvas.boundingBox();
   expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 

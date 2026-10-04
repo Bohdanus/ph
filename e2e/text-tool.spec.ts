@@ -529,8 +529,13 @@ async function setTextToolColor(page: Page, hex: string): Promise<void> {
  * order that makes a stale box possible: the draft drag is expressed in canvas-box
  * coordinates, so a box read before the tool click would address different pixels if the
  * click reflowed the workspace. Measured, it does not — the box is the same size before and
- * after selecting the Text tool, because the tool's options mount in the RIGHT sidebar and the
- * left rail scrolls inside its own box. So this re-read is not load-bearing for the tool click;
+ * after selecting the Text tool, because the tool's options do not mount anywhere near it.
+ * `ToolbarHorizontal` renders `<ToolComponent key={toolName} />` in the TOOLBAR row, inside
+ * `TOOLBAR_BASE_CLASS`, which fixes that strip at `h-[50px]`, and `App.tsx` declares the
+ * toolbar row and the canvas's main area as two different rows — so the box is the main area
+ * whichever tool is selected, and no tool choice can resize it. The left rail is
+ * `toolbarWidth`, which the viewport decides and the tool does not, and it scrolls inside its
+ * own box. So this re-read is not load-bearing for the tool click;
  * it is here so that a reflow which did change the box could not make the drag quietly address
  * a different pixel, and it is the reason nothing here caches a box across the tool click.
  *

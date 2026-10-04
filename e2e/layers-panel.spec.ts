@@ -578,8 +578,16 @@ test.describe('Layers panel', () => {
     // group, so it comes out of the flyout.
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'eraser', label: 'Eraser Tool' });
-    // The eraser bar is a different height from the draw bar, so the canvas box moves.
-    // Measuring it once and reusing it is the defect `e2e/OPEN_PROBLEMS.md` records.
+    // Read separately, once per tool, and that re-read is sound — but not for the reason it
+    // used to be given. The eraser bar and the draw bar really are different heights, and
+    // that is what used to be recorded here as the canvas box MOVING. It does not move: both
+    // bars mount in the toolbar row, whose height `TOOLBAR_BASE_CLASS` fixes at 50px, while
+    // the canvas sits in the main area, a different row in `App.tsx`. A bar taller than 50px
+    // paints over the workspace rather than reflowing it, and painting is not layout — so the
+    // two boxes above coincide, and the re-read cannot make a difference on this layout. It
+    // is here so that a layout which did let a tool resize the workspace would put the box the
+    // finished eraser bar produced under the erase, rather than a stale one aimed at the
+    // strokes' own bands.
     const eraserBox = await canvasBox(page);
     const eraserFirst = canvasRedrawClip(eraserBox);
     const eraserSecond = { ...eraserFirst, y: eraserFirst.y + 200 };
