@@ -23,10 +23,13 @@ export async function encodeGif(canvas: HTMLCanvasElement): Promise<Blob> {
   // below now come from the one authority instead of from two that could drift.
   const { width, height } = canvas;
   // The shape of the geometry is checked before its size, separately, and as in `avif-utils.ts`
-  // and `ico-utils.ts`: `!width` and `> 65535` are both false for `-5`, `4.5` and `NaN`, so a
-  // range-only guard waves all three through to `getCanvasImageData`, which hands them to
-  // `createImageData`. `canvas.width`/`canvas.height` are unsigned longs so no real canvas
-  // arrives that way; this is the same rule as its two siblings rather than a reachable case.
+  // and `ico-utils.ts`. The two holes are a negative and a fractional axis: `!-5` is false and
+  // `-5 > 65535` is false, so the range-only guard below waves both through to `getCanvasImageData`
+  // and on to `createImageData(-5, 4)`, where the DOM throws an `IndexSizeError` naming neither GIF
+  // nor the file. `NaN` and `Infinity` were never holes — `!NaN` is true and `Infinity > 65535` is
+  // true — so this adds exactly the two, and `canvas.width`/`canvas.height` are unsigned longs, so
+  // no real canvas arrives with either. It is the same rule as its two siblings, not a fix for a
+  // reachable case.
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
     throw new Error(`GIF image has invalid dimensions (${width}×${height}).`);
   }

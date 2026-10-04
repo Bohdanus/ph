@@ -30,11 +30,17 @@ const MAX_TIFF_PIXELS = MAX_TIFF_BYTES / 8;
 
 /**
  * The smallest tile a TIFF is allowed to declare. TileWidth (322) and TileLength (323) are
- * specified as multiples of 16, so this is a format floor rather than a tuned budget, and it is
- * what bounds the one cost a byte budget cannot see: `UTIF.decodeImage`'s tile loop runs
- * `ceil(width / tw) × ceil(height / th)` times regardless of how few offsets the file supplies.
- * That count is 3.9 × 10⁵ at 16 over a 10000×10000 page and 10⁸ at 1 — the same ~200-byte IFD,
- * seconds apart, with per-tile work too small to notice either way.
+ * specified as multiples of 16, so this is a format floor rather than a tuned budget.
+ *
+ * What it buys is that the tile loop is finite at all. `UTIF.decodeImage`'s bound is
+ * `ceil(width / tw) × ceil(height / th)` — `tx` is `floor((width + tw - 1) / tw)`, which is
+ * `Infinity` at `tw === 0` — so a zero tile never returns, and no budget can price an unbounded
+ * loop. Over a 10000×10000 page the floor takes the count from 10⁸ at 1-pixel tiles to 3.9 × 10⁵
+ * at 16.
+ *
+ * The floor is not what bounds the work, and used to be described as though it were:
+ * `predictTileWorkBytes` prices that separately. What the floor alone still cannot see is a page
+ * much narrower than its tile, where the waste is in the page rather than in the tile.
  */
 const MIN_TILE = 16;
 
@@ -206,9 +212,24 @@ function predictDecodeBytes(page: IfdTags, width: number, height: number): numbe
  * enforces, and the waste comes from the page being narrower than one tile, not from the tile being
  * small.
  *
- * Priced against the same `MAX_TIFF_BYTES` as the peak, and for the same reason: it is the buffer
- * the loader would otherwise have to move. It is stricter than the pixel budget only where tile
- * alignment wastes more than a factor of two, which is the pathological case and no other.
+ * Priced against the same `MAX_TIFF_BYTES` as the peak, and for the same reason: it is the traffic
+ * the loader would otherwise push through that buffer.
+ *
+ * **It is tighter than the peak, by exactly the alignment waste, and that is not always slack.**
+ * The peak is `width × height`; the work is `ceil(width / tw) × tw × ceil(height / th) × th`, so the
+ * work can only exceed the peak by the inflation alignment adds — and it binds on that inflation
+ * alone whenever the page's own bytes are already within `8 / bipp` of the ceiling. At 8-bit RGBA
+ * (4 bytes per pixel) that is a factor of two of headroom, which is generous. At 16-bit RGBA it is
+ * **1.0** — any inflation at all crosses it — and at 16-bit 5-sample it is 0.8, so the work figure
+ * binds *before* the peak does.
+ *
+ * The consequence is deliberate and worth stating rather than discovering: a tiled page near the
+ * ceiling can be refused for a half-percent misalignment that the peak budget admitted, and which
+ * tile size is refused is not monotonic, because a finer grid aligns the page more closely. The
+ * same 16-bit page passes in 16-pixel tiles and fails in 64. That is the guard working — the page
+ * really would move more than the ceiling — but it means the effective open-side ceiling for a
+ * tiled 16-bit page is a little under `MAX_TIFF_PIXELS`, and `MAX_TIFF_PIXELS` alone no longer
+ * states it.
  */
 function predictTileWorkBytes(page: IfdTags, width: number, height: number): number | null {
   const tileWidth = tagValue(page, 't322');
@@ -241,7 +262,7 @@ function assertIfdWithinBudget(page: IfdTags, width: number, height: number) {
   if (tileWork !== null && tileWork > MAX_TIFF_BYTES) {
     throw new Error(
       `TIFF image's tile layout is too expensive to open (${width}×${height}). ` +
-        `Processing it would need more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
+        `Filling its tiles would move more than ${MAX_TIFF_BYTES / 1_000_000} MB, over the TIFF budget.`
     );
   }
 }
