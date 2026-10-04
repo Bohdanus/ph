@@ -275,11 +275,13 @@ describe('toolProcessors registry', () => {
 
     expect(creators.sort()).toEqual(
       [
+        'brush',
         'draw',
         'ellipse',
         'elliptical-selection',
         'freehand-lasso',
         'line',
+        'pencil',
         'polygon',
         'polygonal-lasso',
         'quick-selection',
@@ -293,7 +295,9 @@ describe('toolProcessors registry', () => {
       ].sort()
     );
     for (const toolName of creators) {
-      expect(['source', 'selection'], `${toolName} creator commit`).toContain(findToolProcessor(toolName)!.commit);
+      expect(['source', 'selection', 'raster'], `${toolName} creator commit`).toContain(
+        findToolProcessor(toolName)!.commit
+      );
     }
   });
 
