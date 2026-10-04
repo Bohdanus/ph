@@ -55,8 +55,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 /**
  * Where git records each operation, and what to call it.
@@ -259,6 +259,68 @@ export function resolveCommonDir(cwd) {
   }
 }
 
+/** The entries under `<common>/worktrees`, or `[]` when that directory is unreadable. */
+function adminDirs(commonDir) {
+  try {
+    return readdirSync(join(commonDir, 'worktrees'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(commonDir, 'worktrees', entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The git directory of a worktree WHOSE OWN DIRECTORY IS GONE, by matching, not by name.
+ *
+ * WHY NOT `<common>/worktrees/<basename>`. Because git does not name the administrative
+ * directory after the worktree. It sanitises: a LEADING `.` becomes `-`, measured on
+ * the git here — a worktree at `.hidden` gets the administrative directory `-hidden`, and
+ * one at `.a.b` gets `-a.b`, while `a.b.c` keeps its name. So `basename(path)` is wrong
+ * for every dot-prefixed worktree, and the derived path does not exist. An earlier
+ * version of this function derived that path and its comment claimed it was "the only
+ * place it can be"; for those names it silently produced `readError`, which is the same
+ * "reported clean without having established it" class this module exists to remove.
+ *
+ * So the match is made against the CONTENT instead. Every administrative directory
+ * holds a `gitdir` file naming the absolute path of that worktree's `.git` file, so
+ * `dirname()` of its contents is the worktree path, and comparing that to the path git
+ * listed needs no naming rule at all — it cannot be wrong about a sanitisation this
+ * function has never heard of.
+ *
+ * Returns null when no administrative directory claims that path, which is the honest
+ * answer: git has dropped it, or it was never a linked worktree.
+ */
+export function resolveAdminDirFor(commonDir, worktreePath) {
+  if (!commonDir) return null;
+  const wanted = realpathIfPresent(worktreePath) ?? worktreePath;
+  for (const dir of adminDirs(commonDir)) {
+    let contents;
+    try {
+      contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
+    } catch {
+      continue;
+    }
+    if (contents === '') continue;
+    const owner = dirname(contents);
+    // `realpath` on BOTH sides, falling back to the string each already is when a path
+    // cannot be resolved — which is the normal case here, since this function exists
+    // for worktrees whose directory is GONE. Comparing only resolved paths would make
+    // every one of them fail to match, which is the bug the first version of this had.
+    if ((realpathIfPresent(owner) ?? owner) === wanted) return dir;
+  }
+  return null;
+}
+
+/** `realpathSync` when the path exists, and null when it does not — never a throw. */
+function realpathIfPresent(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
 /** Parse `git worktree list --porcelain` into records. */
 function parseWorktreeListing(listing) {
   const entries = [];
@@ -286,14 +348,14 @@ function parseWorktreeListing(listing) {
  * worktree was derived from is not a report about the repository.
  *
  * A registration whose directory is gone is still reported, WITH its operations read
- * from the git directory git left behind — `<common>/worktrees/<name>`, which is
- * where git puts a linked worktree's state and the only place it can be. That path
- * is derived rather than asked for, because there is no directory left to ask in,
- * and it is derived for exactly the case that needs it: `git worktree prune` deletes
- * those state files with no reflog entry and nothing for `git fsck` to recover, so a
- * merge that is invisible there is a merge that is gone. An earlier version reported
- * such a worktree as `operations: []` on the reasoning that reporting it was
- * better than dropping it — and then dropped it, one line later, in `findings`.
+ * from the git directory git left behind. That is found by {@link resolveAdminDirFor},
+ * which matches the administrative directory's own `gitdir` file rather than deriving
+ * a name — see there for why a derived name is wrong. It matters because
+ * `git worktree prune` deletes those state files with no reflog entry and nothing for
+ * `git fsck` to recover, so a merge that is invisible there is a merge that is gone.
+ * An earlier version reported such a worktree as `operations: []` on the reasoning that
+ * reporting it was better than dropping it — and then dropped it, one line later, in
+ * `findings`, so the net behaviour was the thing it argued against.
  *
  * `readError` is a FIELD on every record, and it is populated rather than thrown,
  * because the two failure modes are different: a worktree git will not describe is
@@ -305,8 +367,12 @@ function parseWorktreeListing(listing) {
  * than in a caller: this is an on-demand command, and correctness of the
  * worktree-name-to-gitdir mapping is not something to re-derive.
  *
- * Returns `{ ok: false, reason }` when the roster itself could not be read, so the
- * caller can refuse rather than report an empty repository as clean.
+ * Returns `{ ok: false, reason }` when the roster itself could not read, or read as
+ * empty, so the caller can refuse rather than report an empty repository as clean. The
+ * second condition is not reachable on the git measured — a repository always lists at
+ * least its primary — but an empty parse is the same shape as an unreadable one, and
+ * this module's whole argument is that it does not report health it has not
+ * established.
  */
 export function scanRepository(cwd = process.cwd()) {
   let listing;
@@ -321,6 +387,14 @@ export function scanRepository(cwd = process.cwd()) {
   }
 
   const entries = parseWorktreeListing(listing);
+  if (entries.length === 0) {
+    return {
+      ok: false,
+      reason: 'git worktree list produced no worktree records',
+      detail: `\`git worktree list --porcelain\` answered with no \`worktree \` line in: ${JSON.stringify(listing)}`,
+      worktrees: [],
+    };
+  }
   const commonDir = resolveCommonDir(cwd);
 
   return {
@@ -331,20 +405,19 @@ export function scanRepository(cwd = process.cwd()) {
       const present = existsSync(entry.path);
 
       if (!present) {
-        // The path git itself would use. Null when git did not answer, in which case
-        // there is nothing left to read and the record says so rather than claiming
-        // an empty operation set.
-        const derived = commonDir ? join(commonDir, 'worktrees', name) : null;
-        const gitDir = derived && existsSync(derived) ? derived : null;
+        const gitDir = resolveAdminDirFor(commonDir, entry.path);
         return {
           name,
           path: entry.path,
           branch: entry.branch ?? null,
+          detached: entry.detached === true,
           present: false,
           gitDir,
           operations: readOperations(gitDir),
           unmerged: [],
-          readError: gitDir ? null : 'the worktree directory and its git directory are both gone',
+          readError: gitDir
+            ? null
+            : 'no administrative directory claims this worktree, so its git directory is gone too',
         };
       }
 

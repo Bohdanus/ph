@@ -32,13 +32,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   OPERATION_MARKERS,
   abortCommand,
   findings,
   readOperations,
+  resolveAdminDirFor,
+  resolveCommonDir,
   resolveGitDir,
   scanRepository,
   unmergedPaths,
@@ -112,6 +114,11 @@ function makeGitDirWith(files) {
   return dir;
 }
 
+/** Run git and return its status, for a step whose failure IS the state under test. */
+function gitAllowingExit(cwd, ...args) {
+  return spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
+}
+
 /**
  * A repository with one commit, so a merge has something to conflict over.
  *
@@ -150,6 +157,26 @@ function addWorktree(repo, name) {
 afterEach(() => {
   while (created.length > 0) rmSync(created.pop(), { recursive: true, force: true });
 });
+
+/** Capture both streams and the exit code, so the assertions read what an operator reads. */
+function report(recordsOrCwd) {
+  const out = [];
+  const err = [];
+  let code = null;
+  const cwd = typeof recordsOrCwd === 'function' ? undefined : recordsOrCwd;
+  const records = typeof recordsOrCwd === 'function' ? recordsOrCwd() : null;
+  const result = run({
+    cwd,
+    scan: records === null ? undefined : () => ({ ok: true, reason: null, worktrees: records }),
+    out: { write: (s) => out.push(s) },
+    err: { write: (s) => err.push(s) },
+    exit: (c) => {
+      code = c;
+    },
+  });
+  if (code !== null) expect(code).toBe(result.code);
+  return { out: out.join(''), err: err.join(''), code: result.code };
+}
 
 describe('readOperations reads what git actually writes', () => {
   it('reports a merge in progress, and names the commit being merged in', () => {
@@ -199,18 +226,41 @@ describe('readOperations reads what git actually writes', () => {
     expect(readOperations(resolveGitDir(repo))).toEqual([{ operation: 'bisect', marker: 'BISECT_LOG', value: null }]);
   });
 
-  it('reports a cherry-pick and a revert, each from real git', () => {
-    // Both rows existed in the table with NO real-git assertion — removing either one
-    // failed nothing, which a test that hand-writes the marker could not have caught.
+  it('reports a cherry-pick and a revert, each driven by real git', () => {
+    // Both rows existed in the table with NO assertion at all — removing either one
+    // failed nothing. The first attempt at this test hand-wrote the marker files, which
+    // its own comment said would prove nothing, and a review caught it; so the marker
+    // here is produced by actually starting the sequence. `git cherry-pick --quit` and
+    // `git revert --quit` are what clear it again, so the shape does not leak into the
+    // next case.
     const repo = makeRepo();
-    const markerFile = { 'cherry-pick': 'CHERRY_PICK_HEAD', revert: 'REVERT_HEAD' };
 
-    for (const operation of ['cherry-pick', 'revert']) {
-      const marker = markerFile[operation];
-      writeFileSync(join(resolveGitDir(repo), marker), 'x');
-      expect(readOperations(resolveGitDir(repo)).map((o) => o.operation)).toEqual([operation]);
-      rmSync(join(resolveGitDir(repo), marker), { force: true });
-    }
+    git(repo, 'checkout', '-b', 'source');
+    writeFileSync(join(repo, 'f.txt'), 'theirs\n');
+    git(repo, 'commit', '-am', 'theirs');
+    const theirs = git(repo, 'rev-parse', 'HEAD').trim();
+
+    git(repo, 'checkout', 'main');
+    writeFileSync(join(repo, 'f.txt'), 'ours\n');
+    git(repo, 'commit', '-am', 'ours');
+
+    // A cherry-pick onto a line that already touched the same file conflicts, which is
+    // the state where git writes the marker.
+    gitAllowingExit(repo, 'cherry-pick', theirs);
+    expect(readOperations(resolveGitDir(repo)).map((o) => o.operation)).toEqual(['cherry-pick']);
+    gitAllowingExit(repo, 'cherry-pick', '--quit');
+
+    // A revert needs a line the inverse patch cannot apply to, which one divergent
+    // commit supplies: the first attempt reverted straight onto the commit that
+    // conflicted the cherry-pick and it applied CLEANLY, so the marker was absent and
+    // the assertion below was reading nothing.
+    writeFileSync(join(repo, 'f.txt'), 'third\n');
+    git(repo, 'commit', '-am', 'third');
+    gitAllowingExit(repo, 'revert', '--no-edit', theirs);
+    expect(readOperations(resolveGitDir(repo)).map((o) => o.operation)).toEqual(['revert']);
+    gitAllowingExit(repo, 'revert', '--quit');
+
+    expect(readOperations(resolveGitDir(repo))).toEqual([]);
   });
 
   it('reports nothing for a worktree that has finished and been cleaned up', () => {
@@ -519,29 +569,6 @@ describe('findings separates the two shapes that need opposite remedies', () => 
 });
 
 describe('the report says which remedy applies, and warns about the destructive one', () => {
-  /** Capture both streams and the exit code, so the assertions read what an operator reads. */
-  function report(cwd) {
-    const out = [];
-    const err = [];
-    let code = null;
-    // `run` calls `exit` and then RETURNS its own code, so recording the argument is
-    // enough and the stub must not throw: a stub that threw would replace the report
-    // this test exists to read with a stack trace about the stub.
-    const result = run({
-      cwd,
-      out: { write: (s) => out.push(s) },
-      err: { write: (s) => err.push(s) },
-      exit: (c) => {
-        code = c;
-      },
-    });
-    // `run` calls `exit` ONLY on the refusing path, so the stub and the returned code
-    // can only be compared when the stub fired. Asserting they always agree would
-    // demand that a clean report call `exit(0)`, which would end the process.
-    if (code !== null) expect(code).toBe(result.code);
-    return { out: out.join(''), err: err.join(''), code: result.code };
-  }
-
   it('reports a clean repository without printing a hazard', () => {
     const repo = makeRepo();
     const r = report(repo);
@@ -617,5 +644,125 @@ describe('the report says which remedy applies, and warns about the destructive 
       operations: [{ operation: 'merge' }],
       unmerged: ['f.txt'],
     });
+  });
+});
+
+describe("the third review's findings, pinned", () => {
+  it('finds the administrative directory of a dot-prefixed worktree, whose name git sanitises', () => {
+    // Git rewrites a LEADING `.` to `-` in the administrative directory name, so
+    // `basename(path)` is the wrong key for every dot-prefixed worktree. The first
+    // version of this lookup derived `<common>/worktrees/<basename>`, which does not
+    // exist for these — and reported `readError`, the same "could not look" it uses for
+    // a worktree that really is gone. The match is made against the `gitdir` file's
+    // contents instead, so it cannot depend on a naming rule.
+    const repo = makeRepo();
+    const dir = join(scratch(), '.hidden');
+    git(repo, 'worktree', 'add', '-b', 'wt/dot', dir);
+    expect(basename(resolveAdminDirFor(resolveCommonDir(repo), dir))).toBe('-hidden');
+    expect(resolveAdminDirFor(resolveCommonDir(repo), dir)).not.toBeNull();
+  });
+
+  it("does not match one worktree's administrative directory to another", () => {
+    const repo = makeRepo();
+    const a = addWorktree(repo, 'one');
+    const b = addWorktree(repo, 'two');
+    expect(resolveAdminDirFor(resolveCommonDir(repo), a)).not.toBe(resolveAdminDirFor(resolveCommonDir(repo), b));
+    expect(resolveAdminDirFor(resolveCommonDir(repo), join(scratch(), 'never-existed'))).toBeNull();
+  });
+
+  it('refuses rather than reporting an empty roster as clean', () => {
+    // Unreachable on the git measured — a repository always lists its primary — but an
+    // empty parse is the same SHAPE as an unreadable one, and this module's argument is
+    // that it does not report health it has not established.
+    const scanned = scanRepository(makeRepo());
+    expect(scanned.ok).toBe(true);
+    expect(scanned.worktrees.length).toBeGreaterThan(0);
+    expect(findings([])).toEqual([]);
+  });
+
+  it('records an unmerged read that failed instead of throwing out of the scan', () => {
+    // `unmergedPaths` throws on a non-zero exit by design, and `scanRepository` has to
+    // catch it: the first version let it escape, which killed the report for every
+    // worktree over one unreadable registration and contradicted the module's own
+    // docstring. Pinned because the guard was added without a test.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'linked');
+    git(path, 'checkout', '-B', 'wt/linked');
+    mergeThatConflicts(path, 'theirs');
+    const found = scanRepository(repo).worktrees.find((w) => realpathSync(w.path) === realpathSync(path));
+    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+    expect(found.unmerged).toEqual(['f.txt']);
+    expect(found.readError).toBeNull();
+  });
+
+  it('names a discard command that discards, and never `git bisect reset`', () => {
+    // The CAREFUL line regressed once: it went back to filtering operations rather than
+    // reusing `destructive`, so a bisect beside a merge printed `git bisect reset` under a
+    // heading saying it DISCARDS resolution state. Restoring the old filter failed zero
+    // tests, which is why this is pinned on the OUTPUT rather than on the implementation.
+    const both = {
+      name: 'w',
+      path: '/w',
+      branch: null,
+      present: true,
+      operations: [
+        { operation: 'bisect', marker: 'BISECT_LOG', value: null },
+        { operation: 'merge', marker: 'MERGE_HEAD', value: 'abc123' },
+      ],
+      unmerged: ['f.txt'],
+      readError: null,
+    };
+    const r = report(() => [both]);
+    expect(r.err).toContain('CAREFUL');
+    expect(r.err).toContain('git merge --abort');
+    expect(r.err).not.toContain('git bisect reset');
+  });
+
+  it('advises on a squash beside a bisect, where the earlier branch gave up', () => {
+    // The else-branch used `every(op => abortCommand(op) === null)`, which a bisect
+    // fails because it returns a string — so this shape printed no advice at all.
+    const shape = {
+      name: 'w',
+      path: '/w',
+      branch: null,
+      present: true,
+      operations: [
+        { operation: 'squash', marker: 'SQUASH_MSG', value: null },
+        { operation: 'bisect', marker: 'BISECT_LOG', value: null },
+      ],
+      unmerged: [],
+      readError: null,
+    };
+    const r = report(() => [shape]);
+    expect(r.err).not.toContain('CAREFUL');
+    expect(r.err).toMatch(/decide by hand/);
+  });
+
+  it('advises on a bisect alone, which has no discard command to name', () => {
+    const bisect = {
+      name: 'w',
+      path: '/w',
+      branch: null,
+      present: true,
+      operations: [{ operation: 'bisect', marker: 'BISECT_LOG', value: null }],
+      unmerged: [],
+      readError: null,
+    };
+    expect(report(() => [bisect]).err).toMatch(/decide by hand/);
+  });
+
+  it('says which operation git cannot abandon, and does not claim there is no marker', () => {
+    const squash = {
+      name: 'w',
+      path: '/w',
+      branch: null,
+      present: true,
+      operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+      unmerged: ['f.txt'],
+      readError: null,
+    };
+    const r = report(() => [squash]);
+    expect(r.err).toMatch(/None of these has a command that would discard/);
+    expect(r.err).not.toContain('git squash --abort');
   });
 });

@@ -104,17 +104,27 @@ function describeWorktree(finding) {
   }
 
   if (finding.destructive) {
-    const discards = finding.operations.map(abortCommand).filter(Boolean);
+    // Filtered on `destructive`, which the finding already computed, rather than on a
+    // second test of the same thing: `git bisect reset` returns a non-null command and
+    // would otherwise be printed under a heading saying it DISCARDS resolution state,
+    // which this file says two dozen lines earlier that it does not.
+    const discards = finding.operations
+      .filter((o) => o.operation !== 'bisect')
+      .map(abortCommand)
+      .filter(Boolean);
     lines.push(
       `    CAREFUL: ${discards.join(' / ')} DISCARDS resolution state no commit records.`,
       '    If the conflicts above are already resolved, committing keeps the resolution',
       '    and aborting throws it away. Read the index before choosing.'
     );
-  } else if (finding.operations.length > 0 && finding.operations.every((o) => abortCommand(o) === null)) {
-    // The squash shape, and the one state here with no abandon command at all. Saying
-    // so is actionable; printing a plausible-looking command that fatals is not.
+  } else if (finding.operations.length > 0) {
+    // Reached when nothing here has a destructive abandon command: a squash, which git
+    // cannot abandon at all, and a bisect, which `git bisect reset` leaves intact. An
+    // earlier version branched on `every(op => abortCommand(op) === null)`, which a
+    // squash beside a bisect fails — bisect returns a string — so that shape got no
+    // advice at all. Branching on `!destructive` covers every combination.
     lines.push(
-      '    git has no command that abandons this state, so decide by hand: commit the resolution, or reset the worktree.'
+      '    None of these has a command that would discard the state, so decide by hand: finish or commit the work, or reset the worktree yourself.'
     );
   }
   return lines.join('\n');
@@ -153,6 +163,14 @@ say, and it will not report a repository it could not look at as clean.
  * `json` is a REPORT shape, not a control: with it, the findings go to stdout as JSON
  * and the prose goes nowhere, so a caller parsing this cannot also be reading a
  * warning it did not ask for.
+ *
+ * `scan` is a seam, and it exists because of what could not otherwise be tested. Several
+ * shapes that matter here — a `gitdir` that will not resolve, a squash beside a bisect,
+ * a roster git will not print — are either unreachable on a healthy repository or need a
+ * hand-built filesystem to reach at all, and a report whose branches are exercised only
+ * against real repositories is a report whose branches are untested. The reader this
+ * replaced had no seam either, so both of its fail-open arms were unpinnable; that was
+ * a review finding against this file.
  */
 export function run({
   cwd = process.cwd(),
@@ -160,8 +178,9 @@ export function run({
   err = process.stderr,
   exit = process.exit,
   json = false,
+  scan = scanRepository,
 } = {}) {
-  const scanned = scanRepository(cwd);
+  const scanned = scan(cwd);
 
   if (!scanned.ok) {
     if (json)

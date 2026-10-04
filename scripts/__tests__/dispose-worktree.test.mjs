@@ -35,6 +35,7 @@ import {
   locateInventory,
   preflight,
   protectedContentOnDisk,
+  REFUSALS,
   readGitState,
   readOperationState,
   rebuildCommand,
@@ -43,7 +44,7 @@ import {
 // Imported from its own module, not re-exported: the test asserts against the
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
-import { ACTION } from '../lib/worktree-inventory/classify.mjs';
+import { ACTION, LIVE_WINDOW_MS } from '../lib/worktree-inventory/classify.mjs';
 
 const NOW = 1_800_000_000_000;
 
@@ -665,7 +666,7 @@ describe('a signal that could not be read is not an empty signal', () => {
       operationState: greenOperationState({ operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }] }),
     });
     const message = squash.failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).toMatch(/No operation marker is set|no \w[\w -]*will clean this up/);
+    expect(message).toMatch(/no command that abandons a squash|No operation marker is set/);
     expect(message).not.toMatch(/git status/);
     expect(message).not.toMatch(/git squash --abort/);
   });
@@ -723,11 +724,12 @@ describe('a signal that could not be read is not an empty signal', () => {
     // which is how a guard gets switched off.
     const dir = join(TMP, 'op-state-clean');
     mkdirSync(dir, { recursive: true });
-    expect(readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: () => [] })).toEqual({
+    expect(readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: () => [] })).toMatchObject({
       gitDir: dir,
       operations: [],
       unmerged: [],
       readError: null,
+      unmergedError: null,
     });
   });
 
@@ -1255,5 +1257,126 @@ describe('locating the inventory', () => {
     });
     expect(asked).toHaveLength(1);
     expect(asked[0]).toContain('--git-common-dir');
+  });
+});
+
+describe("the third review's findings, pinned on the disposal side", () => {
+  it('reads the operation state of a worktree whose own directory is gone', () => {
+    // The largest hole the third review found. `resolveGitDir` runs git INSIDE the
+    // worktree, so for a worktree that has been removed by hand it answers null — and
+    // the state was never read, while the `prunable` refusal told the operator there was
+    // "nothing to salvage and no state to verify. Run `git worktree prune`". That is
+    // precisely the state `prune` deletes, with no reflog entry and nothing for
+    // `git fsck` to recover. So the git directory is matched by content when the
+    // directory cannot be asked.
+    const dir = join(TMP, 'gone-worktree');
+    mkdirSync(dir, { recursive: true });
+    const state = readOperationState('/nowhere', {
+      gitDirOf: () => null,
+      fallbackGitDir: '/repo/.git/worktrees/gone',
+      readOps: (gitDir) => [{ operation: 'merge', marker: 'MERGE_HEAD', value: `sha-of-${gitDir}` }],
+      unmergedOf: () => [],
+    });
+    expect(state.readError).toBeNull();
+    expect(state.operations).toEqual([
+      { operation: 'merge', marker: 'MERGE_HEAD', value: 'sha-of-/repo/.git/worktrees/gone' },
+    ]);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-in-progress']);
+  });
+
+  it('still refuses when there is no fallback either, rather than reporting clean', () => {
+    const state = readOperationState('/nowhere', { gitDirOf: () => null, fallbackGitDir: null });
+    expect(state.readError).toMatch(/no administrative directory/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
+  it('reports an unmerged read that failed only when the operations were empty', () => {
+    // A merge whose index cannot be diffed because its directory is gone is still a
+    // merge in progress. Reporting only the read failure would hide the finding.
+    const boom = () => {
+      throw new Error('spawnSync git ENOENT');
+    };
+    expect(
+      readOperationState('/w', {
+        gitDirOf: () => '/d',
+        readOps: () => [{ operation: 'merge', marker: 'MERGE_HEAD' }],
+        unmergedOf: boom,
+      })
+    ).toMatchObject({
+      readError: null,
+      unmergedError: expect.stringMatching(/ENOENT/),
+    });
+    expect(readOperationState('/w', { gitDirOf: () => '/d', readOps: () => [], unmergedOf: boom }).readError).toMatch(
+      /ENOENT/
+    );
+  });
+
+  it('guards the operations reader too, because preflight has no try/catch of its own', () => {
+    const boom = () => {
+      throw new Error('EACCES');
+    };
+    const state = readOperationState('/w', { gitDirOf: () => '/d', readOps: boom, unmergedOf: () => [] });
+    expect(state.readError).toMatch(/EACCES/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
+  it('leaves no empty slot where a command would be, when one operation has no remedy', () => {
+    // `.filter(Boolean)` on the remedy list was unpinned: removing it failed zero tests
+    // and printed "Finish or abandon it deliberately —  / git merge --abort". A squash
+    // beside a merge is what produces the null, so that is the shape asserted here.
+    const message = green({
+      operationState: greenOperationState({
+        operations: [
+          { operation: 'squash', marker: 'SQUASH_MSG', value: null },
+          { operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' },
+        ],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toMatch(/— git merge --abort —/);
+    expect(message).not.toMatch(/—\s+\/|—\s+—|\/\s+\//);
+  });
+
+  it('names the operation git cannot abandon, instead of claiming no marker is set', () => {
+    // The self-contradicting sentence: a refusal whose own detail read
+    // "squash (SQUASH_MSG)" and which then said "No operation marker is set".
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+        unmerged: ['f.txt'],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('SQUASH_MSG');
+    expect(message).toMatch(/no command that abandons a squash/);
+    expect(message).not.toContain('No operation marker is set');
+  });
+
+  it('still says no marker is set when there is genuinely no marker', () => {
+    const message = green({
+      operationState: greenOperationState({ unmerged: ['f.txt'] }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('No operation marker is set');
+  });
+
+  it('states the recency window instead of claiming the sessions are there right now', () => {
+    // Every one of these sources is a window, so "RIGHT NOW" asserted a strength the
+    // data does not have, and the refusal printed beside it stated the same fact
+    // correctly.
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+      board: { ...greenBoard, liveAgents: [{ id: 'a' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).not.toContain('RIGHT NOW');
+    expect(message).toContain(`inside the last ${LIVE_WINDOW_MS / 60000} min`);
+  });
+
+  it('no longer tells the operator to prune a worktree whose state may still exist', () => {
+    // `git worktree prune` deletes `.git/worktrees/<name>/`, which is where a merge's
+    // state lives. The refusal recommended it unconditionally, in the same run that
+    // could not rule out a merge being there.
+    expect(REFUSALS.prunable('')).toMatch(/repo:state/);
+    expect(REFUSALS.prunable('')).toMatch(/DELETES it with no reflog entry/);
   });
 });
