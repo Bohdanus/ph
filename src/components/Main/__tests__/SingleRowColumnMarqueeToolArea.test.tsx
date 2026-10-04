@@ -1,5 +1,5 @@
 import { act, fireEvent, render } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SingleRowColumnMarqueeToolArea } from '../SingleRowColumnMarqueeToolArea.tsx';
 import {
   MARQUEE_THICKNESS_PX,
@@ -7,6 +7,7 @@ import {
   SINGLE_ROW_MARQUEE_SOURCE_TOOL,
 } from '../../../tools/singleRowColumnMarquee.ts';
 import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import { clearSelectionDragPreview, readSelectionDragPreview } from '../../../hooks/selection-drag-preview.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
 import type { Point, Selection, Size } from '../../../contexts/general-types.ts';
 import type { SingleRowOrColumnMarqueeToolName } from '../../../tools/singleRowColumnMarquee.ts';
@@ -300,6 +301,15 @@ describe('SingleRowColumnMarqueeToolArea', () => {
     // The claim is module-level, so a leaked one refuses every later claim in this file and
     // reads as a dozen unrelated failures.
     resetDocumentGestures();
+    // The drag channel is module-level for the same reason, and its failure mode is the same one
+    // with an extra step: a `follow` entry left behind is read by the ants loop of every later
+    // case. Cleared on both sides of every case so neither a leak out of one nor an inherited
+    // entry into another can be what an assertion reads.
+    clearSelectionDragPreview();
+  });
+
+  afterEach(() => {
+    clearSelectionDragPreview();
   });
 
   describe('a press and release on the canvas', () => {
@@ -413,8 +423,9 @@ describe('SingleRowColumnMarqueeToolArea', () => {
 
     /**
      * A committed selection's `pos` is its DOCUMENT-space origin: `RectangularSelectionToolArea`
-     * adds the frame to a CANVAS rect for exactly that reason, and `drawSelectionOutline` maps the
-     * stored points back to canvas with `documentToCanvasPoint` before painting them. Here the
+     * adds the frame to a CANVAS rect for exactly that reason, and every painter of a stored
+     * selection maps the points back to canvas with `documentToCanvasPoint` before drawing them —
+     * `useSelectionAnts.ts:40`, for the border this band's own tool area does not paint. Here the
      * press is canvas (0, 0), so document (30, 40), so document row 40 — and 40 is the row the
      * band must carry.
      *
@@ -431,8 +442,8 @@ describe('SingleRowColumnMarqueeToolArea', () => {
 
       const selection = committedSelection(singleSelectionEdit());
       // `x: 0`, not the frame's 30: a row band starts at the DOCUMENT's left edge, and a stored
-      // `pos` is document space, so the band is `{0, 40}` there and canvas `(-30, 0)` once
-      // `drawSelectionOutline` maps it back — which is the canvas the press happened on.
+      // `pos` is document space, so the band is `{0, 40}` there and canvas `(-30, 0)` once the
+      // ants map it back — which is the canvas the press happened on.
       expect(selection.pos).toEqual({ x: 0, y: 40, width: 200, height: 1 });
     });
   });
@@ -499,7 +510,7 @@ describe('SingleRowColumnMarqueeToolArea', () => {
 
     /**
      * `Selection.pos` is the DOCUMENT-space origin of a selection, and that is what every other
-     * writer in this app commits: `RectangularSelectionToolArea.tsx:105`-`:112` takes a CANVAS
+     * writer in this app commits: `RectangularSelectionToolArea.tsx:112`-`:119` takes a CANVAS
      * rect from `useRect` and adds the frame, because canvas + frame is document — and its own
      * test pins that identity (`{x: 20, y: 10} -> {x: 50, y: 50}` with the frame at (30, 40)).
      *
@@ -591,7 +602,7 @@ describe('SingleRowColumnMarqueeToolArea', () => {
      * missing branch: with one `pointerMove` the last delta IS the whole delta, so
      * `moveSelectionByDelta(baseline, delta)` and `moveSelectionByDelta(preview, delta)` agree.
      * Every move case above issues exactly one move, so the suite was blind to the difference by
-     * construction. This is the same defect `EllipticalSelectionToolArea.test.tsx:318` pins as a
+     * construction. This is the same defect `EllipticalSelectionToolArea.test.tsx:347` pins as a
      * tripwire for that tool, and this tool had no such case at all.
      */
     it('accumulates a multi-frame move instead of committing the last frame alone', () => {
@@ -1192,9 +1203,11 @@ describe('SingleRowColumnMarqueeToolArea', () => {
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
 
       // The band for row 40 is (0,40) to (200,41), and the preview is its four corners as a
-      // closed path. Deliberately not `drawSelectionOutline`: that draws a white dot on every
-      // vertex, and the corners of a 1-pixel band are not draggable in Photoshop — the band is
-      // placed by the press, not by dragging its handles.
+      // closed path. Hand-rolled rather than a call into `util/selection.ts`'s outline painters,
+      // because those draw a white dot on every vertex and the corners of a 1-pixel band are not
+      // draggable in Photoshop — the band is placed by the press, not by dragging its handles.
+      // The committed band's border is the ants canvas's and it paints no dots at all, so the two
+      // halves of a drag are now decoration-free in the same way.
       expect(ctx.moveTo).toHaveBeenCalledWith(0, 40);
       expect(ctx.lineTo).toHaveBeenCalledWith(200, 40);
       expect(ctx.lineTo).toHaveBeenCalledWith(200, 41);
@@ -1232,13 +1245,15 @@ describe('SingleRowColumnMarqueeToolArea', () => {
     });
 
     /**
-     * The overlay is painted in CANVAS coordinates: `drawSelectionOutline` maps each stored point
-     * through `documentToCanvasPoint` before it draws, and `useRect` is handed `initialRect` as
-     * `pos - frame` (`RectangularSelectionToolArea.test.tsx:196` pins that subtraction). The live
-     * preview is the transient twin of that outline, so it converts the same way; it was a
-     * `it.fails` tripwire because it handed `rectCorners(rectForAxis(axis))` — a DOCUMENT-space
-     * rect — straight to the painter, so on a cropped document the band being aimed at was drawn a
-     * whole frame origin away from the pointer aiming it.
+     * The overlay is painted in CANVAS coordinates: every painter of a stored selection maps each
+     * point through `documentToCanvasPoint` before it draws (`useSelectionAnts.ts:40` for this
+     * band's border, `useRect`'s own stroke among the rest), and `useRect` is handed `initialRect`
+     * as `pos - frame` (`RectangularSelectionToolArea.test.tsx:196` pins that subtraction). The
+     * live preview has to land on the same canvas the committed border lands on, so it converts
+     * the same way; it was a `it.fails` tripwire because it handed
+     * `rectCorners(rectForAxis(axis))` — a DOCUMENT-space rect — straight to the painter, so on a
+     * cropped document the band being aimed at was drawn a whole frame origin away from the
+     * pointer aiming it.
      *
      * The press below is canvas (5, 40) with the frame at (30, 40), i.e. document row 80, and
      * document row 80 sits at canvas y=40. That is where the preview belongs and where the
@@ -1270,7 +1285,18 @@ describe('SingleRowColumnMarqueeToolArea', () => {
       expect(ctx.clearRect).toHaveBeenCalledTimes(3);
     });
 
-    it('paints the moved band during a move drag, in place of the stored one', () => {
+    /**
+     * The band the user sees DURING a move drag has to be the dragged one, not the stored one, and
+     * the surface that proves it moved.
+     *
+     * It used to be this overlay: the repaint took a `selectionOverride` and stroked the band's own
+     * outline at the dragged position. Now the move arm has no representation here at all — it
+     * publishes to the ants channel and repaints an empty overlay, and the ants loop paints the
+     * published selection IN PLACE of the committed one (`useSelectionAnts.ts:163`-`:170`). So what
+     * this area publishes is the whole of the picture during the drag, which makes the channel the
+     * place the claim has to be read from, and makes the silence of this overlay part of it.
+     */
+    it('publishes the DRAGGED band to the ants channel during a move drag, and strokes nothing here', () => {
       storeState.selections = [bandSelection(60)];
       storeState.activeSelectionId = 'selection-1';
       const ctx = createOverlayContext();
@@ -1279,13 +1305,60 @@ describe('SingleRowColumnMarqueeToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(100, 60) });
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(100, 90) });
 
-      // The move arm overrides the selection in the repaint rather than drawing a preview path,
-      // so the band's own outline is drawn at the dragged position — the same painter the
-      // committed selection uses, which is why there is no second dash pattern to look for.
-      expect(ctx.moveTo).toHaveBeenCalledWith(0, 90);
-      expect(ctx.lineTo).toHaveBeenCalledWith(200, 90);
-      expect(ctx.lineTo).toHaveBeenCalledWith(200, 91);
-      expect(ctx.lineTo).toHaveBeenCalledWith(0, 91);
+      // Row 90 is where the pointer is, not row 60 where the store still says the band is — and the
+      // `id` is the band's own, because the ants key their shape cache on it and swap the dragged
+      // one in by that key rather than drawing a second outline beside it.
+      expect(readSelectionDragPreview()).toEqual({
+        kind: 'follow',
+        selection: expect.objectContaining({
+          id: 'selection-1',
+          pos: { x: 0, y: 90, width: 200, height: 1 },
+        }),
+      });
+      // The stored band, unchanged by the drag so far, is what a store-driven paint would have used.
+      expect(storeState.selections[0].pos.y).toBe(60);
+
+      // And the overlay says nothing at all: no path for the dragged band and none for the stored
+      // one, at either row. Two outlines of one selection on two canvases is the defect the whole
+      // split exists to remove.
+      expect(ctx.moveTo).not.toHaveBeenCalled();
+      expect(ctx.lineTo).not.toHaveBeenCalled();
+      expect(ctx.stroke).not.toHaveBeenCalled();
+      expect(ctx.setLineDash).not.toHaveBeenCalled();
+      expect(ctx.arc).not.toHaveBeenCalled();
+    });
+
+    it('publishes nothing while a NEW band is being aimed, so the committed one keeps marching behind it', () => {
+      storeState.selections = [bandSelection(60)];
+      storeState.activeSelectionId = 'selection-1';
+      const toolArea = renderArea();
+
+      // Row 40 is outside the band, so this press opens a draft and aims a NEW one rather than
+      // grabbing the committed one.
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+
+      // Silence, and deliberately: a new band is a different shape from the committed one, so both
+      // are true at once and Photoshop shows both. Publishing `marquee` instead would tell the ants
+      // to clear their canvas (`selection-drag-preview.ts:19`-`:21`, and the branch that reads it
+      // at `useSelectionAnts.ts:129`), and the committed border would blink out under the drag.
+      expect(readSelectionDragPreview()).toBeNull();
+      expect(dispatchedTypes()).toEqual(['START_SELECTION_DRAFT']);
+
+      // The control that makes the `null` above mean something: the press INSIDE the band on this
+      // same mount is the move arm, and the very same reader returns its band. So the create arm is
+      // silent, not the channel.
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, ...canvas(5, 40) });
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(100, 60) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(100, 90) });
+
+      expect(readSelectionDragPreview()).toEqual({
+        kind: 'follow',
+        selection: expect.objectContaining({
+          id: 'selection-1',
+          pos: { x: 0, y: 90, width: 200, height: 1 },
+        }),
+      });
     });
   });
 
@@ -1334,6 +1407,11 @@ describe('committed band geometry, read through the store readers', () => {
     storeState.activeSelectionId = null;
     storeState.documentFrame = null;
     resetDocumentGestures();
+    clearSelectionDragPreview();
+  });
+
+  afterEach(() => {
+    clearSelectionDragPreview();
   });
 
   it('has absolute corners on the two rows the band covers, and on no others', () => {

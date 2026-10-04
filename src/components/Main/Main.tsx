@@ -37,10 +37,32 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
 
-// The tools that commit a polygon selection, and so the only modes with a border
-// to march. The rectangular selection tool is absent on purpose: `useRect` strokes
-// its own rect, with handles, and marching it as well would double the outline.
-const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'magic-wand'];
+/**
+ * The interaction modes whose tool owns a selection, which is every mode that can have a
+ * marching-ants border — the ants ARE the selection border in this editor, for all of them.
+ *
+ * This replaces a narrower list that named only the polygon modes and left the rectangular
+ * selection out on the stated ground that `useRect` strokes a border of its own. That reason
+ * has two halves and only one of them was ever true. `useRect` still owns the four handles,
+ * and they are the resize hit area, so they stay; but Adobe documents the ants as the display
+ * of a selection and not as a per-tool option
+ * (`helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html`
+ * lists all nine marquee and lasso tools as making selections, and none of them as producing a
+ * different kind of border), and nothing in `useRect`'s own API makes its static stroke the
+ * selection border rather than a draft preview of it.
+ *
+ * Exported so the tool-area test asserts the list itself rather than a copy of it that can
+ * drift.
+ */
+export const SELECTION_INTERACTION_MODES: ReadonlySet<string> = new Set([
+  'lasso',
+  'feather-magnetic-lasso',
+  'magic-wand',
+  'quick-selection',
+  'elliptical-selection',
+  'single-row-column-marquee',
+  'rectangular-selection',
+]);
 
 const Main = () => {
   const [
@@ -132,6 +154,11 @@ const Main = () => {
     // A drag, unlike the bucket it shares an options bar with.
     interactionMode = 'gradient';
   }
+
+  // One read, because the canvas's `display` and the loop's `enabled` gate the same question and
+  // have to answer it identically: the canvas is the ants' only output, so a `display: none`
+  // beside a running loop would run 60 frames a second into a canvas nobody can see.
+  const selectionToolActive = SELECTION_INTERACTION_MODES.has(interactionMode);
 
   useEffect(() => {
     drawAllLayers();
@@ -293,8 +320,8 @@ const Main = () => {
             // paints and is missing here renders a blank preview with no error, and a
             // mode listed here that paints nothing just shows an already-clear canvas.
             // Painted: clone-stamp (the Alt source marker, CloneStampToolArea.tsx:249),
-            // and the two selection tools (EllipticalSelectionToolArea.tsx:107,
-            // QuickSelectionToolArea.tsx:99). NOT painted, and so deliberately absent:
+            // and the two selection tools (EllipticalSelectionToolArea.tsx:113,
+            // QuickSelectionToolArea.tsx:120). NOT painted, and so deliberately absent:
             // eraser, smudge, dodge, burn, sharpen, paint-bucket, gradient and the
             // eyedropper — every one of them previews through `tempUpdateLayer`, which
             // republishes the layer and redraws the document canvas, and the eyedropper
@@ -342,13 +369,10 @@ const Main = () => {
           data-testid="selection-ants-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
-            display: POLYGON_SELECTION_MODES.includes(interactionMode) ? 'block' : 'none',
+            display: selectionToolActive ? 'block' : 'none',
           }}
         />
-        <SelectionMarchingAnts
-          overlayRef={selectionAntsOverlayRef}
-          enabled={POLYGON_SELECTION_MODES.includes(interactionMode)}
-        />
+        <SelectionMarchingAnts overlayRef={selectionAntsOverlayRef} enabled={selectionToolActive} />
         <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
         {/*
          * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so

@@ -355,7 +355,7 @@ replay authority.
 
 ---
 
-## 45. The codecs' raster ceilings disagree, and four of six have no budget at all
+## 45. The codecs' raster ceilings disagree, and two of seven have no budget at all
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
 all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
@@ -372,13 +372,16 @@ Adobe rather than this. The remaining work is the other-format gap below, not th
 **The rule that must survive.** Above a ceiling the file is **rejected with an error, never clamped
 or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
 rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
-`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
-`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample, in
-`UTIF.js` — `UTIF.decodeImage()`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at
-8 bytes per pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
-different number defensible if the ceiling is ever revisited.
+`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, which is what
+`UTIF.decodeImage` allocates for the **page** of a 4-sample RGBA file (`Math.min(32, t258[0])` bits
+per sample, times the four samples an RGBA page carries) — and `MAX_TIFF_PIXELS` is that same budget
+read at 8 bytes per pixel, so the two agree by construction rather than by coincidence. That
+derivation is what makes a different number defensible if the ceiling is ever revisited. It is a
+budget on the page term, though, not on every byte UTIF can allocate: a tiled page adds a second
+buffer sized by `t322`/`t323`, so what the ceiling is compared against is the page and tile together
+and a page nowhere near this figure can still exceed it.
 
-**Five ceilings exist and two are below what the dialog can create:**
+**Five ceilings exist and three are below what the dialog can create:**
 
 | ceiling                             | value       | where                                              |
 | ----------------------------------- | ----------- | -------------------------------------------------- |
@@ -390,72 +393,51 @@ different number defensible if the ceiling is ever revisited.
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
-as PSD — and the PSD cap is recorded nowhere. "One exported `MAX_RASTER_PIXELS`" would have to
-reconcile **five** constants, not one.
+as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one, and
+that reconciliation is the reason the BMP ceiling below is filed rather than fixed: choosing a number
+is cheap, and choosing it in one place is the decision nobody has taken.
 
-**And four of the six codecs have no budget at all, or check theirs too late.**
+**Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
 
-| codec | loader budget                   | encoder budget            | check before the allocation?                 |
-| ----- | ------------------------------- | ------------------------- | -------------------------------------------- |
-| avif  | yes                             | yes                       | yes                                          |
-| tiff  | yes (pixels + bytes)            | yes (+ a dead byte check) | yes — the only genuine pre-decode load check |
-| bmp   | **none** — bounded by file size | **none**                  | n/a                                          |
-| gif   | **none**                        | 65535/axis                | **no**                                       |
-| ico   | **none**                        | 1..256/axis               | **no**                                       |
-| svg   | **none**                        | **none**                  | n/a                                          |
-| psd   | yes                             | yes                       | yes — the reference implementation           |
+| codec | loader budget | encoder budget | check before the allocation it bounds? |
+| ----- | ------------- | -------------- | -------------------------------------- |
+| avif  | yes           | yes            | yes                                    |
+| tiff  | yes           | yes            | yes                                    |
+| bmp   | **none**      | **none**       | n/a                                    |
+| gif   | **none**      | 65535/axis     | yes, on the encoder                    |
+| ico   | 256/axis      | 1..256/axis    | yes, on both                           |
+| svg   | **none**      | **none**       | n/a                                    |
+| psd   | yes           | yes            | yes — the reference implementation     |
 
-The three that are actionable without an architecture decision, all in files no campaign owns:
+`psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
+`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
+rather than an exception to it. What the table leaves open is the loader column for `gif`, `svg` and
+`bmp`, and the whole of `bmp` in both directions.
 
-- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts` —
-  `predictDecodeBytes()` is the whole predictor and never reads `t322` (TileWidth) or `t323`
-  (TileLength), but `UTIF.js` — `UTIF.decodeImage()` allocates a **separate** per-tile buffer for a
-  tiled page. The page
-  `{t256:[1000], t257:[1000], t258:[8,8,8,8], t322:[23170], t323:[23170]}` predicts 4,000,000 bytes
-  — comfortably inside the 1.6 GB ceiling — while UTIF allocates **2,147,395,600 (2.15 GB)**. A
-  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism the doc comment above
-  `tiff-utils.ts` — `predictDecodeBytes()` documents as the module's reason for existing. Fix: also
-  predict
-  `Math.ceil(t322[0] * t323[0] * bitsPerPixel / 8)` and return the larger; a present `t322` with a
-  missing `t323` should return `null`, which `tiff-utils.ts` — `assertByteBudget()` already refuses
-  like over-ceiling.
-- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts` — `encodeGif()` runs
-  `getCanvasImageData(canvas)` before its own `65535` check, so a 70000×100000 canvas allocates
-  28 GB before the line that would refuse it — the same ordering defect this item's AVIF half had.
-  `gif-utils.test.ts` — the `it('rejects canvases that exceed the 65535 pixel limit')` title cannot
-  catch it: it mocks `getContext` to report a width no real canvas has and never asserts
-  `getImageData` was not called. Fix: hoist both checks above the `getCanvasImageData(canvas)` call.
-- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts` — `encodeIco()`
-  runs `canvasToPngBlob` before its 256 check, so `Save as ICO` on a 10000×10000 document pays a full
-  PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte blob,
-  so nothing detects it. Fix: move the 256 check above the `canvasToPngBlob(canvas)` call.
-
-**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts` — `decodeBmpIcon()`) validates only
-`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling in
-`ico-utils.ts` — `loadIcoFile()` is used for **entry selection** only, and the geometry actually
-decoded is read from the DIB in `ico-utils.ts` — `decodeBmpIcon()` and never compared to 256.
-**A file that opens cannot be saved back.**
+**The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
+entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
+`ico-utils.ts` reads the former directly and the latter out of the PNG's `IHDR` chunk before
+handing the bytes to the browser. Both are held to the same 256 the encoder enforces, so that a file
+which opens can be saved back. The consequence worth knowing before changing it: an ICO whose
+selected entry decodes above 256 on either axis — a 512×512 PNG entry, which Windows opens, because
+it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
+loosening the load side reintroduces documents this build then cannot write.
 
 **BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
 byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
 `32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
 absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 7×4, so no
-test can reach an interesting ratio.
+test can reach an interesting ratio. The fix is one comparison before the `width * height * 4`
+allocation; the open question is the number, and it has to be one of the five above rather than a
+sixth.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
 `new Image()`. That is where a shared load-side ceiling would have to live for those two formats.
-Separately, TIFF's save-side byte check in `tiff-utils.ts` — `encodeTiff()` is provably dead
-(`MAX_TIFF_PIXELS * 4` is always below
-`MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
-finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
-`createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
 
-**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
-`src/contexts/bmp-utils.ts`, `src/contexts/gif-utils.ts`,
-`src/contexts/ico-utils.ts`,
-`src/contexts/image-load-save-utils.ts`, `src/contexts/affine-transform.ts`,
-`src/contexts/psd-utils.ts`
+**Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
+`src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
+`src/contexts/affine-transform.ts`, `src/contexts/psd-utils.ts`
 
 ---
 
@@ -1567,7 +1549,7 @@ fails if `xAnchor` is removed.
 
 ---
 
-## 86. No `useRect` border animates, so the crop, move, text and rectangular-selection rects all sit still
+## 86. `useRect`'s border still sits still for the three callers that are not a selection
 
 **Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
 `ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
@@ -1577,60 +1559,43 @@ border: it recomputes the rect and calls `drawMask(true)`, which redraws the sam
 looks alive during a drag only because the drag is RAF-throttled, so the line is redrawn at pointer
 rate — the dashes never move.
 
-**`useRect` is the one border in the app that redraws without advancing, and THREE selection
-borders are drawn that way — not one.** `useMarchingAnts`
-(`useAnts.ts` — `useMarchingAnts()`) is the real marching-ants loop, and its only production
-consumer is `MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a
-**hovered layer** in `reposition` mode. So
-"marching ants on a rectangle" is the Move tool's layer outline.
+**What this costs is now ONE selection border, not three.** Every selection tool's committed
+border is now the same animated loop — `Main.tsx` — `SELECTION_INTERACTION_MODES` — admits all
+seven selection modes, `useSelectionMarchingAnts` strokes every active selection whatever made it,
+and the static stroke the elliptical marquee and quick selection used to hand-roll is gone from
+`selection.ts`. The rect is what is left: `rectangular-selection` strokes it only while a marquee is
+in flight (`borderMode: 'while-dragging'`, below), which §229 records, and the three callers that
+are not selections stroke it whenever the rect is drawn.
 
-**Three selection borders still sit still, not one.** A polygon selection animates
-(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx` — the
-`POLYGON_SELECTION_MODES` list. The elliptical and quick selection tools are deliberately absent
-from it and map to their own `interactionMode`s (`Main.tsx` — the `interactionMode` mapping in
-`Main`), so their borders stay the static
-`drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
-(`createCommittedPolygonSelection`, `selection.ts` — whose `geometry: 'polygon'` is the value it
-returns), so nothing about the selection's
-own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
-(`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
-of the choice below — would leave two behind, which is why they are named here together.
+**`useMarchingAnts` is a fourth border and reaches none of them.** Its only production consumer is
+`MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a **hovered layer**
+in `reposition` mode. So "marching ants on a rectangle" is the Move tool's layer outline, and the
+crop rectangle, the move rectangle and the text frame have no loop that could reach them.
 
-**The rectangle and the polygon no longer match each other** in colour or weight (`#007bff` at 2px,
-plus four square handles, versus black/white ants at 1px), and the two marquee tools match neither.
+**The one thing NOT to change here.** `borderMode: 'while-dragging'` is load-bearing for the
+rectangular selection and must keep its current meaning (`useRect.ts` — `drawMask()`): the marquee
+being dragged is the only evidence of itself, because a marquee in progress has not been committed
+and so has no ants, and the ants stand down for the duration so the committed rectangle does not
+appear beside the one being dragged. Animating the border must not move it out from under that
+gate, and must not be applied to the handles, which are the resize hit area.
 
 **It affects four tools, not one.** `useRect` is shared by `MoveToolArea` — its `useRect()` call —
 `CropToolArea`, `RectangularSelectionToolArea` and `TextToolArea`, each reached through their own
-`useRect()` call, so the crop rectangle, the move
-rectangle, the text frame and the rectangular selection all have the same still border.
+`useRect()` call. Three of them stroke the still border whenever the rect is drawn; the rectangular
+selection strokes it only between press and release.
 
-**Fix.** Three shapes, and the choice is a recording decision rather than a mechanical one. Fixing
-the rectangle alone is a real option, but it is not the same task as fixing all three still
-borders, and the entry above says which is which — pick the scope deliberately.
+**Fix.** Two shapes remain, and the choice is a recording decision rather than a mechanical one.
 
 - Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
-  existing draw path, keeping the current colour and the four handles. Cheapest, and the only option
-  that covers all four callers at once. It needs its own loop, because `drawMask` is only called while
-  something is changing. Fixes the rectangle and the crop, move and text frames with it; leaves the
-  two marquee tools static.
-- Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
-  `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
-  (`useSelectionMarchingAnts` currently skips rectangles on the assumption that `useRect` still
-  paints one), and let the ants canvas own the rect. Note the constraint this has to respect:
-  `useRect` also draws the dim-out scrim and, in the same `drawMask()` pass, the border and the
-  corner handles, so the border and the handles have to
-  end up on different canvases or the scrim will wipe the ants mid-drag.
-- Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
-  three: add `'elliptical-selection'` and `'quick-selection'` to `Main.tsx`'s
-  `POLYGON_SELECTION_MODES` and stop those two tool areas calling `drawSelectionOutline`. This one
-  is not only a
-  mode list, because both commit `sourceTool: 'magic-wand'` — `ellipticalSelection.ts` —
-  `ELLIPTICAL_SELECTION_SOURCE_TOOL` and `quickSelection.ts` — `QUICK_SELECTION_SOURCE_TOOL`, the
-  constant each borrows from the wand —
-  and `drawSelectionAnchors` skips that source, so the anchors have to be taught the difference
-  between a wand selection and a marquee selection or the two tools lose their handles as well as
-  their border. `EllipticalSelectionToolArea.test.tsx`'s 'strokes a committed selection border' pins
-  the current ownership and will fail until this is done on purpose.
+  existing draw path, keeping the current colour and the four handles. It needs its own loop,
+  because `drawMask` is only called while something is changing. It must advance for
+  `borderMode: 'while-dragging'` without advancing for `'always'`, or the Move tool's own dashed rect
+  starts crawling under a different rule than the ants use. Fixes the three non-selection frames
+  and the in-flight marquee with it.
+- Or give the rect the treatment every other selection border already has: stop `useRect` stroking
+  it and let the ants canvas own it. Not a one-line change, and §229 says why: `useRect` draws the
+  dim-out scrim, the border and the corner handles in the same `drawMask()` pass, so the border and
+  the handles have to end up on different canvases or the scrim will wipe the ants mid-drag.
 
 Whichever is chosen, the two `setLineDash` assertions in `useRect.drag.test.ts` — the
 `it('paints the initial selection, its blend cut-out, and the four handles')` and
@@ -3872,8 +3837,6 @@ its two JSX wirings,
 `src/components/Main/RectangularSelectionToolArea.tsx` — `handlePointerCancel`,
 `src/tools/singleRowColumnMarquee.ts` — `singleRowMarqueeRect`'s doc comment.
 
----
-
 ## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
@@ -5181,26 +5144,67 @@ Clear". That is twenty-nine. `Paint.tsx` renders `{PAINT_BLEND_MODES.map(...)}`,
 values it does not, and the row is data — `npm run docs:tools` renders it into `docs/TOOLS.md`, so the
 generated per-tool specification carries the overcount as the app's own description of its bar.
 
-The source comment on `PAINT_BLEND_MODES` makes a smaller version of the same mistake. It says
-"Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind,
-Clear)" — thirteen absent values, of which it names eight. The five it omits are Darker Color, Lighter
-Color, Linear Dodge (Add), Linear Light and Hard Mix. None appears in the comment, and none is an alias
-of a name that does, so the omission is not a naming choice. `brush.test.ts` pins the sixteen values and
-not this sentence, so nothing catches the enumeration drifting.
+**The comment on `PAINT_BLEND_MODES` states the counts and names all thirteen, and nothing checks
+them.** It is a comment, so `brush.test.ts` — which pins the sixteen values exhaustively — cannot see
+it, and a mode added to the array would leave the comment quietly wrong. The array is a closed literal
+union precisely because `src/contexts/layer-utils.ts` reads a value back off stored history, but
+nothing requires a new member to be one Photoshop lists or one a canvas can express. That gap is the
+whole of what is left on this side, and it is a documentation check rather than a code one.
+
+One of the thirteen needs a caveat a future editor could get wrong. `plus-lighter` **is** a canvas
+value, and for opaque pixels it computes `src + dst`, which is what Linear Dodge (Add) does — it
+diverges only for translucent strokes. The comment's claim is that there is no _exact_ equivalent,
+which holds; a reader who takes it as "no such value exists" would be wrong.
 
 **What is already right.** The Brush's `appNotes` in the same file state the shortfall correctly —
 "sixteen canvas compositing operations rather than Photoshop's 29 for this tool" — and the reasoning
 beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
 would ship a dead option.
 
-**Affected.** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose "offering" sentence is
-the overcount and whose `appNotes` is the correct statement it contradicts;
-`src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, for the five omitted names.
+**Owned, so recorded not fixed: the four blend-mode `Mode` rows.** `src/tools/descriptions/paint.ts`
+carries the twenty-seven phrasing in four rows — the Brush, the Pencil, the Paint Bucket and the Clone
+Stamp — and each states what Photoshop offers while the two rows beside it in the same file state
+what the bar renders.
 
-**What would close it.** Correct the row to say the bar offers the sixteen the component actually
-renders, keeping the `appNotes` sentence as the statement of the shortfall. That is the half a reader
-is misled by, and it regenerates into `docs/TOOLS.md`. Adding the five missing names to the source
-comment is the smaller half, and it makes the comment agree with the row rather than the reverse.
+**The two halves need different fixes, and only two of the four rows have a control to describe.**
+`PaintBucket.tsx` and `CloneStamp.tsx` contain no `blendMode` reference at all; their rows are
+`status: 'missing'` and their own `appNotes` say the control is absent outright. Writing "the sixteen
+the component renders" into those two would be a new falsehood in a data file. Their rows are already
+right about Photoshop and already say the control is missing, so what they need is the twenty-seven
+sentence marked as Adobe's rather than read as the app's — the same fix as the `status` field, not a
+new count.
+
+The Brush and the Pencil are the two that render a control, because both live in `Paint.tsx`, which
+maps `PAINT_BLEND_MODES`. Each row overcounts — the Brush's says twenty-nine and the Pencil's
+twenty-eight — and each is contradicted by its own `appNotes` in the same file, which already states
+sixteen correctly. Those two are the whole of the correction: state the sixteen the component renders
+and keep `appNotes` as the statement of the shortfall.
+
+**That is filed rather than fixed because the row is data and the generated file is spoken for.**
+`npm run docs:tools` renders these rows into `docs/TOOLS.md`, and both files are claimed by work in
+flight — `src/tools/descriptions/paint.ts` by `fix/rail-drop-draw`. Editing the source without
+regenerating leaves the two inconsistent, and regenerating rewrites a file another branch is editing.
+
+**Related, and the same phrase in a third file.** `src/tools/descriptions/paint.notes.md` cites the UXP
+`BlendMode` enum to establish that Dissolve is one of the twenty-seven, and writes it as "`DISSOLVE` in
+the list at the UXP constants reference, alongside `PASSTHROUGH` and the 25 others". The enum has
+**twenty-eight** members — the twenty-seven real modes plus `PASSTHROUGH`, which the Layers panel lists
+separately — so "the 25 others" is twenty-six. The same file gets the count right further down, where
+it calls `PASSTHROUGH` "a twenty-eighth entry", so the file contradicts itself. The four rows above
+are not what propagates it — they are being told to state sixteen and stop citing a Photoshop census —
+so this is a fix to that file alone. `docs/luna-psd-currency` claims it.
+
+**Affected.** `src/tools/descriptions/paint.ts` — the Brush, Pencil, Paint Bucket and Clone Stamp
+`Mode` rows; `src/tools/descriptions/paint.notes.md` — the enum citation; `docs/TOOLS.md`, which
+regenerates from the first; `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, whose
+counts and enumeration no gate checks.
+
+**What would close the `brush.ts` half.** A source-reading test that asserts the comment's counts and
+names against `PAINT_BLEND_MODES` — the same technique the three `readFileSync` tests under
+`src/contexts/__tests__/` already use — so a member added to the array that is neither on Photoshop's
+list nor a canvas value fails instead of quietly making the comment wrong. That is a check on prose,
+which is unusual, and it is worth it only because the alternative is a comment whose whole value is
+that a reader can trust its count.
 
 ## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
 
@@ -6312,3 +6316,28 @@ unfilled, record the divergence in `docs/OVERRIDES.md` — the tile is kept ther
 override is where a deliberate divergence belongs. Either way the `!!args.backgroundColor` half of
 the gate must survive the change: it is what stops a filled figure with no colour from painting with
 whatever `fillStyle` the shared overlay last carried.
+
+---
+
+---
+
+## 229. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
+
+**Problem.** A selection's border is the marching ants for every selection tool, so the crawl is
+uniform across all of them. The exception is the rectangle BETWEEN press and release: while a gesture
+is in flight the ants stand down (`selection-drag-preview.ts` — published by `useRect`'s
+`beginGesture`) and the only border on screen is `useRect`'s own stroke, whose dashes are static for
+the reason in §86. The user sees the border appear — a dashed rectangle where there was none — and
+then not move, for the whole drag, on the one tool whose border is otherwise indistinguishable from
+the others at rest.
+
+**It is a smaller defect than it looks, and the fix is the fix.** The drag is RAF-throttled, so the
+rectangle itself tracks the pointer; only the dashes are frozen, and a still dash around a moving
+rectangle reads as a marquee rather than as a stalled border. Animating it means §86's loop, and
+that loop has to reach this case too: `borderMode: 'while-dragging'` is the only place the
+rectangle's stroke is on screen while `useRect` owns it, so the offset ref has to advance there
+without advancing for `'always'`, where the Move tool's own dashed rect would start crawling under a
+different rule than the ants use.
+
+**Files.** `src/hooks/useRect.ts` — `drawMask()`, `beginGesture()`;
+`src/hooks/selection-drag-preview.ts` — `publishSelectionDragPreview()`

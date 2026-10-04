@@ -271,10 +271,31 @@ test.describe('Export visual regression', () => {
       // assert on the export rather than on the drawing.
       await openSaveDialog(page);
       await fillSaveDialog(page, 'layout-invariance', 'PNG');
+
+      /**
+       * The locator the absence below is stated with, resolved POSITIVELY first, while the
+       * dialog is still on screen. `SaveDialog` renders its title as an `<h2
+       * id="save-dialog-title">`, which is also the dialog's `aria-labelledby` target, so in the
+       * open state this locator names exactly one visible element.
+       *
+       * That is what makes the absence discriminating rather than vacuous: it is the same
+       * locator, in the same configuration iteration, in the state where the element exists. A
+       * bare `toHaveCount(0)` cannot tell "the dialog closed" from "this app never mints that
+       * name", so rewording the title or demoting the `<h2>` would leave the absence green with
+       * the dialog still on screen. This loop runs eight configurations, so the positive is
+       * established eight times rather than once.
+       */
+      const saveDialogTitle = page.getByRole('heading', { name: 'Save File As...' });
+      await expect(
+        saveDialogTitle,
+        `${label}: the open Save dialog is titled by a heading carrying this accessible name`
+      ).toHaveCount(1);
+      await expect(saveDialogTitle, `${label}: and that heading is on screen`).toBeVisible();
+
       const download = await submitSaveDialogForDownload(page, layoutInvarianceFormat);
       const target = path.join(downloadDirectory, path.basename(download.suggestedFilename()));
       await download.saveAs(target);
-      await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+      await expect(saveDialogTitle, `${label}: the Save dialog unmounted once the download completed`).toHaveCount(0);
 
       const bytes = await readFile(target);
       expect(bytes.byteLength, `${label}: the exported file should not be empty`).toBeGreaterThan(100);

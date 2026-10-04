@@ -4,11 +4,10 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { useContainScale } from '../../hooks/useContainScale.ts';
+import { clearSelectionDragPreview, publishSelectionDragPreview } from '../../hooks/selection-drag-preview.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import {
   createCommittedPolygonSelection,
-  drawSelectionOutline,
   getActiveSelection,
   getSelectionAbsolutePoints,
   hasSameSelectionGeometry,
@@ -50,11 +49,13 @@ type EllipseDrag =
 /**
  * The live marquee, drawn as a closed path.
  *
- * It is deliberately NOT `drawSelectionOutline`: that draws a white anchor dot on every
- * vertex, and a tessellated ellipse has between 16 and 720 of them depending on its
- * radius. The committed outline is the store's business; this is the transient picture
- * of the drag, and it is the same dashed closed path a committed marquee shows without
- * the handles.
+ * Hand-rolled rather than a call into `util/selection.ts`'s outline painters, because they draw
+ * a white anchor dot on every vertex and a tessellated ellipse has between 16 and 720 of them
+ * depending on its radius. This file calls neither of them. The committed border is the ants
+ * canvas's business now, and the committed one never had dots to give up: an ellipse commits
+ * with the borrowed `sourceTool: 'magic-wand'` (`ellipticalSelection.ts:48`), which is the one
+ * source those painters skip. What this paints is the transient picture of the drag, and it is
+ * the same dashed closed path a committed marquee shows without the handles.
  */
 function drawMarqueePreview(ctx: CanvasRenderingContext2D, points: Point[]): void {
   if (points.length < 2) return;
@@ -87,36 +88,31 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     ref: containerRef,
     imageSize: totalSize,
   });
-  const containScale = useContainScale(containerRef, totalSize);
 
   /**
-   * Repaint the whole overlay: every committed selection's outline, then the live
-   * marquee on top of it.
+   * Repaint the whole overlay: the live marquee, and nothing else.
    *
-   * `selectionOverride` exists for the move arm only. A drag never reaches the store, so
-   * the store still shows the selection at its pre-drag geometry; substituting the
-   * dragged one in the array is the whole difference between previewing the drag and
-   * repainting the un-moved selection underneath it.
+   * The committed border is not painted here any more. This tool is in `Main.tsx`'s
+   * `SELECTION_INTERACTION_MODES`, so `useSelectionMarchingAnts` owns that border on a canvas of
+   * its own, and the static stroke here put two outlines of one selection on screen in two
+   * colours on two canvases. The drag that used to arrive as `selectionOverride` goes to the
+   * ants too — it is published to them instead of drawn — so the move arm has no representation
+   * on this overlay at all.
    */
   const redrawOverlay = useCallback(
-    ({
-      selectionOverride,
-      previewPoints,
-    }: {
-      selectionOverride?: Selection[];
-      previewPoints?: Point[] | null;
-    } = {}) => {
+    ({ previewPoints }: { previewPoints?: Point[] | null } = {}) => {
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      // Not optional, and not `drawMarqueePreview`'s to do: the tool overlay is one 2D context
+      // for the whole session and the preview painter is `save()`/`restore()`, so it inherits
+      // whatever `globalAlpha` the last painting tool left behind. Nothing else in this
+      // repository skips the reset before painting an overlay (`useSelectionAnts.ts:137`-`:143`).
       resetOverlayAlpha(ctx);
-      (selectionOverride ?? selections).forEach((selection) =>
-        drawSelectionOutline(ctx, selection, documentFrame, containScale.current)
-      );
       if (previewPoints && previewPoints.length > 0) drawMarqueePreview(ctx, previewPoints);
     },
-    [documentFrame, overlayCtxRef, selections, containScale]
+    [overlayCtxRef]
   );
 
   /** Read and clear in one step, so two routes out of a gesture cannot both commit it. */
@@ -195,6 +191,11 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
 
       const params = dragParams(drag);
       drag.previewPoints = params ? ellipsePointsFromDrag(params) : null;
+      // Nothing published, and that is the whole difference between this arm and the move arm
+      // below: a NEW ellipse is being drawn rather than a committed one moved, so the committed
+      // border behind it is still true and keeps marching under the marquee. That is what
+      // Photoshop shows when a new selection is dragged across an existing one, and
+      // `selection-drag-preview.ts:19`-`:21` states the same rule for the polygon tools.
       redrawOverlay({ previewPoints: drag.previewPoints });
       return;
     }
@@ -206,9 +207,13 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     const preview = moveSelectionByDelta(drag.baseline, delta);
     drag.origin = documentPoint;
     drag.preview = preview;
-    redrawOverlay({
-      selectionOverride: selections.map((selection) => (selection.id === preview.id ? preview : selection)),
-    });
+    // The ants canvas is what follows the selection, not this overlay. It owns the committed
+    // border and reads this channel every frame, painting `preview` in place of the committed one
+    // with the dash offset held, so the ants freeze rather than crawl away from the pointer
+    // (`useSelectionAnts.ts:163`-`:191`). Publishing exactly what the overlay used to draw is
+    // what keeps one selection to one outline.
+    publishSelectionDragPreview({ kind: 'follow', selection: preview });
+    redrawOverlay();
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -217,6 +222,10 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     if (!isPointerUpValid(event)) return;
 
     takeDrag();
+    // Unconditional, and here before either arm can return: the create arm never publishes, so
+    // the slot may already be empty, and clearing it anyway is what lets the route that did
+    // publish be written without asking which arm ran.
+    clearSelectionDragPreview();
 
     if (drag.mode === 'move') {
       // Gated on GEOMETRY, not on the drag having happened: both move builders bump
@@ -267,8 +276,10 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
     if (!drag || drag.pointerId !== (typeof event.pointerId === 'number' ? event.pointerId : null)) return;
 
     takeDrag();
-    // The store still shows the un-moved selection, so the repaint below is the
-    // snap-back an abandoned drag gets.
+    clearSelectionDragPreview();
+    // What the repaint still has to do is drop the create arm's marquee. The snap-back an
+    // abandoned MOVE gets is not drawn here: the store still shows the un-moved selection, and
+    // the ants canvas picks that geometry up again the moment the preview above is gone.
     redrawOverlay();
     if (drag.mode === 'create') {
       dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
@@ -286,6 +297,11 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       // An unmount mid-drag is an abort like any other: the running drag is dropped
       // through the same primitive, so a gesture that ends here can never commit.
       takeDrag();
+      // The route easiest to miss, because nothing about an unmount looks like a gesture. The
+      // preview slot is a module-level variable that outlives this mount, so an entry left
+      // behind would freeze the ants on a selection that no longer exists for every later tool
+      // — `selection-drag-preview.ts:56`-`:64`.
+      clearSelectionDragPreview();
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
