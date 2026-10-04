@@ -8,7 +8,7 @@ import { liveDragCursorCount, lockDragCursor, unlockDragCursor } from '../dragCu
  * last release. Those assertions cannot see the COUNT, because every DOM effect
  * is idempotent — `classList.add` twice reads the same as once.
  *
- * So this suite covers only the three things the count is load-bearing for and
+ * So this suite covers only the four things the count is load-bearing for and
  * that no DOM assertion can reach. Each is named for the mutation it kills.
  */
 describe('dragCursorLock', () => {
@@ -24,6 +24,11 @@ describe('dragCursorLock', () => {
 
   afterEach(() => {
     for (let held = liveDragCursorCount(); held > 0; held -= 1) unlockDragCursor();
+    // A drain cannot climb: `unlockDragCursor` floors at zero, so a count that went
+    // negative stays negative and the loop above never runs. Asserting here reports the
+    // leak against the case that caused it — `afterEach` runs immediately after that case
+    // — instead of letting it gate the next one silently.
+    expect(liveDragCursorCount()).toBe(0);
     document.body.className = '';
     document.body.style.userSelect = '';
   });
@@ -46,12 +51,14 @@ describe('dragCursorLock', () => {
     // outside. Pinning the increment is what makes `unlockDragCursor`'s
     // `if (liveLocks > 0)` guard mean "someone still holds it" rather than a guess.
     //
-    // What this does NOT cover, having been checked by mutation: deleting
-    // `lockDragCursor`'s `if (liveLocks > 1) return;` guard is UNOBSERVABLE —
-    // the count still reaches 2 and `classList.add`/`setProperty` on a present
-    // value change nothing — so no test can kill that mutation. The line is an
-    // optimisation that skips re-applying what is already applied, not a
-    // behaviour, and no assertion here claims otherwise.
+    // What this does NOT claim: that `lockDragCursor` skips re-applying what is already
+    // applied. That guard has no observable effect on the DOM — `classList.add` on a
+    // present value and `setProperty` on a set value read the same before and after — so
+    // no assertion here distinguishes it and none should. It IS distinguishable, but only
+    // by counting calls (`vi.spyOn(document.body.classList, 'add')` sees one call with the
+    // guard and two without), and pinning that would pin the DOM API this module happens
+    // to use rather than the lock's behaviour: an equivalent implementation that assigned
+    // `className` or used `toggle` would go red for a change nobody could observe.
     lockDragCursor();
     lockDragCursor();
 
@@ -80,6 +87,40 @@ describe('dragCursorLock', () => {
     expect(document.body.style.userSelect).toBe('none');
 
     unlockDragCursor();
+    expect(document.body).not.toHaveClass('cursor-grabbing');
+    expect(document.body.style.userSelect).toBe('');
+  });
+
+  it('counts a third lock, so a depth the two-lock cases never reach cannot go wrong', () => {
+    // The count, not the class, decides who releases: three concurrent gestures owe three
+    // releases. Nothing above reaches depth three, and that is the hole — moving
+    // `if (liveLocks > 1) return;` ABOVE the increment leaves every other case in this
+    // file green, because the class is applied at the first lock and never removed early,
+    // so every DOM assertion here still passes.
+    //
+    // The count assertion immediately below the three locks is the load-bearing line: it
+    // is the only one that reads 2 where 3 is expected. The DOM lines after each release
+    // are there because "the count went down" and "the user still sees a grabbing cursor"
+    // are different claims, and only the first is what this module guarantees.
+    lockDragCursor();
+    lockDragCursor();
+    lockDragCursor();
+
+    expect(liveDragCursorCount()).toBe(3);
+    expect(document.body).toHaveClass('cursor-grabbing');
+    expect(document.body.style.userSelect).toBe('none');
+
+    unlockDragCursor();
+    expect(liveDragCursorCount()).toBe(2);
+    expect(document.body).toHaveClass('cursor-grabbing');
+    expect(document.body.style.userSelect).toBe('none');
+
+    unlockDragCursor();
+    expect(liveDragCursorCount()).toBe(1);
+    expect(document.body).toHaveClass('cursor-grabbing');
+
+    unlockDragCursor();
+    expect(liveDragCursorCount()).toBe(0);
     expect(document.body).not.toHaveClass('cursor-grabbing');
     expect(document.body.style.userSelect).toBe('');
   });
