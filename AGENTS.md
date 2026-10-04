@@ -58,7 +58,7 @@ ALL GPT MODELS ARE PAID. EVERY OTHER MODEL IS FREE
 
 1. A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION
 2. A GPT SESSION MAY LAUNCH GPT SUBAGENTS
-3. ALWAYS PASS `provider` TOGETHER WITH `model`. "OpenAI" is CORRECT provider for GPT models, "kilo", is CORRECT provider for SpaceBunny.
+3. A MODEL NAME AND A PROVIDER ARE A PAIR, AND THE CATALOG DECIDES THE PAIR. Check `agent_manager_models` instead of inferring the provider from the family: `GPT Luna Latest` is `openrouter`-only and `GPT-5.6 Luna Fast` is `openai`-only, so no single provider is correct for "GPT models".
 4. `model: 'Space Bunny Alpha (retires Oct 5)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the DEFAULT (the dated spelling is the one that resolves on this gateway).
 5. Cost doubles past 200k of context FOR GPT Luna, and doubles above 270k of context for GPT Terra and Sol. Space Bunny does not have such restriction. IMPORTANT THAT GPT MODELS stay below threshold!
 6. `agent_manager`: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
@@ -131,8 +131,9 @@ npm run probe:console   # playwright, HEADLESS - one page load, reports console 
 runs from `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean
 merge that commits itself), and **refuses** the merge. It catches the shape `tsc` and `build`
 cannot: a path the merge resolved by copying one whole side's content, which is a perfectly
-good file and compiles. Three limits, all of them real: a **fast-forward fires no hook at
-all**; `--no-verify` bypasses it, as it bypasses every gate here; and **it only sees a merge
+good file and compiles. Three limits, all of them real: a **fast-forward reaches neither
+`pre-commit` nor `pre-merge-commit`** (it runs `post-merge`, which cannot block);
+`--no-verify` bypasses the rest, as it bypasses every gate here; and **it only sees a merge
 that is being committed** — a merge or rebase left open on a conflict runs nothing, and no
 hook or script reports an operation in progress. [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)
 — §Landing is the one home, with the incident that proves the third limit.
@@ -184,7 +185,7 @@ On the default headless run **no e2e test fails**. The only skips are 3 declarat
 - The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
 - A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `it.fails(...)` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.
 - **DO NOT widen a threshold, add a skip, or re-record a visual baseline to make a test green.** Baselines re-record only under an explicit `--update-snapshots=all`, so a green run means the pixels matched.
-- Read a failure from disk, never from a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing test's `outputDir` under `test-results/`, and a run through the wrapper writes its machine-readable record under `test-results/runs/<run-id>/` and prints that path. A trace needs the trace viewer, which is a window — ask the operator.
+- Read a failure from disk, never from a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing test's `outputDir` under `test-results/`, and a run through the wrapper writes its machine-readable record to `.kilo/e2e-last-run.json` and prints that path. A trace needs the trace viewer, which is a window — ask the operator.
 
 ## Documentation
 
