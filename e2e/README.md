@@ -243,8 +243,10 @@ and the CI job's bare `npx playwright test` never load the wrapper at all).
 
 Each run writes to `test-results/runs/<run-id>/`, and the wrapper prints that
 directory before the suite starts. `test-results/` is gitignored wholesale, and
-`npm run test:e2e:clean` clears the run directories under it plus `playwright-report/`, while
-deliberately keeping `test-results/results.json`. A bare `npx playwright test` (or
+`npm run test:e2e:clean` clears the generated output under it without taking the
+machine-readable run result with it; exactly which files those are is
+[`../docs/TESTING.md`](../docs/TESTING.md#e2e-failures)'s rule, not this
+section's. A bare `npx playwright test` (or
 `npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
 — that is the same as CI, where the JSON reporter's output is collected as an
 artifact, and it is why CI calls Playwright directly. A bare run still starts its
@@ -541,7 +543,7 @@ npm run test:e2e:unit:coverage
 
 # output
 npm run test:e2e:report              # open the last HTML report (opens a window, and blocks)
-npm run test:e2e:clean               # delete generated run output (test-results/, playwright-report/)
+npm run test:e2e:clean               # delete generated run output; see "Output" above for what survives
 npm run test:e2e:update-baselines    # rewrite the visual-regression baselines
 ```
 

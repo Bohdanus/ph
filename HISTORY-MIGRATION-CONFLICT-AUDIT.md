@@ -6,7 +6,7 @@ number below was measured then; re-derive before trusting it. `docs/README.md` n
 
 - Audited at: `main` @ `33f9e960` (2026-10-03, ~17:07 local). `main` moved again while this was
   being written, so treat any count that involves `main`'s position as already stale.
-- Previous audit: [`MIGRATION_NEXT_STEPS_SUNDAY.md`](../MIGRATION_NEXT_STEPS_SUNDAY.md) at
+- Previous audit: [`MIGRATION_NEXT_STEPS_SUNDAY.md`](MIGRATION_NEXT_STEPS_SUNDAY.md) at
   `main` @ `f7757cf` (2026-09-28). **Many commits have landed since**; most of what that document
   said about the durable path has been replaced.
 - Line numbers drift — **re-verify from the sentence that makes the claim, never from an old
