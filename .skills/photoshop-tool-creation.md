@@ -3361,7 +3361,7 @@ baselines (`AGENTS.md`, "Gates" and "E2E failures").
 Baselines live in `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`, resolved
 through `testInfo.snapshotDir` rather than `snapshotPath()` so a baseline committed on one machine
 does not read as missing on another (`e2e/README.md` — the `testInfo.snapshotDir` paragraph under "Baseline layout"). The directory holds 17 committed
-files; 7 are read, one per format with `comparePixels: true` (`drawing.png.png`, `.jpeg`, `.webp`,
+files; 7 are read, one per format in `browserVerifiedFormats` (`drawing.png.png`, `.jpeg`, `.webp`,
 `.svg`, `.bmp`, `.gif`, `.avif`); the other 10 are orphans nothing references
 (`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes:14` marks the snapshot tree `binary` so
 line-ending normalisation can never rewrite the committed pixels.
