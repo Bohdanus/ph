@@ -18,9 +18,10 @@ function assertPixelBudget(width: number, height: number, action: 'open' | 'save
   // or `NaN` — and `width * height > MAX_AVIF_PIXELS` is false for every one of those, so the
   // budget waves them through to `createImageData(-5, -3)`, where the DOM throws an
   // `IndexSizeError` that names neither AVIF nor the pixels the user opened. Anything that is
-  // not a positive integer is refused here instead, with a message that names the format.
-  // `Infinity` needs no case of its own: it is the one non-integer that already fails the
-  // budget comparison below.
+  // not a positive integer is refused here instead, with a message that names the format. This
+  // also catches `Infinity`, which is a non-integer — it reports as an invalid geometry rather
+  // than as too large, and both are refusals, so the ceiling below is still the only thing that
+  // decides a merely large file.
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
     throw new Error(`AVIF image has invalid dimensions to ${action} (${width}×${height}).`);
   }

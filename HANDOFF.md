@@ -372,11 +372,14 @@ Adobe rather than this. The remaining work is the other-format gap below, not th
 **The rule that must survive.** Above a ceiling the file is **rejected with an error, never clamped
 or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
 rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
-`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
-`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample, times
-the four samples an RGBA page carries) — and `MAX_TIFF_PIXELS` is that same budget read at
-8 bytes per pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
-different number defensible if the ceiling is ever revisited.
+`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, which is what
+`UTIF.decodeImage` allocates for the **page** of a 4-sample RGBA file (`Math.min(32, t258[0])` bits
+per sample, times the four samples an RGBA page carries) — and `MAX_TIFF_PIXELS` is that same budget
+read at 8 bytes per pixel, so the two agree by construction rather than by coincidence. That
+derivation is what makes a different number defensible if the ceiling is ever revisited. It is a
+budget on the page term, though, not on every byte UTIF can allocate: a tiled page adds a second
+buffer sized by `t322`/`t323`, so what the ceiling is compared against is the page and tile together
+and a page nowhere near this figure can still exceed it.
 
 **Five ceilings exist and three are below what the dialog can create:**
 
@@ -390,12 +393,11 @@ different number defensible if the ceiling is ever revisited.
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
-as PSD — and the PSD cap is recorded nowhere. "One exported `MAX_RASTER_PIXELS`" would have to
-reconcile **five** constants, not one, and that reconciliation is the reason the BMP ceiling below
-is filed rather than fixed: choosing a number is cheap, and choosing it in one place is the decision
-nobody has taken.
+as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one, and
+that reconciliation is the reason the BMP ceiling below is filed rather than fixed: choosing a number
+is cheap, and choosing it in one place is the decision nobody has taken.
 
-**Two codecs have no raster budget in either direction, and two more bound nothing on the way in.**
+**Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
 
 | codec | loader budget | encoder budget | check before the allocation it bounds? |
 | ----- | ------------- | -------------- | -------------------------------------- |
@@ -409,8 +411,17 @@ nobody has taken.
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `gif` and
-`svg`, both of which are reached through the unbounded path below, and the whole of `bmp`.
+rather than an exception to it. What the table leaves open is the loader column for `gif`, `svg` and
+`bmp`, and the whole of `bmp` in both directions.
+
+**The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
+entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
+`ico-utils.ts` reads the former directly and the latter out of the PNG's `IHDR` chunk before
+handing the bytes to the browser. Both are held to the same 256 the encoder enforces, so that a file
+which opens can be saved back. The consequence worth knowing before changing it: an ICO whose
+selected entry decodes above 256 on either axis — a 512×512 PNG entry, which Windows opens, because
+it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
+loosening the load side reintroduces documents this build then cannot write.
 
 **BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
 byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly

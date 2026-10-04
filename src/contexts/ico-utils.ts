@@ -34,6 +34,24 @@ function assertWithinMaxEdge(width: number, height: number, action: 'open' | 'sa
   }
 }
 
+/**
+ * Width and height from a PNG's IHDR chunk, which the format requires to be the first chunk after
+ * the signature: 8 signature bytes, a 4-byte length, a 4-byte type, then the two 4-byte big-endian
+ * values. Reading them here is a pure byte decode — it is how the ceiling on this branch can be
+ * enforced before the browser allocates the raster rather than after.
+ *
+ * Returns `null` when the header is not the shape described, which leaves the caller to fall back
+ * on the browser-reported geometry: a malformed IHDR is the decoder's error to report, not this
+ * guard's to invent.
+ */
+function pngDimensions(data: Uint8Array): [number, number] | null {
+  if (data.length < 24) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const chunkType = String.fromCharCode(data[12], data[13], data[14], data[15]);
+  if (chunkType !== 'IHDR') return null;
+  return [view.getUint32(16), view.getUint32(20)];
+}
+
 function isPng(data: Uint8Array): boolean {
   return PNG_SIGNATURE.every((byte, index) => data[index] === byte);
 }
@@ -132,6 +150,13 @@ export async function loadIcoFile(file: Blob): Promise<HTMLImageElement> {
   const image = new Uint8Array(buffer, imageOffset, imageSize);
   if (!isPng(image)) return imageDataToImage(decodeBmpIcon(image), 'Failed to decode ICO image');
 
+  // Before the blob URL, so before the browser's decode. A 4096×4096 PNG entry is a ~2-6 MB file
+  // that rasterises to 67 MB, and the ceiling has to be able to see that without paying for it.
+  const declared = pngDimensions(image);
+  if (declared) {
+    assertWithinMaxEdge(declared[0], declared[1], 'open');
+  }
+
   const png = new Blob([image], { type: 'image/png' });
   const url = URL.createObjectURL(png);
   try {
@@ -141,10 +166,8 @@ export async function loadIcoFile(file: Blob): Promise<HTMLImageElement> {
       imageElement.onerror = () => reject(new Error('Failed to decode ICO image'));
       imageElement.src = url;
     });
-    // A PNG entry declares its geometry in the IHDR chunk, which the browser has already honoured
-    // by the time `onload` fires, so this is a read and not a second decode. Without it the modern
-    // entry kind skips the ceiling entirely: a 512×512 PNG icon opens here and is then refused by
-    // `encodeIco`, so the round trip is broken on exactly the branch most tools produce.
+    // The authority, and the only one that can see a PNG whose IHDR was unreadable. It cannot be
+    // the only one: the check above is what stops the raster being allocated at all.
     assertWithinMaxEdge(decoded.naturalWidth, decoded.naturalHeight, 'open');
     return decoded;
   } finally {

@@ -2,6 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeIco, loadIcoFile } from '../ico-utils.ts';
 
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/**
+ * A PNG whose IHDR chunk carries a real geometry, so `loadIcoFile`'s pre-decode check has something
+ * to read: 8 signature bytes, a 4-byte chunk length, the `IHDR` type, then the two 4-byte
+ * big-endian dimensions. The rest of the payload is filler — nothing decodes these bytes in jsdom,
+ * and the point of the check is that it never gets that far.
+ */
+function pngOf(width: number, height: number) {
+  const bytes = new Uint8Array(32);
+  bytes.set(PNG_SIGNATURE, 0);
+  new DataView(bytes.buffer).setUint32(8, 13);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12); // 'IHDR'
+  new DataView(bytes.buffer).setUint32(16, width);
+  new DataView(bytes.buffer).setUint32(20, height);
+  return bytes;
+}
 const ICO_HEADER_SIZE = 6;
 const ICO_DIRECTORY_ENTRY_SIZE = 16;
 
@@ -609,15 +625,57 @@ describe('ICO PNG-compressed entries', () => {
     expect(vi.mocked(URL.revokeObjectURL)).toHaveBeenCalledExactlyOnceWith('blob:mock-url');
   });
 
-  it('refuses a PNG entry whose geometry it cannot read, rather than assuming it is small', async () => {
-    // `undefined < 1` and `undefined > 256` are both false, so a range-only guard waves an
-    // unreadable geometry through and the document reaches the Save dialog unchecked.
+  it('refuses an over-large PNG entry before the browser decodes it', async () => {
+    // The post-`onload` check is the authority but it is too late to bound anything: the raster is
+    // already allocated by the time `naturalWidth` exists. A 4096×4096 entry is a ~2-6 MB file and
+    // 67 MB of RGBA, so the geometry has to be read out of the entry's own bytes — which is what
+    // IHDR is — before the blob URL is created at all.
     installImageHarness();
-    const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
-    const pending = resolvePngIco(icon(png, 4, 4), undefined, undefined);
+    const pending = loadIcoFile(new Blob([icon(pngOf(4096, 4096), 4, 4)]));
 
-    await expect(pending).rejects.toThrow('ICO image has invalid dimensions to open');
+    await expect(pending).rejects.toThrow('ICO image is too large to open (4096×4096)');
+    expect(imageStub).toBeNull();
+    expect(vi.mocked(URL.createObjectURL)).not.toHaveBeenCalled();
   });
+
+  it('accepts a PNG entry on its declared IHDR geometry, without reaching the browser', async () => {
+    installImageHarness();
+    const pending = resolvePngIco(icon(pngOf(64, 48), 64, 48), 64, 48);
+
+    await expect(pending).resolves.toBeInstanceOf(ImageStub);
+  });
+
+  it('falls back on the browser-reported geometry when the IHDR is unreadable', async () => {
+    // A PNG whose first chunk is not IHDR is malformed, and refusing to guess is the decoder's job:
+    // the guard declines to read it and the post-`onload` check still applies. Here the stub reports
+    // 512×512, so the post-`onload` check is what refuses — the pre-check never spoke.
+    installImageHarness();
+    const notIhdr = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
+    const pending = resolvePngIco(icon(notIhdr, 4, 4), 512, 512);
+
+    await expect(pending).rejects.toThrow('ICO image is too large to open (512×512)');
+  });
+
+  it.each([
+    { label: 'both axes', naturalWidth: undefined, naturalHeight: undefined },
+    { label: 'the width alone', naturalWidth: undefined, naturalHeight: 4 },
+    { label: 'the height alone', naturalWidth: 4, naturalHeight: undefined },
+  ])(
+    'refuses a PNG entry with $label unreadable, rather than assuming it is small',
+    async ({ naturalWidth, naturalHeight }) => {
+      // `undefined < 1` and `undefined > 256` are both false, so a range-only guard waves an
+      // unreadable geometry through and the document reaches the Save dialog unchecked. Each axis
+      // has to be caught on its own, or dropping one of the two comparisons is invisible.
+      installImageHarness();
+      const pending = resolvePngIco(
+        icon(new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]), 4, 4),
+        naturalWidth,
+        naturalHeight
+      );
+
+      await expect(pending).rejects.toThrow('ICO image has invalid dimensions to open');
+    }
+  );
 
   it('accepts a PNG entry sitting exactly on the ICO maximum', async () => {
     installImageHarness();
