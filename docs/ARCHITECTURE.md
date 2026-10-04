@@ -106,8 +106,7 @@ Surrounding it, `src/App.tsx`'s provider tree nests seven providers: `File`,
 `Theme`, `Store`, `KeyboardEvents`, `CurrentTool`, `PanelLayout`,
 `RightPanelVisibility`. `CurrentTool` holds live tool args outside the reducer,
 because options bars change at pointer rate and re-rendering the whole tree on
-every slider tick is not acceptable. `src/contexts/ImageContext.tsx` is 18 lines,
-entirely commented out.
+every slider tick is not acceptable.
 
 ## The pipeline, one gesture
 

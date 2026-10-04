@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { Action, PublicAction, StoreDispatch } from '../StoreContext.tsx';
 
@@ -235,6 +235,106 @@ function materializationProductionImports(modules?: readonly SourceModule[]): Fo
   return imports;
 }
 
+/**
+ * `vi.mock` takes a SPECIFIER, not a module, so a suite can name a module no
+ * `import` statement names — 114 such specifiers exist here. This arm is kept so
+ * that such a module is not mistaken for dead code, and it is honest about its own
+ * standing: it is currently UNEXERCISED, because every one of those 114 specifiers
+ * names a module some import statement also names, which was measured by deleting
+ * this arm and re-running rather than assumed. Removing it does not change the
+ * gate's verdict today; it would only start doing so if a suite ever mocked a
+ * module nothing imports.
+ */
+const MOCK_SPECIFIER = /\bvi\s*\.\s*(?:mock|doMock|unmock)\s*\(\s*['"]([^'"]+)['"]/g;
+
+const MODULE_EXTENSIONS = ['.ts', '.tsx', '/index.ts', '/index.tsx'] as const;
+
+/**
+ * A specifier to the repo-relative path of a module in `walked`, or `null` when it
+ * names something outside this walk.
+ *
+ * The extension search is load-bearing: most specifiers in this tree omit it —
+ * `toolIcons.tsx` writes `'./icons/BlurIcon'` for all 37 icon components — so a
+ * resolver that compared the raw path called every one of them unimported, and the
+ * gate below demanded 37 allow-list entries for live code. That was measured, not
+ * assumed: the first run of this guard failed with exactly those 37.
+ */
+function resolveSpecifier(fromPath: string, specifier: string, walked: ReadonlySet<string>): string | null {
+  let base: string | null = null;
+  if (specifier.startsWith('.')) {
+    base = relative(repoRoot, resolve(repoRoot, dirname(fromPath), specifier))
+      .split(sep)
+      .join('/');
+  } else if (specifier.startsWith('@/')) {
+    // `@/*` is the one non-relative alias `tsconfig.app.json` declares. A bare
+    // specifier is a package, which by definition lives outside this walk.
+    base = `src/${specifier.slice(2)}`;
+  }
+  if (base === null) return null;
+  if (walked.has(base)) return base;
+  for (const extension of MODULE_EXTENSIONS) {
+    if (walked.has(`${base}${extension}`)) return `${base}${extension}`;
+  }
+  return null;
+}
+
+/**
+ * Memoised because it walks every module under `src/` INCLUDING the test suites,
+ * masking comments as it goes, and the three cases that need it would otherwise pay
+ * for that walk three times over — which measured as a timeout, not as slowness.
+ * The tree cannot change while one test file runs, so a single scan is exact.
+ */
+let importedModulesCache: Set<string> | null = null;
+
+function importedModules(): ReadonlySet<string> {
+  if (importedModulesCache) return importedModulesCache;
+
+  const walked = new Set(
+    [...sourceModulesUnder(srcDir), join(repoRoot, 'toolbar-mapping.ts')]
+      .map((absolute) => relative(repoRoot, absolute).split(sep).join('/'))
+      .filter((path) => /\.tsx?$/.test(path))
+  );
+
+  const imported = new Set<string>();
+  for (const path of walked) {
+    const source = readFileSync(join(repoRoot, path), 'utf8');
+    const masked = maskCommentsPreservingImportSpecifiers(source);
+    for (const pattern of [IMPORT_SPECIFIER, MOCK_SPECIFIER]) {
+      for (const match of masked.matchAll(pattern)) {
+        const resolved = resolveSpecifier(path, match[1], walked);
+        if (resolved) imported.add(resolved);
+      }
+    }
+  }
+  importedModulesCache = imported;
+  return imported;
+}
+
+/**
+ * A production module no module in the repository names.
+ *
+ * This is DEAD code, not merely under-wired production code: a module that only
+ * its own tests import is untested-by-production logic, which is a coverage
+ * finding and not this gate's business. The distinction is why the allow-list
+ * below is a `Map` of one entry rather than the several a "no production
+ * importer" rule would need.
+ *
+ * Every entry carries its reason, because an unexplained entry is the
+ * unfalsifiable flag `scripts/__tests__/agents-citations.test.mjs` is written
+ * against.
+ */
+const ALLOWED_UNIMPORTED_MODULES = new Map<string, string>([
+  [
+    'src/main.tsx',
+    'the HTML entry point. `index.html` and `e2e/global-setup.ts` name it as the string literal `/src/main.tsx`, which no import statement can express',
+  ],
+]);
+
+function unimportedProductionModules(): string[] {
+  const imported = importedModules();
+  return walkedProductionModules().filter((path) => !imported.has(path));
+}
+
 const ALL_PUBLIC_ACTIONS: Record<PublicAction['type'], true> = {
   SET_HAS_IMAGE: true,
   SET_HAS_UNSAVED_CHANGES: true,
@@ -412,6 +512,54 @@ describe('StoreContext boundary gates', () => {
     expect(materializationProductionImports().map(({ file, specifier }) => ({ file, specifier }))).toEqual([
       { file: 'src/contexts/durable-compositor.ts', specifier: './materialization.ts' },
     ]);
+  });
+
+  // A module nothing names cannot fail a typecheck, cannot fail a test, and cannot be
+  // found by reading the entry points. Five accumulated in this repository at once —
+  // a fully commented `text.ts` and `ImageContext.tsx`, a two-constant barrel, a
+  // six-export fixture nothing imported, and that fixture's own barrel, which nothing
+  // imported either. The guard is what stops the sixth.
+  //
+  // The scan is warmed once here rather than inside the first case: it reads and
+  // comment-masks every module under `src/`, suites included, which costs several
+  // seconds and does not fit the per-test timeout. It runs in `beforeAll` so the cost
+  // is paid once and the assertions below stay ordinary.
+  beforeAll(() => {
+    importedModules();
+  }, 60_000);
+
+  it('finds the importers of a module the scan could otherwise miss', () => {
+    // The positive control the negative case needs. A resolver that resolved nothing
+    // would report every module as unimported, and `unimportedProductionModules` would
+    // then be an allow-list that happens to be short. Asserting known importers first
+    // means a broken scan fails here, where the message can say what it found, rather
+    // than in the next case behind a list of paths nobody can interpret.
+    const imported = importedModules();
+
+    expect(imported.has('src/contexts/StoreContext.tsx')).toBe(true);
+    expect(imported.has('src/hooks/useRect.ts')).toBe(true);
+    // Named through a specifier with no extension, which is how all 37 rail icons are
+    // reached — the case a naive resolver reports as 37 orphans.
+    expect(imported.has('src/components/SidebarLeft/icons/BlurIcon.tsx')).toBe(true);
+  });
+
+  it('reports a production module nothing imports, rather than leaving it to rot undeleted', () => {
+    const orphans = unimportedProductionModules().filter((path) => !ALLOWED_UNIMPORTED_MODULES.has(path));
+
+    expect(orphans).toEqual([]);
+  });
+
+  it('holds no allow-list entry for a module that now has an importer', () => {
+    const imported = importedModules();
+    const stale = [...ALLOWED_UNIMPORTED_MODULES.keys()].filter((path) => imported.has(path));
+
+    expect(stale).toEqual([]);
+  });
+
+  it('holds a reason on every allow-list entry, because an unexplained one is unfalsifiable', () => {
+    const unexplained = [...ALLOWED_UNIMPORTED_MODULES].filter(([, reason]) => !reason.trim()).map(([path]) => path);
+
+    expect(unexplained).toEqual([]);
   });
 
   it('keeps the public action union exhaustive and rejects internal actions', () => {
