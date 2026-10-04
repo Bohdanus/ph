@@ -91,7 +91,7 @@ Three things stay allowed, each deliberately:
   reaches this file. The narrow word matters: a fast-forward does run
   `post-merge`, which is why §Landing can name it as the thing that releases this
   merge's board claims. A document that says "runs no hook at all" is wrong about
-  git, and this one was: the phrase was in seven places across five files.
+  git, and the narrower word is load-bearing in both sentences.
 - **An operator hotfix the operator asked for on `main` by name** —
   `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`, because a truthiness test
   would read `ALLOW_MAIN_COMMIT=0` as permission and turn a spelling that looks
@@ -389,29 +389,38 @@ value as a clean answer.
 ### `derived-live-writer` can refuse the session that is asking
 
 **The refusal most likely to be hit by a reader who did nothing wrong.** `dispose` refuses
-`derived-live-writer` when the record's `derivedLive` is true or
-`writeHistory.derivedChatIds` is non-empty, and both are derived from what a chat **did inside
-that worktree** — so the chat that ran the gates in there, committed there, or read there is the
-chat the refusal is about. `classify()` deliberately keeps `derivedLive` beside the suppressed
-`live` rather than letting `--no-live-writers` erase its own evidence, and `dispose` reads
-`derivedLive`, so **the documented suppression flag does not clear this refusal.** The `io` arm is
-the wide one — `RECENT_IO_WINDOW_MS`, four hours — and it folds in `readHistory`, so a pure reader
-holds it too; `derivedChatIds` expires at `LIVE_WINDOW_MS`, thirty minutes, and is the only arm
-that **names** the chat it is refusing, so an `io`-only refusal prints "a chat", not an id.
+`derived-live-writer` when the record's `derivedLive` is true or `writeHistory.derivedChatIds` is
+non-empty. `derivedLive` is an **or** of four arms, and only three of them are records of a call
+inside the directory:
 
-So the ordinary shape of a harvest is: gate the branch inside its worktree, land it, and find the
+| arm         | what it actually is                                                   | window                     | names a chat?      |
+| ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
+| `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
+| `ioLive`    | recent `shellHistory` **and `readHistory`** — a reader counts         | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
+| `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
+
+So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **reads**. A
+session arm makes it worse than it looks: `writes.mjs` argues in its own header that attributing a
+call to a worktree by the session's directory is wrong in both directions, and this arm then does
+exactly that. `classify()` deliberately keeps `derivedLive` beside the suppressed `live` rather than
+letting `--no-live-writers` erase its own evidence, and `dispose` reads `derivedLive`, so **the
+documented suppression flag does not clear this refusal.**
+
+The refusal message names a chat only when `derivedChatIds` is non-empty — the write arm. **Every
+other arm prints "a chat"**, so an anonymous refusal is the normal case, not a sign of something
+else.
+
+The ordinary shape of a harvest is: gate the branch inside its worktree, land it, and find the
 worktree you just gated cannot be disposed. **Treat that as the tool working, not a flag to find.**
 The same `io` signal is the one that caught a worktree with agents editing it an hour earlier
-carrying `action: "dispose"` and `prunable: true` with every git fact correct. Land the work,
-leave the directory, and **say in the report that the removal is pending** — a harvest that
-reports its landing and silently leaves the directory is indistinguishable from one that forgot.
+carrying `action: "dispose"` and `prunable: true` with every git fact correct. Land the work, leave
+the directory, and **say in the report that the removal is pending** — a harvest that reports its
+landing and silently leaves the directory is indistinguishable from one that forgot.
 
-**And there is a flag that does clear it, which is why the sweep must not use one.** See `HANDOFF.md`
-§205: `node scripts/worktree-inventory.mjs --now <ms>` stamps `generatedAt` with the clock you
-pass, so a clock in the future expires every recency window **and** hands `dispose` a negative
-inventory age, defeating the staleness check as well. The clamp in `assemble.mjs` is
-`Math.max(nowMs, newestKnown)`, which bounds a **past** clock and lets a future one through. On
-this repository that moved `disposalCandidates` from 15 to 51 on an unchanged tree.
+**A flag does clear it, which is why a sweep must not reach for one.** `HANDOFF.md` §205 has the
+mechanism and the reproduction; the short form is that `--now` moves the clock every window is
+measured against, and a clock in the future expires them all.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 

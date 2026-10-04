@@ -5537,52 +5537,47 @@ items by number, so the second heading overwrites or is dropped rather than repo
 item, titled `one`, with no warning and no entry in any diagnostics field.
 
 **Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
-case, so the suite is green on a document that has lost an entry. `.skills/hard-merge.md`
-Phase 7.2 previously claimed this test existed and failed on exactly this input; that claim was
-false and is corrected in the same change. The phase's count sweep cannot catch it either — a
-duplicated number leaves `merged == ours + theirs − base` true — which is why the phase now also
-runs `grep -oE '^## [0-9]+\.' | sort | uniq -d` over the incoming side.
+case, so the suite is green on a document that has lost an entry. **There is no mechanical check
+anywhere**: `.skills/hard-merge.md` Phase 7.2 asserted one existed, which is false, and its own count
+sweep cannot catch it either — a duplicated number leaves `merged == ours + theirs − base` true. The
+only check is a set comparison between the two sides' number lists, run by hand.
 
-**What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding
-rather than resolving it silently, in the shape it already uses for a retired heading
-(`deadNumbers` and the `DEAD_HEADING` consumed by `assemble`), and
-`scripts/__tests__/handoff-import.test.mjs` should gain the case: two headings, one number, one
-reported finding, and the heading count still two. Until then the only check is the `uniq -d`
-Phase 7.2 now carries, and it has to be run by hand.
+**What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding rather
+than resolving it silently, in the shape it already uses for a retired heading (`deadNumbers` and
+the `DEAD_HEADING` consumed by `assemble`), and `scripts/__tests__/handoff-import.test.mjs` should
+gain the case: two headings, one number, one reported finding, and the heading count still two. §82
+is the same parser failing the same way on a different input, and the remedy is shared.
 
-## 204. `dispose` has one refusal no flag can clear, and it names the session that is asking
+## 204. The harvest gate sequence cannot dispose the worktree the harvest just gated
 
-**The problem.** `scripts/dispose-worktree.mjs` refuses `derived-live-writer` when the
-inventory record's `derivedLive` is true or `writeHistory.derivedChatIds` is non-empty. Both are
-derived from what a chat did **inside** that worktree — `writeHistory` from the write calls and
-`shellHistory` from bash calls whose `workdir` is under it, per the header of
-`scripts/lib/worktree-inventory/writes.mjs` — so the chat that ran the gates in a worktree is the
-chat the refusal names, for `RECENT_IO_WINDOW_MS` (four hours).
-
-**The consequence, which is the finding.** `.skills/worktree-merge-harvest.md` §Step 5 runs
-`npm run tsc` from inside the branch's worktree and §Step 6 then calls `npm run dispose`, so **a
-harvest cannot complete its own removal**. Five independent sessions over three days hit this
-and every one correctly refused to defeat the gate, which left landed branches accumulating
-behind a gate nobody could open. `--no-live-writers "<why>"` does **not** open it: `classify()`
-in `scripts/lib/worktree-inventory/classify.mjs` keeps `derivedLive` beside the suppressed `live`
+**The problem.** `scripts/dispose-worktree.mjs` refuses `derived-live-writer` when the inventory
+record's `derivedLive` is true or `writeHistory.derivedChatIds` is non-empty. Two of the four arms
+that produce `derivedLive` are call histories inside the worktree — `writeHistory` from the write
+calls, and `shellHistory` from bash calls whose `workdir` is under it, per the header of
+`scripts/lib/worktree-inventory/writes.mjs` — so a chat that ran the gates in a worktree is the chat
+the refusal is about. `--no-live-writers "<why>"` does **not** clear it: `classify()` in
+`scripts/lib/worktree-inventory/classify.mjs` keeps `derivedLive` beside the suppressed `live`
 precisely so an override cannot erase its own evidence, and `dispose` reads `derivedLive`.
 
-**What is documented, and what is not.** `docs/ORCHESTRATION.md` — §"`derived-live-writer` can
-refuse the session that is asking — and no override clears it" — now explains the shape, and
-both skills defer to it. That is deliberately the whole of the fix: the signal is the one that
-caught ten worktrees certified `dispose` while a live agent was editing inside them, and
-weakening it to let an agent clear its own name is the same defect the 2026-10-01 incident was.
-What is still missing is **a lever that is safe**. The shape that would close it without
-weakening the guard is a self-scoped one — a refusal is cleared when the named `derivedChatIds`
-are **this session's own** ids and nothing else is live, recorded in `ownership.suppressed` beside
-the signals it overrode, so the file stays auditable rather than believed. Whether an agent may
-clear its own name at all is an architecture judgement and belongs to the operator.
+**The consequence, which is the finding.** `.skills/worktree-merge-harvest.md` §Step 5 runs the
+gates from inside the branch's worktree and §Step 6 then calls `npm run dispose`, so **a harvest
+cannot complete its own removal**. Every sweep that hit this correctly refused to defeat the gate,
+which left landed branches accumulating behind a gate nobody could open.
 
-**Correction, 2026-10-04: a lever exists and it is not safe.** `scripts/worktree-inventory.mjs`
-accepts `--now <ms>`, documented as "pin the clock, for reproducible output". A **future** clock
-expires every recency window at once, so it clears the refusal this entry says nothing clears.
-See §205 — it is a defect, not a lever, and the fix belongs there rather than in a scoped
-override here.
+**What the refusal does and does not tell you.** Only the **write** arm names a chat id, and it
+expires at `LIVE_WINDOW_MS`, thirty minutes. The **I/O** arm is `RECENT_IO_WINDOW_MS`, four hours,
+counts **reads** as well as writes, and prints "a chat" with no id. The **session** and **board**
+arms print no id either — `chatLive` is `session.directory` plus `time_updated`, and `liveAgent` is
+a board row, so neither is a record of a call inside the directory. `docs/ORCHESTRATION.md` —
+§"`derived-live-writer` can refuse the session that is asking" — is the one home, and both skills
+defer to it rather than restating it.
+
+**What is missing.** A lever that is **safe**. The shape that would close this without weakening the
+guard is a self-scoped one: a refusal is cleared when the named `derivedChatIds` are **this session's
+own** ids and nothing else is live, recorded in `ownership.suppressed` beside the signals it
+overrode, so the file stays auditable rather than believed. Whether an agent may clear its own name
+at all is an architecture judgement and belongs to the operator. **A lever already exists and is not
+safe — see §205**, which is where that defect belongs.
 
 ## 205. `--now` with a future clock defeats both the liveness arm and the staleness arm of `dispose`
 
@@ -5595,29 +5590,102 @@ clock: `classify()`'s recency tests (`hasRecentIo()`, and the `LIVE_WINDOW_MS` f
 value, so `dispose`'s freshness check `nowMs - inventory.generatedAtMs > maxAgeMs` computes a
 **negative** age and passes.
 
-**Reproduced on an unchanged tree.** Honest run: `disposalCandidates` held 15 worktrees. Same
-commit, same tree, `--now` five hours ahead: `disposalCandidates` held **51**,
-`ownership.liveWriterCount` was `0`, and `ownership.derivedLiveWorktrees` was empty. The worktree
-the measurement ran in was the one running it — 23 write calls and 31 shell calls, the newest
-seconds old — and the record came back `derivedLive: false`, all four `liveSignals` false,
-`writeHistory.derivedChatIds: []`. Worktrees the honest run classified `in-use` on a live
-`derivedLive` became disposal candidates. Nothing was forced and no permission was asked for.
+**Reproduced on an unchanged tree.** `disposalCandidates` and `ownership.liveWriterCount` go from
+their honest values to `51` and `0`; the worktree running the measurement came back
+`derivedLive: false` with all four `liveSignals` false and `writeHistory.derivedChatIds: []`.
+**Only the far-side figures are stable** — with every window expired the candidate set is a pure
+git function, so 51 reproduces exactly; the honest-side count moves as the repository moves, and
+this session's own call counters rise every minute. Re-derive both halves. Worktrees the honest run classified `in-use` on a live
+`derivedLive` became disposal candidates. **It clears three refusals, not one, and the staleness hole is the wider of the two.** A future
+stamp makes `action-not-dispose` read as satisfied as well as `inventory-stale` and
+`derived-live-writer`, and `preflight()` returns `ok: true` with an empty failure list on a clean
+worktree. The two paths need different amounts of clock: **+2 seconds is enough for the staleness
+check alone**, because a negative age is never `> maxAgeMs`, while the liveness arm needs more than
+four hours. So the staleness hole is roughly 8 000× the easier one to fall into, and the two are
+independent — which is the argument for fixing the consumer side first.
 
-**Why it matters more than a flag bug.** `scripts/dispose-worktree.mjs` is the only sanctioned
-removal path, and its refusal list exists because a sweep destroyed a live chat's uncommitted work
-on 2026-10-01 by using a hand-written deletion list instead. A documented flag that turns the
-liveness verdict off **and** simultaneously defeats the staleness check removes both of the signals
-that refusal list is built from.
+**The clamp's stated purpose is backwards, and that matters for the fix.** `assemble.mjs` claims
+`Math.max(nowMs, newestKnown)` is what makes `--now` reproducible. It is not: a **past** pin is
+_discarded_ and replaced by the newest session row, so two different past pins produce two different
+`generatedAt` values. The clamp's real value is defensive — it stops a negative age from passing the
+liveness test — and any symmetric bound needs a written rule for what a pin is allowed to be, or
+`--now` becomes a no-op in one direction and a lie in the other.
 
-**What would close it.** Clamp `effectiveNow` on **both** sides — the past clamp is what makes
-`--now` reproducible, and a future clock is never a reproducibility need — or, smaller and holding
-even if another generator gains the same flag, have `dispose` refuse an inventory whose
-`generatedAt` is further ahead than its staleness ceiling. Either way `--now` should be documented
-as a test-only input. The honesty rule `assemble.mjs` already states — "a flag whose purpose is
-reproducibility must not change the answer" — is currently false in exactly this direction.
+**What would close it.** Two changes, and the second holds even if another generator grows the
+flag. **First**, the smaller one: `dispose` should refuse an inventory whose age is outside the
+staleness ceiling in **either** direction — `Math.abs(nowMs - generatedAtMs) > maxAgeMs`, not the
+one-sided test — because a future stamp is the whole bypass and this does not require trusting the
+generator. One assertion pins it: `preflight()` with a `generatedAtMs` of `nowMs + 2_000` over a
+clean record must refuse as `inventory-stale`. **Second**, the generator: stop `generatedAt` being
+authoritative about time — emit the wall-clock stamp beside the pinned one and let every recency test
+read the pinned value, which makes a pin incapable of moving a freshness verdict and is what
+`assemble.mjs`'s own honesty rule already claims. That is a schema bump, and it must land with the
+`schemaVersion` check §206 asks for.
 
-**Related, and the same shape.** The refusal message prints a chat id only when `derivedChatIds`
-is non-empty; on the `io`-only arm it prints "a chat", and `classify.mjs` folds `readHistory` into
-that arm, so a **reader** can trip a refusal worded as "a chat wrote a file in it" when nothing
-was written. `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is
-asking" — now states which arm names an id and which does not.
+**Related, and the same shape.** The refusal message prints a chat id only when `derivedChatIds` is
+non-empty, which is the **write** arm alone; the `io`, session and board arms all print "a chat", and
+`classify.mjs` folds `readHistory` into the `io` arm, so a **reader** can trip a refusal worded as
+"a chat wrote a file in it" when nothing was written. `docs/ORCHESTRATION.md` —
+§"`derived-live-writer` can refuse the session that is asking" — has the per-arm table.
+
+## 206. The `mustNotPrune` veto is advertised in a refusal message and can never fire
+
+**The problem.** `dispose`'s refusal text tells a reader the way out of a disposal it is about to
+refuse: _"A curated finding sets `mustNotPrune`, which vetoes `dispose` as well as `land`. It
+records work git cannot see in a clean tree."_ The mechanism behind that sentence is real —
+`classify.mjs` reads `Boolean(curated?.mustNotPrune)` into `curatedBlocksPrune`, and
+`dispose-worktree.mjs` refuses `must-not-prune` on the same field. **No input sets it.**
+
+```bash
+node --input-type=module -e "import {CURATED} from './scripts/lib/worktree-inventory/curated.mjs'; \
+  console.log(Object.entries(CURATED).filter(([,v])=>Object.hasOwn(v,'mustNotPrune')))"
+# → []      (160 entries, 0 with the field)
+```
+
+The field was removed from every entry when the curated summary was re-derived from git — the
+reasoning recorded in `curated.mjs` is that the hand-maintained list was the thing that rotted.
+One entry that carried it retracts it explicitly, on the grounds that git now proves the work
+committed. So the guard is not wrong, and it is not a lie: it is a **guard with no reachable input**,
+and the removal deleted the branch that read it.
+
+**Why it matters.** This is the one mechanism standing between "git says this worktree is
+disposable" and a worktree holding work that exists nowhere else. The scenario it exists for is real
+and has happened — the 2026-10-01 incident was a worktree whose only copy of someone's work was
+uncommitted. Today the guard cannot catch it, because the only way to arm it is for a human to edit
+a source file by hand, and nothing tells them to.
+
+**What would close it.** `dispose` should offer the claim rather than assert it: when it refuses on
+liveness or staleness and the worktree has uncommitted or untracked content, say that arming
+`mustNotPrune` is what a human does, and where. That is a wording fix, it costs nothing, and it
+stops the refusal message from implying a path that requires hand-editing `curated.mjs`. Whether a
+subagent may ever set the flag is a separate question and belongs to the operator — the field
+records a _human_ claim, so a subagent setting it would make the guard self-served.
+
+## 207. `dispose` reads two record keys that it never checks a version for
+
+**The problem.** `dispose-worktree.mjs` gates its liveness refusal on
+`inventory.record.derivedLive === true || (writeHistory?.derivedChatIds ?? []).length > 0`. Both are
+**duck-typed**: an absent key is neither `true` nor a non-empty list, so it reads as safe. The
+inventory carries `schemaVersion`, but `dispose` never reads it — the string does not appear in the
+file at all — and `readInventory` performs no version check.
+
+Probed directly against `preflight()`:
+
+```
+record WITH derivedLive + derivedChatIds            → ok=false  [derived-live-writer]
+record WITHOUT derivedLive, no writeHistory          → ok=true   []
+record WITHOUT derivedLive, empty writeHistory      → ok=true   []
+```
+
+**Why it is still open.** `scripts/__tests__/dispose-worktree.test.mjs` writes `derivedLive`
+explicitly in every fixture, so no case covers its absence and the suite is green either way. The
+reachable path today is a `WORKTREES.json` written by a pre-`6eaeef6c` build, which is narrow — but
+the shape is the general one: **a consumer that reads two keys it does not version will eventually
+read a file where they are missing, and it will fail toward disposal rather than toward refusal.**
+Every other guard in this program fails closed.
+
+**What would close it.** `readInventory` should refuse a `schemaVersion` it does not recognise, the
+way it already refuses a missing or unreadable file, and the refusal should be the existing
+`inventory-missing` shape rather than a new code. Then the liveness keys may be read as an
+invariant instead of as a hope. This should land with the `generatedAt` half of §205, which is the
+same schema and the same file.

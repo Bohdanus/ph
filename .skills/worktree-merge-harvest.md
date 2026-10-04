@@ -479,20 +479,18 @@ move on. A dirty tree means commit it or carry it as a patch. `git branch -d`
 refusing is likewise a finding, not an obstacle — and `dispose` already uses `-d`,
 so a branch it kept is anchored and recoverable.
 
-**Expect `derived-live-writer` to fire on a worktree you just gated.** Step 5 ran the gates
-in that worktree, and `dispose` refuses on what a chat did _inside_ it. `--no-live-writers`
-does **not** clear the refusal: it suppresses the verdict the record carries without erasing the
-evidence it is built from. The wide arm is recent command I/O, four hours, and it counts **reads**
-as well as writes — so the refusal may name no id at all, printing "a chat"; only the write arm
-names one, and it expires in thirty minutes. `docs/ORCHESTRATION.md` — §"`derived-live-writer`
-can refuse the session that is asking" — is the one home, and it also names the one flag that
-_would_ clear this (`--now`, which is why a sweep must not use it: `HANDOFF.md` §205).
+**Expect `derived-live-writer`, and do not expect it to name you.** Step 5 ran the gates in that
+worktree, so the refusal is about you or about nobody in particular — only the write arm names a
+chat, and only for thirty minutes. `--no-live-writers` does not clear it.
+`docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is the
+one home for the mechanism, and `HANDOFF.md` §205 is the one home for the flag that _would_ clear it,
+which a sweep must not reach for.
 
-This is the gate working: the same signal caught a worktree with agents editing it an hour
-earlier reading `action: "dispose"` with every git fact correct. Do not reach for
-`git worktree remove`. **Land the work, leave the directory, and say in the report that the
-removal is pending** — a harvest that reports its landing and silently leaves the worktree
-behind is indistinguishable from one that forgot.
+This is the gate working: the same signal caught a worktree with agents editing it an hour earlier
+reading `action: "dispose"` with every git fact correct. Do not reach for the removal command by
+hand. **Land the work, leave the directory, and say in the report that the removal is pending** — a
+harvest that reports its landing and silently leaves the worktree behind is indistinguishable from
+one that forgot.
 
 **Record the outcome.** `.skills/stale-worktree-reclaim.md` and this file both
 exist because a harvest that lands silently teaches the next agent nothing. Put
