@@ -335,7 +335,7 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 45. Thirty-six registrations in
+**This app:** 46. Thirty-seven registrations in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
@@ -343,7 +343,7 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 **Status:** `partial`
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`, `Ctrl+T`; `[` and `]` for brush size; `0` and `1`
 for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
 Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
 and the Burn, so the Sponge must be the active tool.
@@ -351,7 +351,10 @@ and the Burn, so the Sponge must be the active tool.
 Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
 only save is Save As, which is what `File > Save` opens
 (`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
-`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
+`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two. `T` is the one key
+with two bindings: bare it selects the Type tool, and `Ctrl+T` selects Free Transform,
+which is Adobe's accelerator and the only keyboard route to that panel — the tool has no
+rail tile, so `Edit ▸ Free Transform` was its sole entry before this binding.
 
 **Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
 Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
