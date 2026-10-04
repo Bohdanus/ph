@@ -164,8 +164,9 @@ describe('Sharpen toolbar', () => {
       fireEvent.change(getAmount(), { target: { value: '120' } });
       flushRaf();
 
-      // `throttledOnChange` spreads `args` and overwrites one field, so a value the user never
-      // moved cannot survive in the frame that flushes, and no field can be invented.
+      // `throttledOnChange` spreads the pending-or-`args` base and overwrites one field, so a
+      // value the user never moved cannot survive in the frame that flushes, and no field can
+      // be invented.
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
         amount: 120,
         radius: 1,
@@ -187,6 +188,33 @@ describe('Sharpen toolbar', () => {
       expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
       expect(mockSetToolArgs).toHaveBeenCalledWith({ amount: 80, radius: 1, toolName: 'sharpen' });
       expect(mockTempUpdateLayer).toHaveBeenCalledTimes(1);
+    });
+
+    it('carries both controls into the single write when they change in one frame', () => {
+      render(<Sharpen />);
+
+      // Nothing republishes `args` until the frame runs, so both handlers below close over
+      // the SAME render-time object. Each hands over one field, and the only base that can
+      // carry the first control's field into the second handler's write is the pending args
+      // — merging onto `args` instead silently put Amount back to its seeded 50 and wrote a
+      // Radius the user had paired with 120%. Both values differ from the seeds, so this
+      // cannot pass by accident.
+      fireEvent.change(getAmount(), { target: { value: '120' } });
+      fireEvent.change(getRadius(), { target: { value: '8' } });
+
+      // One frame, because the first change already armed it.
+      expect(rafCallbacks).toHaveLength(1);
+      expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+
+      flushRaf();
+
+      const expected = { amount: 120, radius: 8, toolName: 'sharpen' };
+      // The preview and the published args are the same payload, so the pair that reaches the
+      // store cannot disagree about the merge. `toHaveBeenCalledExactlyOnceWith` on both is
+      // what makes this mutation-sensitive: a per-field write would be two calls, and a
+      // write carrying the stale Amount would be one call with the wrong value.
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ toolArgs: expected });
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expected);
     });
 
     it('schedules a fresh frame after the previous one has flushed', () => {
