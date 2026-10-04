@@ -2,6 +2,7 @@ import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
 import { durableSourceKindForTool, legacyHistoryToDurable } from '../history-adapter.ts';
+import { createLayerSource } from '../layer-utils.ts';
 import type { DurableOperation } from '../history-model.ts';
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
@@ -20,22 +21,7 @@ import {
 
 function replayDependencies(): HistoryReplayDependencies {
   return {
-    createLayer: ({ layerId, layers, source }) => ({
-      id: layerId,
-      name:
-        source.kind === 'tool' ? source.args.toolName : source.kind === 'image' ? (source.name ?? layerId) : 'Blank',
-      isBedrock: Boolean(source.isBedrock),
-      tmpCanvas: null,
-      bitmap: source.kind === 'image' ? source.bitmap : null,
-      visible: true,
-      opacity: 1,
-      locked: false,
-      blendMode: 'source-over',
-      order: Object.values(layers).length,
-      pos: 'pos' in source ? { ...source.pos } : { x: 0, y: 0, width: source.size.width, height: source.size.height },
-      source,
-      operations: [],
-    }),
+    createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
     applyRasterTool: (layer) => layer,
   };
 }
