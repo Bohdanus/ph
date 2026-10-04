@@ -137,6 +137,18 @@ function selectionArgs(historyItem: HistoryItem): { previous: unknown; next: unk
   return { previous: args.previousSelectionState, next: args.nextSelectionState };
 }
 
+/**
+ * A one-entry timeline, because `validateTimeline` refuses an append point at or
+ * past the end of the timeline. `seed` leaves `history: []` with
+ * `historyIndex: 0`, so an append planned against it yields `durableEntry: null`
+ * and the durable boundary is never reached at all.
+ */
+function seedWithAppendableTimeline(selections: Selection[], activeSelectionId: string | null) {
+  seed(selections, activeSelectionId);
+  storeStateMock.history = [{ id: 'prior-selection', actionName: SELECTION_ACTION, layerId: 'selection' }];
+  storeStateMock.historyIndex = 0;
+}
+
 beforeEach(() => {
   dispatchMock.mockClear();
   appendControl.calls = [];
@@ -497,7 +509,7 @@ describe('useSelectionHistory recorded baseline is a value, not a live reference
     // reach the durable `before` as well as the legacy arg.
     const existing = makeSelection('existing');
     const live = [existing];
-    seed(live, existing.id);
+    seedWithAppendableTimeline(live, existing.id);
 
     mountWriter().clearSelections();
 
