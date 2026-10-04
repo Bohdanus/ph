@@ -727,10 +727,15 @@ const REAL_TOOL_LABELS: string[] = toolbarMap.flatMap((group) =>
 );
 
 // The labels the suite passes to the slug-consuming helpers:
-// `e2e/levels.spec.ts:86,128` and `e2e/sidebar-flyout.spec.ts:73,86`. They are a subset
-// of REAL_TOOL_LABELS; they are listed separately because those are the three paths an
-// e2e run actually exercises end to end.
-const SUITE_FLYOUT_LABELS = ['Levels', 'Pencil Tool', 'Ellipse Tool'];
+// `e2e/paint-options.spec.ts:98`, `e2e/paint-tool-pixels.spec.ts:276` and
+// `e2e/sidebar-flyout.spec.ts:387`. They are a subset of REAL_TOOL_LABELS; they are listed
+// separately because those are three paths an e2e run actually exercises end to end.
+//
+// `'Levels'` was here and is not any more: `levels` is an `Image ▸ Adjustments` command, so
+// it has no rail group and its `tool-flyout-item-levels-…` id is no longer minted by
+// anything. The three-dots/flyout path is not where that tool is reached from any more, so
+// there is no flyout label of its to compare.
+const SUITE_FLYOUT_LABELS = ['Brush Tool', 'Pencil Tool', 'Ellipse Tool'];
 
 const KEYBOARD_CASES: Array<{
   requested: 'ArrowDown' | 'ArrowUp' | 'Enter' | ' ';
@@ -952,9 +957,11 @@ describe('Toolbar Helpers', () => {
         // The tripwire is the it.each below: the helper keeps its own copy of the rule so
         // that the comparison is not a tautology. Change one side alone and it goes red.
         // This case only fails if the label set itself stops being read, which would
-        // silently turn the 28 real cases above into zero.
+        // silently turn the real cases above into zero. Named rather than counted, because
+        // the count is a property of `toolbarMap` and rots every time a group changes — the
+        // last pin on it was a `'Levels'` that outlived the group holding it.
         expect(REAL_TOOL_LABELS.length).toBeGreaterThan(0);
-        expect(REAL_TOOL_LABELS).toContain('Levels');
+        expect(REAL_TOOL_LABELS).toContain('Brush Tool');
       });
 
       it.each(REAL_TOOL_LABELS)('reproduces the application slug for the real toolbar label %j', (label) => {

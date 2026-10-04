@@ -332,10 +332,9 @@ describe('useLayers removeLayer', () => {
     // on the floor would leave the whole feature inert with every other assertion
     // still green.
     //
-    // The discriminator is the registry: a publication never opens an asset
-    // transaction, and every reconversion does (`convertLegacyHistorySafely`,
-    // `history-adapter.ts:830`, reached from `buildDurableDocument`). This test is
-    // the one that fails if the writer stops passing `durableEntry`.
+    // The discriminator is the registry: publication opens exactly one append
+    // transaction, while reconversion opens its own conversion transaction. This
+    // test is the one that fails if the writer stops passing `durableEntry`.
     const beginTransaction = vi.spyOn(getAssetRegistry(), 'beginDocumentAssetTransaction');
     try {
       const result = setupWithDocument();
@@ -348,7 +347,7 @@ describe('useLayers removeLayer', () => {
         result.current.layers.removeLayer(id);
       });
 
-      expect(beginTransaction).not.toHaveBeenCalled();
+      expect(beginTransaction).toHaveBeenCalledTimes(1);
       expect(result.current.store.durableStatus).toBe('current');
     } finally {
       beginTransaction.mockRestore();
@@ -358,6 +357,7 @@ describe('useLayers removeLayer', () => {
   it('still removes the layer when the boundary itself throws', () => {
     const result = setupWithDocument();
     const id = Object.keys(result.current.store.layers)[0]!;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     // A shadow projection that throws must not reject a valid removal, exactly as
     // the selection writers' `catch` re-dispatch says. Nothing has been appended
     // and no layer has left the record when the plan runs, so the catch path is
@@ -379,6 +379,10 @@ describe('useLayers removeLayer', () => {
     // still in the shadow — the legacy timeline is the authority either way.
     expect(store.durableStatus).toBe('current');
     expect(store.durableDocument!.history.map((entry) => entry.operation.kind)).toEqual(['remove-layer']);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Unable to plan durable history for a layer removal',
+      expect.objectContaining({ message: 'the durable projection failed' })
+    );
   });
 
   it('removes a layer the record does not hold without asking the boundary at all', () => {

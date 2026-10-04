@@ -135,29 +135,85 @@ describe('useRect', () => {
       onChange: options.onChange ?? vi.fn(),
       onChangeEnd: options.onChangeEnd ?? vi.fn(),
     };
-    return renderHook(() => useRect(props));
+    // The refs are handed back by identity, so a mocked rect util can be asserted against the
+    // very object the hook measures through rather than against a re-derived `{ current: canvas }`.
+    return { ...renderHook(() => useRect(props)), containerRef: props.containerRef, overlayRef: props.overlayRef };
   }
 
   it('initializes without initial rect', () => {
-    const { result } = renderUseRect();
-    expect(result.current.onPointerDown).toBeDefined();
-    expect(result.current.onPointerMove).toBeDefined();
-    expect(result.current.onPointerUp).toBeDefined();
-    expect(result.current.redraw).toBeDefined();
-    expect(result.current.clearSelection).toBeDefined();
+    const onRepaint = vi.fn();
+    const onChangeEnd = vi.fn();
+    const { result } = renderUseRect({ onRepaint, onChangeEnd });
+    const target = createMockTarget();
+
+    // Nothing to initialise FROM: with no rect the mount effect finds its two refs already equal
+    // and paints nothing, so there is no selection to report either.
+    expect(onRepaint).not.toHaveBeenCalled();
+
+    // A press with no box under it finds no edge, so the gesture is a fresh drag and the press is
+    // recorded as having landed on nothing — `currentEdgeRef` is `null` for exactly this reason.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 150, clientY: 150, target })
+        )
+      ).toBe(false);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
+
+    // The release is the whole gesture: it commits a fresh drag anchored at the press point,
+    // which is the only rect this hook ever had.
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(createPointerEvent({ button: 0, clientX: 300, clientY: 250, target }));
+    });
+    expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 150, y1: 150, x2: 300, y2: 250 });
+
+    // A hover reports the edge it found to its CALLER and records none: `currentEdgeRef` is a
+    // fact about the press, and this hook's only press was erased by its own release. A hover
+    // that stored its edge would hand the next `TextToolArea` placement a stale one, and the
+    // boolean above already shows the hover found the interior of the rect the release committed.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 200, target }))
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
   });
 
   it('initializes with initial rect', () => {
     const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
     const { result } = renderUseRect({ initialRect });
-    expect(result.current.onPointerDown).toBeDefined();
+    const target = createMockTarget();
+
+    // The incoming rect IS the box, so a press names the edge it landed on rather than reporting
+    // only that it found one. `TextToolArea` decides a fresh placement from
+    // `pointerState.currentEdgeRef.current === null`, so the NAME is the contract and the boolean
+    // every other suite already reads is not enough to pin it.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        )
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('top-left');
+
+    // Interior press on the same box: a move, not a resize, and a different name for it.
+    act(() => {
+      expect(
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 175, target })
+        )
+      ).toBe(true);
+    });
+    expect(result.current.pointerState.currentEdgeRef.current).toBe('inside');
   });
 
   it('returns false for pointer down on non-left button', () => {
     const { result } = renderUseRect();
     const event = createPointerEvent({ button: 1, target: createMockTarget() });
     act(() => {
-      const res = result.current.onPointerDown(event);
+      const res = result.current.pointerHandlers.onPointerDown(event);
       expect(res).toBe(false);
     });
   });
@@ -169,7 +225,7 @@ describe('useRect', () => {
     const target = createMockTarget();
     const onCorner = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target });
     act(() => {
-      expect(result.current.onPointerDown(onCorner)).toBe(true);
+      expect(result.current.pointerHandlers.onPointerDown(onCorner)).toBe(true);
     });
 
     // Both counts are absolute. The relative form below only says the clear published nothing MORE,
@@ -179,14 +235,14 @@ describe('useRect', () => {
     expect(onRepaint).toHaveBeenCalledTimes(1);
     const publishedBeforeClear = onRepaint.mock.calls.length;
     act(() => {
-      result.current.clearSelection();
+      result.current.rectHandles.clearSelection();
     });
     expect(onRepaint).toHaveBeenCalledTimes(publishedBeforeClear);
     expect(onRepaint).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
 
     // The selection is gone, so the corner that was a handle no longer reports one.
     act(() => {
-      expect(result.current.onPointerDown(onCorner)).toBe(false);
+      expect(result.current.pointerHandlers.onPointerDown(onCorner)).toBe(false);
     });
   });
 
@@ -198,7 +254,7 @@ describe('useRect', () => {
     // Drop the mount effect's own publication, so the count below is the redraw's.
     onRepaint.mockClear();
     act(() => {
-      result.current.redraw();
+      result.current.rectHandles.redraw();
     });
 
     expect(onRepaint).toHaveBeenCalledExactlyOnceWith(initialRect);
@@ -212,26 +268,26 @@ describe('useRect', () => {
       // (100, 100) is the rect's top-left corner, so it is inside the top-left handle.
       const onCorner = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target: createMockTarget() });
       act(() => {
-        expect(result.current.onPointerDown(onCorner)).toBe(true);
+        expect(result.current.pointerHandlers.onPointerDown(onCorner)).toBe(true);
       });
 
       // (400, 400) misses the rect entirely, so no edge is found and no resize starts.
       act(() => {
         const onMiss = createPointerEvent({ button: 0, clientX: 400, clientY: 400, target: createMockTarget() });
-        expect(result.current.onPointerDown(onMiss)).toBe(false);
+        expect(result.current.pointerHandlers.onPointerDown(onMiss)).toBe(false);
       });
     });
 
     it('creates rect from layer when clicking on layer', () => {
       const layer = createMockLayer();
       const onRepaint = vi.fn();
-      const { result } = renderUseRect({ onRepaint });
+      const { result, overlayRef } = renderUseRect({ onRepaint });
 
       const event = createPointerEvent({ button: 0, clientX: 150, clientY: 150, target: createMockTarget() });
       act(() => {
         // No selection rect exists yet, so the layer rect is adopted as a move: the pointer is
         // inside it, not on a handle, which is what `isHandleClicked` reports.
-        expect(result.current.onPointerDown(event, layer)).toBe(false);
+        expect(result.current.pointerHandlers.onPointerDown(event, layer)).toBe(false);
       });
 
       // Proves the layer position was converted and that the adopted rect is what the
@@ -239,8 +295,21 @@ describe('useRect', () => {
       // runs — so this asserts the conversion END TO END instead of that a hand-copy mock was
       // called. The old form (`expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(...)`)
       // could only ever prove the mock was live, never that the conversion was right.
-      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalled();
       expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
+
+      // The paint is clamped by a measurement of the hook's own OVERLAY ref, and the real
+      // `getCanvasSize(canvasRef)` reads `canvasRef.current.width/height` — so the argument is
+      // the REF, by identity, and neither the size it returns nor the `imageSize` prop. A bare
+      // `toHaveBeenCalled()` accepted the container ref, a freshly built ref object, or any size.
+      // Exactly once, because this hook had no rect on mount and the adoption is the one paint.
+      //
+      // That one line also rules out the container ref, so a `not.toHaveBeenCalledWith(containerRef)`
+      // beside it said nothing the call count and identity had not already said. The claim it did
+      // not reach is the one the sibling suite owns: that the measurement is what CLAMPS the paint
+      // rather than `imageSize`, which `useRect.drag.test.ts` pins in
+      // `clamps the painted geometry to the canvas but reports the unclamped rect` with an
+      // `imageSize` deliberately unlike the canvas.
+      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalledExactlyOnceWith(overlayRef);
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {
@@ -258,10 +327,12 @@ describe('useRect', () => {
       });
       act(() => {
         // Ctrl is held over the top-left handle, so the drag starts as a handle resize.
-        expect(result.current.onPointerDown(downEvent)).toBe(true);
+        expect(result.current.pointerHandlers.onPointerDown(downEvent)).toBe(true);
       });
       act(() => {
-        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 200, clientY: 200, target }));
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 200, target })
+        );
       });
 
       const committed = onChangeEnd.mock.lastCall?.[0] as { x1: number; y1: number; x2: number; y2: number };
@@ -296,7 +367,9 @@ describe('useRect', () => {
       for (const [clientX, clientY] of hits) {
         act(() => {
           expect(
-            result.current.onPointerMove(createPointerEvent({ clientX, clientY, target: createMockTarget() })),
+            result.current.pointerHandlers.onPointerMove(
+              createPointerEvent({ clientX, clientY, target: createMockTarget() })
+            ),
             `${clientX},${clientY}`
           ).toBe(true);
         });
@@ -304,7 +377,9 @@ describe('useRect', () => {
 
       act(() => {
         expect(
-          result.current.onPointerMove(createPointerEvent({ clientX: 400, clientY: 400, target: createMockTarget() }))
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: 400, clientY: 400, target: createMockTarget() })
+          )
         ).toBe(false);
       });
     });
@@ -321,7 +396,9 @@ describe('useRect', () => {
 
       act(() => {
         expect(
-          result.current.onPointerDown(createPointerEvent({ button: 0, clientX: 100, clientY: 100, target }))
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          )
         ).toBe(true);
       });
       usePointerPositionMock.mockData.isMouseDown.current = true;
@@ -329,8 +406,8 @@ describe('useRect', () => {
       // A handle drag anchors at the opposite corner, so pulling the top-left handle out to (400, 350)
       // grows the rect to (300, 250)-(400, 350).
       act(() => {
-        result.current.onPointerMove(createPointerEvent({ clientX: 350, clientY: 300, target }));
-        result.current.onPointerMove(createPointerEvent({ clientX: 400, clientY: 350, target }));
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 350, clientY: 300, target }));
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 400, clientY: 350, target }));
       });
       // Nothing is painted on the event itself, and the two moves share one frame: a single
       // publication, at the LAST point, so a fast drag cannot outrun the frame it scheduled.
@@ -341,7 +418,9 @@ describe('useRect', () => {
       expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 250, x2: 400, y2: 350 });
 
       act(() => {
-        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 400, clientY: 350, target }));
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 400, clientY: 350, target })
+        );
       });
       expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 250, x2: 400, y2: 350 });
     });
@@ -353,7 +432,9 @@ describe('useRect', () => {
       // Hovering the top-left handle reports an edge and sets that handle's resize cursor.
       const target = createMockTarget();
       act(() => {
-        const res = result.current.onPointerMove(createPointerEvent({ clientX: 100, clientY: 100, target }));
+        const res = result.current.pointerHandlers.onPointerMove(
+          createPointerEvent({ clientX: 100, clientY: 100, target })
+        );
         expect(res).toBe(true);
       });
       // The real `CURSOR_MAP`, so this is the cursor a user gets hovering the top-left handle, not
@@ -364,7 +445,9 @@ describe('useRect', () => {
       // carrying the handle cursor the hover above just set — has to lose it. A fresh element would
       // satisfy this before the hook ever ran.
       act(() => {
-        const res = result.current.onPointerMove(createPointerEvent({ clientX: 400, clientY: 400, target }));
+        const res = result.current.pointerHandlers.onPointerMove(
+          createPointerEvent({ clientX: 400, clientY: 400, target })
+        );
         expect(res).toBe(false);
       });
       expect(target.style.cursor).toBe('');
@@ -374,7 +457,7 @@ describe('useRect', () => {
       const { result } = renderUseRect();
       const event = createPointerEvent({ clientX: 100, clientY: 100, target: createMockTarget() });
       act(() => {
-        const res = result.current.onPointerMove(event);
+        const res = result.current.pointerHandlers.onPointerMove(event);
         expect(res).toBe(false);
       });
     });
@@ -391,13 +474,13 @@ describe('useRect', () => {
       const target = createMockTarget();
       const downEvent = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target });
       act(() => {
-        result.current.onPointerDown(downEvent);
+        result.current.pointerHandlers.onPointerDown(downEvent);
       });
 
       const upEvent = createPointerEvent({ button: 0, clientX: 150, clientY: 150, target });
       expect(() => {
         act(() => {
-          result.current.onPointerUp(upEvent);
+          result.current.pointerHandlers.onPointerUp(upEvent);
         });
       }).not.toThrow();
     });
@@ -408,7 +491,7 @@ describe('useRect', () => {
 
       const event = createPointerEvent({ button: 1, target: createMockTarget() });
       act(() => {
-        result.current.onPointerUp(event);
+        result.current.pointerHandlers.onPointerUp(event);
       });
 
       expect(onChangeEnd).not.toHaveBeenCalled();
@@ -440,7 +523,7 @@ describe('useRect', () => {
       });
 
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       // 0.7 x 0.2 = 0.14 is a crop boundary the user can barely see.
@@ -456,7 +539,7 @@ describe('useRect', () => {
       });
 
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       expect(alphasAtStroke[0]).toBe(1);
@@ -470,7 +553,7 @@ describe('useRect', () => {
       });
 
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       // The reset has to sit BEFORE the `hideBlend` branch, not inside it, or the text tool's
@@ -486,7 +569,7 @@ describe('useRect', () => {
       });
 
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       // The dash is `drawMask`'s own state, deliberately not part of the reset, and it is written
@@ -532,16 +615,20 @@ describe('useRect', () => {
       const target = createMockTarget();
 
       act(() => {
-        result.current.onPointerDown(createPointerEvent({ button: 0, clientX: from.x, clientY: from.y, target }));
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: from.x, clientY: from.y, target })
+        );
       });
       act(() => {
-        result.current.onPointerMove(createPointerEvent({ clientX: to.x, clientY: to.y, target }));
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: to.x, clientY: to.y, target }));
       });
       act(() => {
         vi.advanceTimersByTime(20);
       });
       act(() => {
-        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: to.x, clientY: to.y, target }));
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: to.x, clientY: to.y, target })
+        );
       });
 
       return {
@@ -613,7 +700,7 @@ describe('useRect', () => {
       const onRepaint = vi.fn();
       const { result } = renderUseRect({ aspectRatio: ratio, initialRect: committed, onRepaint });
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       // The fixed point, stated against the shared helper the hook now uses, and then the
@@ -659,7 +746,7 @@ describe('useRect', () => {
       onRepaint.mockClear();
       const { result } = renderUseRect({ aspectRatio: 16 / 9, initialRect: committed, onRepaint });
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       expect(onRepaint).toHaveBeenLastCalledWith(committed);
@@ -674,7 +761,7 @@ describe('useRect', () => {
       const { result } = renderUseRect({ aspectRatio: 16 / 9, initialRect, onRepaint });
 
       act(() => {
-        result.current.redraw();
+        result.current.rectHandles.redraw();
       });
 
       // Height 200 held, width 200 * 16/9 = 355.555…, centred on x=150. The old inverted refit
@@ -696,15 +783,17 @@ describe('useRect', () => {
       const target = createMockTarget();
 
       act(() => {
-        result.current.onPointerDown(
+        result.current.pointerHandlers.onPointerDown(
           createPointerEvent({ button: 0, clientX: 100, clientY: 100, ctrlKey: true, target })
         );
       });
       act(() => {
-        result.current.onPointerMove(createPointerEvent({ clientX: 200, clientY: 200, target }));
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 200, target }));
       });
       act(() => {
-        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 200, clientY: 200, target }));
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 200, target })
+        );
       });
 
       const committed = onChangeEnd.mock.lastCall?.[0] as SortedRect;
@@ -723,13 +812,17 @@ describe('useRect', () => {
       const target = createMockTarget();
 
       act(() => {
-        result.current.onPointerDown(createPointerEvent({ button: 0, clientX: 200, clientY: 100, target }));
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 100, target })
+        );
       });
       act(() => {
-        result.current.onPointerMove(createPointerEvent({ clientX: 200, clientY: 50, target }));
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 200, clientY: 50, target }));
       });
       act(() => {
-        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 200, clientY: 50, target }));
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 200, clientY: 50, target })
+        );
       });
 
       const committed = onChangeEnd.mock.lastCall?.[0] as SortedRect;
@@ -752,13 +845,17 @@ describe('useRect', () => {
       const target = createMockTarget();
 
       act(() => {
-        result.current.onPointerDown(createPointerEvent({ button: 0, clientX: 275, clientY: 175, target }));
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 275, clientY: 175, target })
+        );
       });
       act(() => {
-        result.current.onPointerMove(createPointerEvent({ clientX: 475, clientY: 175, target }));
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 475, clientY: 175, target }));
       });
       act(() => {
-        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 475, clientY: 175, target }));
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 475, clientY: 175, target })
+        );
       });
 
       const committed = onChangeEnd.mock.lastCall?.[0] as SortedRect;

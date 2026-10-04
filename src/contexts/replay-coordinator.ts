@@ -46,11 +46,24 @@ function sameToken(left: ReplayRevisionToken, right: ReplayRevisionToken): boole
 
 function yieldToHost(): Promise<void> {
   return new Promise((resolve) => {
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => resolve());
-    } else {
+    const frameAvailable =
+      typeof window !== 'undefined' &&
+      typeof window.requestAnimationFrame === 'function' &&
+      (typeof document === 'undefined' || document.visibilityState !== 'hidden');
+    if (!frameAvailable) {
       setTimeout(resolve, 0);
+      return;
     }
+    let settled = false;
+    const fallback = { id: undefined as number | undefined };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (fallback.id !== undefined) window.clearTimeout(fallback.id);
+      resolve();
+    };
+    fallback.id = window.setTimeout(finish, 100);
+    window.requestAnimationFrame(finish);
   });
 }
 

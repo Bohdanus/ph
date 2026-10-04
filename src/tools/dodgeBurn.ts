@@ -1,12 +1,7 @@
-import {
-  BRUSH_SPACING_DEFAULT,
-  brushDabCenters,
-  clampBrushTipSettings,
-  tipAlphaAt,
-  type BrushTipSettings,
-} from '../util/brush-engine.ts';
+import { BRUSH_SPACING_DEFAULT, clampBrushTipSettings, type BrushTipSettings } from '../util/brush-engine.ts';
+import { buildStrokeCoverage } from '../util/stroke-coverage.ts';
 import { computeLuma } from '../util/magneticLasso.ts';
-import { clampChannel, forEachPixelInRect, forEachPixelInSize, readRgba, writeRgba } from '../util/pixels.ts';
+import { clampChannel, forEachPixelInSize, readRgba, writeRgba } from '../util/pixels.ts';
 import type { BitmapSource, Point, Size } from '../contexts/general-types.ts';
 import type { Rgba } from '../util/pixels.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
@@ -231,55 +226,16 @@ const tipSettings = (args: DodgeBurnToolArgs): BrushTipSettings =>
   });
 
 /**
- * The stroke's per-pixel coverage field, 0-1, or `null` when the stroke lands nowhere.
+ * The stroke's per-pixel coverage field comes from `src/util/stroke-coverage.ts`.
  *
- * This is where the shared brush engine is used as a GEOMETRY rather than as a painter.
- * `stampBrushStroke` is the wrong primitive here and deliberately is not called: it
- * composites a COLOUR over the destination, and dodge and burn have no colour to
- * composite — they have an amount to scale each existing channel by. Compositing
- * towards white would also produce a different answer for every pixel that is not fully
- * opaque, because `blendPixel` premultiplies by the destination's alpha, so the result
- * would depend on the layer's transparency instead of on the tonal band the user picked.
- *
- * So only the two geometric halves are borrowed: `brushDabCenters` for the dab centres
- * along the path, and `tipAlphaAt` for the falloff, which is the module's single
- * definition of a soft edge and is not re-derived here.
- *
- * Dabs are UNIONED, not summed: overlapping dabs take the larger coverage rather than
- * adding. Summing would make the amount a function of how many dabs happened to land on
- * a pixel, which is a function of the pointer's own sample rate — the same defect
- * `brushDabCenters` exists to rule out for the dab SPACING. Unioning also makes a
- * commit idempotent, which matters because the registry replays these args
- * (`replay('raster-processor', true)` in `src/tools/toolProcessors.ts`) and a sum would
- * compound on every replay.
+ * It used to be built here, privately, and moved out because the Sponge
+ * (`src/tools/sponge.ts`) needs the identical field to scale chroma with and must not
+ * carry a second copy of the same union-over-dabs loop. The reasoning that justified the
+ * shape — this is where the shared brush engine is used as a GEOMETRY rather than as a
+ * painter, so `stampBrushStroke` is deliberately not called; and dabs are UNIONED rather
+ * than summed so a commit is idempotent under replay — moved with it and is recorded
+ * there.
  */
-const buildCoverage = (size: Size, points: Point[], settings: BrushTipSettings): Float32Array | null => {
-  const centers = brushDabCenters(points, settings.size, settings.spacing);
-  if (centers.length === 0 || size.width === 0 || size.height === 0) return null;
-
-  const radius = settings.size / 2;
-  const coverage = new Float32Array(size.width * size.height);
-  let touched = false;
-
-  for (const center of centers) {
-    forEachPixelInRect(
-      size,
-      { left: center.x - radius, top: center.y - radius, right: center.x + radius, bottom: center.y + radius },
-      (x, y) => {
-        const distanceY = y - center.y;
-        const distance = Math.sqrt((x - center.x) * (x - center.x) + distanceY * distanceY);
-        const weight = tipAlphaAt(distance, radius, settings.hardness);
-        if (!(weight > 0)) return;
-
-        const index = y * size.width + x;
-        if (weight > coverage[index]) coverage[index] = weight;
-        touched = true;
-      }
-    );
-  }
-
-  return touched ? coverage : null;
-};
 
 /**
  * Shift every painted channel towards white (dodge) or towards black (burn), in place.
@@ -330,7 +286,7 @@ const shiftPaintedChannels = (
  * to share one.
  *
  * `points` are in the same space as `size` and the buffer: the registry hands a raster
- * tool the layer's own bitmap and extent (`src/contexts/useLayer.ts:544`), so a point is
+ * tool the layer's own bitmap and extent (`src/contexts/useLayer.ts:730-734`), so a point is
  * addressed against this buffer and not against the document.
  *
  * There is no build-up. Photoshop's dodge and burn accumulate for as long as the button
@@ -360,7 +316,7 @@ const applyDodgeBurn = (
   if (extent.width === 0 || extent.height === 0) return [canvas];
 
   const settings = tipSettings(args);
-  const coverage = buildCoverage(extent, Array.isArray(args.points) ? args.points : [], settings);
+  const coverage = buildStrokeCoverage(extent, Array.isArray(args.points) ? args.points : [], settings);
   if (!coverage) return [canvas];
 
   const imageData = ctx.getImageData(0, 0, extent.width, extent.height);

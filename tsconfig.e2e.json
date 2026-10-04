@@ -28,7 +28,7 @@
     // ON, matching tsconfig.app.json / tsconfig.node.json. It was off here only to
     // accommodate unread parameters, and there are now none: `exportAndVerify`'s
     // `testInfo` attaches the exported bytes to the report when the pixel comparison
-    // fails (`e2e/export/helpers.ts:230`). An earlier version of this comment claimed a
+    // fails (`verifyExportPixelsInBrowser()` in `e2e/export/helpers.ts`). An earlier version of this comment claimed a
     // dead parameter was "a documented defect in e2e/OPEN_PROBLEMS.md"; it was not, and
     // the parameter was not missing a step.
     //

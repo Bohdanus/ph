@@ -29,6 +29,19 @@ export const normalizeFigure = (figure: unknown): FigureType => {
 export type ShapeToolMode = 'shape' | 'path' | 'pixels';
 export type ShapeLineCap = CanvasLineCap;
 
+/** Adobe's Polygon tool floors `Sides` at 3; below that a polygon is not a polygon. */
+export const MIN_POLYGON_SIDES = 3;
+/** Adobe's Polygon tool seeds `Sides` at 5, and 5 is the count this app hardcoded. */
+export const DEFAULT_POLYGON_SIDES = 5;
+/**
+ * Adobe's ceiling, and this app's: the Polygon tool's `Sides` field is documented
+ * as 3 to 100, so 100 is Adobe's number and not a judgement of ours. It is also
+ * the bound that keeps the draw loop cheap — it emits one `lineTo` per side — so a
+ * field without an upper bound would be a denial-of-service wearing a number
+ * input. Two reasons, and only one of them is ours.
+ */
+export const MAX_POLYGON_SIDES = 100;
+
 export type ShapeToolArgs = {
   alpha: number;
   color: string;
@@ -39,6 +52,7 @@ export type ShapeToolArgs = {
   lineDash?: null | number[];
   lineCap?: ShapeLineCap;
   cornerRadius?: number;
+  sides?: number;
   toolMode?: ShapeToolMode;
   start?: Point;
   end?: Point;
@@ -191,9 +205,32 @@ const roundedRectPath = (ctx: Ctx2D, x: number, y: number, width: number, height
   ctx.closePath();
 };
 
+/**
+ * The Polygon tool's `Sides` field, normalized for the draw loop.
+ *
+ * Every one of these guards is load-bearing rather than defensive tidiness. The
+ * value is persisted per figure and round-trips through the settings store, so
+ * it can arrive from a document written before the field existed, from a
+ * hand-edited store, or from the number input mid-edit. The loop divides by the
+ * result to space each angle, so an unnormalized value is either a wrong polygon,
+ * a NaN path, or an unbounded loop over a hostile number.
+ */
+export const polygonSides = (sides: number | undefined): number => {
+  if (typeof sides !== 'number' || !Number.isFinite(sides)) return DEFAULT_POLYGON_SIDES;
+  const rounded = Math.round(sides);
+  if (rounded < MIN_POLYGON_SIDES) return MIN_POLYGON_SIDES;
+  if (rounded > MAX_POLYGON_SIDES) return MAX_POLYGON_SIDES;
+  return rounded;
+};
+
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { figure, start, end } = args;
-  const hasFill = args.toolMode !== 'path' && args.hasFill;
+  // `backgroundColor` is half the condition, not a detail: `setShapeCtx` only assigns `fillStyle`
+  // when it is set, so filling on `hasFill` alone would paint with whatever the context already
+  // carried — the canvas default on a fresh surface, and the previous tool's colour on the shared
+  // tool overlay, which paints many times per one `setShapeCtx`. Path mode suppresses the fill
+  // outright, as a path carries no rasterized fill.
+  const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor;
 
   if (!start || !end) return;
 
@@ -207,7 +244,7 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     const centerY = (start.y + end.y) / 2;
     const radiusX = Math.abs(end.x - start.x) / 2;
     const radiusY = Math.abs(end.y - start.y) / 2;
-    const sides = figure === 'triangle' ? 3 : 5;
+    const sides = figure === 'triangle' ? 3 : polygonSides(args.sides);
 
     ctx.beginPath();
     for (let index = 0; index < sides; index += 1) {

@@ -16,6 +16,19 @@ import type { FullConfig } from '@playwright/test';
  * created, with a message that says what to run instead. It is the difference
  * between a rule and a comment about a rule.
  *
+ * Two of the routes above are not this file's to close and are not pretending to be:
+ * `--ui` returns before `globalSetup` ever loads (see the comment on the flag loop in
+ * `refuseVisibleBrowser`), and `show-report` / `show-trace` / `codegen` never load a
+ * Playwright config at all. Both are `kilo.jsonc`'s, and the comment at each says so
+ * rather than implying a guarantee this function does not provide.
+ *
+ * ## The HTML report is in scope here too
+ *
+ * Not a test browser: no `chromium.launch()`, nothing in `use.headless`, no flag in
+ * `config.argv`. The configured reporter asks for `open: 'never'` and two environment
+ * variables plus one command-line flag outrank that ask. See the block above
+ * `checkHtmlOpenEnv`.
+ *
  * ## What it can and cannot see
  *
  * The check is on the RESOLVED per-project `use.headless`, not on the config file,
@@ -42,6 +55,52 @@ import type { FullConfig } from '@playwright/test';
 
 /** The only environment value this guard accepts. Set by `npm run test:e2e:headed`. */
 const ALLOW_ENV = 'PLAYWRIGHT_ALLOW_HEADED';
+
+/**
+ * The two environment variables that become the HTML reporter's own `open` option.
+ *
+ * `playwright/lib/runner/index.js:3510-3511`, read by
+ * `getHtmlReportOptionProcessEnv()`. Neither is documented; both outrank
+ * `playwright.config.ts`, which is the whole problem.
+ */
+const HTML_OPEN_ENV_VARS = ['PLAYWRIGHT_HTML_OPEN', 'PW_TEST_HTML_REPORT_OPEN'] as const;
+
+/**
+ * The one value of the above that opens nothing.
+ *
+ * `htmlReportOptions` is exactly `['always', 'never', 'on-failure']`
+ * (`runner/index.js:3401`), so `never` is the single honest spelling of "do not open
+ * this". Anything else that is truthy — `always`, `on-failure`, or a typo, which
+ * Playwright reports as a configuration error and then ignores
+ * (`runner/index.js:3514-3517`), leaving the `"on-failure"` fall-through in place —
+ * is refused here.
+ */
+const NON_OPENING_HTML_OPEN = 'never';
+
+/**
+ * The environment variable that names an EXTRA reporter, appended to the configured
+ * list rather than replacing it: `runner/index.js:5221-5228`. It is constructed with
+ * `reporterCommandOptions` and nothing else (`runner/index.js:5250-5256`), so an `html`
+ * here reaches the same `_resolveOptions()` as one from the CLI.
+ */
+const REPORTER_ENV_VAR = 'PW_TEST_REPORTER';
+
+/**
+ * The two CLI options that reach the reporter list (`cli/testActions.js:119,189`).
+ *
+ * They are not equivalent, and the difference is why both are here.
+ * `--reporter` REPLACES the configured list outright —
+ * `reporter: [...takeFirst(configCLIOverrides.reporter, resolveReporters(userConfig.reporter, …))]`
+ * at `common/index.js:522` — so it throws away the `open: 'never'` in
+ * `playwright.config.ts` along with the `list` reporter, and the replacement
+ * `[['html']]` carries no options at all. `--add-reporter` APPENDS, so the configured
+ * reporter keeps `open: 'never'` and a second `HtmlReporter` arrives beside it with no
+ * `open`. Both land in `_resolveOptions()`, where a missing `open` is `"on-failure"`.
+ */
+const REPORTER_FLAGS = ['--reporter', '--add-reporter'] as const;
+
+/** The only reporter whose missing `open` option resolves to something that opens. */
+const OPENING_REPORTER = 'html';
 
 /**
  * The only value that permits a run to test something other than its own checkout.
@@ -108,9 +167,18 @@ export function checkOwnServer(options: {
 
   const target = parseHttpUrl(baseUrl);
   if (!target) {
+    // REFUSED, and this is the one branch that used to permit. A base URL this
+    // function cannot parse into an origin is a run whose destination cannot be
+    // compared with the server this run started, and `file:///…/other-checkout/dist`
+    // is a value somebody can reach by typing. `scripts/e2e-run.mjs` refuses the
+    // same variable, but that is the friendly caller; this is the load-bearing one,
+    // and it was the one hole in the pair: the reason it logged said "there is no
+    // origin to verify" while the run navigated somewhere this run did not start.
     return {
-      permitted: true,
-      reason: `base URL ${JSON.stringify(baseUrl)} is not an http(s) URL, so there is no origin to verify`,
+      permitted: false,
+      reason:
+        `base URL ${JSON.stringify(baseUrl)} is not an http(s) URL, so this run cannot show that it is ` +
+        'loading the server it started',
     };
   }
 
@@ -155,18 +223,36 @@ function refuseForeignOrigin(check: OwnServerCheck): void {
   );
 }
 
+/**
+ * Does a variable in `env` hand the HTML reporter an `open` option that opens?
+ */
 function refuseVisibleBrowser(config: FullConfig): void {
   if (process.env[ALLOW_ENV] === '1') return;
 
   const reasons: string[] = [];
 
   // Named explicitly so the message says which flag caused it. Authoritative for
-  // `--headed` and `--debug`; `--ui` is not caught by the `use.headless` check below,
-  // because in UI mode the test browsers stay headless and it is the UI itself that
-  // opens in the default browser.
-  for (const flag of ['--headed', '--debug', '--ui']) {
+  // `--headed` and `--debug`.
+  //
+  // `--ui` WAS IN THIS LIST AND IS DELIBERATELY NOT ANY MORE. It could never fire
+  // here: `runUIMode` is reached from `cli/testActions.js:62` and RETURNS at :77, while
+  // `globalSetup` only exists inside `runAllTestsWithConfig`
+  // (`runner/index.js:6949-6954`). So the branch read as a guarantee it never provided
+  // — a reader would conclude `--ui` was covered at the layer that is supposed to cover
+  // it, and it is covered one layer out, in `kilo.jsonc`, by a rule on the flag itself
+  // rather than on the command that carries it. A branch for a condition this function
+  // cannot observe is not a safety property; it is a second code path a reader has to
+  // verify and a refactor can "fix" in either direction.
+  for (const flag of ['--headed', '--debug']) {
     if (config.argv.includes(flag)) reasons.push(`\`${flag}\``);
   }
+
+  // The HTML REPORT is deliberately NOT checked here. It is a window, and it is
+  // handled by `refuseOpeningHtmlReport`, which is called from `globalSetup` OUTSIDE
+  // this function — because the escape hatch above is the operator's signature on a
+  // HEADED BROWSER, and the report viewer is not the thing that variable is about. A
+  // check in here would be skipped entirely by `PLAYWRIGHT_ALLOW_HEADED=1`, which is
+  // exactly the hole that arrangement exists to close.
 
   // The authoritative check. `use.headless` is `false` here for `--headed`,
   // `--debug`, `PLAYWRIGHT_ALLOW_HEADED=1`, and any project-scope `test.use`.
@@ -205,6 +291,169 @@ function refuseVisibleBrowser(config: FullConfig): void {
       `${ALLOW_ENV}=1. To unblock a run without a window, add --retries=1 so \`trace:`,
       "'on-first-retry' produces a trace file, and read the failure PNG from the test's own",
       'outputDir instead.',
+    ].join('\n')
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * The HTML report is a window too, and it is the only one that also never exits.
+ *
+ * `playwright.config.ts` asks for `open: 'never'`. That ask is worth nothing on its
+ * own, because the reporter resolves its own option as
+ *
+ *     open: getHtmlReportOptionProcessEnv() || this._options.open || "on-failure"
+ *
+ * (node_modules/playwright/lib/runner/index.js:3450) and `getHtmlReportOptionProcessEnv()`
+ * is `process.env.PLAYWRIGHT_HTML_OPEN || process.env.PW_TEST_HTML_REPORT_OPEN`
+ * (`runner/index.js:3511`). So EITHER variable silently outranks the config. Failing
+ * that, `"on-failure"` is what a reporter configured with NO `open` option resolves to
+ * — which is exactly what a CLI `--reporter` produces.
+ *
+ * `showHTMLReport` then serves the report, opens it in the default browser, and awaits
+ * a promise that is never resolved (`runner/index.js:3581-3585`). A window AND a process
+ * that never prints a summary and never exits. `refuseVisibleBrowser` sees none of it:
+ * no browser is launched, `config.argv` carries no flag, and every project still
+ * resolves to `headless: true`.
+ *
+ * Two decisions worth stating, because either could reasonably have gone the other way.
+ *
+ * ## No escape hatch
+ *
+ * `PLAYWRIGHT_ALLOW_HEADED=1` is the human's signature and `refuseVisibleBrowser`
+ * honours it. This refusal does NOT. Widening that variable to mean "and may also open
+ * the report viewer" would make the one knob in this file mean two things, and would
+ * make the guarantee depend on an environment variable — which is the thing a model
+ * under pressure will set. The cost is that an operator who wants to read the report in
+ * a browser cannot get Playwright to open it for them, and does not need to: the run
+ * still writes `playwright-report/`, and opening a file is not a Playwright command.
+ *
+ * ## Why this layer and not `kilo.jsonc`
+ *
+ * `kilo.jsonc` denies these tokens too, and it is the friendlier refusal because it
+ * arrives before the process starts. It is not the load-bearing one: it is scoped to
+ * this project directory, so it does not apply to a run started elsewhere, and every
+ * other caller of the rule in this repository is a convention waiting for a bare
+ * `npx playwright test`. `globalSetup` is the only layer that every invocation loads.
+ * --------------------------------------------------------------------------- */
+
+/** What named a window-opening hazard, and what it would have done. */
+export interface WindowHazard {
+  /** The exact token, quoted into the refusal so the reader can see what the run typed. */
+  cause: string;
+  /** Why that token opens something. Reported separately because the two causes differ. */
+  why: string;
+}
+
+/**
+ * Would a variable in `env` hand the HTML reporter an `open` option that opens?
+ *
+ * Pure over the environment record it is given, so the refusal is unit-testable with
+ * the variable set and unset without mutating `process.env` — which matters here
+ * because the thing under test is precisely "what this function reads out of the
+ * environment".
+ */
+export function checkHtmlOpenEnv(env: Record<string, string | undefined>): WindowHazard | null {
+  for (const variable of HTML_OPEN_ENV_VARS) {
+    const value = env[variable];
+    // Empty is falsy, so Playwright ignores it (`runner/index.js:3513`); refusing an
+    // empty value would be refusing something that cannot open anything.
+    if (!value || value === NON_OPENING_HTML_OPEN) continue;
+    return {
+      cause: `${variable}=${value}`,
+      why:
+        `${variable} is read as the HTML reporter's "open" option, and it outranks the ` +
+        `\`open: '${NON_OPENING_HTML_OPEN}'\` in playwright.config.ts`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Would this run name the `html` reporter without an `open` option?
+ *
+ * Covers the CLI (`--reporter`, `--add-reporter`, both the `--flag=value` and the
+ * `--flag value` spellings) and `PW_TEST_REPORTER`, because all three reach the same
+ * constructor with nothing in `_options.open` and therefore resolve to `"on-failure"`.
+ *
+ * There is no CLI syntax for reporter OPTIONS at all — `resolveReporterOption` splits
+ * the value on `,` and hands each name to `resolveReporter` with nothing else
+ * (`cli/testActions.js:165-168`) — so "names `html`" and "names `html` with an `open`"
+ * are the same condition on this path, and there is no way to write the safe one.
+ */
+export function checkHtmlReporterSelection(options: {
+  argv: readonly string[];
+  env: Record<string, string | undefined>;
+}): WindowHazard | null {
+  const fromEnv = options.env[REPORTER_ENV_VAR];
+  if (fromEnv && namesHtmlReporter(fromEnv)) {
+    return {
+      cause: `${REPORTER_ENV_VAR}=${fromEnv}`,
+      why: `${REPORTER_ENV_VAR} adds a reporter built from no options, so "open" resolves to "on-failure"`,
+    };
+  }
+
+  for (const [index, arg] of options.argv.entries()) {
+    // Everything after a bare `--` is a positional filter rather than an option, and
+    // commander stops parsing options there (`program.js:51-52`). Refusing a grep
+    // filter that happens to spell `--reporter=html` would be refusing a legitimate
+    // way to select tests.
+    if (arg === '--') break;
+
+    const flag = REPORTER_FLAGS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
+    if (!flag) continue;
+
+    const value = arg.includes('=') ? arg.slice(flag.length + 1) : (options.argv[index + 1] ?? '');
+    if (!namesHtmlReporter(value)) continue;
+
+    return {
+      cause: `${flag} ${value}`,
+      why:
+        `${flag === '--reporter' ? 'replaces' : 'adds to'} the reporter list, and a reporter ` +
+        'named on the command line carries no "open" option, so it resolves to "on-failure"',
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Does this reporter list name the `html` reporter?
+ *
+ * Exact, comma-separated, no trimming and no case folding, because that is what
+ * Playwright does: `resolveReporter` tests `builtInReporters.includes(id)`
+ * (`cli/testActions.js:201-208`), so `--reporter=HTML` is not the html reporter to
+ * Playwright either — it tries `require.resolve('HTML')` and fails loudly. Refusing it
+ * here would replace an accurate error with a misleading one.
+ */
+function namesHtmlReporter(value: string): boolean {
+  return value.split(',').includes(OPENING_REPORTER);
+}
+
+function refuseOpeningHtmlReport(hazard: WindowHazard | null): void {
+  if (!hazard) return;
+
+  throw new Error(
+    [
+      `Refusing to start a run that would open the HTML report and then never exit: ${hazard.cause}.`,
+      '',
+      `This run ${hazard.why}. When the report opens, Playwright serves it, hands it to the`,
+      'default browser, and then waits on a promise it never resolves',
+      '(node_modules/playwright/lib/runner/index.js:3581-3585) — so the run does not print a',
+      'summary, does not set an exit code, and does not end until it is killed.',
+      '',
+      "playwright.config.ts asks for `open: 'never'` on purpose, and asking is not the same as",
+      'binding: this refusal is what makes the ask hold for every `playwright test` invocation,',
+      'and `kilo.jsonc` refuses the same tokens at the permission layer, before the process',
+      'starts. Nothing here has an escape hatch, on purpose: a variable that switches off this',
+      'refusal would put the guarantee one `export` away from being false.',
+      '',
+      'Run `npm run test:e2e`. It writes `playwright-report/` and never opens it.',
+      '',
+      'To read a failure, open the screenshot Playwright already wrote under the run output',
+      'directory: test-results/, or test-results/runs/<run-id>/ when the run went through',
+      'scripts/e2e-run.mjs, which prints the path it used. Add --retries=1 so `trace:',
+      "'on-first-retry' produces a trace file. Do not run `show-report` or `show-trace`: both open",
+      'a window and block until you close it.',
     ].join('\n')
   );
 }
@@ -571,6 +820,12 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   // refused for putting a window on the operator's screen, or for testing somebody
   // else's server.
   refuseVisibleBrowser(config);
+  // Two separate checks rather than one combined expression, so that the order is the
+  // order a reader expects: a variable first, because it is the silent route, then the
+  // flag someone typed. Both run before the warm-up, and both run before Playwright's
+  // reporter `onExit` — which is when `_resolveOptions()` would finally read them.
+  refuseOpeningHtmlReport(checkHtmlOpenEnv(process.env));
+  refuseOpeningHtmlReport(checkHtmlReporterSelection({ argv: config.argv, env: process.env }));
 
   const baseUrl = resolvedBaseUrl(config);
   const webServerUrl = resolvedWebServerUrl(config);

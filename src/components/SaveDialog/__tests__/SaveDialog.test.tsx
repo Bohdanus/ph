@@ -262,7 +262,6 @@ const rejectionHook = (globalThis as Record<string, unknown>).process as Rejecti
 
 describe('SaveDialog rejected save', () => {
   let rejections: unknown[];
-  let alertSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   /**
    * Node emits `unhandledRejection` on `process`, not on `window`, and Vitest
@@ -283,7 +282,6 @@ describe('SaveDialog rejected save', () => {
       rejections.push(reason);
     };
     rejectionHook.on('unhandledRejection', onNodeRejection);
-    alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -292,7 +290,6 @@ describe('SaveDialog rejected save', () => {
     for (const listener of runnerListeners) {
       rejectionHook.on('unhandledRejection', listener as (reason: unknown) => void);
     }
-    alertSpy.mockRestore();
     consoleErrorSpy.mockRestore();
   });
 
@@ -321,7 +318,6 @@ describe('SaveDialog rejected save', () => {
 
     expect(rejections).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file:', expect.any(Error));
-    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('still restores the controls and leaves the dialog open after a rejected save', async () => {
@@ -337,7 +333,6 @@ describe('SaveDialog rejected save', () => {
     // A non-Error rejection reason still reaches the catch, which records it verbatim
     // rather than stringifying it into a message for the user.
     expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file:', 'PSD encoder exploded');
-    expect(alertSpy).not.toHaveBeenCalled();
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
@@ -353,7 +348,6 @@ describe('SaveDialog rejected save', () => {
     });
     await drain();
 
-    expect(alertSpy).not.toHaveBeenCalled();
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(rejections).toEqual([]);
   });

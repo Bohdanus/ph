@@ -12,7 +12,6 @@ function createMockStoreData(): StoreData {
     toolOverlayRef: { current: null },
     rectOverlayRef: { current: null },
     containerRef: { current: null },
-    textareaRef: { current: null },
     currentArgs: {
       current: { toolName: 'draw', alpha: 0.9, lineWidth: 10, color: '#000000', points: [], penType: 'pen' },
     } as { current: ToolArgs },
@@ -43,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   createBlankLayer: vi.fn(),
   createLayerFromBitmap: vi.fn(),
   commitDirtyTool: vi.fn(),
+  adoptLayerBitmaps: vi.fn(),
 }));
 vi.mock('../../contexts/StoreContext.tsx', () => ({ useStore: mocks.useStore }));
 vi.mock('../../contexts/useLayer.ts', () => ({ useLayers: () => mocks }));
@@ -97,8 +97,8 @@ function setup(warnings: string[] = []) {
     hasUnsavedChanges: true,
   };
   const dispatch = vi.fn();
-  mocks.useStore.mockReturnValue([state, dispatch]);
-  return { document, state, dispatch };
+  mocks.useStore.mockReturnValue([{ ...state, adoptLayerBitmaps: mocks.adoptLayerBitmaps }, dispatch]);
+  return { document, state, dispatch, adoptLayerBitmaps: mocks.adoptLayerBitmaps };
 }
 
 describe('useApp PSD replacement', () => {
@@ -108,7 +108,7 @@ describe('useApp PSD replacement', () => {
   });
 
   it('replaces the document atomically with an independent, metadata-preserving history baseline', async () => {
-    const { document, state, dispatch } = setup();
+    const { document, state, dispatch, adoptLayerBitmaps } = setup();
     const confirm = vi.spyOn(window, 'confirm');
     await useApp().setImageFromUpload({ fileName: 'design.psd', document });
 
@@ -117,7 +117,12 @@ describe('useApp PSD replacement', () => {
     // load-bearing: the presentation scope is keyed by the owning document, so an
     // adoption published first would be filed under the outgoing document id and
     // closed by its release.
-    expect(dispatch.mock.calls.map(([action]) => action.type)).toEqual(['REPLACE_DOCUMENT', 'ADOPT_LAYER_BITMAPS']);
+    expect(dispatch.mock.calls.map(([action]) => action.type)).toEqual(['REPLACE_DOCUMENT']);
+    expect(adoptLayerBitmaps).toHaveBeenCalledExactlyOnceWith([
+      (document.layers.top.source as ImageLayerSource).bitmap,
+      (document.layers.bottom.source as ImageLayerSource).bitmap,
+    ]);
+    expect(dispatch.mock.invocationCallOrder[0]).toBeLessThan(adoptLayerBitmaps.mock.invocationCallOrder[0]);
     const action = dispatch.mock.calls[0][0];
     expect(action).toEqual({
       type: 'REPLACE_DOCUMENT',
@@ -172,10 +177,7 @@ describe('useApp PSD replacement', () => {
     // The adopted rasters are the imported layers' own, by identity: the
     // re-encoding above reuses an already immutable bitmap rather than copying it.
     const sourceBitmap = (id: 'top' | 'bottom') => (document.layers[id].source as ImageLayerSource).bitmap;
-    expect(dispatch.mock.calls[1][0]).toEqual({
-      type: 'ADOPT_LAYER_BITMAPS',
-      payload: { bitmaps: [sourceBitmap('top'), sourceBitmap('bottom')] },
-    });
+    expect(adoptLayerBitmaps).toHaveBeenCalledExactlyOnceWith([sourceBitmap('top'), sourceBitmap('bottom')]);
   });
 
   it('leaves the old document, dirty tool, and canvases untouched when warnings are declined', () => {

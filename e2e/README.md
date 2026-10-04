@@ -24,7 +24,7 @@ e2e/
 │   │                    #   __tests__/ and a Playwright spec beside the
 │   │                    #   browser-facing ones
 │   └── __tests__/       # Node-environment unit tests for the helper modules
-└── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
+└── global-setup.ts      # refuses --headed / --debug before a window exists
 ```
 
 Counts are deliberately absent, and an earlier version of this block carried them
@@ -47,7 +47,7 @@ purpose:
 | The left rail and its flyouts | `sidebar-flyout`, `sidebar-keyboard`, `sidebar-layout`                                              |
 | Layers and the panel          | `layers`, `layers-panel`, `undo-redo`                                                               |
 | History and its panel         | `keyboard-shortcuts`, `history-panel`, `undo-redo`                                                  |
-| Dialogs and the document      | `document-dialogs`, `select-move` (crop), `file-roundtrip`                                          |
+| Dialogs and the document      | `document-dialogs`, `crop-history`, `file-roundtrip`                                              |
 | Adjustments and filters       | `adjustments`, `filter-tools`, `levels`                                                             |
 | Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
 | Selections                    | `selection-tools`, `select-move`                                                                    |
@@ -85,10 +85,10 @@ reproduced in this suite. Headless is a preventive default. What _was_ measured,
 what made headless the default rather than a preference, is that headed mode also
 changed which tests fail, independently of any human:
 
-| formerly failing tests                        | headed | headless |
-| --------------------------------------------- | ------ | -------- |
-| `cdp-helpers.spec.ts:132 :146 :161 :193 :210` | 5 fail | pass     |
-| `cdp-helpers.spec.ts:281, 301`                | pass   | 2 fail   |
+| formerly failing tests                                                                                                                                                                                                                                                                                                                | headed | headless |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
+| five `captureCanvasScreenshot` cases in `e2e/helpers/cdp-helpers.spec.ts` — `captures screenshot via CDP`, `captures screenshot with clip options`, `uses box coordinates when clip not provided`, `captures screenshot via CDP without explicit DPR scaling`, `captures the page background when the region lies outside the canvas` | 5 fail | pass     |
+| two cases in that file's `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` block — `reports the emulated ratio, so the override provably applied` and `returns the box region at one integral scale`                                                                                                                    | pass   | 2 fail   |
 
 The two groups were disjoint and each mode's set reproduced identically across
 repeats. Both are now fixed — the assertions no longer name a capture scale, so they
@@ -110,8 +110,10 @@ and keyboard alone.
 `--headed`, `--ui` and `--debug` override the config's `headless` setting after the
 config has been read, and `show-report` / `show-trace` / `codegen` never read it at
 all. So the headless default alone is a convention with several ways around it.
-`e2e/global-setup.ts` closes the first three: it runs before any browser is created
-and throws, naming the flag that asked for a window. `kilo.jsonc` denies them at
+`e2e/global-setup.ts` closes the two it can see — `--headed` and `--debug`: it runs before any
+browser is created and throws, naming the flag that asked for a window. It deliberately does not
+carry `--ui`, because Playwright opens that window before a global setup can run; `kilo.jsonc` denies
+it on the flag alone instead. `kilo.jsonc` denies all three at
 the agent permission layer, including the npm script spellings, with one deliberate
 exception: `--debug` and `test:e2e:debug` are `ask`, not `deny`, so a wrong guess
 reaches a prompt instead of a silent block. The escape hatch for all of it is
@@ -241,7 +243,10 @@ and the CI job's bare `npx playwright test` never load the wrapper at all).
 
 Each run writes to `test-results/runs/<run-id>/`, and the wrapper prints that
 directory before the suite starts. `test-results/` is gitignored wholesale, and
-`npm run test:e2e:clean` removes it. A bare `npx playwright test` (or
+`npm run test:e2e:clean` clears the generated output under it without taking the
+machine-readable run result with it; exactly which files those are is
+[`../docs/TESTING.md`](../docs/TESTING.md#e2e-failures)'s rule, not this
+section's. A bare `npx playwright test` (or
 `npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
 — that is the same as CI, where the JSON reporter's output is collected as an
 artifact, and it is why CI calls Playwright directly. A bare run still starts its
@@ -294,12 +299,12 @@ coverage thresholds in `vitest.e2e.config.ts`.
 These run under a **second, independent Vitest project** (`vitest.e2e.config.ts`),
 not the root `vitest.config.ts`. The split is not cosmetic:
 
-|                 | root `vitest.config.ts` | `vitest.e2e.config.ts`               |
-| --------------- | ----------------------- | ------------------------------------ |
-| environment     | `jsdom`                 | `node`                               |
-| setup file      | `src/test/setup.ts`     | none                                 |
-| `globals: true` | yes                     | no                                   |
-| tests           | `src/**`                | `e2e/**/__tests__/**/*.unit.test.ts` |
+|                 | root `vitest.config.ts`                         | `vitest.e2e.config.ts`               |
+| --------------- | ----------------------------------------------- | ------------------------------------ |
+| environment     | `jsdom`                                         | `node`                               |
+| setup file      | `src/test/setup.ts`                             | none                                 |
+| `globals: true` | yes                                             | no                                   |
+| tests           | Vitest default, less `e2e/**` and `**/.kilo/**` | `e2e/**/__tests__/**/*.unit.test.ts` |
 
 The helpers exercise `node:fs/promises`, `sharp` and `pixelmatch`, none of which
 exist under jsdom, and `src/test/setup.ts` imports `@testing-library/jest-dom`,
@@ -412,7 +417,7 @@ e2e/export/visual-regression.spec.ts-snapshots/
 ```
 
 The remaining committed files are orphans — the raw `drawing.<ext>` exports
-(including `drawing.bmp`, the bulk of the 2.1 MB), plus `drawing-icon.ico.png` and
+(including `drawing.bmp`, the bulk of the directory's 2.05 MB), plus `drawing-icon.ico.png` and
 `source-baseline.png`. Nothing reads them; the ICO spec compares in-browser against
 the source canvas instead. They are still tracked, pending authorisation to delete
 committed baselines. See the entry in `OPEN_PROBLEMS.md`.
@@ -426,6 +431,44 @@ rather than by a `*.png`-style pattern, so committed pixels can never be rewritt
 line-ending normalisation. Read the file for the current list rather than trusting a
 copy of it here — each new corpus needs its own rule, and the file is the only place
 that stays right.
+
+### The export test line is in document space, and it must stay off the pixel grid
+
+Two things about `EXPORT_LINE_START` / `EXPORT_LINE_END` in `e2e/export/helpers.ts`
+are load-bearing and neither is obvious from the constants themselves.
+
+**The line is specified in DOCUMENT space.** `documentToCanvasOffset`
+(`canvas-helpers.ts`) mirrors the app's own contain-fit from
+`src/hooks/usePointerPosition.ts`, and `setupExportTest` maps the document point into
+whatever canvas box the shell produced. A canvas-relative offset would make the export a
+function of the window, which is what the baselines used to record — see the `e2087bf` /
+`e8f17ba` history.
+
+**The coordinates must be clear of the integer document pixel grid, and that is enforced.**
+`documentStrokeBoundaryMargin` returns the smallest distance from any stroke boundary to
+an integer document pixel, and `MIN_STROKE_BOUNDARY_MARGIN_DOC_PX` is the floor. The
+reason is specific: the pen strokes with a ROUND cap, a boundary that lands on an integer
+pixel is a Skia anti-aliasing rounding tie, and the app's `getLocalCoords` is bare
+float64 — so the sign of a sub-pixel error decides an 8-bit coverage value. The only error
+in the chain is the transport's, because a CDP `pointermove` carries `Math.fround(sent)`:
+measured at 4.1e-5 document px of achieved-coordinate error over viewport widths
+768-1920, and it varies with `offsetX` and `scale`, i.e. with the frame.
+
+So the two failure shapes to know about:
+
+- **Do not round the constants.** `123.203285` → `123` puts both cap extremes exactly on
+  the grid. Measured: the export then splits into 2+ distinct byte-strings across viewport
+  widths and the suite is still green at 1280, because the split is periodic in WIDTH.
+- **Do not assume a height sweep would catch it.** The right panel's width — and therefore
+  the canvas box — is a function of width alone, so every height agreed at a fixed width.
+  `the export is independent of the shell layout` sweeps widths across the `lg` breakpoint
+  (1024px, the `--breakpoint-lg` custom property in `src/index.scss`) at two heights and in
+  both sidebar states, and compares the
+  **exported PNG bytes** with `Buffer.equals`. PNG rather than a comparison of
+  `sourceDataUrl`, because the property is about the export and PNG is the only lossless
+  format that never leaves the browser — the TIFF, GIF and AVIF wrappers (`tiff-utils.ts`,
+  `gif-utils.ts`, `avif-utils.ts`) are the app's own modules, and each statically imports its
+  codec (`utif`, `gifenc`, `@jsquash/avif`) at the top level.
 
 ## Current status
 
@@ -500,7 +543,7 @@ npm run test:e2e:unit:coverage
 
 # output
 npm run test:e2e:report              # open the last HTML report (opens a window, and blocks)
-npm run test:e2e:clean               # delete generated run output (test-results/, playwright-report/)
+npm run test:e2e:clean               # delete generated run output; see "Output" above for what survives
 npm run test:e2e:update-baselines    # rewrite the visual-regression baselines
 ```
 
@@ -512,10 +555,14 @@ the `test-results/results.json` written in CI are all readable without a window.
 
 ### Local vs CI behaviour
 
-`npm run test:e2e` sets **no** `CI=true`. Setting it would flip `forbidOnly` on (a
-stray `test.only` becomes a hard error), enable `retries: 2`, switch the reporter
-to `github`, and default `workers` to full parallelism. Locally you get
+`npm run test:e2e` sets **no** `CI=true`. Setting it would enable `retries: 2`, switch
+the reporter to `github`, and default `workers` to full parallelism. Locally you get
 `workers: 1` and a `list`/`html` reporter, which keeps a debug run readable.
+
+`forbidOnly` is **not** one of the differences, and never was a safe one to make
+conditional. It is unconditional, so a stray `test.only` is a hard error on every
+run rather than a silent scope reduction in exactly the local runs where it is
+least visible.
 
 The one thing `CI` does change in the wrapper is that it skips the swarm lock and
 keeps the default :5173 and the shared `test-results/`, because a CI job owns its

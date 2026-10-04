@@ -1,5 +1,16 @@
 # HISTORY MIGRATION — STATE OF PLAY
 
+> **SUPERSEDED. Do not work from this document.** It is a point-in-time report and
+> `docs/README.md` lists it under "Not maintained here", so its numbers are not
+> refreshed. The maintained contract is [`docs/HISTORY-MIGRATION.md`](docs/HISTORY-MIGRATION.md);
+> the current code shape is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); open
+> defects are in [`HANDOFF.md`](HANDOFF.md).
+> [`HISTORY-MIGRATION-CONFLICT-AUDIT.md`](HISTORY-MIGRATION-CONFLICT-AUDIT.md), the
+> next audit, records that "most of what that document said about the durable path
+> has been replaced", and it names this file as its predecessor. Claims below are
+> left as written so the audit trail stays readable; where they contradict the three
+> documents above, those win.
+
 **The current map of the history-machinery migration: what is in production, what is still a
 shadow, what is broken, and what must not be "fixed".**
 
@@ -454,7 +465,7 @@ failure; ask the operator to run `npm run test:e2e:headed` themselves.
 | No layer's pixels mutated, discarded, masked or resampled | ✅     | The commit path has **no layer write at all**. `updateLayerByTool` refuses `document-operation` outright (`useLayer.ts:315`)                                                                              |
 | No re-rasterization or bitmap resize on crop              | ✅     | `drawLayersToCanvas` resizes only the staging and visible canvases (`layer-renderer.ts:121`, `:136`). The one frame-clipping re-materializer (`materialization.ts:296-318`) has zero production importers |
 | Off-frame data stays intact, in the document              | ✅     | Not rendered (clipped at draw time only, `layer-renderer.ts:78-79`) but still in `layers`, still in the Layers panel, still world-space and hit-testable                                                  |
-| Undo/redo restores the pre-crop state                     | ✅     | Frame-only entry; `history-replay.ts:91-97` reads `nextFrame` and `continue`s, never touching a layer; `useHistory.ts:112-130` republishes the untouched `layers` record                                  |
+| Undo/redo restores the pre-crop state                     | ✅     | Frame-only entry; `history-replay.ts:111-117` reads `nextFrame` and `continue`s, never touching a layer; `useHistory.ts:112-130` republishes the untouched `layers` record                                |
 | **PSD round trip preserves off-frame pixels**             | ✅     | `psd-utils.ts:221-227` computes per-layer bounds as `presentation − frame` with **full world width/height**; `:245-250` writes each layer at its frame-translated offset                                  |
 | Selections are never clamped or deleted by a frame change | ✅     | Selections are world-space and `updates` carries no `selections`. A selection fully outside the new frame stays active; its outline is drawn off-canvas                                                   |
 
@@ -464,7 +475,7 @@ failure; ask the operator to run `npm run test:e2e:headed` themselves.
   **manufactures no raster operation** for a crop.
 - `durable-replay.ts:129-131` replays `set-document-frame` as `frame = operation.next` — there is no
   layer branch in the replay.
-- `history-replay.ts:195` skips any `document-operation` tool action.
+- `history-replay.ts:215` skips any `document-operation` tool action.
 - `StoreContext.tsx:1014` retirement closes only bitmaps absent from `collectLivePresentationBitmaps`
   (`:718-737`); a crop leaves every layer bitmap referenced, so **nothing is closed**.
 

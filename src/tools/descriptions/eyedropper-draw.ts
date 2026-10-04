@@ -11,16 +11,16 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       {
         control: 'Sample Size',
         detail:
-          'Sets the sampling footprint, and Adobe enumerates the whole menu: Point Sample "Reads the exact value of the clicked pixel", and 3 by 3 / 5 by 5 / 11 by 11 / 31 by 31 / 51 by 51 / 101 by 101 Average "Reads the average color value within the selected pixel area". There are no Median entries in it. Default: Point Sample.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:23',
+          'Sets the sampling footprint, and Adobe enumerates the whole menu: Point Sample "Reads the exact value of the clicked pixel", and 3 by 3 / 5 by 5 / 11 by 11 / 31 by 31 / 51 by 51 / 101 by 101 Average "Reads the average color value within the selected pixel area". There are no Median entries in it. Adobe lists the menu without saying which entry ships selected, and states no default for it; the app seeds Point Sample.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22',
       },
       {
         control: 'Sample',
         detail:
-          'Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox.',
+          'Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox. The app renders no control for it at all, and its `sampleAllLayers` field persists in settings and is refused loudly on click.',
         status: 'inert',
-        appRef: 'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:37',
+        appRef: 'src/tools/settings.ts:226',
       },
     ],
     modifiers: [
@@ -39,22 +39,25 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/components/Main/EyedropperToolArea.tsx:46',
-      'src/components/Main/EyedropperToolArea.tsx:57',
-      'src/components/Main/EyedropperToolArea.tsx:121',
-      'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:21',
-      'src/tools/eyedropper.ts:28',
-      'src/tools/toolProcessors.ts:80',
-      'src/tools/toolsMap.ts:126',
-      'toolbar-mapping.ts:57',
+      'src/components/Main/EyedropperToolArea.tsx:59',
+      'src/components/Main/EyedropperToolArea.tsx:102',
+      'src/components/Main/EyedropperToolArea.tsx:133',
+      'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:22',
+      'src/tools/eyedropper.ts:7',
+      'src/tools/eyedropper.ts:34',
+      'src/tools/toolProcessors.ts:82',
+      'src/tools/toolsMap.ts:148',
+      'toolbar-mapping.ts:64',
     ],
     appNotes:
-      'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. Four behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:57`) and there is no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. Sample Size offers only Point Sample, 3 by 3 Average and 5 by 5 Average, where Photoshop lists a longer set. `Sample All Layers` renders as a permanently unchecked, permanently disabled checkbox with no change handler, so the sample source cannot be changed at all; the field is declared in settings and seeded false, no control in the app ever writes it — the only `patchToolArgs` call in this bar writes `sampleSize` — so it can never become true, and a click that found it set refuses loudly rather than silently sampling the active layer. And the sample is always read from the composited canvas, with no modifier that can redirect it to the background swatch or to a single layer. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` here selects the tool outright and there is no temporary mode. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile and neither registration declares a `shift: true` twin, so a shifted `I` re-selects the Eyedropper instead of cycling, and none of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s current page names only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with two third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all (`HANDOFF.md` §51 (`HANDOFF.md:1081`)).',
+      'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. `Sample Size` is the one control this bar matches rather than diverges on: all seven of Adobe’s entries are rendered with Adobe’s own labels in Adobe’s order, and the sample itself is Photoshop’s behaviour — an odd-sided square centred on the click, clipped at the canvas edge rather than shifted inward, reduced by an arithmetic mean. Three behaviors diverge. The drag is the first of them: the app’s only handler is `handlePointerDown` (`src/components/Main/EyedropperToolArea.tsx:59`), wired only to `onPointerDown` (`:137`) with no move or up handler anywhere in the file, so the sample is taken at the pointer-down position alone, no color box previews as the pointer travels, and a drag samples its first pixel rather than the one under the pointer at release. `Sample All Layers` is the second: nothing is rendered for it at all. The permanently unchecked, permanently disabled checkbox this bar used to carry is gone — a box that reads as a switch and cannot be used is worse than an absent one — and `src/components/ToolbarsRight/Eyedropper/__tests__/Eyedropper.test.tsx:77` pins that no such control exists. The field itself survives, seeded `false` at `src/tools/settings.ts:226`, and no control anywhere in the app writes it — the only `patchToolArgs` call in this bar writes `sampleSize` (`Eyedropper.tsx:15`) — so the settings state persists and drives nothing, and a click that found it set refuses loudly with a named reason rather than silently sampling the composited canvas and presenting it as the whole document’s (`EyedropperToolArea.tsx:65`). The composited read is the third: the sample always comes from the composited workspace canvas, and no setting narrows it to one layer, because that needs a composite that excludes adjustment-layer corrections. **The Alt modifier is not among the divergences** — it is implemented, and as Adobe states it: `EyedropperToolArea.tsx:133` dispatches `SET_BACKGROUND_COLOR` when `event.altKey` is held and `SET_COLOR` otherwise, so the sampled colour reaches the background swatch on Alt (Windows) or Option (macOS) exactly as in Photoshop, with no platform branch because the modifier is `altKey` on both. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` selects the tool outright and the keyboard hook has no key-up listener at all, so there is no temporary mode and no return on release. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile (`src/components/Common/AppKeyboardShortcuts.tsx:334` and `:480`), neither registration declares a `shift: true` twin, and the hook matches a declared `shift` exactly (`src/hooks/useKeyboardEvents.tsx:72`), so a shifted `I` falls through to the plain registration and re-selects the Eyedropper instead of cycling; the comment at `AppKeyboardShortcuts.tsx:475` says that omission is deliberate, on the grounds that a single-tool tile has nothing to cycle. None of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all, so there are no members to cycle through even if the twin were added. The sampling-ring toggle is deliberately absent from the census above rather than overlooked. Adobe’s two current pages that describe this bar, the tool page and the set-colors page, name only `Sample Size` and `Sample`, so the ring is not a proven gap and is not filed as `missing`; the name is unconfirmed in 27.x, with third-party sources calling it `Show Sampling Ring` and Adobe’s own CS5 help mentioning only "a color sampler ring for the Eyedropper tool" without naming a control. The app has no ring either way, since the ring is a cursor and this repo has no cursor registry at all.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html',
+      'https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html',
+      'https://video.pie-menu.com/adobe-photoshop-cheat-sheet.pdf',
       'https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=126',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/127',
       'https://ptgmedia.pearsoncmg.com/images/9780789744470/samplepages/0789744473.pdf',
@@ -88,7 +91,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
         detail:
           'The diameter of the brush tip, in pixels. Photoshop’s Size runs from 1 to 5000 px; the app’s slider runs from 0.5 to 500 in steps of 0.5.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:142',
+        appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:149',
       },
       {
         control: 'Mode',
@@ -101,7 +104,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
         detail:
           'The transparency of the color applied. As a stroke passes over an area the color does not exceed this level until the button is released; a further stroke adds more. Adobe’s own words are "Opacity of 100 percent is opaque", which is a value rather than a default, and Adobe states no default for the control. The app seeds a lower default per pen — 90% for the solid and dashed pens, 50% for the spray.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:204',
+        appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:211',
       },
       {
         control: 'Flow',
@@ -130,16 +133,16 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
     ],
     implementation: 'implemented',
     implementationRefs: [
-      'src/components/ToolbarsRight/Draw/Draw.tsx:13',
-      'src/components/Main/DrawToolArea.tsx:110',
+      'src/components/ToolbarsRight/Draw/Draw.tsx:14',
+      'src/components/Main/DrawToolArea.tsx:143',
       'src/util/draw.ts:85',
       'src/tools/draw.ts:6',
-      'src/tools/toolProcessors.ts:151',
-      'src/tools/settings.ts:32',
-      'toolbar-mapping.ts:96',
+      'src/tools/toolProcessors.ts:153',
+      'src/tools/settings.ts:39',
+      'toolbar-mapping.ts:116',
     ],
     appNotes:
-      'No Photoshop provenance is claimed and none is invented: the Tools panel has no freehand-annotation or pen-stroke tool, and this app’s Draw tile sits in the tonal group where Photoshop has no tool at all. The nearest Photoshop tools are the Pen tool family, for path work, and the Brush, for freehand paint. The `shortcut` field on a toolbar entry is display-only and binds nothing: its only consumers are the tile tooltip and the <kbd> in the flyout, and the key bindings live in a separate hand-written table. That table is where the `B` goes. `B` is bound to the brush group — brush, pencil, color replacement, eraser — and `Shift+B` cycles it, so pressing `B` selects the Brush and can never select this tool. The `B` badged on the Draw Tool is therefore wrong twice over: the letter belongs to the Brush in Photoshop, and in this app the letter is taken by the Brush as well, leaving this tool reachable by pointer only. Photoshop’s spring-loaded switch is also absent: no key in the table selects this tool, so holding a letter cannot reach it either. The two fields the Photoshop paint bar exposes as Mode and Smoothing are declared on the draw args but unreachable from this bar — no draw control writes either, the default args set neither, and a draw stroke’s layer is forced to Normal by the blend-mode gate that admits only the paint tools. Two app-only controls, Dash and Gap, have no Photoshop counterpart in the paint bar. Three of the Brush bar’s controls diverge rather than go missing. Size is `partial` on its range alone: the slider starts at 0.5 px where Photoshop starts at 1 and stops at 500 px where Photoshop reaches 5000. Opacity is `partial` for the same kind of reason, and the build-up rule is the part that diverges: the value is measured and applied correctly, but a draw stroke is one `beginPath`/`stroke()` over the whole path at the tool’s alpha, so where a stroke crosses itself the color does not compound within that stroke, and Adobe’s rule is that the color does not exceed the set level however many times the pointer crosses the same pixels until the button is released. And the airbrush toggle is `missing` rather than approximate: the Draw bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing that builds color up under a held button. The Spray pen type is the nearest thing and it diverges twice over — it is reached from the Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer is moving and a press that is then held still adds nothing after the single dot it already laid down. The bracket keys Photoshop binds to resize the tip are absent too: no bracket key is bound anywhere in the app, so `[` and `]` do not change the brush size. And Photoshop’s Shift-constrains-a-freehand-stroke-to-a-straight-line has no implementation here either — the draw area reads no modifier at all, so a Shift-held drag produces the identical freehand path.',
+      'No Photoshop provenance is claimed and none is invented: the Tools panel has no freehand-annotation or pen-stroke tool, and this app’s Draw tile sits in the tonal group where Photoshop has no tool at all. The nearest Photoshop tools are the Pen tool family, for path work, and the Brush, for freehand paint. The `shortcut` field on a toolbar entry is display-only and binds nothing: its only consumers are the tile tooltip and the <kbd> in the flyout, and the key bindings live in a separate hand-written table. This tool declares no shortcut, and the reason is that Photoshop’s letter for it is taken here: Photoshop binds the Draw tool to `Shift+W`, and this app spends both `W` and `Shift+W` on the Object Selection tool, so there is no free key to declare. It was previously badged `B`, which was wrong twice over — `B` belongs to the Brush in Photoshop, and in this app `B` is bound to the brush group (brush, pencil, color replacement, eraser) with `Shift+B` cycling it, so pressing `B` selected the Brush and could never select this tool. The badge is gone rather than reassigned because a declared shortcut the app does not implement is a falsehood the rail prints, and reassigning it is a product decision about which tool wins the chord. So this tool is reachable by pointer only. Photoshop’s spring-loaded switch is also absent: no key in the table selects this tool, so holding a letter cannot reach it either. The two fields the Photoshop paint bar exposes as Mode and Smoothing are declared on the draw args but unreachable from this bar — no draw control writes either, the default args set neither, and a draw stroke’s layer is forced to Normal by the blend-mode gate that admits only the paint tools. Two app-only controls, Dash and Gap, have no Photoshop counterpart in the paint bar. Three of the Brush bar’s controls diverge rather than go missing. Size is `partial` on its range alone: the slider starts at 0.5 px where Photoshop starts at 1 and stops at 500 px where Photoshop reaches 5000. Opacity is `partial` for the same kind of reason, and the build-up rule is the part that diverges: the value is measured and applied correctly, but a draw stroke is one `beginPath`/`stroke()` over the whole path at the tool’s alpha, so where a stroke crosses itself the color does not compound within that stroke, and Adobe’s rule is that the color does not exceed the set level however many times the pointer crosses the same pixels until the button is released. And the airbrush toggle is `missing` rather than approximate: the Draw bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing that builds color up under a held button. The Spray pen type is the nearest thing and it diverges twice over — it is reached from the Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer is moving and a press that is then held still adds nothing after the single dot it already laid down. The bracket keys Photoshop binds to resize the tip reach no tool here, because this tool is the one the binding could serve and is not in its table: `[` and `]` are registered, but only for the tools `tipSizeField` names — brush, pencil, color replacement, eraser, smudge, dodge, burn and clone stamp — and this tool’s Size writes the same `lineWidth` field the brush uses while being absent from that list, so the two keys are inert for it rather than unbound. And Photoshop’s Shift-constrains-a-freehand-stroke-to-a-straight-line has no implementation here either — the draw area reads no modifier at all, so a Shift-held drag produces the identical freehand path.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/create-smoother-more-polished-brush-strokes-with-stroke-smoothing.html',

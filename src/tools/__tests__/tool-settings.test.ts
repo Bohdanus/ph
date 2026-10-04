@@ -143,7 +143,11 @@ describe('defaultSettings', () => {
     expect(defaultSettings.text).toMatchObject({
       text: '',
       fontSize: 64,
-      lineHeight: 1.1,
+      // Adobe's default leading is Auto, and auto-leading is 120% of the type size:
+      // `JustificationProperties.autoLeadingAmount` defaults to `120`. This app's `lineHeight`
+      // is a ratio rather than an absolute baseline-to-baseline distance, so 1.2 reproduces the
+      // percentage and not the semantics.
+      lineHeight: 1.2,
       fontFamily: 'Arial',
       align: 'left',
       bold: false,
@@ -320,7 +324,10 @@ const figurePresets: readonly [FigureType, Record<string, unknown>][] = [
   ['rectangle', { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' }],
   ['oval', { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' }],
   ['triangle', { alpha: 1, lineWidth: 5, toolMode: 'shape' }],
-  ['polygon', { alpha: 1, lineWidth: 5, toolMode: 'shape' }],
+  // `sides` is here rather than defaulted at the renderer, so the assertion names
+  // the seed: 5 is Adobe's Polygon-tool default, and a store that arrives
+  // without the key must still draw a pentagon.
+  ['polygon', { alpha: 1, lineWidth: 5, sides: 5, toolMode: 'shape' }],
 ];
 
 /** Walks nested settings values (e.g. `reposition.move`) looking for non-finite numbers. */

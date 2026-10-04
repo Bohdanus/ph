@@ -119,17 +119,92 @@ function isMergedInto(cwd, base) {
 }
 
 /**
+ * Of the paths a worktree reports as modified, how many the base branch does
+ * NOT already hold byte-for-byte.
+ *
+ * WHY THIS IS A SEPARATE NUMBER, NOT A REPLACEMENT
+ * -------------------------------------------------
+ * `git status` compares the working tree against the worktree's own HEAD. On a
+ * branch 100 commits behind `main` that reports every file `main` has since
+ * rewritten as "modified", so a worktree holding nothing of its own can report
+ * a dirty count in the dozens. A sweep that reads `modified` as "uncommitted
+ * work at risk" then overstates the risk roughly fourfold: on 2026-10-02,
+ * `history/migration-finalisation` reported 70 modified and 35 of them were
+ * byte-identical to `main`, and `fix/header-menu-structure` reported 13 with 7
+ * already on `main`. The work was already on `main`; only the branch tip was
+ * behind.
+ *
+ * So `modified` stays exactly as it was — it is what the strict disposal test
+ * needs, and making that test more permissive is the wrong direction — and this
+ * answers the question a reader actually has: of the paths that differ from the
+ * tip, how many differ from the BASE too, and are therefore content no commit
+ * on the base holds?
+ *
+ * An untracked path counts here on its own: the base branch cannot hold a file
+ * the branch never tracked, so every untracked path is content only this
+ * directory has. That is the shape `git worktree remove --force` destroys.
+ *
+ * Failure is counted as `notOnBase`. A path whose blob cannot be hashed — a
+ * filename `git status` quoted because it contains a space or a newline, a file
+ * deleted mid-scan — cannot be proven to be on the base either, and the safe
+ * direction to be wrong in is the one that keeps the work.
+ */
+function notOnBase(cwd, base, { modifiedPaths, untracked }) {
+  const onBase = new Set();
+
+  if (modifiedPaths.length > 0) {
+    // Two batched calls rather than two per path: a worktree can report
+    // hundreds of modified paths and this runs for every worktree in the
+    // repository.
+    //
+    // `hash-object` prints one hash per argument, in order, which pairs with
+    // `modifiedPaths` positionally. `ls-tree` prints only the paths that DO
+    // exist on the base, so a missing path is absent from the set below and
+    // counts as not-on-base, which is the correct reading: the base has no such
+    // path at all.
+    const hashes = git(cwd, ['hash-object', '--', ...modifiedPaths]);
+    const tree = git(cwd, ['ls-tree', base, '--', ...modifiedPaths]);
+
+    if (hashes !== null && tree !== null) {
+      const worktreeHashes = hashes.split('\n').filter(Boolean);
+      const baseBlobs = new Map();
+      for (const line of tree.split('\n')) {
+        if (!line.trim()) continue;
+        const tab = line.indexOf('\t');
+        if (tab === -1) continue;
+        const [meta] = [line.slice(0, tab)];
+        const path = line.slice(tab + 1);
+        const blob = meta.split(/\s+/)[2];
+        if (blob) baseBlobs.set(path, blob);
+      }
+      modifiedPaths.forEach((path, i) => {
+        const mine = worktreeHashes[i];
+        const theirs = baseBlobs.get(path);
+        if (mine && theirs && mine === theirs) onBase.add(path);
+      });
+    }
+  }
+
+  return modifiedPaths.filter((p) => !onBase.has(p)).length + untracked;
+}
+
+/**
  * Everything the working tree holds that no commit does.
  *
  * Split into modified vs untracked because they are recovered differently: a
  * modified file is `git diff` away from a commit, an untracked file is on no
  * ref at all and is destroyed by `git worktree remove --force`.
+ *
+ * `notOnBase` is the subset of `modified` whose content the base branch does
+ * not already hold, plus every untracked path — see `notOnBase` above for why
+ * it is reported next to the count rather than instead of it.
  */
-function workingTreeState(cwd) {
+function workingTreeState(cwd, base) {
   const out = git(cwd, ['status', '--porcelain']);
-  if (out === null) return { modified: 0, untracked: 0, paths: [] };
+  if (out === null) return { modified: 0, untracked: 0, notOnBase: 0, paths: [] };
 
   const paths = [];
+  const modifiedPaths = [];
   let modified = 0;
   let untracked = 0;
 
@@ -137,10 +212,15 @@ function workingTreeState(cwd) {
     if (!line.trim()) continue;
     paths.push(line.slice(3));
     if (line.startsWith('??')) untracked += 1;
-    else modified += 1;
+    else {
+      modified += 1;
+      modifiedPaths.push(line.slice(3));
+    }
   }
 
-  return { modified, untracked, paths };
+  const offBase = base ? notOnBase(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
+
+  return { modified, untracked, notOnBase: offBase, paths };
 }
 
 /** Subject line and dates of the branch's tip commit. */
@@ -245,10 +325,11 @@ export function mergeConflict(cwd, base) {
 export function collectWorktrees(cwd, { base = 'main' } = {}) {
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);
+  const nameCollisions = historicalNameCollisions(root, base);
 
   return worktrees.map((w) => {
     const { ahead, behind } = aheadBehind(w.path, base);
-    const tree = workingTreeState(w.path);
+    const tree = workingTreeState(w.path, base);
     const unmerged = typeof ahead === 'number' && ahead > 0;
 
     return {
@@ -264,8 +345,96 @@ export function collectWorktrees(cwd, { base = 'main' } = {}) {
       // branch that is already on main, or a detached HEAD, produces a
       // meaningless answer that would be read as a real one.
       merge: unmerged ? mergeConflict(w.path, base) : { conflict: null },
+      // Advisory, and deliberately not part of any verdict — see the note on
+      // `historicalNameCollisions` for the inference it exists to block.
+      nameCollisions: nameCollisions.get(w.branch) ?? [],
     };
   });
+}
+
+/**
+ * Branches whose NAME already appears in a merge subject on `base`.
+ *
+ * WHY THIS IS A FIELD AND NOT A STATUS
+ * ------------------------------------
+ * On 2026-10-01 a sweep read `git log --grep=fix/stale-citations`, found
+ * `merge(fix/stale-citations): two TEST-FLAKES citations no longer point at what
+ * they claim`, and concluded the branch was already landed — so it deleted a
+ * worktree a live chat was using. That merge was fourteen hours old and of an
+ * unrelated dead branch; the live branch's tip was not an ancestor of `main`, and
+ * `action` had already said so. The name was the only thing that misled.
+ *
+ * So this is advisory. It changes no status, no recommendation and no
+ * `action`, because a branch whose name was used before is neither safer nor more
+ * dangerous than one whose name was not — `mergedIntoBase` is the fact, and it is
+ * already computed. What the flag buys is that a reader who was about to make the
+ * name-shaped inference sees, in the same record, that the inference is available
+ * to make and does not hold.
+ *
+ * ONE SCAN FOR ALL WORKTREES
+ * --------------------------
+ * Scoped to `base` rather than `--all`, and run once per collection rather than
+ * once per worktree: at 99 worktrees the per-worktree form is 99 `git log`
+ * invocations over the whole history.
+ *
+ * EVERY BRANCH NAME THE SUBJECT MENTIONS, NOT THE FIRST ONE
+ * -------------------------------------------------------
+ * Two shapes exist and the naive reading of each is wrong. `merge(<name>):` names
+ * the merged branch. `Merge branch '<a>' into <b>` names TWO branches, and the
+ * first quoted one is the branch merged *in* — so matching only the leading
+ * quote credited `main` with every "Merge branch 'main' into <feature>" on a
+ * feature branch, 126 collisions on this repository, while a branch whose name
+ * only ever appears in the `into` position got an empty list. Both names are
+ * recorded. `base` is skipped entirely: every fast-forward into it says
+ * "Merge branch 'main'", so listing it would be the base branch claiming a
+ * hundred merges of itself.
+ *
+ * A base ref that does not resolve — `--base trunk` on a clone whose default is
+ * `main` — yields an empty map. `git()` returns its fallback and never throws,
+ * which is the contract `aheadBehind` and `isMergedInto` already rely on to
+ * degrade rather than fail; re-wrapping it in a `try` that expected a throw and
+ * then reading the result outside it turned that degradation into a
+ * `TypeError` that killed the whole generator.
+ */
+export function historicalNameCollisions(cwd, base = 'main') {
+  const out = git(cwd, ['log', base, '--format=%H%x09%cI%x09%s']);
+  const found = new Map();
+  if (!out) return found;
+  for (const line of out.split('\n')) {
+    const [sha, date, subject] = line.split('\t');
+    if (!sha || !subject) continue;
+    const names = new Set([...branchNamesInSubject(subject)].filter((n) => n && n !== base));
+    if (names.size === 0) continue;
+    for (const name of names) {
+      const list = found.get(name) ?? [];
+      // Newest first, because `git log` is newest first and a reader wants the
+      // most recent merge that carries this name, not the first one ever written.
+      list.push({ sha, subject, date });
+      found.set(name, list);
+    }
+  }
+  return found;
+}
+
+/**
+ * Every branch name a merge subject mentions.
+ *
+ * Exported for its own test rather than inlined, because the two shapes are
+ * easy to get wrong in the direction that matters: attributing a collision to
+ * the wrong branch is worse than reporting none, since the field exists to stop
+ * a reader trusting a name.
+ */
+export function branchNamesInSubject(subject) {
+  const names = [];
+  const paren = /^merge\(([^)]+)\)/.exec(subject);
+  if (paren) names.push(paren[1]);
+  const into = /^Merge branch '([^']+)' into (.+)$/.exec(subject);
+  if (into) names.push(into[1], into[2]);
+  // A bare `Merge branch '<name>'` is the fast-forward wording, where the merged
+  // branch is the only name present.
+  const plain = /^Merge branch '([^']+)'/.exec(subject);
+  if (plain && !into) names.push(plain[1]);
+  return names;
 }
 
 /**

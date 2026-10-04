@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   drawLine,
@@ -10,12 +10,31 @@ import {
   LINE_START_Y,
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
-import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
+/*
+ * Every redraw wait in this file polls the DOCUMENT's own rect inside the canvas box, derived
+ * from the contain fit, rather than `CANVAS_REDRAW_CLIP`.
+ *
+ * `CANVAS_REDRAW_CLIP` is a fixed 300x100 box-relative rect, so whether it stays inside the
+ * document is a property of the current layout rather than of the helper: at the suite's
+ * 974x583 box it starts at box x 100 while the document's own left edge is at
+ * `offsetX = 98.33`, and `offsetX` reaches 100 at a box height of 580.5. A viewport three
+ * pixels shorter therefore puts the LETTERBOX inside it. In the light theme that is
+ * `#ffffff` and nothing false-passes; under DARK it is `#121212`, which is inside
+ * `hasDarkPixels` (all three channels under 60) with no stroke on the canvas at all — so a
+ * wait for the stroke would return on a frame containing nothing, and a wait for the stroke
+ * to LOSE its dark core could never settle and would time out instead.
+ *
+ * The fitted document rect is a subset of the box by construction, so a clip built from the
+ * fit cannot contain the letterbox. That is the spec-side statement; the containment itself
+ * is pinned in `__tests__/document-sampling.unit.test.ts`.
+ */
+import { documentClipInBox } from './helpers/document-sampling';
 import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
-  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
+  await waitForCanvasPixels(page, documentClipInBox(box), hasRedPixels, { description: 'red pixels' });
 }
 
 // screenshot of canvas area contains line of selected red color
@@ -34,16 +53,21 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // change, which turns the second assertion into a check that the click did
   // something rather than a check that the app booted.
   await clickToolButton(page, 'reposition');
-  // Resolved, not addressed: `draw` is the seventeenth group, so at this viewport it has been
-  // folded into the three-dots tile and there is no `tool-button-draw` element at all. The
-  // three-dots tile computes `aria-pressed` with the same `group.some(...)` the real tiles do,
-  // so this says the same thing whether the tool has a tile or not.
+  // Resolved, not addressed: `draw` is group 13 of the 16 in `toolbar-mapping.ts`, and the
+  // rail fits SEVEN of them into the slot at this viewport, so `draw` sits in the three-dots
+  // tile and there is no `tool-button-draw` element at all. The seven is the number to keep
+  // current: the fold follows the fit, not the ordinal, and `draw` stopped being the last
+  // group, so a count derived any other way would be describing a rail this viewport does not
+  // produce. The three-dots tile carries no `aria-pressed` at all — it opens a menu rather
+  // than toggling a tool — so the helper reads its lit class off the same `group.some(...)`
+  // predicate the tiles read `aria-pressed` from, and this says the same thing whether the
+  // tool has a tile or not.
   await expectToolSelected(page, 'draw', false);
 
   await clickToolButton(page, 'draw');
   // The draw tool only strokes with the active foreground color once it is the active tool.
-  // Asserted for the same reason as the assertion above it: `draw` is the seventeenth group,
-  // so at this viewport it has been folded into the three-dots tile and there is no
+  // Asserted for the same reason as the assertion above it: `draw` is group 13 and the rail
+  // fits seven at this viewport, so it is in the three-dots tile and there is no
   // `tool-button-draw` element.
   await expectToolSelected(page, 'draw');
 

@@ -1,10 +1,15 @@
+import { flushSync } from 'react-dom';
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
+import { useFile } from '../../contexts/useFile.tsx';
+import { useLayers } from '../../contexts/useLayer.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import type { SpongeMode } from '../../tools/sponge.ts';
+import type { FigureType } from '../../tools/shape.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 
 /**
@@ -22,14 +27,33 @@ const lassoGroup = [
   'polygonal-lasso',
   'feather-magnetic-lasso',
 ] as const satisfies readonly ToolName[];
-/** `M`: the marquee tile — rectangular and elliptical, NOT the wand, which moved to `W`. */
-const marqueeGroup = ['rectangular-selection', 'elliptical-selection'] as const satisfies readonly ToolName[];
+/**
+ * `M`: the marquee tile — all four of Adobe's marquee tools, NOT the wand, which moved to `W`.
+ *
+ * The order is the flyout order from `toolbar-mapping.ts`, and it is what `Shift+M` walks.
+ * Adobe publishes "Switch between marquee tools — SHIFT+M"
+ * (`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`)
+ * without enumerating which tools the cycle covers, and its default-shortcut table names
+ * only the Rectangular and Elliptical Marquees against `M`. Two third-party sources
+ * disagree on whether the 1-pixel pair is inside the cycle at all
+ * (`guides.wmlcloud.com`, reproducing Adobe's own CS5 "Basic Selection Tools", says they were
+ * never assigned `M`; `flylib.com`'s Real World Adobe Photoshop CS2 says the cycle covers
+ * four). This app follows the group: the cycle is the marquee tile, and a tool the rail
+ * shows behind the same key that a user has just pressed is a tool they will expect the key
+ * to reach. Recorded as unresolved in `selection.notes.md`.
+ */
+const marqueeGroup = [
+  'rectangular-selection',
+  'elliptical-selection',
+  'single-row-marquee',
+  'single-column-marquee',
+] as const satisfies readonly ToolName[];
 /** `W`: the object-selection tile — the wand and the quick selection, which now share it. */
 const objectSelectionGroup = ['magic-wand', 'quick-selection'] as const satisfies readonly ToolName[];
 /** `G`: paint bucket and gradient, one tile, one fill gesture between a click and a drag. */
 const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolName[];
-/** `O`: the dodge/burn tonal pair, which also share one options bar (`ToolbarsRight/Tonal`). */
-const tonalGroup = ['dodge', 'burn'] as const satisfies readonly ToolName[];
+/** `O`: the whole toning flyout — the Dodge, the Burn and the Sponge, in Adobe's order. */
+const tonalGroup = ['dodge', 'burn', 'sponge'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
 
 /**
@@ -49,6 +73,7 @@ const tipSizeField = {
   smudge: 'size',
   dodge: 'size',
   burn: 'size',
+  sponge: 'size',
   'clone-stamp': 'size',
 } as const satisfies Partial<Record<ToolName, 'lineWidth' | 'size'>>;
 
@@ -78,11 +103,13 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ hasImage, toolName }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
-  const { goToTool } = useApp();
+  const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { openSaveImageDialog } = useFile();
+  const { commitDirtyTool } = useLayers();
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -108,21 +135,45 @@ export const AppKeyboardShortcuts = () => {
 
   const selectShapeTool = (shiftKey = false) => {
     if (shiftKey) {
-      // The cycle must be expressed in real FigureType values. Matching the
-      // display name 'ellipse' against the stored figure 'oval' made
-      // indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle
-      // instead of advancing to Line.
+      // The cycle IS the flyout, in the rail's own order: `toolbar-mapping.ts` —
+      // `toolbarMap`'s five `shape`-named entries. The Custom Shape tool is the sixth entry of
+      // that same group rather than a figure, because it carries its own `toolName`, so it gets
+      // the one index past the last figure and the modulus spans all six entries.
+      //
+      // The group CLOSES, which is what Adobe's "cycle through tools with the same shortcut
+      // key" does: the press after the last entry advances to the first, so the press after
+      // Custom Shape selects the Rectangle. That is why the active tool's position is derived
+      // explicitly rather than left to `indexOf`. Letting the Custom Shape tool fall into the
+      // `-1` branch gave it the Rectangle's index, and the cycle then closed over five entries
+      // with the Rectangle permanently unreachable by Shift+U alone.
+      //
+      // The fallback is still `-1 + 1 === 0`, so a genuinely unlisted figure and a non-shape
+      // tool both start the group at the Rectangle. The list holds real `FigureType` values for
+      // the same reason: matching the display name 'ellipse' against the stored figure 'oval'
+      // made indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle instead of
+      // advancing to Line.
+      const orderedFigures = [
+        'rectangle',
+        'oval',
+        'line',
+        'triangle',
+        'polygon',
+      ] as const satisfies readonly FigureType[];
+      const customShapeIndex = orderedFigures.length;
       const currentFigure = toolArgs.toolName === 'shape' ? toolArgs.figure : 'rectangle';
-      const orderedFigures = ['rectangle', 'oval', 'line', 'custom-shape'] as const;
-      const currentIndex = orderedFigures.indexOf(currentFigure as (typeof orderedFigures)[number]);
-      const nextFigure = orderedFigures[(currentIndex + 1) % orderedFigures.length];
+      const figureIndex = orderedFigures.indexOf(currentFigure);
+      // The Custom Shape tool is the group's LAST entry, not a figure, so its index comes from
+      // what it is rather than from the -1 the figure lookup gives it.
+      const currentIndex = toolArgs.toolName === 'custom-shape' ? customShapeIndex : figureIndex;
+      const nextIndex = (currentIndex + 1) % (orderedFigures.length + 1);
 
-      if (nextFigure === 'custom-shape') {
+      if (nextIndex === customShapeIndex) {
         goToTool('custom-shape');
-      } else {
-        patchToolArgs('shape', { figure: nextFigure });
-        goToTool('shape');
+        return;
       }
+
+      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
+      goToTool('shape');
       return;
     }
 
@@ -234,6 +285,49 @@ export const AppKeyboardShortcuts = () => {
     patchToolArgs(tool, { alpha: value } as ToolPatch<typeof tool>);
   };
 
+  /**
+   * The save the `mod+S` chord runs. It is the header's save, restated rather than shared: the same
+   * four steps `DesktopHeader`, `MobileHeader` and `MobileMenuDrawer` each write out, with the same
+   * `flushSync`, the same staged `ImageSaveInput` and the same `if (data)` guard. **No shared hook
+   * was extracted and none is implied.** Four call sites now spell the sequence rather than three,
+   * and that duplication is the deliberate price of a change that adds a keyboard binding without
+   * re-architecting the save path — extracting a `useSaveDocument` is a separate decision with its
+   * own blast radius (it would have to carry `useStore`, `useLayers`, `useApp` and `useFile` into
+   * one hook and rewrite three components that are each independently tested). Recorded here so the
+   * next reader counts copies deliberately instead of assuming one is hiding.
+   *
+   * Restating rather than forking is what keeps a keyboard save and a `File > Save` click identical:
+   * the steps are the same three calls in the same order, and the `flushSync` around
+   * `commitDirtyTool` is load-bearing rather than decorative. `commitDirtyTool` bakes a live preview
+   * into a real layer and dispatches, and `exportLayers` has to hold THAT result before
+   * `openSaveImageDialog` is called; without the wrapper the batch runs after the call and the
+   * dialog is handed the un-committed record.
+   *
+   * `if (data) handleImageSave(data)` is the in-band refusal every other caller of this flow
+   * already guards: a cancelled dialog resolves `null` and is not a save, so there is nothing to
+   * record and nothing to report. The `try` matches them too — a throwing `commitDirtyTool` is
+   * reported rather than escaping a document-level `keydown` listener as an uncaught exception.
+   */
+  const saveDocument = async () => {
+    try {
+      if (!hasImage) return;
+
+      let exportLayers!: ReturnType<typeof commitDirtyTool>;
+      flushSync(() => {
+        exportLayers = commitDirtyTool();
+      });
+      const data = await openSaveImageDialog({
+        fileName,
+        layers: exportLayers,
+        size: totalSize,
+        documentFrame,
+      });
+      if (data) handleImageSave(data);
+    } catch (error) {
+      console.error('Unable to prepare document export', error);
+    }
+  };
+
   useKeyDownShortcut({
     key: 'z',
     mod: true,
@@ -342,6 +436,48 @@ export const AppKeyboardShortcuts = () => {
         console.error('Failed to create a layer from the active selection');
       }
     },
+  });
+
+  /**
+   * `mod+S`: Adobe's Save on both platforms at once. `mod: true` is what covers the pair —
+   * `matchesShortcut` compares `(event.metaKey || event.ctrlKey)` against the declared `mod`, so
+   * this one registration IS `Cmd+S` on macOS and `Ctrl+S` on Windows and Linux, which is exactly
+   * the split Adobe documents. Declaring `meta` or `ctrl` instead would bind one platform and
+   * silently unbind the other.
+   *
+   * **Position is NOT load-bearing here, unlike the Sponge's two mode keys.** Every other `s`
+   * registration in this file declares `mod: false`, so a press carrying either modifier fails
+   * their `mod` test before their undeclared `shift`/`alt` are ever compared, and last-registered-
+   * wins never gets to arbitrate. It sits here with the other document chords rather than beside
+   * the Clone Stamp because that is where it belongs by kind; a future bare-`s` registration that
+   * DID declare `mod: true` would need this moved last.
+   *
+   * `preventDefault` is the whole reason the key is registered at all: `Ctrl+S`/`Cmd+S` is the
+   * browser's own Save Page in every engine, and an in-app Save that also saved the HTML would be
+   * worse than the missing shortcut this replaces.
+   *
+   * `enabled: hasImage` is the file's uniform gate and nothing more is claimed for it. Unlike the
+   * Meta+J chord above, `saveDocument` has no narrower precondition to lose — there is no selection
+   * to check — so the tempting "claim the key even when there is nothing to save" argument does not
+   * apply. What DOES apply is the ordering: `useKeyboardEvents.tsx` resolves `enabled` with a
+   * `continue` that runs BEFORE `preventDefault`, so with no document loaded this registration is
+   * skipped and the browser's own Save Page is left alone. That consequence is deliberate here, it
+   * matches every other registration in this file, and the save tests pin it as the behaviour rather
+   * than papering over it. Widening the claim to the no-document case would mean answering a
+   * document-less keypress outside the handler, which is a different design than this one.
+   *
+   * `mutatesDocument` is left at its `true` default and that is deliberate: the handler commits a
+   * live tool preview, and `useKeyboardEvents.tsx` refuses a document-committing registration at
+   * `keydown` — before dispatch, therefore before `commitDirtyTool` — while a gesture holds the
+   * document. A mid-gesture save would consume the preview the gesture's own commit is about to
+   * write. The refusal costs the press, which is the correct trade.
+   */
+  useKeyDownShortcut({
+    key: 's',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: saveDocument,
   });
 
   useKeyDownShortcut({
@@ -544,6 +680,66 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage && opacityTool(toolName) !== null,
     onKeyDown: () => setOpacity(OPACITY_TEN_PERCENT),
+  });
+
+  /**
+   * The Sponge's two mode keys: `Shift+Alt+D` for Desaturate and `Shift+Alt+S` for
+   * Saturate, with the Sponge selected.
+   *
+   * Adobe's own manual shortcut tables give both rows verbatim — "Desaturate (Sponge Tool)
+   * Alt+Shift+D" and "Saturate (Sponge Tool) Alt+Shift+S" — and Julieanne Kost restates
+   * them on Adobe's behalf. They are **tool-conditional**, which is load-bearing rather
+   * than a workaround: the SAME `Alt+Shift+S` is Shadows on the Dodge and the Burn, on the
+   * same page of the same table, so Photoshop resolves the collision by which tool is
+   * active. `enabled: toolName === 'sponge'` is that resolution, and it is also what keeps
+   * this registration from claiming the Dodge's Shadows key.
+   *
+   * `preventDefault` is on because `Alt+S` is a browser and OS chord on several platforms
+   * and an unbound one would otherwise act on the user's document.
+   *
+   * **THEY ARE REGISTERED LAST ON PURPOSE, and that position is load-bearing.**
+   * `matchesShortcut` only compares a modifier the registration actually DECLARES
+   * (`src/hooks/useKeyboardEvents.tsx:70-77`), and the Clone Stamp's bare `s` at
+   * `key: 's', mod: false` declares neither `shift` nor `alt` — so it matches `Alt+Shift+S`
+   * as readily as a bare `s`. Dispatch is last-registered-wins (`useKeyboardEvents.tsx:109`
+   * walks the registration array backwards), which is why a registration sitting earlier in
+   * this function loses to one sitting later. Registered up here with the other tool
+   * selectors, `Alt+Shift+S` reached the Clone Stamp instead of the Sponge and Adobe's
+   * Saturate key was dead on arrival; `Alt+Shift+D` was unaffected because no registration
+   * for `d` leaves its modifiers undeclared. Moving the pair to the end fixes it without
+   * touching the Clone Stamp's own `Shift+S`, which is pinned behaviour.
+   *
+   * The alternative — declaring `shift: false, alt: false` on the Clone Stamp — was rejected
+   * because `Shift+S` selecting the Clone Stamp is itself pinned by
+   * `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx`. The dependency this
+   * creates is on ORDER rather than on the flag, so the reason is recorded here and in the
+   * tests that pin it.
+   *
+   * **The Dodge's and the Burn's own `Alt+Shift+S/M/H` range keys are NOT bound here.** They
+   * are listed in their descriptions and do nothing. That asymmetry is the point of the
+   * `enabled` gate rather than an oversight in it, and the missing pair is recorded in
+   * `HANDOFF.md` §145 rather than fixed in this change.
+   */
+  const setSpongeMode = (mode: SpongeMode) => patchToolArgs('sponge', { mode });
+
+  useKeyDownShortcut({
+    key: 'd',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: hasImage && toolName === 'sponge',
+    onKeyDown: () => setSpongeMode('desaturate'),
+  });
+
+  useKeyDownShortcut({
+    key: 's',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: hasImage && toolName === 'sponge',
+    onKeyDown: () => setSpongeMode('saturate'),
   });
 
   return null;

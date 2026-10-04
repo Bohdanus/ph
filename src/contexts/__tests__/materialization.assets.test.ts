@@ -4,7 +4,8 @@ import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { AssetRegistry } from '../asset-registry.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
-import type { DocumentFrame } from '../document-frame.ts';
+import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
+import { MAX_AFFINE_PIXELS } from '../affine-transform.ts';
 import type { AssetId, DurableLayerSnapshot, DurableLayerSource, DurableOperation } from '../history-model.ts';
 import { createMaterializationKey, materializeDocument, materializeLayer } from '../materialization.ts';
 import type { MaterializationRequest } from '../materialization.ts';
@@ -122,6 +123,7 @@ function makeReplay(layers: Record<string, DurableReplayLayer>): DurableReplayRe
     durableRevision: 0,
     cursor: 0,
     frame: { ...defaultFrame },
+    totalSize: documentFrameSize(defaultFrame),
     layers: Object.freeze({ ...layers }),
     selections: Object.freeze({ selections: Object.freeze([]), activeSelectionId: null }),
     activeLayerId: Object.keys(layers)[0] ?? null,
@@ -502,6 +504,7 @@ describe('materialization source kinds', () => {
       'layer-1',
       Object.freeze({
         kind: 'text' as const,
+        toolName: 'text',
         args: Object.freeze({ toolName: 'text', text: 'hi' }),
         size: { width: 32, height: 16 },
         sourcePos: Object.freeze({ x: 0, y: 0, width: 32, height: 16 }),
@@ -688,6 +691,28 @@ describe('materialization operation loop guards', () => {
     registry.shutdown();
   });
 
+  it('passes the materialized base bitmap into a Brush replay before drawing the stroke', async () => {
+    const registry = new AssetRegistry();
+    const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
+      {
+        kind: 'apply-raster-processor',
+        layerId: 'layer-1',
+        processorId: 'brush',
+        version: 1,
+        args: { toolName: 'brush', alpha: 1, color: '#000000', penType: 'pen', lineWidth: 2, points: [{ x: 2, y: 2 }] },
+      },
+    ]);
+
+    await materializeLayer(layer, makeRequest(registry));
+
+    const copiedBase = recordedContexts.some((context) =>
+      vi
+        .mocked(context.drawImage)
+        .mock.calls.some(([source]) => recordedBitmaps.includes(source as (typeof recordedBitmaps)[number]))
+    );
+    expect(copiedBase).toBe(true);
+  });
+
   it('skips operation kinds that are neither retained nor raster processors', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
@@ -771,6 +796,73 @@ describe('materialization ownership of borrowed rasters', () => {
     registry.shutdown();
     expect(close).toHaveBeenCalledTimes(1);
     result.lease.release();
+  });
+
+  // The presentation a raster source is published at is its own `pos`, and the
+  // final retained segment is SKIPPED when that extent exceeds the affine budget
+  // — `evaluatePresentation` refuses it, and a refusal would drop the layer from
+  // the document entirely. That skip is the only path on which the registry's
+  // borrowed bitmap survives as the materialization result, and the materializer
+  // released its lease on it before the cache published it.
+  const unevaluatedSide = Math.floor(Math.sqrt(MAX_AFFINE_PIXELS)) + 1;
+  const oversizedBounds = { x: 0, y: 0, width: unevaluatedSide, height: unevaluatedSide };
+
+  it('copies an unrendered borrowed raster so the cache never holds the baseline bitmap', async () => {
+    // One entry fits, so materializing a second layer is the pressure that evicts
+    // the first — the eviction path, not only the scope path, has to leave the
+    // baseline alone.
+    const registry = new AssetRegistry({ maxCacheEntries: 1 });
+    const { bitmap, close } = makeOwnedBitmap(unevaluatedSide, unevaluatedSide);
+    const assetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
+    const layer = makeLayer('layer-1', rasterSource(assetId, unevaluatedSide, unevaluatedSide), oversizedBounds);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+    const publishedClose = closeSpy(result.bitmap);
+
+    // The published bitmap is a copy the cache owns, not the asset itself, and
+    // its bounds are the layer's own — an unevaluated copy must not move them.
+    expect(result.bitmap).not.toBe(bitmap);
+    expect(result.bounds).toEqual(oversizedBounds);
+    expect(close).not.toHaveBeenCalled();
+    expect(publishedClose).not.toHaveBeenCalled();
+
+    // A live lease pins the entry, so the second layer cannot evict it yet.
+    const other = makeLayer('layer-2', blankSource(4, 4), { x: 0, y: 0, width: 4, height: 4 });
+    const otherResult = await materializeLayer(other, makeRequest(registry));
+    expect(publishedClose).not.toHaveBeenCalled();
+
+    // Eviction closes what the cache owns — the copy — and not the baseline the
+    // registry owns. One close each, and never the same object twice.
+    result.lease.release();
+    expect(publishedClose).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+
+    // Disposing the document still closes the adopted baseline exactly once
+    // after a materialization of it was evicted, and the materialization that
+    // is still published is untouched by the baseline's disposal.
+    registry.disposeDocument('test-doc');
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(closeSpy(otherResult.bitmap)).not.toHaveBeenCalled();
+
+    otherResult.lease.release();
+    expect(closeSpy(otherResult.bitmap)).toHaveBeenCalledTimes(1);
+    registry.shutdown();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes an unrendered blank source without the ownership copy', async () => {
+    const registry = new AssetRegistry();
+    const layer = makeLayer('layer-1', blankSource(unevaluatedSide, unevaluatedSide), oversizedBounds);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    // A source this function created is already owned, so the copy is not only
+    // unnecessary — it would be a second full-size raster per oversized layer.
+    expect(recordedBitmaps).toHaveLength(0);
+    expect(result.bitmap).toBeInstanceOf(RecordingOffscreenCanvas);
+    expect(result.bounds).toEqual(oversizedBounds);
+    result.lease.release();
+    registry.shutdown();
   });
 });
 
@@ -873,8 +965,18 @@ describe('materialization document frame presentation', () => {
 });
 
 describe('staging before publication', () => {
-  it('does not publish a partially materialized document when a later layer fails', async () => {
+  // SD-8: a refused layer does not refuse the document. This used to assert
+  // `rejects.toThrow(/Unknown or disposed asset/)`, and its trailing block then went on
+  // to measure whether the whole-document rollback had dropped the good layer's cache
+  // entry to `retainCount` 0. Both of those described a behaviour that no longer exists:
+  // `materializeDocument` catches a per-layer failure, reports it, and continues, so
+  // there is no rejection to await and no rollback to measure. The property that took
+  // its place is strictly sharper — the document resolves, the refused layer is ABSENT
+  // from the composed set, the refusal is reported rather than silent, and the surviving
+  // layer keeps its lease until the published document releases it.
+  it('omits only the refused layer, reports it, and still publishes the rest', async () => {
     const registry = new AssetRegistry();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const good = makeLayer('layer-good', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
     const bad = makeLayer('layer-bad', rasterSource('missing' as AssetId, 20, 20), {
       x: 0,
@@ -883,34 +985,53 @@ describe('staging before publication', () => {
       height: 20,
     });
     const replay = makeReplay({ 'layer-good': good, 'layer-bad': bad });
+    const request = makeRequest(registry);
 
-    await expect(materializeDocument(replay, makeRequest(registry))).rejects.toThrow(/Unknown or disposed asset/);
-
-    // The all-or-nothing part is what `materializeDocument` already pins in
-    // `materialization.ordering.test.ts:367` ("releases already-materialized
-    // layer leases when a later layer fails"): delete the rollback there and the
-    // contexts suite goes red. It is NOT pinned here, and this comment used to
-    // claim it was.
-    //
-    // What this test actually shows is narrower, and measured: the rollback in
-    // `materializeDocument` drops the good layer's cache entry to `retainCount`
-    // 0 after the rejection, and without the rollback the entry is still at
-    // `retainCount` 1. `producerRuns` is 1 either way, because
-    // `AssetRegistry.materialize` serves a cached entry whenever one exists
-    // (`asset-registry.ts:305-310`) and never consults `retainCount` — so the
-    // assertion below cannot detect the lease leak it was written to detect, and
-    // is kept only as a regression guard on the retry succeeding at all.
-    const producerRuns = vi.fn();
+    const releaseSpy = vi.fn();
+    const releasedKeys: string[] = [];
     const originalMaterialize = registry.materialize.bind(registry);
     vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
-      producerRuns();
-      return originalMaterialize(input);
+      const lease = await originalMaterialize(input);
+      const originalRelease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          releaseSpy();
+          releasedKeys.push(input.key);
+          originalRelease();
+        },
+      };
     });
-    const retry = await materializeLayer(good, makeRequest(registry));
 
-    expect(producerRuns).toHaveBeenCalled();
-    expect(retry.layerId).toBe('layer-good');
-    retry.lease.release();
+    const result = await materializeDocument(replay, request);
+
+    // The refused layer is omitted rather than published empty, and the layer before
+    // it still composed — the omission is local, not a truncated document.
+    expect(Object.keys(result.layers)).toEqual(['layer-good']);
+    expect(result.layers['layer-bad']).toBeUndefined();
+    expect(result.layers['layer-good'].layerId).toBe('layer-good');
+    expect(result.layers['layer-good'].bitmap).toBeDefined();
+    expect(Object.isFrozen(result.layers)).toBe(true);
+
+    // The refusal is reported, not swallowed: one line naming the skipped layer,
+    // carrying the underlying error as the second argument so the cause survives.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message, reported] = consoleError.mock.calls[0] as [string, Error];
+    expect(message).toBe('Unable to materialize durable layer layer-bad; skipping layer');
+    expect(reported.message).toMatch(/Unknown or disposed asset/);
+
+    // Nothing is rolled back and nothing is released early. The surviving layer holds
+    // its lease until the published document releases it; the refused layer never took
+    // one, so its key is absent from the released set below by construction.
+    expect(releaseSpy).not.toHaveBeenCalled();
+
+    result.release();
+    expect(releasedKeys).toEqual([createMaterializationKey(good, request)]);
+
+    // Double-release stays a no-op.
+    result.release();
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+
     registry.shutdown();
   });
 
@@ -938,7 +1059,12 @@ describe('document asset scope disposal', () => {
     const first = await materializeDocument(replay, makeRequest(registry));
     const batched = Object.values(first.layers);
     expect(batched).toHaveLength(3);
-    for (const layer of batched) expect(closeSpy(layer.bitmap)).toBeDefined();
+    // The PRE-STATE, not the mock's own existence: `closeSpy` just hands back the
+    // `vi.fn` `makeBitmap` built, so a `toBeDefined()` here could only fail if the
+    // fixture broke. Without this, the "not closed after disposal" assertion below
+    // would also pass on a bitmap that had already been closed before the disposal
+    // did anything at all.
+    for (const layer of batched) expect(closeSpy(layer.bitmap)).not.toHaveBeenCalled();
 
     // A committed replacement disposes the document scope while the published
     // layers still hold their leases, so the bitmaps stay alive.

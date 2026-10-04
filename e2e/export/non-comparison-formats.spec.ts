@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from '../fixtures/extended-test';
 import { readFile } from 'node:fs/promises';
 import { exportFormats, setupExportTest, exportAndVerify } from './helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
@@ -43,7 +43,11 @@ const CONTAINER_SIGNATURES: Record<string, ContainerSignature> = {
 
 const toHex = (bytes: readonly number[]): string => bytes.map((byte) => byte.toString(16).padStart(2, '0')).join(' ');
 
-const nonComparisonFormats = exportFormats.filter((f) => !f.comparePixels);
+// The signature oracle's own set, re-keyed onto the `verification` field that replaced
+// `comparePixels`. `comparePixels: false` used to be the value the schema deleted, so the
+// filter is now stated as the mechanism it actually named: a format the browser cannot
+// decode, whose bytes are checked in Node.
+const nonComparisonFormats = exportFormats.filter((f) => f.verification === 'container');
 
 for (const format of nonComparisonFormats) {
   const container = CONTAINER_SIGNATURES[format.extension];

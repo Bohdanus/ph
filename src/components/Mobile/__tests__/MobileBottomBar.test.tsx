@@ -68,15 +68,20 @@ describe('MobileBottomBar', () => {
   it('selects its own primary tool even when the current tool is already one of its matching tools', async () => {
     const user = userEvent.setup();
     const onToggleToolSheet = vi.fn();
-    // `levels` is in the Colors tile's group, so the old
+    // `pencil` is in the Brush tile's group and is not that group's primary, so the
     // `matchingTools.includes(toolName)` branch opened the options sheet and never
-    // reached `color`.
-    setTool('levels');
+    // reached `brush`.
+    //
+    // It was `levels` in the old Colors tile's group. `color`/`levels`/`transform` are
+    // `Image ▸ Adjustments` and `Edit ▸ Transform` commands now and have no rail entry, so
+    // neither does `mobileToolGroups`; the Brush group is a live tile with six members, which
+    // exercises the same branch at least as hard.
+    setTool('pencil');
     render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={onToggleToolSheet} onOpenLayers={vi.fn()} />);
 
-    await user.click(screen.getByRole('button', { name: 'Colors' }));
+    await user.click(screen.getByRole('button', { name: 'Brush Tool' }));
 
-    expect(goToToolMock).toHaveBeenCalledWith('color');
+    expect(goToToolMock).toHaveBeenCalledWith('brush');
     expect(onToggleToolSheet).not.toHaveBeenCalled();
   });
 
@@ -113,10 +118,13 @@ describe('MobileBottomBar', () => {
   });
 
   it('marks the active tool’s tile as pressed and every other tile as unpressed', () => {
-    setTool('levels');
+    // A group member that is NOT the group's primary, so "pressed" is proven to come from
+    // `matchingTools` and not from the tile's own identity. `pencil` stands in for `levels`,
+    // whose tile no longer exists.
+    setTool('pencil');
     render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
 
-    expect(screen.getByRole('button', { name: 'Colors' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Brush Tool' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Crop Tool' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Tool options' })).not.toHaveAttribute('aria-pressed');
     expect(screen.getByRole('button', { name: 'Layers' })).not.toHaveAttribute('aria-pressed');

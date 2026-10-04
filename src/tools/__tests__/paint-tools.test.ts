@@ -240,7 +240,7 @@ describe('paint tool rasterization', () => {
     }
   });
 
-  it.each(paintToolNames)('allocates exactly one canvas for %s and never reads a source bitmap', (toolName) => {
+  it.each(paintToolNames)('allocates exactly one canvas for %s and composites its source bitmap', (toolName) => {
     const bitmap = createMockImageBitmap(20, 20);
     const result = toolProcessors[toolName].imageProcessor({ size: documentSize, bitmap } as never)(
       paintToolArgsWithPoints(toolName, stroke) as never
@@ -249,7 +249,13 @@ describe('paint tool rasterization', () => {
     expect(result).toHaveLength(1);
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(result[0]).not.toBe(bitmap);
-    expect(RecordingOffscreenCanvas.instances[0].ctx.drawImage).not.toHaveBeenCalled();
+    expect(RecordingOffscreenCanvas.instances[0].ctx.drawImage).toHaveBeenCalledWith(
+      bitmap,
+      0,
+      0,
+      documentSize.width,
+      documentSize.height
+    );
   });
 
   it.each(paintToolNames)('returns a full-size canvas and draws nothing for %s without points', (toolName) => {

@@ -101,13 +101,17 @@ vi.mock('../../../hooks/useRect.ts', () => ({
     if (props.initialRect) props.onRepaint?.(props.initialRect);
 
     return {
-      getLocalCoords: h.getLocalCoords,
-      isMouseDown: h.isMouseDownRef,
-      pointerIdRef: h.pointerIdRef,
-      onPointerDown: h.useRectPointerDown,
-      onPointerMove: h.useRectPointerMove,
-      onPointerUp: h.useRectPointerUp,
-      clearSelection: h.clearSelection,
+      pointerHandlers: {
+        onPointerDown: h.useRectPointerDown,
+        onPointerMove: h.useRectPointerMove,
+        onPointerUp: h.useRectPointerUp,
+      },
+      rectHandles: { redraw: vi.fn(), clearSelection: h.clearSelection },
+      pointerState: {
+        getLocalCoords: h.getLocalCoords,
+        isMouseDown: h.isMouseDownRef,
+        pointerIdRef: h.pointerIdRef,
+      },
     };
   },
 }));

@@ -300,6 +300,37 @@ nested tree, never against the live database alone.
 Note also that `session.time_updated` is in milliseconds, so it must be divided by 1000 before
 it becomes an age.
 
+**`time_updated` is a bookkeeping field, not a conversation, and the two come apart.** It is
+bumped by compaction, archiving, a title change, a token recount and other writes that are not
+a message. A chat whose last _words_ were yesterday can therefore read as minutes old, which
+inverts the rule below: the walk says LIVE, the sweep leaves the worktree alone, and a dozen
+cases get classified `unproven` for no reason. It happened on a sweep where one root read
+3.4 hours old — inside the threshold, so **not** dead by the operator's own rule — while its
+newest non-synthetic text part was 21 hours old, and it was the writer of 22 of the stale
+candidates.
+
+So whenever a row lands **just inside** the threshold and is therefore deciding a case, confirm
+it against what the session actually said before believing it:
+
+```bash
+DB="${XDG_DATA_HOME:-$HOME/.local/share}/kilo/kilo.db"
+sqlite3 -readonly "$DB" "
+SELECT datetime(s.time_updated/1000,'unixepoch')  AS row_says,
+       datetime(MAX(p.time_created)/1000,'unixepoch') AS last_spoke,
+       CAST((s.time_updated - MAX(p.time_created))/60000 AS INT) AS gap_min
+FROM session s LEFT JOIN part p
+  ON p.session_id = s.id
+ AND json_extract(p.data,'\$.type') = 'text'
+ AND coalesce(json_extract(p.data,'\$.synthetic'),0) = 0
+WHERE s.id = '<sid>'
+GROUP BY s.id;"
+```
+
+A gap measured in **hours** is a bookkeeping bump and the session is dead; a gap measured in
+**seconds or minutes** is real activity and the session is live. `synthetic` matters — the
+empty prompts a harness injects are not the session speaking, and counting one is how a dead
+chat manufactures a fresh timestamp.
+
 A worktree is **DEAD** only when every row above is older than the threshold. One live row
 anywhere in the family — root or subagent, up or down, a sibling's grandchild included — means
 the worktree is **LIVE**. Leave it and move on.
@@ -342,6 +373,30 @@ and it will not look like one: a branch the sweep had just classified as unprove
 a root session claiming it while the sweep was still writing its report. The classification
 that saved that branch was made minutes before its owner showed up. **Every liveness fact in
 this document is a fact about when you ran the query.**
+
+**`main` moves under a sweep too, and it does not announce itself.** The rule above protects a
+_worktree_ from a late owner; nothing protects your _facts about a branch_ from another agent
+landing the very work you are triaging. On a sweep, `main` advanced by a dozen commits
+mid-flight and one of them was `Merge branch 'main' into fix/guard-ours-hole` — the branch
+under review went from `ahead=1 cherryPlus=1 behind=9 dirty=4` to `ahead=0 cherryPlus=0
+behind=1 clean` while the subagent was still reading it, because a live agent landed it. Every
+downstream verdict (`unmerged-work`, `at-risk`, `salvage`, the conflict count, the own-file
+list) was stale the moment it was computed, and a triage that trusted it would have re-landed
+work that was already on `main`.
+
+So treat `ahead`, `behind`, `cherry`, `action` and every conflict count as per-instant facts
+too, and **re-derive them in the same breath as the liveness re-run**:
+
+```bash
+git rev-parse main            # the tip you measured against
+git log --oneline -1 main     # and when it landed
+```
+
+If `main` has moved since the inventory was generated, **regenerate it and re-read the
+classification** before acting on anything you decided earlier. A worktree that was `at-risk`
+when you started may be `dispose` now, and one you were about to land may have landed an hour
+ago. When two agents are sweeping at once this is not a rare race — it is the normal state, and
+the second-arriving sweep is the one that has to notice.
 
 ## 5 — Confirm with the board before writing anything
 
@@ -420,7 +475,72 @@ git rev-list --count main.."$BRANCH" # must be 0
 git merge-base --is-ancestor "$BRANCH" main && echo on-main
 ```
 
-Delete the worktree **and** its branch, then regenerate the inventory.
+**The third test is git-ancestor-only, and that leaves a shape nothing can ever delete.**
+`classify.mjs` derives `LANDED` from `mergedIntoBase` alone — it consults no patch-absorption
+signal — and `prunable` requires that too. So a branch whose every commit is **already on main
+by patch-id**, but which is **not** a git ancestor because main re-landed the same content with
+different surrounding context, is `unmerged-work` forever; if its merge conflicts, which it
+usually will, it is `at-risk` forever; and `npm run dispose` refuses it on every sweep, naming
+the action as the reason. Three were sitting in exactly that state while their owner families
+were proven dead and their working trees clean. There is no sweep-time workaround, and there
+should not be: the fix is a status in `classify.mjs`, not a bypass.
+
+Until that status exists, **recognise the shape and report it rather than working around it**:
+
+```bash
+git cherry main "$BRANCH" | grep -c '^+'   # 0 => every patch is already on main
+```
+
+**Empty `git cherry` does NOT mean the merge is a no-op, and must not be used to justify a
+deletion.** It proves patch-id absorption, not tree identity, and when main re-landed the same
+change the three-way merge still conflicts — verified on all three stuck branches, where
+`merge-tree` reports a conflict on every one. The test that does answer the question is content
+equality on the branch's **own** touched paths:
+
+```bash
+mb=$(git merge-base main "$BRANCH")
+for p in $(git diff --name-only "$mb".."$BRANCH"); do
+  printf '%s %s\n' "$p" "$([ "$(git rev-parse "$BRANCH:$p" 2>/dev/null)" \
+                       = "$(git rev-parse "main:$p" 2>/dev/null)" ] && echo same || echo DIFFERS)"
+done
+```
+
+All `same` means landing changes nothing and the branch is genuinely absorbed. Any `DIFFERS`
+means main holds the same _intent_ reworded, which is a **different** case: the branch has
+nothing to contribute and nothing at risk, so it is clutter rather than work — but proving that
+is a review, not an arithmetic fact, and it is what case (b) is for.
+
+A zero-own-path branch (`git diff --name-only "$mb".."$BRANCH"` prints nothing) is the same
+answer by construction, and `ahead > 0` does not contradict it: two commits that add and then
+revert leave a tip tree byte-identical to the merge-base while `git cherry` still counts an
+unabsorbed patch. Compare the **trees**, never the commit count.
+
+Delete the worktree **and** its branch, then regenerate the inventory — through
+the one program that will do it:
+
+```bash
+npm run dispose -- <name> --dry-run     # names the signal that refuses, if any
+npm run dispose -- <name>
+node scripts/worktree-inventory.mjs      # the verdict you acted on is now stale
+```
+
+**Never hand-write the list.** `dispose-worktree.mjs` re-reads the generated
+`action`, the board's claims and file locks, and the session database, and it
+anchors the branch at `refs/keep/disposed/<name>` before it deletes anything. A
+triage that classifies worktrees correctly and then deletes them from its own
+list has thrown the classification away, which is exactly what happened on
+2026-10-01: a sweep read a merge commit whose subject carried a branch's _name_
+and disposed of a worktree a live chat was using (the full account is in the
+header of `scripts/dispose-worktree.mjs`). The
+cleanliness probe it ran first — `git status --porcelain` — reads the same for an
+abandoned worktree and a busy one, so it could not have caught that.
+
+**A refusal you expected is a finding, not an obstacle — and it may not name you.** Only the
+write arm of `derived-live-writer` names a chat; every other arm prints "a chat". Report it and move
+on. `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is
+the one home for the mechanism, and the Never list's entry against reaching for the removal command
+by hand is what you do instead. **Do not fold it into "skipped"**: a pending removal is a claim
+about a directory that outlives the session.
 
 **0 commits ahead of `main` is not evidence a worktree is disposable.** It is the single most
 expensive mistake available here: such a branch can hold uncommitted work that exists on no ref
@@ -469,10 +589,14 @@ git log main.."$KEEP" --no-merges --format='%s'        # same commit list
 git branch --contains <drop-sha>                      # only the dropped ref
 ```
 
-Delete the worktree **and** its branch together, and confirm the survivor is untouched
-afterwards. Deleting the _other_ one, or both, destroys the only ref holding the content — a
-salvage commit is frequently the sole holder, with no tag and no remote-tracking ref. **Never
-delete both halves of a duplicate pair.**
+Delete the worktree **and** its branch together with `npm run dispose -- <name>`
+— one call per half, never a loop over a list you wrote — and confirm the
+survivor is untouched afterwards. Deleting the _other_ one, or both, destroys the
+only ref holding the content — a salvage commit is frequently the sole holder,
+with no tag and no remote-tracking ref. **Never delete both halves of a duplicate
+pair**, and note that `dispose` anchors whatever it removes at
+`refs/keep/disposed/<name>`, so a half you deleted by mistake is one `git branch`
+away.
 
 ### (c) Hard merge — mark it, move on, come back last
 
@@ -537,6 +661,11 @@ than silently dropping it.
 - Count a branch's value by its commit count. A branch can be several commits of real fixes and
   a branch one commit of scratch.
 - Release another agent's claim or file lock before `doctor` says it is expired.
+- Route around a `dispose` refusal. Every refusal names the signal that produced
+  it, and the one you are most likely to hit is **you** — see case (a). The gate
+  is the only thing standing between a sweep and the 2026-10-01 incident, and a
+  refusal you argued with is a refusal that taught its reader to discount the
+  next one.
 
 ## Report
 

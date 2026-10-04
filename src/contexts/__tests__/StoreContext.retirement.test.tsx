@@ -318,7 +318,7 @@ describe('the liveness walk is deferred behind the ownership check', () => {
       MERGE_ACTION
     );
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+      store().adoptLayerBitmaps([adopted]);
     });
     // Registration is ownership bookkeeping and dispatches no transition, so it
     // walks nothing either — the scope now owns a raster it has not been asked to
@@ -348,7 +348,7 @@ describe('ADOPT_LAYER_BITMAPS is a deliberate no-op transition', () => {
     const before = store();
 
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+      store().adoptLayerBitmaps([adopted]);
     });
 
     expect(store()).toBe(before);
@@ -831,7 +831,7 @@ describe('retirement against every alias of a raster, not only layer.bitmap', ()
       MERGE_ACTION
     );
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+      store().adoptLayerBitmaps([adopted]);
     });
     expect(layerAt(store, layerId).bitmap).toBe(adopted);
 
@@ -874,7 +874,7 @@ describe('retirement against every alias of a raster, not only layer.bitmap', ()
     // commits drop it from the layer record.
     replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, null), bitmap: cache } });
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [cache] } });
+      store().adoptLayerBitmaps([cache]);
     });
 
     commit(dispatch(), { layers: { [secondLayerId]: layerWithCanvas(secondLayerId, null) } }, REMOVE_ACTION);
@@ -910,7 +910,7 @@ describe('retirement against every alias of a raster, not only layer.bitmap', ()
       }
     );
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [imported] } });
+      store().adoptLayerBitmaps([imported]);
     });
     expect(layerAt(store, layerId).bitmap).toBe(imported);
 
@@ -958,7 +958,7 @@ describe('retirement against every alias of a raster, not only layer.bitmap', ()
     // document is published.
     replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, staged), bitmap: imported, source } });
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [imported] } });
+      store().adoptLayerBitmaps([imported]);
     });
     expect(layerAt(store, layerId).bitmap).toBe(imported);
 
@@ -1064,7 +1064,7 @@ describe('retirement when a promotion replaces an adopted raster', () => {
     // writer registers it with the scope after the layer is published.
     replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, staged), bitmap: imported } });
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [imported] } });
+      store().adoptLayerBitmaps([imported]);
     });
 
     // The first raster edit on that layer promotes a fresh cache over it. The
@@ -1112,7 +1112,7 @@ describe('retirement when a promotion replaces an adopted raster', () => {
       MERGE_ACTION
     );
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+      store().adoptLayerBitmaps([adopted]);
     });
 
     commit(dispatch(), { layers: { [layerId]: { ...layerAt(store, layerId), tmpCanvas: staged } } });
@@ -1141,7 +1141,7 @@ describe('retirement when a promotion replaces an adopted raster', () => {
       MERGE_ACTION
     );
     act(() => {
-      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+      store().adoptLayerBitmaps([adopted]);
     });
     expect(closeOf(adopted)).not.toHaveBeenCalled();
 

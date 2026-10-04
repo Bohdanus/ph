@@ -5,6 +5,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
 import { createMagicWandSelectionFromCanvas } from '../../util/magicWand.ts';
 import { createCommittedPolygonSelection, drawSelectionAnchors } from '../../util/selection.ts';
@@ -26,6 +27,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
   // The tool overlay carries no border of its own: a committed polygon's marching
   // ants are painted on their own canvas, so this only has to keep the anchors of
@@ -36,7 +38,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     if (!ctx) return;
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
+    selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, containScale.current));
   }
 
   function isPointInsideImage(point: Point): boolean {
@@ -101,8 +103,8 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     if (!ctx) return;
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
-  }, [documentFrame, overlayCtxRef, selections]);
+    selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame, containScale.current));
+  }, [documentFrame, overlayCtxRef, selections, containScale]);
 
   useEffect(() => {
     const ctx = overlayCtxRef.current;

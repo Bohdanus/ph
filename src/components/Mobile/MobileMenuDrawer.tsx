@@ -6,7 +6,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
-import { hasPendingText } from '../../util/typeGuards.ts';
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { useModalA11y } from './useModalA11y.ts';
 
 export interface MobileMenuDrawerProps {
@@ -18,10 +18,11 @@ const ITEM_CLASS =
   'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-medium text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800 disabled:opacity-40 disabled:pointer-events-none';
 
 export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onClose }) => {
-  const [{ canvasRef, currentArgs, fileName, totalSize, hasImage, hasUnsavedChanges, documentFrame }] = useStore();
+  const [{ fileName, totalSize, hasImage, documentFrame }] = useStore();
   const { setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
   const { commitDirtyTool } = useLayers();
+  const { confirmDiscard } = useUnsavedChanges();
   const { theme, toggleTheme } = useTheme();
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -30,19 +31,24 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
   if (!isOpen) return null;
 
   /**
-   * The same guard `DesktopHeader` puts on File → New and File → Open
-   * (`DesktopHeader.tsx:199` / `:224`). Without it, mobile Open silently
-   * discarded a document with unsaved work while the desktop menu refused —
-   * and an uncommitted text layer is not in `hasUnsavedChanges` yet, so
-   * `hasPendingText(currentArgs.current)` is the half that catches a typed but
-   * unplaced text box.
+   * New and Open used to spell the guard out here, as `DesktopHeader` still did — the same
+   * two-term predicate, written out again. Both now call `confirmDiscard`, which answers
+   * `true` outright when there is nothing to discard, so neither surface carries a dirty
+   * predicate of its own to fall out of step. That matters here specifically: mobile Open
+   * used to be able to discard a document with unsaved work while the desktop menu refused,
+   * and the half that catches a typed-but-unplaced text box is the half a hand-written
+   * predicate keeps losing.
+   *
+   * `onClose()` comes BEFORE the guard, which is the ordering `DesktopHeader` uses for the
+   * File menu and this file already used for Export. It is not cosmetic: the drawer
+   * declares `aria-modal="true"` (`MobileMenuDrawer.tsx:86`) and so does the prompt, and
+   * two modal promises at once tell assistive technology nothing about which is topmost.
+   * Closing first leaves exactly one.
    */
-  const isDocumentDirty = hasUnsavedChanges || hasPendingText(currentArgs.current);
-
   const handleNew = async () => {
     try {
-      if (isDocumentDirty && !confirm('Discard unsaved changes and start a new image?')) return;
       onClose();
+      if (!(await confirmDiscard('new-document'))) return;
       const data = await openNewImageDialog();
       if (data) setBlankImage(data);
     } catch (error) {
@@ -52,8 +58,8 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
 
   const handleOpen = async () => {
     try {
-      if (isDocumentDirty && !confirm('Discard unsaved changes and open another file?')) return;
       onClose();
+      if (!(await confirmDiscard('open-document'))) return;
       const data = await openLoadImageDialog();
       if (data) await setImageFromUpload(data);
     } catch (error) {
@@ -64,14 +70,13 @@ export const MobileMenuDrawer: React.FC<MobileMenuDrawerProps> = ({ isOpen, onCl
   const handleSave = async () => {
     onClose();
     try {
-      if (!hasImage || !canvasRef.current) return;
+      if (!hasImage) return;
       let exportLayers!: ReturnType<typeof commitDirtyTool>;
       // `flushSync` so the commit lands before the dialog reads `layers`.
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
       const data = await openSaveImageDialog({
-        canvas: canvasRef.current,
         fileName,
         layers: exportLayers,
         size: totalSize,

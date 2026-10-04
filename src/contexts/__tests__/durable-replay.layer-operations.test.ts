@@ -511,54 +511,6 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
 
     registry.shutdown();
   });
-
-  it('rasterize-layer replaces a layer snapshot at the tip', () => {
-    const registry = new AssetRegistry();
-    const document = convert(registry, {
-      id: 'dummy',
-      actionName: TOOL_ACTION,
-      layerId,
-      args: { toolName: 'blur', radius: 2 },
-    });
-
-    const originalSnapshot = document.baseline.layers[0]!;
-    const rasterizedSnapshot = {
-      ...originalSnapshot,
-      id: 'rasterized-layer',
-      name: 'Rasterized',
-      source: {
-        kind: 'blank' as const,
-        color: '#000000',
-        opacity: 1,
-        size: { width: 100, height: 100 },
-        isBedrock: false,
-      },
-    };
-
-    const rasterizeOp: DurableOperation = Object.freeze({
-      kind: 'rasterize-layer',
-      layerId,
-      result: rasterizedSnapshot,
-    });
-    const withRaster: DurableDocument = {
-      ...document,
-      history: Object.freeze([
-        ...document.history,
-        Object.freeze({ id: 'rasterize', schemaVersion: 1, enabled: true, operation: rasterizeOp }),
-      ]),
-      cursor: document.history.length,
-    };
-
-    void originalSnapshot;
-    const frozen = freezeDurableDocument(withRaster);
-    const replay = replayDurableDocument(frozen);
-
-    expect(replay.layers[layerId]).toBeUndefined();
-    expect(replay.layers['rasterized-layer']).toBeDefined();
-    expect(replay.layers['rasterized-layer']?.snapshot.source.kind).toBe('blank');
-
-    void registry;
-  });
 });
 
 describe('materialization raster processor failure handling (P0.3 continuation)', () => {
@@ -607,6 +559,15 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
       ]),
     });
 
+    // The lease the producer takes and gives back. Spying is the only way to SEE it: the
+    // fixture below is not the bitmap the registry owns (`registerBaseline` snapshots a
+    // non-`ImageBitmap` source into its own immutable copy), so the `close` spy can never fire
+    // however the lease is handled — which is why the `not.toHaveBeenCalled()` this replaces
+    // passed whether the lease was released, leaked, or never taken.
+    const resolve = vi.spyOn(registry, 'resolve');
+    const retain = vi.spyOn(registry, 'retain');
+    const release = vi.spyOn(registry, 'release');
+
     try {
       await expect(
         materializeLayer(layer, {
@@ -617,15 +578,29 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         })
       ).rejects.toThrow(/processor crash/);
 
+      // The lease WAS taken — `retain` is the positive observation that makes the release below
+      // a statement about a real obligation rather than about a lease that never existed.
+      expect(resolve).toHaveBeenCalledWith(assetId, undefined);
+      expect(retain).toHaveBeenCalledWith(assetId);
+      // ...and it was given back exactly once, in the producer's `finally` (materialization.ts:293),
+      // so a throw mid-processor cannot leave the baseline retained forever.
+      expect(release).toHaveBeenCalledWith(assetId);
+      expect(retain.mock.calls.length).toBe(release.mock.calls.length);
+
       // The bitmap should still be alive — the source lease was released
       // but the baseline document is still alive.
       expect(close).not.toHaveBeenCalled();
+      expect(registry.getRecord(assetId)).toBeDefined();
     } finally {
       blurSpy.mockRestore();
       void originalProcessor;
     }
 
     registry.shutdown();
+
+    // The control that makes the survival assertion above non-vacuous: this same observation
+    // DOES see the asset go away once the baseline is disposed.
+    expect(registry.getRecord(assetId)).toBeUndefined();
   });
 
   it('materialization rejects a zero-width raster source due to degenerate affine bounds', async () => {

@@ -26,6 +26,8 @@ const { liveStore, subscribe, getSnapshot, noopDispatch } = vi.hoisted(() => {
   };
 });
 
+const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
 }));
@@ -48,6 +50,10 @@ const layerActions = {
 };
 
 vi.mock('@/contexts/useLayer.ts', () => ({ useLayers: () => layerActions }));
+
+vi.mock('@/contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
+}));
 
 function updateStore(mutate: (snapshot: typeof liveStore.snapshot) => typeof liveStore.snapshot) {
   liveStore.snapshot = mutate(liveStore.snapshot);
@@ -358,15 +364,19 @@ describe('LayersTab against a live layer store', () => {
       fireEvent.blur(span);
     });
 
-    // The store still holds the old name, so a later store-driven render restores it.
+    // The store keeps the old name and no rename is published, so nothing here depends on the
+    // store being asked to repair the row.
     expect((liveStore.snapshot.layers as LayersRecord)['layer-3'].name).toBe('Top Layer');
     expect(layerActions.updateLayer).not.toHaveBeenCalled();
     expect(row).toBeInTheDocument();
     expect(container.querySelectorAll('span.truncate')).toHaveLength(3);
-    // The row's own label is NOT asserted here: `handleNameChange` (LayersTab.tsx:76-82) refuses the
-    // blank but never writes the previous name back into the contentEditable span, so the row keeps
-    // showing the blank label until an unrelated store render rewrites it. That defect is pinned as
-    // `it.fails` in LayersTab.test.tsx:549 — asserting it here would pin the bug instead.
+    // The row's own label is asserted here, and it is the only place the refused path can be
+    // pinned: holding the old name in the store does NOT restore the label, because React
+    // re-renders with the identical text child and bails out of writing it. The blank text node
+    // the browser typed survives until something else rewrites it, so `handleNameChange`
+    // (LayersTab.tsx:90-104) writes the stored name back on the refused path itself, the way the
+    // Escape branch does. Without it this line reads the blank the test just typed.
+    expect(getNameSpan(row).textContent).toBe('Top Layer');
   });
 
   it('leaves the stacking order untouched when a drop is refused', () => {

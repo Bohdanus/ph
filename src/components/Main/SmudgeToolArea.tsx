@@ -3,6 +3,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointsToLayerLocal } from '../../util/layer-space.ts';
 import type { SmudgeToolArgs } from '../../tools/smudge.ts';
 
@@ -50,8 +51,8 @@ type smudgeToolAreaProps = {
  * the same args and not an accumulation of them.
  *
  * `points` arrives in DOCUMENT space (`usePaintStroke` converts through the document frame,
- * which is the crop origin), and the processor does not speak that space: `tempUpdateLayer`
- * hands it the layer's OWN raster with `size: layer.pos` (`src/contexts/useLayer.ts:544`), so
+ * which is the crop origin), and the processor does not speak that space: it is handed
+ * the PRESENTED layer's own raster in that presentation's space, so
  * the frame it addresses is layer-local and carries no document origin. Every stroke is
  * therefore rebased onto the active layer at the callback boundary, which is the last point
  * where this component still knows which layer it is editing; `src/util/layer-space.ts`
@@ -78,14 +79,21 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
    */
   const isEnabled = Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock);
 
+  /**
+   * The origin of the raster the processor is handed: `pos` for a layer that presents nothing,
+   * its EVALUATED extent for one carrying a transform or a filter, because a Smudge reads and
+   * writes that presentation rather than the raw layer.
+   */
+  const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
+
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
     { imageSize: totalSize, containerRef, enabled: isEnabled },
     {
       onMove: (points) => {
         /**
          * The invariant this establishes: the processor addresses the LAYER's own raster,
-         * whose pixel (0, 0) is `activeLayer.pos`, so a document point becomes
-         * `point - activeLayer.pos` and a layer at the origin passes through unchanged. A
+         * whose pixel (0, 0) is `rasterBounds`, so a document point becomes
+         * `point - rasterBounds` and a layer at the origin passes through unchanged. A
          * Smudge reads and writes the same buffer, so an un-rebased point smudged the wrong
          * pixels entirely rather than merely offsetting the stroke. `onMove` gets the LIVE
          * accumulating array, which the rebase copies rather than writes into;
@@ -94,17 +102,17 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
          */
         tempUpdateLayer({
           id: activeLayerId!,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, activeLayer?.pos) },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
       onCommit: async (points) => {
         // A fresh copy from the hook, so the history item this reaches does not alias a ref
         // the hook is about to reset, and the same rebase as the preview, so what history
         // retains is what the processor addresses on replay
-        // (`src/contexts/useHistory.ts:98-108`).
+        // (`src/contexts/useHistory.ts` — `applyRasterTool`).
         await updateLayerByTool({
           id: activeLayerId!,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, activeLayer?.pos) },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
     }

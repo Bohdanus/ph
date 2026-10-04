@@ -240,7 +240,13 @@ export function createMagicWandSelectionFromCanvas(
 
   try {
     return createMagicWandSelectionFromImageData(ctx.getImageData(0, 0, canvas.width, canvas.height), seed, options);
-  } catch {
+  } catch (error) {
+    // `getImageData` throws on a tainted or zero-area canvas, and the caller
+    // (`MagicWandToolArea.tsx:58`) reads `null` as "no selection", so a failure
+    // here is a click that selects nothing and says nothing. HANDOFF.md §98: the
+    // console is the only error channel, so the null is not the report. One line
+    // per click, and a click is one user intent.
+    console.error(error);
     return null;
   }
 }

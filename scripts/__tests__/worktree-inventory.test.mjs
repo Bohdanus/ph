@@ -21,7 +21,7 @@
  * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
@@ -49,6 +49,7 @@ import {
 } from '../lib/worktree-inventory/writes.mjs';
 import { resolveReadsReleasedBefore } from '../worktree-inventory.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
+import { Board } from '../lib/agent-board/db.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -440,6 +441,64 @@ describe('git.mjs against a real repository', () => {
     }
   });
 
+  it('separates "the branch is behind" from "this content is on no ref"', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      // The shape that produced the false alarm: main moves `one.txt` on to
+      // content the side branch has never seen, and then the side worktree is
+      // given those same bytes. `one.txt` is `modified` — side's tip still
+      // holds the old ones — while the content on disk is exactly what main
+      // already has. Deleting that worktree loses nothing, and reporting it as
+      // uncommitted work at risk is wrong by the only measure that matters.
+      writeFileSync(join(dir, 'one.txt'), 'same-on-both');
+      g('commit', '--quiet', '-am', 'main moves one');
+      g('checkout', '--quiet', 'side');
+      writeFileSync(join(dir, 'one.txt'), 'same-on-both');
+
+      const behind = __testables.workingTreeState(dir, 'main');
+      expect(behind.modified).toBe(1);
+      expect(behind.paths).toEqual(['one.txt']);
+      // The point of the field: main already holds these exact bytes.
+      expect(behind.notOnBase).toBe(0);
+
+      // An edit main does NOT have is content no commit anywhere holds.
+      writeFileSync(join(dir, 'two.txt'), 'only-on-side');
+      const real = __testables.workingTreeState(dir, 'main');
+      expect(real.modified).toBe(2);
+      expect(real.notOnBase).toBe(1);
+
+      // An untracked file cannot be on the base branch by definition: the
+      // branch never tracked it. It is the shape `remove --force` destroys.
+      writeFileSync(join(dir, 'loose.txt'), 'untracked');
+      const withUntracked = __testables.workingTreeState(dir, 'main');
+      expect(withUntracked.untracked).toBe(1);
+      expect(withUntracked.notOnBase).toBe(2);
+
+      // A path the base branch does not have AT ALL counts as not-on-base:
+      // side added `four.txt`, main never did, and it is in side's tip so it
+      // is not even reported as modified — the risk is `main` deleting nothing
+      // here, and this asserts the field does not claim otherwise.
+      expect(withUntracked.notOnBase).toBeLessThanOrEqual(withUntracked.modified + withUntracked.untracked);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a base branch that cannot be resolved as not-on-base rather than as clean', () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'edited');
+      // The direction to be wrong in is the one that keeps the work: an
+      // unresolvable base cannot prove anything is on it.
+      const tree = __testables.workingTreeState(dir, 'no-such-branch');
+      expect(tree.modified).toBe(1);
+      expect(tree.notOnBase).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reports whether the commit list was cut off at the cap', () => {
     const dir = makeRepo();
     try {
@@ -501,28 +560,44 @@ describe('resolveBoardDb', () => {
 
 describe('readBoard: liveness of claims and locks', () => {
   /**
-   * A board database with the CURRENT schema and one row of each kind.
+   * The CURRENT schema, hand-written — and the DDL is COPIED FROM THE PRODUCT
+   * (`db.mjs`, `CREATE TABLE IF NOT EXISTS`), constraints and all, because a
+   * loose hand-written schema is the same defect wearing a different hat.
    *
-   * `file_locks` deliberately has NO `issue_id` column. That is v1 residue:
-   * attribution moved to the `issue_locks` pairing table, and the migration
-   * copies rows into it without dropping the old column — so every board created
-   * before v2 still carries it and every board created AT v2 does not. This
-   * fixture used to build the v1 shape, which is precisely why `readBoard`
-   * selecting `file_locks.issue_id` passed here and threw
-   * `no such column: issue_id` on a fresh clone. A fixture must be the shape a
-   * real new database has, or it certifies the bug.
+   * It used to declare `file_locks` with a v1 `issue_id` column, which made every
+   * test below pass against a board the product stopped creating — the one shape
+   * in which the lock query does not throw. `file_locks` has carried no `issue_id`
+   * since schema v2: attribution moved to the `issue_locks` pairing table, and
+   * `migrateFileLockAttribution` copies rows into it without ever dropping the
+   * old column, so every board created before v2 still carries it and every board
+   * created AT v2 does not — which is why selecting it worked on the only
+   * database anyone tested against and threw `no such column: issue_id` on every
+   * fresh clone. A fixture must be the shape a real new database has, or it
+   * certifies the bug.
+   *
+   * The tests that must run against a board the PRODUCT creates, rather than one
+   * this file describes, use `Board` itself — see "readBoard against a board the
+   * product creates" below.
    */
+  const CURRENT_SCHEMA = `
+    CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
+    CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
+                         lease_until TEXT, released_at TEXT);
+    CREATE TABLE file_locks (path TEXT NOT NULL, agent_id TEXT NOT NULL, worktree TEXT,
+                             acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                             released_at TEXT, PRIMARY KEY (path, agent_id));
+    CREATE TABLE issue_locks (issue_id TEXT NOT NULL, path TEXT NOT NULL, agent_id TEXT NOT NULL,
+                              created_at TEXT NOT NULL, PRIMARY KEY (issue_id, path));
+    CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
+                        session_id TEXT, last_seen TEXT);`;
+
+  const iso = (ms) => new Date(ms).toISOString();
+
+  /** A board database with the real schema and one row of each kind. */
   function makeBoard({ leaseUntil, releasedAt = null, expiresAt }) {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
     const db = new DatabaseSync(join(dir, 'board.db'));
-    db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
-             CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
-                                  lease_until TEXT, released_at TEXT);
-             CREATE TABLE file_locks (path TEXT NOT NULL, agent_id TEXT NOT NULL, worktree TEXT,
-                                     acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-                                     released_at TEXT, PRIMARY KEY (path, agent_id));
-             CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
-                                 session_id TEXT, last_seen TEXT);`);
+    db.exec(CURRENT_SCHEMA);
     db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', 'x');
     db.prepare('INSERT INTO claims VALUES (?,?,?,?,?,?)').run(
       'ph-1',
@@ -536,15 +611,18 @@ describe('readBoard: liveness of claims and locks', () => {
       'src/a.ts',
       'agent-a',
       '/repo/.kilo/worktrees/x',
-      '2026-09-28T12:00:00.000Z',
+      iso(NOW),
       expiresAt,
       releasedAt
     );
+    // The pairing, in the table that holds it — a second insert with the same
+    // column count in a different order would be the v1 bug wearing a costume.
+    if (releasedAt === null) {
+      db.prepare('INSERT INTO issue_locks VALUES (?,?,?,?)').run('ph-1', 'src/a.ts', 'agent-a', iso(NOW));
+    }
     db.close();
     return { dir, dbPath: join(dir, 'board.db') };
   }
-
-  const iso = (ms) => new Date(ms).toISOString();
 
   it('keeps a claim whose ISO-8601 lease has not expired', () => {
     // `lease_until` is TEXT. A bare `Number(x) > nowMs` is `NaN > n` — false
@@ -598,13 +676,7 @@ describe('readBoard: liveness of claims and locks', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
     const db = new DatabaseSync(join(dir, 'board.db'));
     try {
-      db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
-               CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
-                                    lease_until TEXT, released_at TEXT);
-               CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
-                                       expires_at TEXT, released_at TEXT);
-               CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
-                                   session_id TEXT, last_seen TEXT);`);
+      db.exec(CURRENT_SCHEMA);
       db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
         'chore/x',
         'kilo',
@@ -661,6 +733,167 @@ describe('readBoard: liveness of claims and locks', () => {
     expect(board.available).toBe(false);
     expect(board.claims.size).toBe(0);
     expect(board.issues).toEqual([]);
+  });
+});
+
+/**
+ * The board half of the inventory, against a board the PRODUCT creates.
+ *
+ * Everything above hand-writes its schema, which is exactly how the defect this
+ * block exists for survived: the fixture declared the v1 `file_locks.issue_id`
+ * that schema v2 removed, so the suite was green against the only board shape on
+ * which the query cannot fail, while a real fresh board threw `no such column`
+ * out of a command AGENTS.md makes mandatory. A hand-written schema is a claim
+ * about the product that nothing checks; `Board` is the product.
+ */
+describe('readBoard against a board the product creates', () => {
+  let dir;
+  let worktree;
+  let board;
+
+  const identity = (agentId) => ({
+    agentId,
+    kind: 'kilo',
+    worktree,
+    branch: `feat/${agentId}`,
+    sessionId: `run-${agentId}`,
+    pid: 4242,
+    meta: {},
+  });
+
+  const openBoard = (agentId) => new Board({ dir, identity: identity(agentId) }).open();
+
+  /** `readBoard` on the board just written, with the worktree's own path. */
+  const read = (nowMs) => readBoard(process.cwd(), { nowMs, dbPath: join(dir, 'board.db') });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'wtinv-real-board-'));
+    worktree = join(dir, 'wt-a');
+    board = openBoard('agent-a');
+  });
+
+  afterEach(() => {
+    board.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads a lock taken with an issue off a board the current schema created', () => {
+    // The failing case, restated as a test: on a board the current code creates,
+    // `file_locks` has no `issue_id`, and selecting it throws out of an
+    // un-guarded `readBoard` in a command with one caller and no catch.
+    const { id } = board.createIssue({ title: 'paired' });
+    board.holdFiles(['src/a.ts'], { issueId: id });
+
+    const result = read(Date.now());
+
+    expect(result.available).toBe(true);
+    expect(result.lockIssueAttribution).toBe('issue_locks');
+    const locks = result.fileLocks.get(worktree);
+    expect(locks).toHaveLength(1);
+    expect(locks[0].path).toBe('src/a.ts');
+    expect(locks[0].agentId).toBe('agent-a');
+    expect(locks[0].issueIds).toEqual([id]);
+  });
+
+  it('reads a lock taken with NO issue as no attribution, not as a crash', () => {
+    // `hold <path>` with no `--issue` is the form AGENTS.md prescribes, and it
+    // writes no `issue_locks` row at all. Reporting an issue here would be a
+    // guess, so the answer is an empty set and the reader still says where the
+    // attribution came from.
+    board.holdFiles(['src/unpaired.ts']);
+
+    const result = read(Date.now());
+
+    expect(result.lockIssueAttribution).toBe('issue_locks');
+    const locks = result.fileLocks.get(worktree);
+    expect(locks).toHaveLength(1);
+    expect(locks[0].path).toBe('src/unpaired.ts');
+    expect(locks[0].issueIds).toEqual([]);
+  });
+
+  it('reports every issue one lock is being used for', () => {
+    // `issue_locks` is keyed (issue_id, path), so ONE lock can serve as many
+    // issues as there are legitimate uses of it — which is the whole reason the
+    // attribution moved out of a column. A single-valued field has no honest
+    // answer here: it must drop one of these or name the wrong one, and the
+    // inventory is what a human reads to decide who is in which file.
+    const first = board.createIssue({ title: 'first' });
+    const second = board.createIssue({ title: 'second' });
+    board.holdFiles(['src/shared.ts'], { issueId: first.id });
+    board.holdFiles(['src/shared.ts'], { issueId: second.id });
+
+    const result = read(Date.now());
+
+    const locks = result.fileLocks.get(worktree);
+    // ONE lock, not two rows: the unit is the lock, and a join that multiplied
+    // the lock by its pairings would report the same file held twice.
+    expect(locks).toHaveLength(1);
+    expect(locks[0].issueIds).toEqual([first.id, second.id]);
+  });
+
+  it("does not attribute another agent's issue to this agent's lock on the same path", () => {
+    // Attribution is keyed (path, agent): two agents may hold the same file, and
+    // a key of path alone would hand each of them the other's issue.
+    const other = new Board({ dir, identity: { ...identity('agent-b'), worktree } }).open();
+    try {
+      const { id } = board.createIssue({ title: 'mine' });
+      board.holdFiles(['src/contended.ts'], { issueId: id });
+      other.holdFiles(['src/contended.ts'], { force: true });
+
+      const result = read(Date.now());
+      const locks = result.fileLocks.get(worktree);
+
+      expect(locks.map((l) => l.agentId).sort()).toEqual(['agent-a', 'agent-b']);
+      expect(locks.find((l) => l.agentId === 'agent-a').issueIds).toEqual([id]);
+      expect(locks.find((l) => l.agentId === 'agent-b').issueIds).toEqual([]);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("reports a v1 board's unreadable attribution instead of throwing or faking it", () => {
+    // The third on-disk shape, and the one the read-only open makes reachable:
+    // `readBoard` never migrates, so a v1 board file that nothing has opened
+    // since the upgrade still has the v1 column and NO `issue_locks` table. The
+    // query for attribution throws there, and an unguarded throw on a board this
+    // old would be a defect introduced by the fix. The payload has to say so,
+    // because "this lock has no issue" and "this lock's issue could not be read"
+    // are different answers and only one of them is true.
+    const v1Dir = mkdtempSync(join(tmpdir(), 'wtinv-v1-board-'));
+    try {
+      const db = new DatabaseSync(join(v1Dir, 'board.db'));
+      db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
+               CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
+                                    lease_until TEXT, released_at TEXT);
+               CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
+                                       acquired_at TEXT, expires_at TEXT, released_at TEXT,
+                                       PRIMARY KEY (path, agent_id));
+               CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
+                                   session_id TEXT, last_seen TEXT);`);
+      db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', null);
+      const at = Date.now();
+      db.prepare('INSERT INTO file_locks VALUES (?,?,?,?,?,?,?)').run(
+        'src/legacy.ts',
+        'agent-a',
+        'ph-1',
+        worktree,
+        new Date(at).toISOString(),
+        new Date(at + 600_000).toISOString(),
+        null
+      );
+      db.close();
+
+      const result = readBoard(process.cwd(), { nowMs: at, dbPath: join(v1Dir, 'board.db') });
+
+      expect(result.available).toBe(true);
+      expect(result.lockIssueAttribution).toBe('unavailable');
+      const locks = result.fileLocks.get(worktree);
+      expect(locks).toHaveLength(1);
+      expect(locks[0].path).toBe('src/legacy.ts');
+      expect(locks[0].issueIds).toEqual([]);
+    } finally {
+      rmSync(v1Dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -3091,6 +3324,75 @@ describe('the call history', () => {
     });
     expect(verdict.live).toBe(true);
     expect(verdict.reasons.join(' ')).toContain('wrote a file');
+  });
+
+  it('calls a worktree live on recent command I/O alone, with no session and no board record', () => {
+    // The case this exists for: an agent opened in the MAIN checkout drove into
+    // this worktree and ran commands there. Its `session.directory` is the main
+    // checkout, so `chatSummary` cannot see it, and the board is keyed on the
+    // branch, so it cannot see it either. Every git fact about the worktree can
+    // be correct — clean, merged, nothing ahead — and it is still occupied.
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 40 * 60_000, derivedChatIds: [], activeNow: false },
+    });
+    expect(verdict.live).toBe(true);
+    expect(verdict.derivedLive).toBe(true);
+    expect(verdict.liveSignals.io).toBe(true);
+    expect(verdict.liveSignals.chat).toBe(false);
+    expect(verdict.liveSignals.board).toBe(false);
+    // The reason has to name the timestamp, because "in-use" with no stated cause
+    // is what a reader cannot act on.
+    expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
+  });
+
+  it('counts a reader as occupying the worktree, and honours the read release', () => {
+    // A read is weaker evidence than a write and is admitted on the same window,
+    // because the skill treats a read as grounds for LIVE unless the hit can be
+    // shown to be an inventory row. Without this, a worktree whose agent only
+    // read its spec — and then went quiet for the rest of its task — read as
+    // empty while its owner was still live.
+    const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      readHistory: { lastAtMs: NOW - 90 * 60_000 },
+    });
+    expect(reading.live).toBe(true);
+    expect(reading.liveSignals.io).toBe(true);
+
+    // A released reader must read as no signal rather than as a standing claim,
+    // or every worktree any agent ever inspected becomes permanently in-use.
+    const released = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      readHistory: { lastAtMs: null, releasedBefore: NOW - 60_000 },
+    });
+    expect(released.derivedLive).toBe(false);
+  });
+
+  it('stops calling a worktree live once its I/O falls outside the window', () => {
+    const stale = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 5 * 60 * 60_000, derivedChatIds: [] },
+    });
+    expect(stale.derivedLive).toBe(false);
+    expect(stale.liveSignals.io).toBe(false);
+
+    // `prunable` must not become reachable through this. A worktree with
+    // uncommitted work stays un-prunable whatever its I/O looks like.
+    const held = classify(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 3, untracked: 0 } }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 60_000 },
+    });
+    expect(held.prunable).toBe(false);
   });
 
   it('lets a declared hard state outrank every liveness signal, and says so', () => {

@@ -19,7 +19,7 @@ const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockCommitDirtyTool = vi.hoisted(() => vi.fn());
-/** `cancelLayerPreview` and `commitDirtyTool` are optional on the layer context (Transform.tsx:31,303). */
+/** `cancelLayerPreview` and `commitDirtyTool` are optional on the layer context (Transform.tsx:12). */
 const layerApi = vi.hoisted(() => ({ cancelLayerPreview: true, commitDirtyTool: true }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -86,10 +86,23 @@ describe('Transform toolbar', () => {
     expect(screen.getByTitle('Mirror Vertical')).toBeInTheDocument();
   });
 
-  it('has Reset All button', () => {
+  it('renders icon buttons only — no Cancel, no Apply, no Reset All', () => {
     render(<Transform />);
 
-    expect(screen.getByText('Reset All')).toBeInTheDocument();
+    // The complete set of controls on the bar, by accessible name. Asserting the whole
+    // set rather than three absences is the point: `queryByText('Apply')` would stay
+    // green if the button came back as "APPLY", or as an icon with a title, and the bar
+    // is exactly five icon buttons wide now.
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('title'))).toEqual([
+      'Rotate 90° Left',
+      'Rotate 180°',
+      'Rotate 90° Right',
+      'Mirror Horizontal',
+      'Mirror Vertical',
+    ]);
+    expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
+    expect(screen.queryByText('Apply')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reset All')).not.toBeInTheDocument();
   });
 
   // These three used to live here as 'rotate buttons are clickable without error', 'mirror
@@ -100,7 +113,7 @@ describe('Transform toolbar', () => {
   // assertion on the value handed to the mocked tool-args writer, further down this file —
   // 'rotation wrap-around' and 'trapezoid exclusivity' for the three rotate buttons,
   // 'mirror toggles' for the two mirror toggles, and 'optional layer actions' plus
-  // 'keyboard navigation' for Reset All — so re-adding them would duplicate real coverage
+  // 'keyboard navigation' for Cancel — so re-adding them would duplicate real coverage
   // without adding any.
 
   describe('accessible names of the icon buttons', () => {
@@ -121,7 +134,7 @@ describe('Transform toolbar', () => {
       expect(screen.getByTitle('Mirror Vertical')).toHaveAccessibleName('↕');
     });
 
-    it.fails('names the rotate and mirror icon buttons after their action (Transform.tsx:159-178, 281-298)', () => {
+    it.fails('names the rotate and mirror icon buttons after their action (Transform.tsx:155-175, 277-294)', () => {
       render(<Transform />);
 
       expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
@@ -234,6 +247,116 @@ describe('Transform toolbar', () => {
     });
   });
 
+  describe('commit on release', () => {
+    /**
+     * The commit gesture is the END of a gesture, and the end of a slider drag is the
+     * browser's native `change` event — the one that fires once, on release. React binds
+     * its own `onChange` to the native `input` event, which fires on every frame of the
+     * drag, so `fireEvent.input` alone is a frame and `fireEvent.change` is the release.
+     *
+     * These assertions are the load-bearing ones for the whole feature: without them the
+     * panel would preview a drag and leave it uncommitted, and every value on the bar
+     * would be lost the moment another tool was selected.
+     */
+    it('does not commit while the slider is still being dragged', () => {
+      render(<Transform />);
+
+      fireEvent.input(document.getElementById('rotate-slider') as HTMLInputElement, { target: { value: '40' } });
+
+      expect(previewArgs().toolArgs.rotate).toBe(40);
+      expect(mockCommitDirtyTool).not.toHaveBeenCalled();
+    });
+
+    it('commits once when the drag is released', () => {
+      render(<Transform />);
+
+      const slider = document.getElementById('rotate-slider') as HTMLInputElement;
+      for (const frame of ['10', '25', '40']) {
+        fireEvent.input(slider, { target: { value: frame } });
+      }
+      fireEvent.change(slider, { target: { value: '40' } });
+
+      // One history entry for the drag, not one per frame: that is the whole point of
+      // binding the commit to `change` rather than to the input stream.
+      expect(mockCommitDirtyTool).toHaveBeenCalledExactlyOnceWith();
+    });
+
+    it('commits a keyboard step, which the browser also reports as a change', () => {
+      render(<Transform />);
+
+      const slider = document.getElementById('rotate-slider') as HTMLInputElement;
+      slider.stepUp();
+      fireEvent.input(slider);
+      fireEvent.change(slider);
+
+      expect(mockCommitDirtyTool).toHaveBeenCalledExactlyOnceWith();
+    });
+
+    it('commits each of the six sliders on release', () => {
+      render(<Transform />);
+
+      for (const id of [
+        'rotate-slider',
+        'skew-x-slider',
+        'skew-y-slider',
+        'trapezoid-slider',
+        'resize-x-slider',
+        'resize-y-slider',
+      ]) {
+        mockCommitDirtyTool.mockClear();
+        const slider = document.getElementById(id) as HTMLInputElement;
+        fireEvent.change(slider, { target: { value: slider.value } });
+        expect(mockCommitDirtyTool, `${id} commits on release`).toHaveBeenCalledExactlyOnceWith();
+      }
+    });
+
+    it('commits the rotate buttons and the mirror toggles as finished gestures', () => {
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Rotate 90° Right'));
+      expect(mockCommitDirtyTool, 'a rotate button is a completed gesture').toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByTitle('Mirror Horizontal'));
+      expect(mockCommitDirtyTool, 'a mirror toggle is a completed gesture').toHaveBeenCalledTimes(2);
+    });
+
+    it('previews before committing, so a commit never lands a stale value', () => {
+      render(<Transform />);
+
+      const slider = document.getElementById('rotate-slider') as HTMLInputElement;
+      fireEvent.input(slider, { target: { value: '55' } });
+      fireEvent.change(slider, { target: { value: '55' } });
+
+      // `commitDirtyTool` consumes whatever the preview last published, so the assertion
+      // that matters is that the LAST preview carried the released value. Ordering is
+      // React's, not ours: the native `change` is dispatched after the final `input`.
+      expect(previewArgs().toolArgs.rotate).toBe(55);
+    });
+
+    it('survives a layer context with no commitDirtyTool implementation (Transform.tsx:12)', () => {
+      layerApi.commitDirtyTool = false;
+      render(<Transform />);
+
+      expect(() =>
+        fireEvent.change(document.getElementById('rotate-slider') as HTMLInputElement, {
+          target: { value: '30' },
+        })
+      ).not.toThrow();
+      expect(mockCommitDirtyTool).not.toHaveBeenCalled();
+      expect(previewArgs().toolArgs.rotate).toBe(30);
+    });
+
+    it('stops listening for changes on unmount', () => {
+      const { unmount } = render(<Transform />);
+      const slider = document.getElementById('rotate-slider') as HTMLInputElement;
+      unmount();
+
+      fireEvent.change(slider, { target: { value: '30' } });
+
+      expect(mockCommitDirtyTool).not.toHaveBeenCalled();
+    });
+  });
+
   describe('rotation wrap-around', () => {
     it('wraps a left rotation past zero into 360 (Transform.tsx:95-99)', () => {
       resetToolArgs({ rotate: 10 });
@@ -315,11 +438,11 @@ describe('Transform toolbar', () => {
   });
 
   describe('optional layer actions', () => {
-    it('still resets the tool args when the layer context has no cancelLayerPreview (Transform.tsx:31)', () => {
+    it('still resets the tool args when the layer context has no cancelLayerPreview (Transform.tsx:12)', () => {
       layerApi.cancelLayerPreview = false;
       render(<Transform />);
 
-      fireEvent.click(screen.getByText('Reset All'));
+      fireEvent.keyDown(window, { key: 'Escape' });
 
       expect(mockCancelLayerPreview).not.toHaveBeenCalled();
       expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
@@ -335,15 +458,7 @@ describe('Transform toolbar', () => {
       });
     });
 
-    it('applies without a commitDirtyTool implementation (Transform.tsx:303)', () => {
-      layerApi.commitDirtyTool = false;
-      render(<Transform />);
-
-      expect(() => fireEvent.click(screen.getByText('Apply'))).not.toThrow();
-      expect(mockCommitDirtyTool).not.toHaveBeenCalled();
-    });
-
-    it('removes the escape listener on unmount (Transform.tsx:35-43)', () => {
+    it('removes the escape listener on unmount (Transform.tsx:35-44)', () => {
       const { unmount } = render(<Transform />);
       unmount();
 
@@ -400,9 +515,6 @@ describe('Transform toolbar', () => {
       const resizeYSlider = screen.getByRole('slider', { name: /Resize Y/ });
       const mirrorHButton = screen.getByTitle('Mirror Horizontal');
       const mirrorVButton = screen.getByTitle('Mirror Vertical');
-      const resetAllButton = screen.getByText('Reset All');
-      const applyButton = screen.getByText('Apply');
-      const cancelButton = screen.getByText('Cancel');
 
       rotateLeftButton.focus();
       expect(rotateLeftButton).toHaveFocus();
@@ -438,16 +550,10 @@ describe('Transform toolbar', () => {
       expect(mirrorVButton).toHaveFocus();
 
       await user.tab();
-      expect(resetAllButton).toHaveFocus();
-
-      await user.tab();
-      expect(applyButton).toHaveFocus();
-
-      await user.tab();
-      expect(cancelButton).toHaveFocus();
+      expect(document.body).toHaveFocus();
 
       await user.tab({ shift: true });
-      expect(applyButton).toHaveFocus();
+      expect(mirrorVButton).toHaveFocus();
     });
 
     it('allows arrow key navigation on rotate slider', () => {
@@ -577,36 +683,26 @@ describe('Transform toolbar', () => {
       expect(mockTempUpdateLayer).toHaveBeenCalledTimes(2);
     });
 
-    it('allows enter/space to trigger reset all, apply, and cancel buttons', async () => {
+    it('escape key triggers the discard, with nothing focused to begin with', async () => {
       const user = userEvent.setup();
       render(<Transform />);
-      const resetAllButton = screen.getByText('Reset All');
-      const applyButton = screen.getByText('Apply');
-      const cancelButton = screen.getByText('Cancel');
 
-      resetAllButton.focus();
-      await user.keyboard('{Enter}');
+      // There is no discard control on the bar any more, so Escape is the only route and
+      // it must work with focus wherever it happens to be — including on body, which is
+      // where it lands after the last icon button.
+      await user.keyboard('{Escape}');
+
       expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
       expect(mockSetToolArgs).toHaveBeenLastCalledWith(resetArgs);
-
-      applyButton.focus();
-      await user.keyboard(' ');
-      expect(mockCommitDirtyTool).toHaveBeenCalledTimes(1);
       expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
-
-      cancelButton.focus();
-      await user.keyboard('{Enter}');
-      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(2);
-      expect(mockSetToolArgs).toHaveBeenLastCalledWith(resetArgs);
-      expect(mockSetToolArgs).toHaveBeenCalledTimes(2);
     });
 
-    it('escape key triggers cancel', async () => {
+    it('escape key still discards when a control holds focus', async () => {
       const user = userEvent.setup();
       render(<Transform />);
-      const cancelButton = screen.getByText('Cancel');
+      const mirrorVButton = screen.getByTitle('Mirror Vertical');
 
-      cancelButton.focus();
+      mirrorVButton.focus();
       await user.keyboard('{Escape}');
 
       expect(mockSetToolArgs).toHaveBeenCalledWith(

@@ -101,6 +101,53 @@ export const ACTION = {
  */
 export const LIVE_WINDOW_MS = 30 * 60 * 1000;
 
+/**
+ * How recently a tool call must have touched a worktree's own directory for that
+ * to count as someone being in there.
+ *
+ * Deliberately WIDER than {@link LIVE_WINDOW_MS}, and it is a separate signal
+ * rather than a wider version of the same one. `LIVE_WINDOW_MS` answers "is a
+ * chat active", which is a question about `session.time_updated`; it cannot see
+ * a main-checkout agent at all, because that agent's `directory` is the main
+ * checkout no matter how many commands it runs inside a task worktree. Direct
+ * I/O inside the directory is the one piece of evidence that survives that, and
+ * it answers a different question: not "is a chat typing" but "did anything
+ * demonstrably happen here".
+ *
+ * The width is the operator's own staleness threshold, and it is a parameter
+ * rather than a constant of consequence: a worktree whose last recorded command
+ * ran inside this window is not a deletion candidate at any window, because the
+ * cost of being wrong is a live agent's work and the cost of being right is one
+ * worktree kept a few hours longer.
+ */
+export const RECENT_IO_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Did anything demonstrably happen inside this worktree recently?
+ *
+ * `shellHistory.lastAtMs` is a command whose recorded workdir, or whose target
+ * path, is inside this worktree. That is weaker evidence than a file write and
+ * stronger than a message: a `read` proves a reader, and a `write` here is
+ * already covered by `writeHistory`. All three are folded in because a reader
+ * inside a live window is still a live occupant — the skill is explicit that a
+ * read is grounds for LIVE unless the hit can be shown to be an inventory row —
+ * and because each history is a separate pass over the transcript, so any one
+ * of them can be the pass that caught the activity and the other two can be
+ * silent about the same session.
+ *
+ * A read is admitted on the same window as a write rather than a wider one,
+ * because readers accumulate: `readHistory` is why `--release-reads` exists.
+ * The release writes through to the same `lastAtMs`, so a released reader
+ * reads as no signal here rather than as a permanent claim.
+ *
+ * `derivedChatIds` and not `activeNow` for the same reason `writeLive` reads the
+ * former: `activeNow` is the value AFTER the suppression flag has been applied,
+ * so consulting it would let an override erase its own evidence.
+ */
+export function hasRecentIo(histories, nowMs, ioWindowMs = RECENT_IO_WINDOW_MS) {
+  return histories.some((h) => typeof h?.lastAtMs === 'number' && nowMs - h.lastAtMs < ioWindowMs);
+}
+
 function isWorkingTreeHeld(wt) {
   return wt.workingTree.modified + wt.workingTree.untracked > 0;
 }
@@ -153,7 +200,17 @@ function mergeVerdict(wt) {
  */
 export function classify(
   wt,
-  { chatSummary, chatSessions, curated, nowMs, boardAgents = [], writeHistory = null, liveWritersSuppressed = null }
+  {
+    chatSummary,
+    chatSessions,
+    curated,
+    nowMs,
+    boardAgents = [],
+    writeHistory = null,
+    shellHistory = null,
+    readHistory = null,
+    liveWritersSuppressed = null,
+  }
 ) {
   const reasons = [];
   const uncommitted = isWorkingTreeHeld(wt);
@@ -175,7 +232,15 @@ export function classify(
   // override erase its own evidence and `derivedLive` would quietly agree with
   // `live` about a signal nobody ever checked.
   const writeLive = Boolean(writeHistory?.derivedChatIds?.length);
-  const derivedLive = chatLive || writeLive || Boolean(liveAgent);
+  // Direct I/O inside this directory, on the wider window. Without it the three
+  // signals above are all keyed on a chat's own liveness or on the board, and a
+  // main-checkout agent that ran `git -C … worktrees/<name> …` minutes ago is in
+  // neither: its `directory` is the main checkout, and the board is keyed on the
+  // branch. That gap is not theoretical — it is why a worktree with agents
+  // editing it an hour ago could carry `action: "dispose"` with `prunable: true`
+  // and every one of its git facts correct.
+  const ioLive = hasRecentIo([shellHistory, writeHistory, readHistory], nowMs);
+  const derivedLive = chatLive || writeLive || ioLive || Boolean(liveAgent);
 
   // A declared hard state outranks every heuristic above. Both of them are
   // RECENCY inferences over rows that outlive the process that wrote them, so
@@ -183,14 +248,14 @@ export function classify(
   // running them is gone — which is exactly the moment a reader most needs the
   // file to be true. The override is recorded rather than applied silently: the
   // reasons say it happened, and the evidence it overrode is still on the record
-  // in `writeHistory.derivedWriterChatIds`, so the file can be audited rather
+  // in `writeHistory.derivedChatIds`, so the file can be audited rather
   // than believed.
   const live = liveWritersSuppressed ? false : derivedLive;
   if (liveWritersSuppressed) {
     reasons.push(
       `liveness overridden: ${liveWritersSuppressed}` +
         (derivedLive
-          ? ` (${chatLive ? 'a session' : 'a board agent'} looked live at ${new Date(nowMs).toISOString()})`
+          ? ` (${chatLive ? 'a session' : writeLive ? 'a write' : ioLive ? 'recent command I/O' : 'a board agent'} looked live at ${new Date(nowMs).toISOString()})`
           : '')
     );
   }
@@ -249,7 +314,11 @@ export function classify(
         ? 'a chat wrote a file in this worktree inside the last 30 minutes'
         : chatLive
           ? 'a session messaged inside the last 30 minutes'
-          : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
+          : ioLive
+            ? `a command ran inside this worktree at ${new Date(
+                Math.max(shellHistory?.lastAtMs ?? 0, writeHistory?.lastAtMs ?? 0, readHistory?.lastAtMs ?? 0)
+              ).toISOString()}`
+            : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
@@ -354,6 +423,17 @@ export function classify(
     // so an override is auditable: `live: false` beside `derivedLive: true` is
     // a record that something was suppressed and what it suppressed.
     derivedLive,
+    // Which signal fired, so a reader can tell "a chat is typing here" from
+    // "a command ran here 40 minutes ago". Collapsed into `derivedLive` these
+    // are indistinguishable, and they are not the same claim: the first is
+    // current occupancy, the second is evidence of it that survives the
+    // main-checkout-agent blind spot in `chatSummary`.
+    liveSignals: {
+      chat: chatLive,
+      write: writeLive,
+      io: ioLive,
+      board: Boolean(liveAgent),
+    },
     liveSuppressed: Boolean(liveWritersSuppressed),
     uncommitted,
     unmerged,

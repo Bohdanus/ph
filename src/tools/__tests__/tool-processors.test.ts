@@ -7,7 +7,9 @@ import {
   PIXEL_FREE_TOOLS,
   toolProcessors,
   type PixelToolName,
+  type ToolCommitKind,
   type ToolProcessorDefinition,
+  type ToolReplayKind,
 } from '../toolProcessors.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { defaultSettings } from '../settings.ts';
@@ -29,9 +31,11 @@ import { selection } from '../selection.ts';
 import { shape } from '../shape.ts';
 import { sharpen } from '../sharpen.ts';
 import { smudge } from '../smudge.ts';
+import { sponge } from '../sponge.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
+import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
@@ -46,6 +50,95 @@ const toolNames = Object.keys(defaultSettings) as ToolName[];
  * `Record<PixelToolName, ...>` at compile time.
  */
 const processorNames = Object.keys(toolProcessors) as PixelToolName[];
+
+/** Every member of the `ToolCommitKind` union, for the closed-set assertions below. */
+const declaredCommitKinds = [
+  'affine-operation',
+  'document-operation',
+  'geometry',
+  'layer-operation',
+  'raster',
+  'selection',
+  'source',
+  'unimplemented',
+] as const satisfies readonly ToolCommitKind[];
+
+/**
+ * Every member of the `ToolReplayKind` union. It is NOT the commit list above with `raster`
+ * renamed: the two unions are separate declarations in `src/tools/toolProcessors.ts`, and the
+ * replay union is the one the durable replay path dispatches on, so a kind that fell out of use
+ * would leave a declared replay strategy with no tool reaching it.
+ */
+const declaredReplayKinds = [
+  'affine-operation',
+  'document-operation',
+  'geometry',
+  'layer-operation',
+  'raster-processor',
+  'selection',
+  'source',
+  'unimplemented',
+] as const satisfies readonly ToolReplayKind[];
+
+/**
+ * The exact `replay.kind` literal every registry entry declares.
+ *
+ * `replay()` in `src/tools/toolProcessors.ts` is
+ * `Object.freeze({ kind, deterministic, version: 1, requiresRaster })` over arguments handed to it
+ * at the entry, so the value is a FIXED LITERAL per tool and never computed from anything: a test
+ * can pin all forty-three of them. That is what this table is for, and it is why the literal is
+ * asserted instead of its truthiness — `kind` selects the durable replay strategy, so `'source'`
+ * swapped for `'selection'` on one tool would replay that tool's history entries through the
+ * selection arm while every other assertion in this file stayed green.
+ *
+ * `satisfies Record<PixelToolName, ToolReplayKind>` is the exhaustiveness half: a tool added to the
+ * registry without a row here is a type error, not a silently unpinned entry.
+ */
+const replayKinds = {
+  reposition: 'geometry',
+  blur: 'layer-operation',
+  color: 'layer-operation',
+  levels: 'layer-operation',
+  transform: 'affine-operation',
+  crop: 'document-operation',
+  draw: 'source',
+  shape: 'source',
+  text: 'source',
+  'polygonal-lasso': 'selection',
+  'freehand-lasso': 'selection',
+  'feather-magnetic-lasso': 'selection',
+  'magic-wand': 'selection',
+  'rectangular-selection': 'selection',
+  'elliptical-selection': 'selection',
+  'single-row-marquee': 'selection',
+  'single-column-marquee': 'selection',
+  'quick-selection': 'selection',
+  gradient: 'raster-processor',
+  sharpen: 'raster-processor',
+  smudge: 'raster-processor',
+  dodge: 'raster-processor',
+  burn: 'raster-processor',
+  sponge: 'raster-processor',
+  'clone-stamp': 'raster-processor',
+  brush: 'raster-processor',
+  pencil: 'raster-processor',
+  'color-replacement': 'raster-processor',
+  eraser: 'raster-processor',
+  'magic-eraser': 'raster-processor',
+  'paint-bucket': 'raster-processor',
+  pen: 'unimplemented',
+  'freeform-pen': 'unimplemented',
+  'curvature-pen': 'unimplemented',
+  'add-anchor-point': 'unimplemented',
+  'delete-anchor-point': 'unimplemented',
+  'convert-point': 'unimplemented',
+  rectangle: 'source',
+  ellipse: 'source',
+  triangle: 'source',
+  polygon: 'source',
+  line: 'source',
+  'custom-shape': 'unimplemented',
+} satisfies Record<PixelToolName, ToolReplayKind>;
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
 
@@ -167,10 +260,25 @@ describe('toolProcessors registry', () => {
 
       expect(Object.isFrozen(entry.replay), `${toolName}.replay must be frozen`).toBe(true);
       expect(entry.replay.version, `${toolName}.replay.version`).toBe(1);
-      expect(entry.replay.kind, `${toolName}.replay.kind`).toBeTruthy();
-      expect(typeof entry.commit).toBe('string');
+      expect(entry.replay.kind, `${toolName}.replay.kind`).toBe(replayKinds[toolName]);
+      expect(declaredCommitKinds, `${toolName}.commit`).toContain(entry.commit);
       expect(typeof entry.imageProcessor).toBe('function');
     }
+  });
+
+  it('assigns every processor the exact replay kind literal its registry entry declares', () => {
+    // The whole map in one comparison, so a tool that enters or leaves the registry cannot slip
+    // past the per-tool assertion above: `toEqual` on two records compares their key sets too.
+    const kinds = Object.fromEntries(
+      processorNames.map((toolName) => [toolName, findToolProcessor(toolName)!.replay.kind])
+    );
+
+    expect(kinds).toEqual(replayKinds);
+    // Every declared replay strategy is still reachable. A literal left behind by a renamed
+    // strategy would leave the union and the dispatcher disagreeing, which nothing else here sees.
+    expect([...new Set(processorNames.map((toolName) => replayKinds[toolName]))].sort()).toEqual(
+      [...declaredReplayKinds].sort()
+    );
   });
 
   it('rejects mutation of a replay descriptor', () => {
@@ -200,6 +308,7 @@ describe('toolProcessors registry', () => {
         'pencil',
         'sharpen',
         'smudge',
+        'sponge',
       ].sort()
     );
   });
@@ -252,10 +361,19 @@ describe('toolProcessors registry', () => {
         'pencil',
         'sharpen',
         'smudge',
+        'sponge',
       ].sort()
     );
     for (const toolName of rasterCommitted) {
       expect(findToolProcessor(toolName)!.replay.kind).toBe('raster-processor');
+    }
+  });
+
+  it('keeps every raster processor safe to replay over its input bitmap', () => {
+    for (const toolName of processorNames) {
+      const processor = findToolProcessor(toolName)!;
+      if (processor.commit !== 'raster') continue;
+      expect(processor.compositesOntoInput, toolName).not.toBe(false);
     }
   });
 
@@ -264,23 +382,29 @@ describe('toolProcessors registry', () => {
 
     expect(creators.sort()).toEqual(
       [
+        'brush',
         'draw',
         'ellipse',
         'elliptical-selection',
         'freehand-lasso',
         'line',
+        'pencil',
         'polygon',
         'polygonal-lasso',
         'quick-selection',
         'rectangle',
         'rectangular-selection',
         'shape',
+        'single-column-marquee',
+        'single-row-marquee',
         'text',
         'triangle',
       ].sort()
     );
     for (const toolName of creators) {
-      expect(['source', 'selection'], `${toolName} creator commit`).toContain(findToolProcessor(toolName)!.commit);
+      expect(['source', 'selection', 'raster'], `${toolName} creator commit`).toContain(
+        findToolProcessor(toolName)!.commit
+      );
     }
   });
 
@@ -321,6 +445,8 @@ describe('toolProcessors registry', () => {
       'rectangular-selection': 'selection',
       'elliptical-selection': 'selection',
       'quick-selection': 'selection',
+      'single-row-marquee': 'selection',
+      'single-column-marquee': 'selection',
       brush: 'raster',
       pencil: 'raster',
       'color-replacement': 'raster',
@@ -332,6 +458,7 @@ describe('toolProcessors registry', () => {
       smudge: 'raster',
       dodge: 'raster',
       burn: 'raster',
+      sponge: 'raster',
       'clone-stamp': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
@@ -389,7 +516,10 @@ describe('toolProcessors registry', () => {
   it('has no entry and no throw-safe fallback for an unknown tool name', () => {
     expect(asRecord['definitely-not-a-tool']).toBeUndefined();
     expect((toolsMap as unknown as Record<string, unknown>)['definitely-not-a-tool']).toBeUndefined();
-    expect(() => asRecord['definitely-not-a-tool']?.imageProcessor).not.toThrow();
+    // Reading through the optional chain has to yield a VALUE, not merely avoid throwing: a
+    // registry that synthesised a stub processor would let `?.imageProcessor` off the hook
+    // entirely, and `not.toThrow()` could not tell that apart from an absent entry.
+    expect(asRecord['definitely-not-a-tool']?.imageProcessor).toBeUndefined();
   });
 });
 
@@ -510,6 +640,7 @@ const realBarNames = [
   'smudge',
   'dodge',
   'burn',
+  'sponge',
   'color-replacement',
 ] as const satisfies readonly ToolName[];
 
@@ -526,6 +657,81 @@ const placeholderNames = [
   'convert-point',
   'custom-shape',
 ] as const satisfies readonly ToolName[];
+
+/**
+ * Every placeholder card's exact rendering: the title `toolsMap.ts` passes to `placeholderTool`,
+ * and the config group that card is wired to.
+ *
+ * `configKey` is this file's own claim about which group each card belongs on, and it is what the
+ * assertion binds to: the rendered chip set is compared against `placeholderToolGroups` for the key
+ * named HERE, never against the group the card actually renders, so re-pointing a card in
+ * `toolsMap.ts` hands it another group's chips and fails below. What the table does not claim is a
+ * group's own chip list, which would move every row naming that group in step.
+ *
+ * Four of the seven cards share the `pen` group and the other three name a key of their own, so
+ * neither the group nor the title alone tells the cards apart; both are pinned.
+ */
+const placeholderCards = [
+  { toolName: 'pen', configKey: 'pen', title: 'Pen Tool' },
+  { toolName: 'freeform-pen', configKey: 'freeform-pen', title: 'Freeform Pen Tool' },
+  { toolName: 'curvature-pen', configKey: 'curvature-pen', title: 'Curvature Pen Tool' },
+  { toolName: 'add-anchor-point', configKey: 'pen', title: 'Add Anchor Point Tool' },
+  { toolName: 'delete-anchor-point', configKey: 'pen', title: 'Delete Anchor Point Tool' },
+  { toolName: 'convert-point', configKey: 'pen', title: 'Convert Point Tool' },
+  { toolName: 'custom-shape', configKey: 'custom-shape', title: 'Custom Shape Tool' },
+] as const;
+
+/** The one description every `PlaceholderTool` falls back to, from its own default parameter. */
+const PLACEHOLDER_DESCRIPTION = 'TODO: tool behavior not implemented yet.';
+
+/**
+ * The exact control ids each real options bar renders.
+ *
+ * "Rendered something" was the old claim and it was unfalsifiable for the wiring it exists to
+ * catch: the eraser, the sponge and the quick selection all render a caption reading `Mode`, so a
+ * caption check passes for three wrong wirings. Ids are tool-scoped, which makes the exact SET the
+ * discriminator — and the set is exact in both directions, so a bar that lost a control fails too.
+ * `dodge` and `burn` share `Tonal`, which derives its ids from the store's `toolName`; listing
+ * both is what pins that routing per tool instead of per component.
+ */
+const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
+  ['eyedropper', ['eyedropper-sample-size']],
+  // The seeded `style` is `'normal'`, and `EllipticalSelection.tsx` renders Ratio only for
+  // `fixed-ratio` and Width/Height only for `fixed-size`, so the Style select is the whole bar at
+  // the defaults. Pinning the gated controls as ABSENT is the other half: a Style select rendered
+  // unconditionally would fail here.
+  ['elliptical-selection', ['elliptical-selection-style']],
+  ['quick-selection', ['quick-selection-mode', 'quick-selection-size', 'quick-selection-tolerance']],
+  ['eraser', ['eraser-flow', 'eraser-hardness', 'eraser-mode', 'eraser-opacity', 'eraser-size', 'eraser-spacing']],
+  ['clone-stamp', ['clone-stamp-aligned', 'clone-stamp-hardness', 'clone-stamp-opacity', 'clone-stamp-size']],
+  [
+    'paint-bucket',
+    [
+      'paint-bucket-anti-aliased',
+      'paint-bucket-contiguous',
+      'paint-bucket-fill',
+      'paint-bucket-opacity',
+      'paint-bucket-tolerance',
+    ],
+  ],
+  ['gradient', ['gradient-color-a', 'gradient-color-b', 'gradient-opacity', 'gradient-type']],
+  ['sharpen', ['sharpen-amount', 'sharpen-radius']],
+  ['smudge', ['smudge-hardness', 'smudge-size', 'smudge-strength']],
+  ['dodge', ['dodge-exposure', 'dodge-hardness', 'dodge-range', 'dodge-size']],
+  ['burn', ['burn-exposure', 'burn-hardness', 'burn-range', 'burn-size']],
+  ['sponge', ['sponge-flow', 'sponge-hardness', 'sponge-mode', 'sponge-size', 'sponge-vibrance']],
+  [
+    'color-replacement',
+    [
+      'color-replacement-limits',
+      'color-replacement-opacity',
+      'color-replacement-sampling',
+      'color-replacement-size',
+      'color-replacement-smoothness',
+      'color-replacement-tolerance',
+    ],
+  ],
+];
 
 describe('toolsMap wiring', () => {
   it('mirrors every processor entry and adds an icon plus a toolbox component', () => {
@@ -595,16 +801,28 @@ describe('toolsMap wiring', () => {
   });
 
   it('renders the placeholder toolbox components with their configured options', () => {
-    // `PlaceholderTool` reads no context, so a true placeholder mounts bare. Every name
-    // below is wired to one in `toolsMap.ts`, and `/TODO|Tool/i` is the placeholder's own
-    // contract — its title ends in `Tool` and it carries a `TODO` badge.
-    for (const toolName of placeholderNames) {
-      const Component = toolsMap[toolName].toolboxComponent;
-      const { unmount } = render(React.createElement(Component));
+    // `PlaceholderTool` reads no context, so a true placeholder mounts bare. What it renders is
+    // three labelled spans in a fixed order — the `TODO` badge, the card's own title, then one
+    // span per chip of the group `toolsMap.ts` named — plus the default description. Pinning that
+    // array exactly is the claim `/TODO|Tool/i` never made: the old regex was satisfied by the
+    // title alone, so a card wired to the wrong group, or one not rendering every chip of the
+    // group it names, still passed.
+    for (const { toolName, configKey, title } of placeholderCards) {
+      const claimedChips = placeholderToolGroups[configKey];
 
-      expect(screen.getAllByText(/TODO|Tool/i).length, toolName).toBeGreaterThan(0);
+      // The group's existence is checked before it is spread, so a `configKey` that names no group
+      // fails with the tool name attached instead of throwing on a non-iterable value.
+      expect(claimedChips, toolName).toBeDefined();
+
+      const Component = toolsMap[toolName].toolboxComponent;
+      const { container, unmount } = render(React.createElement(Component));
+      const spans = [...container.querySelectorAll('span')].map((node) => node.textContent);
+
+      expect(spans, toolName).toEqual(['TODO', title, ...claimedChips]);
+      expect(container.textContent, toolName).toContain(PLACEHOLDER_DESCRIPTION);
       unmount();
     }
+    expect(placeholderCards.map(({ toolName }) => toolName).sort()).toEqual([...placeholderNames].sort());
   });
 
   it('renders a real options bar for every tool that left the placeholder roster', () => {
@@ -613,7 +831,7 @@ describe('toolsMap wiring', () => {
     // the provider pulls in the durable replay/materialization path, which does not survive
     // jsdom, so rendering these bare would throw `useStore must be used within
     // StoreProvider` before reaching a single assertion.
-    for (const toolName of realBarNames) {
+    for (const [toolName, controlIds] of realBarControlIds) {
       // `Tonal` decides which of its two tools it is from `useStore().toolName`, and the
       // other ten read their args by name, so the store has to agree with the tool under test.
       optionsBarStore.toolName = toolName;
@@ -624,11 +842,18 @@ describe('toolsMap wiring', () => {
       // "not implemented yet" description, and no other content. None of the three can be
       // present once the bar is real, and this fails loudly the moment a wiring entry is
       // pointed back at `placeholderTool(...)`.
-      expect(container.textContent, toolName).not.toBe('');
+      //
+      // The id set is what replaces `textContent` being non-empty: it is the bar's own
+      // controls, so a bar mounted with no args — which is what every one of these components
+      // renders when `getToolArgs` misses — fails here instead of passing as "something".
+      expect([...container.querySelectorAll('[id]')].map((node) => node.id).sort(), toolName).toEqual(
+        [...controlIds].sort()
+      );
       expect(screen.queryByText('TODO'), toolName).toBeNull();
-      expect(screen.queryByText('TODO: tool behavior not implemented yet.'), toolName).toBeNull();
+      expect(screen.queryByText(PLACEHOLDER_DESCRIPTION), toolName).toBeNull();
       unmount();
     }
+    expect(realBarControlIds.map(([toolName]) => toolName).sort()).toEqual([...realBarNames].sort());
     optionsBarStore.toolName = 'brush';
   });
 
@@ -648,10 +873,15 @@ describe('toolsMap wiring', () => {
     // `realBarNames`, so the test above now asserts the OPPOSITE of this one for it, which
     // is the stronger half: one assertion that a tool is not a stub is worth more than the
     // stub assertion it replaces.
-    for (const toolName of ['pen', 'custom-shape'] as const) {
+    for (const toolName of placeholderNames) {
       const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
 
-      expect(screen.getAllByText('TODO').length, toolName).toBeGreaterThan(0);
+      // Exactly one, not at least one: the badge is a single span, and a card that grew a second
+      // one — or matched the description, whose text merely starts with `TODO` — is a different
+      // card. `getAllByText` matches whole element text, so the description cannot satisfy it.
+      // Every placeholder is walked rather than the two the roster happened to sample, because
+      // `showTodoBadge` is `placeholderTool`'s THIRD argument and toolsMap passes it per entry.
+      expect(screen.getAllByText('TODO'), toolName).toHaveLength(1);
       unmount();
     }
   });
@@ -684,6 +914,7 @@ const directProcessorSources: readonly [ToolName, unknown][] = [
   ['smudge', smudge],
   ['dodge', dodge],
   ['burn', burn],
+  ['sponge', sponge],
   ['clone-stamp', cloneStamp],
   ['rectangle', shape],
   ['ellipse', shape],
@@ -734,19 +965,28 @@ describe('toolProcessors processor identity', () => {
       seen.set(imageProcessor, [...(seen.get(imageProcessor) ?? []), toolName]);
     }
 
-    // The only legitimate sharing is the lasso pair and the shape/figure family,
-    // which are the same module export wired to several tool names on purpose.
+    // The only legitimate sharing is the lasso pair, the shape/figure family, and the
+    // marquee trio, which are the same module export wired to several tool names on purpose.
+    // `rectangularSelection` joins that list because a selection is geometry in the store and
+    // no pixels at all: the processor is a pass-through that hands the document bitmap back
+    // untouched (`rectangularSelection.ts:9`-`:13`), so the Rectangular Marquee and the two
+    // 1-pixel marquees have nothing to differ on. A processor that DID differ per tool would
+    // fail this assertion, which is the point of it.
     const shared = [...seen.entries()]
       .filter(([, names]) => names.length > 1)
       .map(([processor, names]) => ({
         names: names.sort(),
-        isIntentional: processor === selection || processor === shape,
+        isIntentional: processor === selection || processor === shape || processor === rectangularSelection,
       }))
       .sort((a, b) => a.names[0].localeCompare(b.names[0]));
 
     expect(shared).toEqual([
       { names: ['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle'], isIntentional: true },
       { names: ['freehand-lasso', 'polygonal-lasso'], isIntentional: true },
+      {
+        names: ['rectangular-selection', 'single-column-marquee', 'single-row-marquee'],
+        isIntentional: true,
+      },
     ]);
   });
 });
@@ -784,6 +1024,8 @@ describe('toolProcessors declared inner-processor arity', () => {
         'rectangular-selection',
         'elliptical-selection',
         'quick-selection',
+        'single-row-marquee',
+        'single-column-marquee',
       ].sort()
     );
   });
@@ -807,6 +1049,8 @@ describe('toolProcessors declared inner-processor arity', () => {
         'rectangular-selection',
         'elliptical-selection',
         'quick-selection',
+        'single-row-marquee',
+        'single-column-marquee',
       ].sort()
     );
   });
@@ -848,6 +1092,10 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['rectangular-selection', 'source-bitmap', 0, 0],
     ['elliptical-selection', 'source-bitmap', 0, 0],
     ['quick-selection', 'source-bitmap', 0, 0],
+    // The 1-pixel marquees share `rectangularSelection`, which is the pass-through that hands
+    // the document bitmap back untouched, so they resolve to the same outcome as the row above.
+    ['single-row-marquee', 'source-bitmap', 0, 0],
+    ['single-column-marquee', 'source-bitmap', 0, 0],
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
     ['color-replacement', 'canvas', 40, 24],
@@ -866,10 +1114,74 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['smudge', 'canvas', 40, 24],
     ['dodge', 'canvas', 40, 24],
     ['burn', 'canvas', 40, 24],
+    ['sponge', 'canvas', 40, 24],
     ['clone-stamp', 'canvas', 40, 24],
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
+    ['pen', 'null', 0, 0],
+    ['freeform-pen', 'null', 0, 0],
+    ['curvature-pen', 'null', 0, 0],
+    ['add-anchor-point', 'null', 0, 0],
+    ['delete-anchor-point', 'null', 0, 0],
+    ['convert-point', 'null', 0, 0],
+    ['rectangle', 'canvas', 40, 24],
+    ['ellipse', 'canvas', 40, 24],
+    ['triangle', 'canvas', 40, 24],
+    ['polygon', 'canvas', 40, 24],
+    ['line', 'canvas', 40, 24],
+    ['custom-shape', 'null', 0, 0],
+  ];
+
+  /**
+   * The same registry read through the SEEDED DEFAULTS only — no injected rect, no lasso path.
+   *
+   * `dispatchTable` above is allowed to override arguments, which is exactly why it cannot answer
+   * "does this tool run on what `defaultSettings` ships". Two rows differ from it for that reason
+   * alone: the two lassos take an empty point list here and collapse to a 1x1 canvas instead of
+   * the 10x10 one a real path produces, and crop is absent because its seeded `rect` is `null`
+   * (asserted separately, by the throw it causes).
+   *
+   * `canvas`  — a fresh full-`size` canvas, which is the whole reason a `commit: 'raster'` tool
+   *             cannot hand the source bitmap back: `tempUpdateLayer` assigns this straight to
+   *             `layer.tmpCanvas`, so a returned `[bitmap]` would render the edit as nothing.
+   * `bitmap`  — the source bitmap BY IDENTITY, for the selection processors that rasterize nothing.
+   * `bitmap-and-move` — the geometry patch reposition returns beside the bitmap.
+   * `null`    — the unimplemented stub's `[null]`.
+   */
+  type DefaultsOutcome = 'bitmap' | 'bitmap-and-move' | 'canvas' | 'empty-canvas' | 'null';
+
+  const defaultsOutcomeTable: readonly [ToolName, DefaultsOutcome, number, number][] = [
+    ['reposition', 'bitmap-and-move', 0, 0],
+    ['blur', 'canvas', 40, 24],
+    ['color', 'canvas', 40, 24],
+    ['levels', 'canvas', 40, 24],
+    ['transform', 'canvas', 40, 24],
+    ['draw', 'canvas', 40, 24],
+    ['shape', 'canvas', 40, 24],
+    ['text', 'canvas', 40, 24],
+    ['polygonal-lasso', 'empty-canvas', 1, 1],
+    ['freehand-lasso', 'empty-canvas', 1, 1],
+    ['feather-magnetic-lasso', 'bitmap', 0, 0],
+    ['magic-wand', 'bitmap', 0, 0],
+    ['rectangular-selection', 'bitmap', 0, 0],
+    ['elliptical-selection', 'bitmap', 0, 0],
+    ['quick-selection', 'bitmap', 0, 0],
+    ['single-row-marquee', 'bitmap', 0, 0],
+    ['single-column-marquee', 'bitmap', 0, 0],
+    ['brush', 'canvas', 40, 24],
+    ['pencil', 'canvas', 40, 24],
+    ['color-replacement', 'canvas', 40, 24],
+    ['eraser', 'canvas', 40, 24],
+    ['magic-eraser', 'canvas', 40, 24],
+    ['paint-bucket', 'canvas', 40, 24],
+    ['gradient', 'canvas', 40, 24],
+    ['sharpen', 'canvas', 40, 24],
+    ['smudge', 'canvas', 40, 24],
+    ['dodge', 'canvas', 40, 24],
+    ['burn', 'canvas', 40, 24],
+    ['sponge', 'canvas', 40, 24],
+    ['clone-stamp', 'canvas', 40, 24],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -948,16 +1260,52 @@ describe('toolProcessors dispatch for every tool name', () => {
   );
 
   it('consumes the unmodified seeded defaults for every tool except crop', () => {
-    for (const toolName of processorNames) {
-      if (toolName === 'crop') continue;
-
+    // The claim is that the SEEDED ARGS ALONE drive every processor, so the table below is a
+    // second, independent reading of the registry: `dispatchTable` above may inject a rect and a
+    // lasso path, which is what makes it a weaker statement about the defaults. What each row
+    // pins is the whole returned tuple, not its existence — `toBeDefined()` passed for a tool
+    // that returned the wrong bitmap, a zero-by-zero canvas, or a `[null]` it had no business
+    // returning, because the only thing asked was that something came back.
+    for (const [toolName, outcome, expectedWidth, expectedHeight] of defaultsOutcomeTable) {
+      RecordingOffscreenCanvas.instances = [];
       const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
         ...defaultSettings[toolName],
       } as never);
+      const allocated = RecordingOffscreenCanvas.instances;
 
-      expect(result, toolName).toBeDefined();
-      expect(result[0], toolName).not.toBeUndefined();
+      if (outcome === 'null') {
+        // The unimplemented stub allocates nothing and says so with a null bitmap.
+        expect(result, toolName).toEqual([null]);
+        expect(allocated, toolName).toHaveLength(0);
+        continue;
+      }
+
+      if (outcome === 'bitmap') {
+        // A selection is geometry in the store, so these hand the document bitmap straight back:
+        // identity, not a copy, is the whole claim.
+        expect(result, toolName).toEqual([bitmap]);
+        expect(result[0], toolName).toBe(bitmap);
+        expect(allocated, toolName).toHaveLength(0);
+        continue;
+      }
+
+      if (outcome === 'bitmap-and-move') {
+        // Reposition is the one processor that returns a geometry patch alongside the bitmap.
+        expect(result, toolName).toEqual([bitmap, defaultSettings.reposition.move]);
+        expect(result[1], toolName).toEqual({ x: 0, y: 0 });
+        expect(allocated, toolName).toHaveLength(0);
+        continue;
+      }
+
+      expect(result, toolName).toHaveLength(1);
+      expect(allocated, toolName).toContain(result[0]);
+      const canvas = result[0] as unknown as RecordingOffscreenCanvas;
+      expect(canvas.width, toolName).toBe(expectedWidth);
+      expect(canvas.height, toolName).toBe(expectedHeight);
     }
+    expect(defaultsOutcomeTable.map(([toolName]) => toolName).sort()).toEqual(
+      processorNames.filter((toolName) => toolName !== 'crop').sort()
+    );
   });
 
   it('cannot consume the seeded crop defaults at all (the crop processor in src/tools/crop.ts)', () => {
@@ -997,27 +1345,35 @@ describe('toolProcessors dispatch for every tool name', () => {
     expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
     expect(canvas.ctx.drawImage).toHaveBeenCalledWith(undefined, -2, -3);
   });
+
+  it.each(['brush', 'pencil'] as const)('composites %s over the supplied input bitmap', (toolName) => {
+    const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
+      ...defaultSettings[toolName],
+      points: [
+        { x: 4, y: 4 },
+        { x: 8, y: 8 },
+      ],
+    } as never);
+    const canvas = result[0] as unknown as RecordingOffscreenCanvas;
+
+    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, size.width, size.height);
+    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('toolProcessors classification invariants', () => {
   const commitKinds = new Set(processorNames.map((toolName) => findToolProcessor(toolName)!.commit));
 
   it('uses every declared commit kind, so no classification is dead', () => {
-    expect([...commitKinds].sort()).toEqual([
-      'affine-operation',
-      'document-operation',
-      'geometry',
-      'layer-operation',
-      'raster',
-      'selection',
-      'source',
-      'unimplemented',
-    ]);
+    expect([...commitKinds].sort()).toEqual([...declaredCommitKinds].sort());
   });
 
   it.each(processorNames)('keeps the %s replay kind aligned with its commit kind', (toolName) => {
     const { commit, replay } = findToolProcessor(toolName)!;
 
+    // Derived, so it cannot stand alone — a tool whose commit AND kind were both rewritten
+    // satisfies it. The literals are pinned by the `replayKinds` table; this pins the RULE that
+    // produces them, which is what makes a newly registered tool's two fields correct by default.
     if (commit === 'raster') {
       expect(replay.kind).toBe('raster-processor');
     } else if (commit === 'unimplemented') {
@@ -1072,6 +1428,8 @@ describe('toolsMap exhaustiveness', () => {
     ['rectangular-selection', 'rectangular-selection'],
     ['elliptical-selection', 'elliptical-selection'],
     ['quick-selection', 'quick-selection'],
+    ['single-row-marquee', 'single-row-marquee'],
+    ['single-column-marquee', 'single-column-marquee'],
     ['brush', 'brush'],
     ['pencil', 'pencil'],
     ['color-replacement', 'color-replacement'],
@@ -1084,6 +1442,7 @@ describe('toolsMap exhaustiveness', () => {
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
+    ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
@@ -1136,7 +1495,7 @@ describe('toolsMap exhaustiveness', () => {
     const placeholderTools: readonly ToolName[] = [...unimplementedTools];
     const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
 
-    // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call
+    // Four of them share the `pen` placeholder group, but each `placeholderTool(...)` call
     // returns a fresh closure, so no two tool names can be wired to the same component.
     expect(new Set(components).size).toBe(placeholderTools.length);
     for (const toolName of placeholderTools) {

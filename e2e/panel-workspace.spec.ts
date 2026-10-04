@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from './fixtures/extended-test';
 import { openToolFlyout } from './helpers/toolbar-helpers';
 
 /**
@@ -35,6 +35,37 @@ const RAIL_GRIP = '[data-testid="rail-re-dock-handle"]';
 const width = (locator: Locator) => locator.evaluate((node) => node.getBoundingClientRect().width);
 
 /**
+ * Whether `locator` is PAINTED at its own centre: the element under that point, once the
+ * element has been made hit-testable, is the element itself or something inside it.
+ *
+ * `toBeVisible()` is `boundingBox() !== null && visibility !== hidden`, so an element that
+ * occupies exactly the right box and paints nothing satisfies it. `bg-blue-500` swapped for
+ * `bg-transparent` is the shape of that: a 2px line that is still 2px tall, still `inset-x-0`
+ * of the dock, still at the same edge, and still commits the same reorder — with no highlight
+ * for the user to release into. Both indicators below are named by what a user SEES
+ * ("Release the tab when a blue highlight appears"; "a drop zone appears"), so the paint is
+ * the claim and a box is not evidence for it. The element's own geometry is still asserted
+ * separately by each caller, because hit testing says nothing about where it is.
+ *
+ * The pointer-events swap is what makes the probe say anything at all:
+ * `document.elementFromPoint` ignores elements with `pointer-events: none`, and every drop
+ * indicator in this app is `pointer-events: none` BY DESIGN so the gesture underneath keeps
+ * receiving the pointer. Unswapped, the probe would always report whatever lies beneath and
+ * read "not painted" for a correct product exactly as happily as for a broken one. The
+ * previous value is written back inside the same call, because these probes run mid-gesture
+ * with the pointer still down and the page must be left exactly as it was found.
+ */
+const paintsAtItsCentre = (locator: Locator): Promise<boolean> =>
+  locator.evaluate((node) => {
+    const previous = node.style.pointerEvents;
+    node.style.pointerEvents = 'auto';
+    const rect = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    node.style.pointerEvents = previous;
+    return hit !== null && (hit === node || node.contains(hit));
+  });
+
+/**
  * What a panel heading says, top to bottom. The order IS the state under test.
  *
  * `panel-header-row-*` is the header ROW and `panel-header-*` is the draggable control inside
@@ -59,50 +90,82 @@ test.describe('Panel workspace (fast)', () => {
     // The first render is deliberately pixel-identical to what it replaces, and everything
     // else in this suite is calibrated on it. A default that drifted would be a change in
     // every e2e clip derived from the shell's arithmetic, not a design choice.
+    //
+    // NAMED CONSTANT, NOT A RELATION, and deliberately left that way: this is the one test
+    // whose subject IS the default. There is no other measurement to read it against — every
+    // other width in this file is derived from the width this one states — so the 250 is the
+    // claim rather than a stand-in for one.
     expect(await width(page.locator(DOCK))).toBeCloseTo(250, 0);
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
   });
 
   test('resizes the dock from its canvas-side edge', async ({ page }) => {
     const handle = page.locator(RESIZE_HANDLE);
+    // The dock's own width, and the window's own width, read rather than named. The default
+    // the panel opens at (`DEFAULT_DOCK_WIDTH`, `src/contexts/PanelLayout.tsx:114`) is a
+    // layout decision, and a spec that writes it down dies on a one-pixel change to it — at
+    // `:75` here, before it has even reached the assertion about the drag. Everything below
+    // is a relation between two measured boxes, so it moves with the default instead of
+    // against it.
+    const before = await width(page.locator(DOCK));
+    const viewportWidth = (await page.viewportSize())!.width;
     const box = (await handle.boundingBox())!;
     // The handle sits against the dock's CANVAS-side edge, so it lives in the dock's leftmost
     // 12px. Asserting a band rather than a point is deliberate: the handle is positioned
     // against the aside's padding box, so it lands 1px inside the 1px border, and a stray
     // border or rounding is not a defect. Landing it on the dock's OUTER edge is — that is a
     // handle against the window border, which is what this assertion caught when the sides
-    // were inverted.
-    const dockLeft = 1280 - 250;
+    // were inverted. The dock is flush to the right edge of the window, so that is where its
+    // canvas-side edge is.
+    const dockLeft = viewportWidth - before;
     expect(box.x).toBeGreaterThanOrEqual(dockLeft - 1);
     expect(box.x + box.width).toBeLessThanOrEqual(dockLeft + 12);
 
+    // The distance the pointer travels, which is a choice about this gesture rather than a
+    // property of the app: 80px in, and the dock must be 80px wider.
+    const drag = 80;
     await page.mouse.move(box.x + box.width / 2, 400);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 - 80, 400, { steps: 8 });
+    await page.mouse.move(box.x + box.width / 2 - drag, 400, { steps: 8 });
     await page.mouse.up();
 
-    expect(await width(page.locator(DOCK))).toBeCloseTo(330, 0);
+    const widened = before + drag;
+    expect(await width(page.locator(DOCK))).toBeCloseTo(widened, 0);
     // And the canvas gets the space back, which is the reason the gesture is worth having.
     // Read the rail rather than naming its width: 108px is the two-column layout's, and the
     // rail is one column below `lg` or after the toggle, so a hard-coded 108 would be a
-    // constant that happens to hold at this viewport and nowhere else.
+    // constant that happens to hold at this viewport and nowhere else. The same argument
+    // applies to the two dock widths on either side of it, which is why both are read.
     const railWidth = await width(page.locator(RAIL));
-    expect(await width(page.locator('main'))).toBeCloseTo(1280 - railWidth - 330, 0);
+    expect(await width(page.locator('main'))).toBeCloseTo(viewportWidth - railWidth - widened, 0);
   });
 
   test('does not resize from a click inside the panels', async ({ page }) => {
     // A whole-dock drag recogniser would make the entire panel column a drag surface, and the
     // first thing a user does in it is click a history entry or a layer row.
-    const before = await width(page.locator(DOCK));
-    await page.mouse.move(1280 - 125, 400);
+    const dock = page.locator(DOCK);
+    const before = await width(dock);
+    // The press goes at the dock's own centre, which is `viewportWidth - before / 2` written
+    // out as a literal in every other shape — `1280 - 125` happens to be the centre of the
+    // 250px this dock opens at, and it is nowhere else once the default moves, at which point
+    // the press lands off the dock and the test quietly stops testing anything.
+    const dockBox = (await dock.boundingBox())!;
+    const viewportWidth = (await page.viewportSize())!.width;
+    await page.mouse.move(dockBox.x + before / 2, 400);
     await page.mouse.down();
-    await page.mouse.move(1280 - 300, 400, { steps: 6 });
+    // And the release well outside the column, off the handle's side of it.
+    await page.mouse.move(viewportWidth - 300, 400, { steps: 6 });
     await page.mouse.up();
 
-    expect(await width(page.locator(DOCK))).toBeCloseTo(before, 0);
+    expect(await width(dock)).toBeCloseTo(before, 0);
   });
 
   test('collapses the dock to icons when it is narrowed past a label, and back', async ({ page }) => {
+    // The width the user had before the drag, which is what widening has to restore. Read
+    // rather than named: the default the dock opens at is a layout decision
+    // (`src/contexts/PanelLayout.tsx:114`), and this test is about restoring what the user
+    // HAD, which is not the same thing as restoring the default.
+    const openedAt = await width(page.locator(DOCK));
     const handle = page.locator(RESIZE_HANDLE);
     const box = (await handle.boundingBox())!;
     const x = box.x + box.width / 2;
@@ -120,9 +183,10 @@ test.describe('Panel workspace (fast)', () => {
     await expect(page.locator('[data-testid="panel-group-history"]')).toBeHidden();
 
     // Widening restores the width the user had, which is the whole reason narrowing collapses
-    // instead of storing the narrow one.
+    // instead of storing the narrow one. So it is the width from the top of this test, not a
+    // constant — see above.
     await page.locator('[data-testid="dock-icon-layers"]').click();
-    expect(await width(dock)).toBeCloseTo(250, 0);
+    expect(await width(dock)).toBeCloseTo(openedAt, 0);
     // Scoped to the group, because "Layers" is a heading and a tool name in the same
     // document, and an unscoped text locator matches both.
     await expect(page.locator('[data-testid="panel-group-layers"]')).toContainText('Layers');
@@ -141,11 +205,6 @@ test.describe('Panel workspace (fast)', () => {
     // "Release the tab when a blue highlight appears" — the target is drawn DURING the drag.
     const line = page.locator('[data-testid="panel-drop-line"]');
     await expect(line).toBeVisible();
-    // `toBeVisible` only proves a box and a visibility value, and this line is
-    // `pointer-events: none` inside an `overflow: hidden` column — a clipped drop target keeps
-    // a non-zero box, so the test has to paint-probe it. `elementFromPoint` ignores
-    // `pointer-events: none` elements, so the probe is made against the column's own child
-    // beneath the line's centre and the line's own geometry is compared to it.
     const lineBox = (await line.boundingBox())!;
     expect(lineBox.height).toBeGreaterThanOrEqual(1);
     expect(lineBox.x).toBeGreaterThanOrEqual(dockBox.x);
@@ -154,6 +213,22 @@ test.describe('Panel workspace (fast)', () => {
     // And it must sit inside the column's clipped box, or `overflow: hidden` eats it. The line
     // is at the column's bottom edge in this gesture, so that is the edge that has to hold.
     expect(lineBox.y + lineBox.height).toBeLessThanOrEqual(dockBox.y + dockBox.height + 1);
+    // AT that edge, which is a different and stronger claim than being somewhere inside the
+    // column. This gesture takes the History tab — index 0 — to the BOTTOM of the column, and
+    // `SidebarRight.tsx:478` picks the edge from `insertionIndex === 0`, so a product that
+    // drew the line at the top while committing to the bottom keeps every box above exact and
+    // still shows the user the wrong half of the column to release into. Two pixels of
+    // tolerance, for the same sub-pixel rounding the group's bottom-border tolerance above
+    // allows; the measured offset on a correct build is zero.
+    expect(
+      Math.abs(lineBox.y + lineBox.height - (dockBox.y + dockBox.height)),
+      'the drop line is not at the edge the drop will insert at'
+    ).toBeLessThanOrEqual(2);
+    // And that it is PAINTED, which none of the geometry above can see: this line is
+    // `pointer-events: none` inside an `overflow: hidden` column, so a transparent one keeps a
+    // non-null box, keeps the geometry above, and commits the same reorder. This is the probe
+    // `paintsAtItsCentre` exists for, and it is the one this test was always claiming to make.
+    expect(await paintsAtItsCentre(line), 'the drop line has a real box but paints nothing').toBe(true);
 
     await page.mouse.up();
     expect(await panelOrder(page)).toEqual(['layers', 'history']);
@@ -255,6 +330,11 @@ test.describe('Panel workspace (fast)', () => {
     // appears" — the zone is on screen before the release.
     const edge = page.locator('[data-testid="dock-edge-line"]');
     await expect(edge).toBeVisible();
+    // PAINTED, on the same grounds as the reorder line and through the same helper: this is a
+    // `pointer-events: none` `fixed w-1` overlay, so a transparent one is a 4px box at the
+    // window edge that satisfies every geometry assertion and still drops the dock exactly the
+    // same — with no drop zone for the user to have seen appear.
+    expect(await paintsAtItsCentre(edge), 'the edge drop zone has a real box but paints nothing').toBe(true);
     // A reorder indicator at the same time would be a lie about what the drop will do.
     await expect(page.locator('[data-testid="panel-drop-line"]')).toBeHidden();
 
@@ -297,35 +377,45 @@ test.describe('Panel workspace (fast)', () => {
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(railBox.x);
     expect(menuBox.x).toBeGreaterThanOrEqual(0);
     // The element has to be made hit-testable for the probe to mean anything, or it always
-    // reports whatever is beneath it.
-    const painted = await menu.evaluate((node) => {
-      const previous = node.style.pointerEvents;
-      node.style.pointerEvents = 'auto';
-      const rect = node.getBoundingClientRect();
-      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-      node.style.pointerEvents = previous;
-      return hit !== null && (hit === node || node.contains(hit));
-    });
-    expect(painted, 'the flyout is in the DOM with a real box but paints nothing — the rail clips it').toBe(true);
+    // reports whatever is beneath it — which is what `paintsAtItsCentre` does for the two
+    // drop indicators as well, which is why the probe lives in one place in this file.
+    expect(
+      await paintsAtItsCentre(menu),
+      'the flyout is in the DOM with a real box but paints nothing — the rail clips it'
+    ).toBe(true);
   });
 
   test('keeps the layout across a reload, and Window > Reset undoes it', async ({ page }) => {
+    const dock = page.locator(DOCK);
+    // The default, read off the panel as it opened. Not a constant, and not merely a
+    // readability choice: the point of the drag below is that it MOVED the width, and
+    // "the reload restored what was stored" is satisfied by the default alone when the drag
+    // changed nothing — `resized` would then equal the default, the reload would restore the
+    // default, and `toBeCloseTo(resized, 0)` at the bottom would pass on a column drag that
+    // is entirely neutered. Read rather than named for the reason every width in this file is
+    // read: `DEFAULT_DOCK_WIDTH` is a layout decision (`src/contexts/PanelLayout.tsx:114`).
+    const openedAt = await width(dock);
     const handle = (await page.locator(RESIZE_HANDLE).boundingBox())!;
     await page.mouse.move(handle.x + handle.width / 2, 400);
     await page.mouse.down();
     await page.mouse.move(handle.x + handle.width / 2 - 60, 400, { steps: 6 });
     await page.mouse.up();
-    const resized = await width(page.locator(DOCK));
+    const resized = await width(dock);
+    // The precondition of everything below, asserted rather than assumed: the drag has to
+    // have changed the value under test, or "the reload restored it" is a claim about the
+    // default and not about persistence.
+    expect(resized, 'the drag did not move the dock, so the reload assertion below cannot fail').not.toBe(openedAt);
 
     // "In Photoshop, workspaces display your last arrangement of panels."
     await page.reload();
     await expect(page.locator(RAIL)).toBeVisible();
-    expect(await width(page.locator(DOCK))).toBeCloseTo(resized, 0);
+    expect(await width(dock)).toBeCloseTo(resized, 0);
 
     await page.getByTestId('header-window-menu-button').click();
     await page.getByTestId('window-menu-reset-workspace-button').click();
 
-    expect(await width(page.locator(DOCK))).toBeCloseTo(250, 0);
+    // Back to where it opened, which is the same measurement as above rather than a literal.
+    expect(await width(dock)).toBeCloseTo(openedAt, 0);
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
   });
 
@@ -334,13 +424,18 @@ test.describe('Panel workspace (fast)', () => {
     // the only way `panelLayout` gets a value the app never wrote, and `readStoredLayout` exists
     // for exactly that. Without a control, "restores what it found" would also be satisfied by
     // a store that returns null for everything — which is what an empty key looks like.
+    //
+    // The default this test degrades TO is measured here, on the pristine page the shared
+    // `beforeEach` left behind, rather than written down: `addInitScript` only reaches
+    // navigations that follow it, so this measurement is taken before it is installed.
+    const openedAt = await width(page.locator(DOCK));
     await page.addInitScript(() =>
       window.localStorage.setItem('panelLayout', '{"dockWidth": "wide", "panelOrder": ["nope"]}')
     );
     await page.reload();
     await expect(page.locator(RAIL)).toBeVisible();
 
-    expect(await width(page.locator(DOCK))).toBeCloseTo(250, 0);
+    expect(await width(page.locator(DOCK))).toBeCloseTo(openedAt, 0);
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
   });
 

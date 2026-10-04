@@ -11,18 +11,19 @@ const GAP = 6;
 const SECTION_BREAK = 7;
 
 /**
- * Where the two sweeps start, and the honest version of the claim.
+ * Where the two sweeps start, and why it is not zero.
  *
- * `63` is `50 / 0.8` — the slot whose budget can hold one row plus the three-dots tile's own
- * row, and NOT the point at which a first tool row fits: that is `(TILE + 2 * GAP + TILE) /
- * 0.8 = 117.5`. So iterations from 63 up run over heights where the plan is the lone
- * three-dots tile, which is a real and tested state (see the degenerate case below) but is
- * not "the shortest slot that fits a row and the tile" as an earlier version of this comment
- * said. The number is the floor for "the budget can hold two rows of anything", which is the
- * property both sweeps actually need: it is what makes `over <= 0` the interesting claim
- * rather than the lone-tile case's known one-row overflow.
+ * `94` is one row plus the three-dots tile's own row — `44 + 6 + 44` — and it is the smallest
+ * budget that can hold the tile AND a tool row. Below it the plan is the lone three-dots
+ * tile, which is a real and separately tested state (`the degenerate case` below) but is not
+ * "a rail with rows in it", and the sweeps assert `one more row would have overflowed`,
+ * which the lone-tile state cannot say.
+ *
+ * It was `63`, derived as `50 / 0.8` while the budget was a fraction of the slot. A
+ * fraction-derived floor is the tell that the number below is not a property of the rail;
+ * with the budget at 1 the same property is a whole number of the rail's own units.
  */
-const SHORTEST_FITTING_SLOT = 63;
+const SHORTEST_FITTING_SLOT = TILE + GAP + TILE;
 
 const metrics = (availableHeight: number, overrides: Partial<ToolbarRowMetrics> = {}): ToolbarRowMetrics => ({
   availableHeight,
@@ -48,9 +49,9 @@ const renderedHeight = (fittedThrough: number, overflowTile: boolean, sectionBre
 
 describe('planToolbarOverflow', () => {
   it('leaves every tool visible while the whole list fits inside the budget', () => {
-    // Five rows of 44 with a 6px gap between them: 244px. 305 * 0.8 = 244, so the list
-    // lands EXACTLY on the budget and nothing is collapsed.
-    const plan = planToolbarOverflow(rows(5), metrics(305));
+    // Five rows of 44 with a 6px gap between them: 244px, and the budget is the slot. At
+    // 244 the list lands EXACTLY on the budget and nothing is collapsed.
+    const plan = planToolbarOverflow(rows(5), metrics(244));
 
     expect(plan.collapsedKeys).toEqual([]);
     expect(plan.showOverflowTile).toBe(false);
@@ -59,12 +60,12 @@ describe('planToolbarOverflow', () => {
   });
 
   it('collapses the bottom rows at the first pixel that does not fit, and no earlier', () => {
-    // One pixel less of slot: the budget is 243.2 against a 244px list, so the list no
-    // longer fits and the tail has to move. This is the whole rule in one pair of cases.
-    const plan = planToolbarOverflow(rows(5), metrics(304));
+    // One pixel less of slot: the budget is 243 against a 244px list, so the list no longer
+    // fits and the tail has to move. This is the whole rule in one pair of cases.
+    const plan = planToolbarOverflow(rows(5), metrics(243));
 
     expect(plan.naturalHeight).toBe(244);
-    expect(plan.budget).toBeCloseTo(243.2, 5);
+    expect(plan.budget).toBe(243);
     // Three rows stay: three rows plus the reserved three-dots tile is 194px, inside the
     // budget, where four rows plus the tile would be 244 and would not.
     expect(plan.fittedThrough).toBe(3);
@@ -89,8 +90,25 @@ describe('planToolbarOverflow', () => {
       // And it is not short-changed: one more visible row would have overflowed.
       expect(
         renderedHeight(plan.fittedThrough + 1, true),
-        `one more row would still have fit at ${available}px`
+        `one more row would still have fitted at ${available}px`
       ).toBeGreaterThan(plan.budget);
+    }
+  });
+
+  it('leaves no room for another tile behind the ones it shows', () => {
+    // The operator's complaint about this rule, stated as a property over every height:
+    // whatever the rail does not use, it cannot put a tile in.
+    //
+    // The budget used to be 80% of the slot, which made this false at almost every height —
+    // the leftover was a fifth of the rail, four to six tiles on an ordinary window, and
+    // the tools in it sat in the three-dots tile. So the leftover is now bounded by the
+    // height of one row and its gap, which is the most a whole-row fit can leave behind.
+    for (let available = TILE; available <= 900; available += 1) {
+      const plan = planToolbarOverflow(rows(6), metrics(available));
+      if (!plan.showOverflowTile || plan.fittedThrough >= 6) continue;
+
+      const leftover = available - renderedHeight(plan.fittedThrough, plan.showOverflowTile);
+      expect(leftover, `unused slot at ${available}px`).toBeLessThan(TILE + GAP);
     }
   });
 
@@ -134,10 +152,11 @@ describe('planToolbarOverflow', () => {
       { keys: ['c'], sectionIndex: 1 },
       { keys: ['d'], sectionIndex: 1 },
     ];
-    // A budget of 180 sits above two rows plus the tile (144) and below three (201).
-    const plan = planToolbarOverflow(slots, metrics(225, { sectionBreakHeight: SECTION_BREAK }));
+    // Four rows are 201px with the separator, and the last two rows plus the three-dots tile
+    // are 251. A budget of 200 keeps two rows and nothing more.
+    const plan = planToolbarOverflow(slots, metrics(200, { sectionBreakHeight: SECTION_BREAK }));
 
-    expect(plan.budget).toBe(180);
+    expect(plan.budget).toBe(200);
     expect(plan.fittedThrough).toBe(2);
     expect(plan.collapsedKeys).toEqual(['c', 'd']);
     expect(renderedHeight(2, true, 0)).toBeLessThanOrEqual(plan.budget);
@@ -158,20 +177,22 @@ describe('planToolbarOverflow', () => {
       { keys: ['b'], sectionIndex: 0 },
       { keys: ['c'], sectionIndex: 1 },
     ];
-    const plan = planToolbarOverflow(slots, metrics(181, { sectionBreakHeight: SECTION_BREAK }));
+    const plan = planToolbarOverflow(slots, metrics(150, { sectionBreakHeight: SECTION_BREAK }));
 
-    // 181 * 0.8 = 144.8. Two rows plus the tile is 44 + 50 + 57 = 151, which does not fit;
-    // two rows plus the tile where the tile carries no separator is 144, which does. A band,
-    // not a point, and it is 7px wide — exactly the separator.
+    // Two rows plus the tile is 144 and fits; two rows plus the tile where the tile carries
+    // no separator is 144, and three rows plus the tile is 201, which does not. A band, not a
+    // point: one row collapses for every budget from 144 to 200, which is 57px wide where the
+    // two-row band below it is 50 — exactly the separator.
     expect(plan.naturalHeight).toBe(TILE * 3 + GAP * 2 + SECTION_BREAK);
     expect(plan.fittedThrough).toBe(2);
     expect(plan.collapsedKeys).toEqual(['c']);
     expect(plan.showOverflowTile).toBe(true);
     // And just outside the band, two rows go, which is the common case.
-    expect(planToolbarOverflow(slots, metrics(180, { sectionBreakHeight: SECTION_BREAK })).collapsedKeys).toEqual([
+    expect(planToolbarOverflow(slots, metrics(143, { sectionBreakHeight: SECTION_BREAK })).collapsedKeys).toEqual([
+      'b',
       'c',
     ]);
-    expect(planToolbarOverflow(slots, metrics(189, { sectionBreakHeight: SECTION_BREAK })).collapsedKeys).toEqual([]);
+    expect(planToolbarOverflow(slots, metrics(201, { sectionBreakHeight: SECTION_BREAK })).collapsedKeys).toEqual([]);
   });
 
   it('collapses BOTH groups of a two-column row, because they share the row', () => {
@@ -182,8 +203,9 @@ describe('planToolbarOverflow', () => {
       sectionIndex: 0,
     }));
 
-    // 250 * 0.8 = 200: four rows fit (194), five do not (244). The four rendered are three
-    // tool rows plus the three-dots tile, so the LAST TWO rows collapse — not one.
+    // Five rows are 244px and a budget of 200 keeps three of them, with the tile standing
+    // where the fourth would be. The three rendered are three tool rows plus the three-dots
+    // tile, so the LAST TWO rows collapse — not one.
     //
     // That is not an accident of these numbers, it is what "the tile is a row" means. Keeping
     // `n - 1` tool rows and drawing the tile would cost exactly `n` rows, which is the height
@@ -191,7 +213,7 @@ describe('planToolbarOverflow', () => {
     // that could not have happened. A collapse always costs at least two rows, and the tile
     // is why. Which also means a two-column rail can never drop ONE group of a pair: the pair
     // is the row, and the row is the unit.
-    const plan = planToolbarOverflow(paired, metrics(250));
+    const plan = planToolbarOverflow(paired, metrics(200));
 
     expect(plan.fittedThrough).toBe(3);
     expect(plan.collapsedKeys).toEqual(['two-column-6', 'two-column-7', 'two-column-8', 'two-column-9']);
@@ -208,7 +230,7 @@ describe('planToolbarOverflow', () => {
 
       expect(heightOf(renderedRows), `rendered rows at ${available}px of slot`).toBeLessThanOrEqual(plan.budget + 1e-9);
       if (renderedRows >= 6) continue;
-      expect(heightOf(renderedRows + 1), `one more row would still have fit at ${available}px`).toBeGreaterThan(
+      expect(heightOf(renderedRows + 1), `one more row would still have fitted at ${available}px`).toBeGreaterThan(
         plan.budget
       );
     }
@@ -235,10 +257,34 @@ describe('planToolbarOverflow', () => {
     expect(plan.fittedThrough).toBe(0);
   });
 
-  it('honours a budget other than 80%', () => {
-    // The fraction is a policy knob, and the caller has to be able to move it without the
-    // planner growing a second code path.
+  it('fills the slot by default, and gives a caller that wants less room a way to ask', () => {
+    // The default is 1, so the planner spends the whole slot. The fraction is still the
+    // policy seam — a rail that deliberately wants a margin below its tiles can ask for one —
+    // but nothing in this repository does, and the 0.8 this replaced bought no stability it
+    // did not already have: rows are accepted whole, so the count steps either way.
+    expect(planToolbarOverflow(rows(5), metrics(400)).showOverflowTile).toBe(false);
     expect(planToolbarOverflow(rows(5), metrics(400), 1).showOverflowTile).toBe(false);
     expect(planToolbarOverflow(rows(5), metrics(400), 0.5).showOverflowTile).toBe(true);
+  });
+
+  it('never plans against more than the slot it was measured at', () => {
+    // The floor is the whole of the safety margin, and what it buys is exactness: the budget
+    // is a whole number that is never larger than a fractional measurement, so a plan built
+    // on it can never render past the slot. Row sums are whole pixels here, so the floor
+    // rarely CHANGES a decision — what it makes exact is the budget the plan reports and the
+    // `content <= available` comparison `e2e/toolbar-fit.spec.ts` sweeps, which under an
+    // 80% budget had a fifth of the slot's slack to hide a separator inside.
+    for (const available of [244, 243.6, 193.9, 448.25]) {
+      const plan = planToolbarOverflow(rows(6), metrics(available));
+
+      expect(plan.budget, `budget at ${available}px`).toBeLessThanOrEqual(available);
+      expect(
+        renderedHeight(plan.fittedThrough, plan.showOverflowTile),
+        `rendered height at ${available}px`
+      ).toBeLessThanOrEqual(plan.budget + 1e-9);
+    }
+
+    expect(planToolbarOverflow(rows(6), metrics(243.6)).budget).toBe(243);
+    expect(planToolbarOverflow(rows(6), metrics(244)).budget).toBe(244);
   });
 });

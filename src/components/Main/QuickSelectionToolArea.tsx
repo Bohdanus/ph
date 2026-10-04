@@ -4,6 +4,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { useContainScale } from '../../hooks/useContainScale.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import {
   createCommittedPolygonSelection,
@@ -45,7 +46,12 @@ function readDocumentImageData(canvas: HTMLCanvasElement | null): ImageData | nu
 
   try {
     return ctx.getImageData(0, 0, canvas.width, canvas.height);
-  } catch {
+  } catch (error) {
+    // Same shape as `magicWand.ts` and `magneticLasso.ts`: the `null` propagates
+    // to the paint path at :151, which then has no image data to grow a region
+    // from and produces no selection. Reported per HANDOFF.md §98 rather than
+    // left to be read as a quiet no-op.
+    console.error(error);
     return null;
   }
 }
@@ -87,6 +93,7 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
     ref: containerRef,
     imageSize: totalSize,
   });
+  const containScale = useContainScale(containerRef, totalSize);
 
   const pointerIdRef = useRef<number | null>(null);
   const strokeRef = useRef<Point[]>([]);
@@ -101,10 +108,10 @@ export const QuickSelectionToolArea = ({ className, overlayCtxRef }: QuickSelect
 
       ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       resetOverlayAlpha(ctx);
-      selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+      selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame, containScale.current));
       if (previewPoints && previewPoints.length > 0) drawRegionPreview(ctx, previewPoints);
     },
-    [documentFrame, overlayCtxRef, selections]
+    [documentFrame, overlayCtxRef, selections, containScale]
   );
 
   /**

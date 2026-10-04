@@ -19,7 +19,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         detail:
           'Checkbox that, when on, resolves the target by hit test: the tool selects the topmost layer that actually has pixels under the cursor, rather than moving whichever layer happens to be active.',
         status: 'partial',
-        appRef: 'src/components/Main/MoveToolArea.tsx:176',
+        appRef: 'src/components/Main/MoveToolArea.tsx:178',
       },
       {
         control: 'Auto-Select: Group / Layer',
@@ -30,9 +30,9 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Show Transform Controls',
         detail:
-          'Checkbox that puts the transform bounding box and its handles on the currently selected layer without putting the tool into transform mode — the handles simply appear. Dragging one of them is what starts the transform, and it is the same handle-driven state Cmd+T opens; the bar swaps to the numeric transform fields while a handle is held.',
+          'Checkbox that puts the transform bounding box and its handles on the currently selected layer without putting the tool into transform mode — the handles simply appear, and they surround every selected object when several are selected. Dragging one of them is what starts the transform, and it is the same handle-driven state Cmd+T opens; the bar swaps to the numeric transform fields while a handle is held.',
         status: 'partial',
-        appRef: 'src/components/Main/MoveToolArea.tsx:117',
+        appRef: 'src/components/Main/MoveToolArea.tsx:123',
       },
       {
         control: 'Align',
@@ -100,20 +100,21 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/components/Main/MoveToolArea.tsx:85',
-      'src/components/Main/MoveToolArea.tsx:132',
-      'src/components/Main/MoveToolArea.tsx:176',
-      'src/components/Main/MoveToolArea.tsx:197',
+      'src/components/Main/MoveToolArea.tsx:119',
+      'src/components/Main/MoveToolArea.tsx:150',
+      'src/components/Main/MoveToolArea.tsx:178',
+      'src/components/Main/MoveToolArea.tsx:199',
+      'src/contexts/useLayer.ts:334',
       'src/tools/reposition.ts:12',
-      'src/tools/toolProcessors.ts:114',
-      'src/components/ToolbarsRight/Move/Reposition.tsx:12',
-      'src/components/Common/AppKeyboardShortcuts.tsx:216',
-      'src/components/SidebarLeft/SidebarLeft.tsx:258',
-      'src/components/SidebarLeft/SidebarLeft.tsx:431',
+      'src/tools/toolProcessors.ts:115',
+      'src/components/ToolbarsRight/Move/Reposition.tsx:13',
+      'src/components/Common/AppKeyboardShortcuts.tsx:327',
+      'src/components/SidebarLeft/SidebarLeft.tsx:644',
+      'src/components/SidebarLeft/SidebarLeft.tsx:974',
       'toolbar-mapping.ts:39',
     ],
     appNotes:
-      "The app's Move tool moves and resizes, and the whole gesture is one committed history entry, but almost nothing of Photoshop's bar survives, and what does survive is not merely narrower than Photoshop's: the one canvas overlay the app draws is a resize rectangle where Photoshop draws a transform box, and two of Photoshop's controls are behaviours this app has with nothing on screen to turn them off. That overlay is a divergence rather than a gap, and it is why the verdict is `partial` and not `implemented`. The two rows whose behaviour is welded on are `partial` on exactly that basis, and their `appRef`s point at the behaviour the app performs rather than at a control, because there is no control in the bar to point at. Neither the Auto-Select checkbox nor the Group/Layer menu beside it is rendered, and a search of `src/` and `e2e/` finds no control for either: the tool always resolves the layer under the pointer by hit test and always makes it active, which is Auto-Select: Layer with that state permanently on and the group mode removed — so a grouped child cannot be dragged out of its group, and a click that lands on a transparent part of a layer finds whatever is underneath instead of nothing. There is no Show Transform Controls checkbox either, and the difference is more than cosmetic, because the overlay that does render is a plain resize rectangle drawn by the shared useRect hook — four painted corner handles sitting on eight draggable edges, no rotation zone at all outside the box, no numeric W/H, no reference point — so the geometric half of the tool, which is where Free Transform normally lives, is absent from the Move tool entirely. The align, distribute and align-target rows, the Alt-drag duplicate, the Shift axis constraint, the Shift-click-to-extend and the arrow-key nudge are all missing, which together mean the app can place one layer but cannot line several up. A third divergence is the refusal, which is not a missing feature: the app refuses a press on a bedrock layer, and it does not consult the locked flag that its own layer model carries, so a layer marked locked is still draggable. The keyboard is a divergence too, and it is a strange one because the badge looks right. The Move tile declares V in the toolbar mapping, and the app does bind V — but the badge is not what binds it, and the letter-key layer is a separate hand-written table rather than anything derived from the toolbar. Spring-loaded switching does not exist here at all: the handler switches the tool on keydown and nothing listens for the keyup, so holding V cannot borrow the Move tool for one gesture and hand it back. Auto-Align is a different matter, because it is not this tool's control to lose: in Photoshop it is the Edit > Auto-Align Layers command, a dialog with a Projection choice, and the app has no equivalent of it at all. The panel the app does render is its own: the active layer's name, a Merge all button and a hint, none of which Photoshop's Move bar has.",
+      "The app's Move tool moves and resizes, and the whole gesture is one committed history entry, but almost nothing of Photoshop's bar survives, and what does survive is not merely narrower than Photoshop's: the one canvas overlay the app draws is a resize rectangle where Photoshop draws a transform box, and two of Photoshop's controls are behaviours this app has with nothing on screen to turn them off. That overlay is a divergence rather than a gap, and it is why the verdict is `partial` and not `implemented`. The two rows whose behaviour is welded on are `partial` on exactly that basis, and their `appRef`s point at the behaviour the app performs rather than at a control, because there is no control in the bar to point at. Neither the Auto-Select checkbox nor the Group/Layer menu beside it is rendered, and a search of `src/` and `e2e/` finds no control for either: the tool always resolves the layer under the pointer by hit test and always makes it active, which is Auto-Select: Layer with that state permanently on and the group mode removed — so a grouped child cannot be dragged out of its group, and a click that lands on a transparent part of a layer finds whatever is underneath instead of nothing. There is no Show Transform Controls checkbox either, and the difference is more than cosmetic, because the overlay that does render is a plain resize rectangle drawn by the shared useRect hook — four painted corner handles sitting on eight draggable edges, no rotation zone at all outside the box, no numeric W/H, no reference point — so the geometric half of the tool, which is where Free Transform normally lives, is absent from the Move tool entirely. The align, distribute and align-target rows, the Alt-drag duplicate, the Shift axis constraint, the Shift-click-to-extend and the arrow-key nudge are all missing, which together mean the app can place one layer but cannot line several up. A third divergence is the refusal, which is not a missing feature. The app refuses a press on a bedrock layer, and it separately refuses to move or resize a layer whose own PSD protection flag is set, which is Photoshop's own constraint rather than a divergence: `locked` is written back out as composite and position protection, and the guard sits above every commit kind, so a protected layer cannot be dragged. What the app cannot do is the half that makes the guard reachable — no panel renders a lock control, so the flag only ever arrives on a layer imported from a PSD, and the refusal is silent where Photoshop names the lock. The keyboard is a divergence too, and it is a strange one because the badge looks right. The Move tile declares V in the toolbar mapping, and the app does bind V — but the badge is not what binds it, and the letter-key layer is a separate hand-written table rather than anything derived from the toolbar. Spring-loaded switching does not exist here at all: the handler switches the tool on keydown and nothing listens for the keyup, so holding V cannot borrow the Move tool for one gesture and hand it back. Auto-Align is a different matter, because it is not this tool's control to lose: in Photoshop it is the Edit > Auto-Align Layers command, a dialog with a Projection choice, and the app has no equivalent of it at all. The panel the app does render is its own: the active layer's name, a Merge all button and a hint, none of which Photoshop's Move bar has.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/move-tool.html',
       'https://helpx.adobe.com/photoshop/using/moving-stacking-locking-layers.html',
@@ -132,13 +133,14 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://jkost.com/blog/2021/10/align-and-distribute-layers-in-photoshop.html',
       'https://www.bwillcreative.com/the-move-tool-in-photoshop/',
       'https://community.adobe.com/questions-712/move-tool-align-to-canvas-by-default-1171406',
+      'https://photoshoptrainingchannel.com/tips/show-transform-controls',
     ],
   },
 
   transform: {
-    photoshopName: 'Free Transform — the Edit > Transform command, not a Tools panel Tool',
+    photoshopName: 'Free Transform — the Edit > Free Transform command, not a Tools panel Tool',
     summary:
-      "Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, warps or tilts a layer in one continuous drag on its bounding box.",
+      "Photoshop's Free Transform (Cmd+T) scales, rotates, skews, distorts, adds perspective or warps a layer in one continuous operation.",
     purpose:
       'Free Transform puts a bounding box around the active layer and lets one continuous operation change its size, angle and shape together, which is the point: rotating and rescaling an image in two steps resamples it twice. Every mode is a drag on that box, and the mode is chosen by right-click menu, by an options-bar button, or by holding a modifier so the box changes behavior mid-gesture. Nothing is written to the document until you commit, so a transform can be abandoned and undone as a unit.',
     options: [
@@ -147,13 +149,13 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         detail:
           'Numeric text box, in percent, for the layer width. The paired Link icon is on by default since Photoshop 21.0, so a corner handle scales proportionally.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:253',
+        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:254',
       },
       {
         control: 'Height',
         detail: 'Numeric text box, in percent, for the layer height, linked to Width by the Link icon.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:268',
+        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:269',
       },
       {
         control: 'Maintain Aspect Ratio (Link)',
@@ -172,14 +174,14 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         detail:
           'Numeric text box, in degrees, for the rotation angle. The same angle is produced by dragging outside the bounding box, where Shift snaps to 15-degree increments.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:182',
+        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:183',
       },
       {
         control: 'H',
         detail:
           'Numeric text box, in degrees, for horizontal skew. Adobe names the field H: "To skew numerically, enter degrees in the H (horizontal skew) and V (vertical skew) text boxes in the options bar." The pair is absent from the bar when a Smart Object is the thing being transformed.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:202',
+        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:203',
       },
       {
         control: 'V',
@@ -214,16 +216,15 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Commit',
         detail:
-          'The checkmark that applies the transform. Enter works too, and so does selecting a new tool, clicking a layer in the Layers panel, or clicking outside the canvas or the bounding box.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:303',
+          'The checkmark that applies the transform. Enter works too — Adobe prints it as "Press Enter (Windows) or Return (macOS) to apply the transformation." A third route, clicking away from the transform controls once the pointer is a black arrow again rather than a handle cursor, is documented outside Adobe. Selecting a new tool commits the transform too.',
+        status: 'missing',
       },
       {
         control: 'Cancel',
         detail:
           'The cancel button that abandons the transform and restores the original shape and size. Esc does the same.',
-        status: 'present',
-        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:306',
+        status: 'partial',
+        appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:31',
       },
     ],
     modifiers: [
@@ -276,12 +277,13 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'src/contexts/affine-transform.ts:216',
       'src/tools/transform.ts:119',
       'src/tools/transform.ts:153',
-      'src/tools/toolProcessors.ts:141',
-      'src/contexts/useLayer.ts:345',
-      'toolbar-mapping.ts:64',
+      'src/tools/toolProcessors.ts:142',
+      'src/contexts/useLayer.ts:552',
+      'src/contexts/useLayer.ts:348',
+      'toolbar-mapping.ts:189',
     ],
     appNotes:
-      'Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Transform > Free Transform or Cmd+T. Adobe\'s own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. One counter-sentence exists on Adobe\'s marketing copy — "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — but the very next clause of the same page is "You can also go to Edit > Free Transform": the page names the menu route itself, and uses "tool" for the interactive state rather than for a Tools-panel entry. The app registers it as a toolbar entry next to Colors and Levels, and none of the three has a Photoshop toolbar slot. That is a defensible choice, but it makes the panel in the options bar a different thing from Free Transform\'s bar, and the two should not be described as the same control set. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop\'s nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and the geometry is only committed, as one history entry, when the dirty tool is committed — on Apply, on tool switch or on export. Escape is the opposite of a commit route: it and the Cancel button both call the same cancel handler, which deletes the pending preview, resets the panel to its defaults and dispatches nothing, so what remains is the last committed state. Of Free Transform\'s own bindings, only Escape is wired; Enter does not commit, and there is no intra-transform undo. Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.',
+      "Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Free Transform or Cmd+T. Adobe's own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. Note the shape of the menu, because it is two items and not one: Edit > Free Transform is a top-level Edit item, and Edit > Transform is a separate submenu carrying the six single modes — Scale, Rotate, Skew, Distort, Perspective and Warp. One counter-sentence exists on Adobe's marketing copy — \"Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)\" — but the very next clause of the same page is \"You can also go to Edit > Free Transform\": the page names the menu route itself, and uses \"tool\" for the interactive state rather than for a Tools-panel entry. The app reaches the same command from Edit > Free Transform, which is the route Adobe documents, so the route matches and the panel does not: it makes the panel in the options bar a different thing from Free Transform's bar, and the two should not be described as the same control set. Colors and Levels went the other way, out of the toolbar and into Image > Adjustments, because they are commands too; `extraTools` in toolbar-mapping.ts is the list of registered tool ids that deliberately carry no rail entry. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop's nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and commit when the gesture ends. A drag PREVIEWS while the pointer is down and lands as exactly one history entry when the pointer is released, which is the browser's own native `change` event on a range input and not React's `onChange`, which is the `input` event and fires on every frame of the drag (`src/components/ToolbarsRight/Transform/Transform.tsx:54-69`). The five discrete controls commit in the same place, because a rotate button and a mirror toggle are finished gestures too. A release that moved nothing writes nothing, so a click that lands where it started costs no history entry. The commit is also still reachable by leaving the tool or exporting, and Escape is the only way back: it calls the cancel handler, which deletes the pending preview, resets the panel to its defaults and dispatches nothing, so what remains is the last committed state. The bar itself carries no commit control, no discard control and no Reset control — the whole right-hand column is the two mirror toggles, centered in the slack the three removed text links left behind. Those removals were a HEIGHT fix, not a width one, and the measurement is worth keeping because the reason reads backwards without it: the column is a `flex flex-col` under the mirror toggles, so those controls were stacked rather than laid out across. With all four children it measured 85px inside the strip's fixed `h-[50px]` (`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:5`) and spilled 35px above and below it. The bar's own width did not change by a pixel across that work — 548px before and after — and a horizontal overflow was never the defect; if it ever becomes one the levers are `w-24`, `w-10` and `gap-4`. Of Free Transform's own bindings, only Escape is wired, and Enter does not commit because there is no commit key to bind; the step back Adobe documents for a live transform is absent: \"To undo the last handle adjustment, choose Edit > Undo.\" Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html',
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/adjust-scale-rotation-and-perspective.html',
@@ -294,6 +296,8 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf',
       'https://glensmith.co.uk/photoshop/tools',
       'https://www.adobe.com/products/photoshop/resize-image.html',
+      'https://www.photoshopessentials.com/basics/free-transform',
+      'https://www.peachpit.com/articles/article.aspx?p=3150375',
       'https://community.adobe.com/questions-712/horizontal-h-and-vertical-v-skew-fields-are-missing-in-the-options-bar-on-photoshop-cc-2019-1078402',
     ],
   },
@@ -301,9 +305,9 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
   levels: {
     photoshopName: 'Levels — the Image > Adjustments command, not a Tools panel Tool',
     summary:
-      "Photoshop's Levels remaps an image's tonal range through a black point, a gamma midtone and a white point, per channel, read against a histogram.",
+      "Photoshop's Levels remaps an image's tonal range through a histogram, a gamma pivot and per-channel black, white and output points.",
     purpose:
-      "Levels is the tonal correction tool: it stretches or compresses where the image's darkest and lightest pixels land, and bends the midtones independently of the ends, which is what separates it from a brightness or contrast slider. The histogram above the controls is the working surface — you read where the data actually sits, then move the three input sliders until the blacks reach the black point, the whites the white point, and the middle slider corrects the overall exposure without crushing either end. Every move can be scoped to one color channel, which is how a cast gets removed rather than merely desaturated. Applied from Image > Adjustments it works directly on the image layer and discards the information it overwrites; applied as an adjustment layer it stays editable forever.",
+      'Levels is the tonal correction tool: it stretches or compresses where the image\'s darkest and lightest pixels land, and bends the midtones independently of the ends, which is what separates it from a brightness or contrast slider. The histogram above the controls is the working surface — you read where the data actually sits, then move the three input sliders until the blacks reach the black point, the whites the white point, and the middle slider makes the gamma adjustment that sets overall midtone brightness without crushing either end. Every move can be scoped to one color channel, which is how a cast gets removed rather than merely desaturated. The two routes are not equivalent, and Adobe says so: choosing Image > Adjustments > Levels "makes direct adjustments to the image layer and discards image information", while an adjustment layer stays editable.',
     options: [
       {
         control: 'Preset',
@@ -314,31 +318,31 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Channel',
         detail:
-          'Menu choosing the channel the adjustment applies to — RGB and the individual Red, Green and Blue channels, plus the channel combinations selected in the Channels panel. Defaults to RGB.',
+          'Menu choosing the channel the adjustment applies to — RGB and the individual Red, Green and Blue channels, plus the channel combinations selected in the Channels panel, whose names the menu abbreviates ("CM for cyan and magenta", as Adobe puts it). RGB is the resting choice, a default Adobe does not state. Choosing a combination is unavailable in a Levels adjustment layer, which Adobe notes alongside the menu.',
         status: 'missing',
       },
       {
         control: 'Histogram',
         detail:
-          'The graph of how pixels are distributed across tonal levels, drawn over the three input sliders as their backing track. It is the guide, not a control: reading it is how you decide where the black and white points belong.',
+          'The graph of how pixels are distributed across tonal levels, drawn over the three input sliders as their backing track. It is the guide, not a control: reading it is how you decide where the black and white points belong, and Adobe says so — "drag the black and white Input Levels sliders to the edge of the first group of pixels at either end of the histogram."',
         status: 'missing',
       },
       {
         control: 'Input Levels: black point',
         detail:
-          'Leftmost input slider, on the 0 to 255 level domain Adobe states for the adjustment. It sits at level 0, which Adobe does not state as a default; what Adobe does state is that with the Output sliders in their default positions "moving the black input slider maps the pixel value to level 0". Dragging it right sets clipping: a black point at level 5, this description’s symmetric case to Adobe’s own 243 example on the white point, maps every pixel at level 5 and lower to level 0.',
+          'Leftmost input slider, on the 0 to 255 level domain Adobe states for the adjustment, with a text box beside it for entering the level directly. It sits at level 0, which Adobe does not state as a default. Adobe prints the worked case itself, and it is the clipping case: "if you move the black point slider to the right at level 5, Photoshop maps all the pixels at level 5 and lower to level 0."',
         status: 'missing',
       },
       {
         control: 'Input Levels: midtone gamma',
         detail:
-          'Middle input slider, which "adjusts the gamma in the image" rather than either extreme. It sits at 1.00 by default, which Adobe does not state; moving it left lightens the image and right darkens it, and the pivot is the midpoint level between the output sliders rather than the center of the range.',
+          'Middle input slider, which "adjusts the gamma in the image" and "moves the midtone (level 128)" rather than either extreme. It sits at 1.00 by default, which Adobe does not state; moving it left makes the image lighter and right darker, and the pivot is the midpoint level between the output sliders, which is level 128 while they are at their defaults.',
         status: 'missing',
       },
       {
         control: 'Input Levels: white point',
         detail:
-          'Rightmost input slider, sitting at level 255 by default, which Adobe does not state as a default. Adobe does print the worked case on this slider: "if you move the white point slider to the left at level 243, Photoshop maps all pixels at level 243 and higher to level 255."',
+          'Rightmost input slider, with a text box beside it, sitting at level 255 by default, which Adobe does not state as a default. Adobe does print the worked case on this slider: "if you move the white point slider to the left at level 243, Photoshop maps all pixels at level 243 and higher to level 255."',
         status: 'missing',
       },
       {
@@ -362,7 +366,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Auto Options',
         detail:
-          'Menu command opening the Auto Color Correction Options dialog, which chooses the algorithm Auto runs and sets the shadow and highlight clipping percentages. Adobe’s guidance for those Clip boxes is that a value between 0.0% and 1% is recommended. Three of the four algorithms are Adobe-named — Enhance Monochromatic Contrast, Enhance Per Channel Contrast and Find Dark and Light Colors — and the fourth, Enhance Brightness and Contrast, is third-party only.',
+          'Entry in the Properties panel menu that opens the Auto Color Correction Options dialog, which chooses the algorithm Auto runs and sets the shadow and highlight clipping percentages; Alt-clicking (Windows) or Option-clicking (Mac OS) the Auto button opens the same dialog. Adobe states the route verbatim: "To experiment with other automatic adjustment options, choose Auto Options from the Properties panel menu, then change Algorithms in the Auto Color Corrections Options dialog box." Adobe\'s guidance for the Clip boxes is that a value between 0.0% and 1% is recommended. Three of the four algorithms are Adobe-named — Enhance Monochromatic Contrast, Enhance Per Channel Contrast and Find Dark & Light Colors — and the fourth, Enhance Brightness and Contrast, is third-party only; the dialog also has a Snap Neutral Midtones checkbox, which Adobe does name.',
         status: 'missing',
       },
       {
@@ -376,7 +380,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         detail:
           'Returns the adjustment to its original settings. Part of the adjustment panel rather than the tonal controls themselves, and listed here because it belongs to this adjustment.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Levels/Levels.tsx:138',
+        appRef: 'src/components/ToolbarsRight/Levels/Levels.tsx:140',
       },
     ],
     modifiers: [
@@ -390,27 +394,27 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         keys: 'Cmd+L',
         action:
-          'Apply the Levels command. Cmd+Shift+L applies it again with the previous settings, and Cmd+Option+L is Levels with the last settings used.',
+          'Apply the Levels command. Cmd+Option+L re-applies it with the last settings used. Cmd+Shift+L is not a second Levels binding — it is Auto Tone.',
       },
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/components/ToolbarsRight/Levels/Levels.tsx:99',
+      'src/components/ToolbarsRight/Levels/Levels.tsx:110',
       'src/components/ToolbarsRight/Levels/Levels.tsx:86',
       'src/tools/levels.ts:12',
-      'src/tools/functions.ts:66',
-      'src/tools/settings.ts:54',
-      'src/tools/toolProcessors.ts:132',
-      'src/contexts/useLayer.ts:536',
-      'src/contexts/useLayer.ts:345',
-      'src/contexts/history-replay.ts:152',
+      'src/tools/functions.ts:160',
+      'src/tools/settings.ts:56',
+      'src/tools/toolProcessors.ts:133',
+      'src/contexts/useLayer.ts:571',
+      'src/contexts/useLayer.ts:348',
+      'src/contexts/history-replay.ts:172',
       'src/contexts/layer-renderer.ts:18',
       'src/contexts/materialization.ts:84',
       'src/test/setup.ts:320',
-      'toolbar-mapping.ts:63',
+      'toolbar-mapping.ts:189',
     ],
     appNotes:
-      "Levels is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so the app's Levels entry occupies a slot Photoshop's toolbar does not have. Inside that slot nothing in Photoshop's Levels panel is reproduced, and the two sliders that are rendered are not Levels controls at all: Photoshop's Levels has no Brightness and no Contrast slider. What the app renders is CSS brightness() and contrast() over the encoded pixel values, both on an exponential curve re-anchored so the endpoints are exact, which means a flat linear multiply and a pivot at mid-gray in encoded space where Photoshop's curve is piecewise-linear through three control points with its midpoint at level 128. The Brightness slider is labelled and centred on a neutral of 0, and the re-anchoring makes that literal rather than approximate: 0 emits exactly brightness(100%), so the panel at its defaults applies nothing at all, and it is the slider's minimum of -100 that emits brightness(0%) and multiplies the whole layer to black — a range-wide multiply, where Photoshop's black point is a threshold that only remaps the pixels below it. There is no black point, no white point, no gamma midtone, no output pair, no histogram, no channel selector, no Auto, no Auto Options and no eyedroppers. Levels works on the document's encoded values rather than a linear-light space — Adobe draws exactly this contrast with Exposure, which does calculate in linear color space — and the app's filter is likewise in whatever space the canvas composite happens to be. A committed adjustment is retained rather than destroyed, and that is the half of the split the app gets right. A committed Levels adjustment is a layer operation, not a rewrite of pixels: the layer's own bitmap is never touched, the commit appends an operation to the layer's operations array and records one history entry, the renderer re-derives the filter from that array on every frame, and undo and redo replay the operation rather than a stored raster. What the app does not have is the other half of the split: the adjustment is not re-editable, so a committed one can only be taken back with undo, which is why the Reset button is gated on an uncommitted preview and restores the panel's own defaults rather than re-opening the adjustment. The engine for all of that is a CSS filter string assigned to ctx.filter on an ordinary HTMLCanvasElement 2D context — the canvas the user is actually looking at, which the renderer builds with document.createElement and draws the layer stack into. The OffscreenCanvas processors in src/tools/levels.ts are not on that path at all: levels and color are registered as commit: 'layer-operation', and the preview and commit paths append the operation and return before any pixel is produced, so those processors are never reached while editing, previewing or committing. The one surface that still applies the string to an OffscreenCanvas 2D context is the durable materializer, which prefers new OffscreenCanvas wherever one exists; no module outside src/contexts/__tests__ imports it today, and the OffscreenCanvasRenderingContext2D.filter support Safari has never shipped is a property of that surface rather than of the canvas this tool edits on. The string is built in one place, so the renderer and that materializer cannot drift, and the test harness exposes filter as a real writable property, so the emitted string is assertable — though the jsdom mock still cannot rasterize it, so no assertion here proves what the filter looks like.",
+      "Levels is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so it has no rail entry at all: the app reaches it from Image > Adjustments > Brightness/Contrast, named for what it computes, and carries Photoshop's own Levels item in the same submenu as a disabled command this app cannot do. No control of Photoshop's Levels panel is reproduced, and the two sliders that are rendered are not Levels controls at all: Photoshop's Levels has no Brightness and no Contrast slider. The one control whose name the app does borrow is the Reset button, and it does not behave as Photoshop's does. What the app renders is CSS brightness() and contrast() over the encoded pixel values, driven PROPORTIONATELY — one constant factor step per slider step, the response Adobe's own words name for this adjustment in its default mode: 'In normal mode, Brightness/Contrast applies proportionate (nonlinear) adjustments to the image layer, as with Levels and Curves adjustments' — so it is a flat linear multiply and a pivot at mid-gray in encoded space where Photoshop's curve is nonlinear and, for Levels itself, piecewise-linear through three control points with its middle slider moving the midtone at level 128. The two sliders carry Adobe's own travels for that adjustment: Brightness -150 to +150 and Contrast -50 to +100. The Brightness slider is labelled and centred on a neutral of 0, and the proportionality makes that literal rather than approximate: 0 emits exactly brightness(100%), so the panel at its defaults applies nothing at all, and it is the slider's minimum of -150 that emits brightness(0%) and multiplies the whole layer to black — a range-wide multiply, where Photoshop's black point is a threshold that only remaps the pixels below it. The negative half of BOTH sliders is exactly non-clipping, which is the property the removed exponential curve broke by reaching a factor of 0 on Contrast and flattening the whole image to one mid-grey. The positive half is the boundary this engine cannot cross: Adobe's normal mode does not clip in either direction and its response is nonlinear, while CSS brightness() is a clamped pure multiply that cannot create a white that was not already white and contrast() clips every input past 0.5 + 0.5/f. Closing that needs a per-channel lookup table applied per pixel, the same absent mechanism the rest of this entry depends on. There is no black point, no white point, no gamma midtone, no output pair, no histogram, no channel selector, no Auto, no Auto Options and no eyedroppers. Levels works on the document's encoded values rather than a linear-light space — Adobe draws exactly this contrast with Exposure, which does calculate in linear color space — and the app's filter is likewise in whatever space the canvas composite happens to be. A committed adjustment is retained rather than destroyed, and that is the half of the split the app gets right. A committed Levels adjustment is a layer operation, not a rewrite of pixels: the layer's own bitmap is never touched, the commit appends an operation to the layer's operations array and records one history entry, the renderer re-derives the filter from that array on every frame, and undo and redo replay the operation rather than a stored raster. What the app does not have is the other half of the split: the adjustment is not re-editable, so a committed one can only be taken back with undo, which is why the Reset button is gated on an uncommitted preview and restores the panel's own defaults rather than re-opening the adjustment. The engine for all of that is a CSS filter string assigned to ctx.filter on an ordinary HTMLCanvasElement 2D context — the canvas the user is actually looking at, which the renderer builds with document.createElement and draws the layer stack into. The OffscreenCanvas processors in src/tools/levels.ts are not on that path at all: levels and color are registered as commit: 'layer-operation', and the preview and commit paths append the operation and return before any pixel is produced, so those processors are never reached while editing, previewing or committing. The one surface that still applies the string to an OffscreenCanvas 2D context is the durable materializer, which prefers new OffscreenCanvas wherever one exists; no module outside src/contexts/__tests__ imports it today, and the OffscreenCanvasRenderingContext2D.filter support Safari has never shipped is a property of that surface rather than of the canvas this tool edits on. The string is built in one place, so the renderer and that materializer cannot drift, and the test harness exposes filter as a real writable property, so the emitted string is assertable — though the jsdom mock still cannot rasterize it, so no assertion here proves what the filter looks like.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/levels-adjustment.html',
       'https://helpx.adobe.com/photoshop/using/adjust-color-tone-levels-curves.html',
@@ -426,11 +430,11 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
   },
 
   color: {
-    photoshopName: 'Black and White — the Image > Adjustments command, not a Tools panel Tool',
+    photoshopName: 'Black & White — the Image > Adjustments command, not a Tools panel Tool',
     summary:
-      "Photoshop's Black and White converts a color image to monochrome with six independent hue-sextant sliders, optionally tinted with a tone color.",
+      "Photoshop's Black & White converts a color image to monochrome with six hue-sextant sliders, optionally tinted with a tone color.",
     purpose:
-      'Black and White is not a desaturation — it is a weighted mix, and the six sliders are the weights. Each of the six sextants of the color wheel, Reds, Yellows, Greens, Cyans, Blues and Magentas, gets its own control over how bright that family of hues becomes in the result, so a landscape can have a dark sky and a bright sky in the same conversion, and skin can be lifted without touching the greens. Every slider starts at a value that reproduces a conventional conversion, and dragging one away from that value is the whole technique. Ticking Tint lays a uniform tone color over the monochrome so it reads as toned rather than neutral, which is how a sepia or a split-tone is made from a color original without going back to it.',
+      'Black & White is not a desaturation — it is a weighted mix, and the six sliders are the weights. Each of the six sextants of the color wheel, Reds, Yellows, Greens, Cyans, Blues and Magentas, gets its own control over how bright that family of hues becomes in the result, so a landscape can have a dark sky and a bright sky in the same conversion, and skin can be lifted without touching the greens. Every slider starts at a value that reproduces a conventional conversion — Photoshop opens the adjustment having already applied "a default grayscale conversion to your image" — and dragging one away from that value is the whole technique. Ticking Tint lays a uniform tone color over the monochrome so it reads as toned rather than neutral, which is how a sepia or a split-tone is made from a color original without going back to it.',
     options: [
       {
         control: 'Preset',
@@ -441,12 +445,13 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'On-image adjustment icon',
         detail:
-          'The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Selecting it and dragging on the image moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.',
+          'The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Adobe states the gesture as a drag of the icon itself: "Select and drag On-image adjustment icon onto the image to adjust tones." It moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.',
         status: 'missing',
       },
       {
         control: 'Auto',
-        detail: 'Sets a grayscale mix based on the values in the image itself.',
+        detail:
+          'Sets a grayscale mix based on the values in the image itself — Adobe\'s own words are "Set a grayscale mix based on your image\'s color values" — so it reads the layer rather than asking you to weight six families by hand.',
         status: 'missing',
       },
       {
@@ -464,7 +469,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Color sliders',
         detail:
-          'Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe\'s Black and White page does not print their resting values; the default of 40, 60, 40, 60, 20 and 80 is third-party, and the pages that give it print only the first three — "Reds set to 40%, Yellows set to 60%, and so on".',
+          'Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe\'s own page names the block and nothing inside it — "Color sliders: Drag sliders to adjust gray tones for specific colors" — so both the six family names and their order are third-party, as are their resting values: the default of 40, 60, 40, 60, 20 and 80 is documented, but the pages that print it print only the first three, "Reds set to 40%, Yellows set to 60%, and so on".',
         status: 'missing',
       },
       {
@@ -472,29 +477,35 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         detail:
           'The reset icon that returns the sliders to their default values, and more generally the panel control that returns the adjustment to its original settings.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Colors/Color.tsx:183',
+        appRef: 'src/components/ToolbarsRight/Colors/Color.tsx:185',
       },
     ],
     modifiers: [],
-    shortcuts: [],
+    shortcuts: [
+      {
+        keys: 'Shift+Cmd+Opt+B',
+        action:
+          'Open the Black & White command. Printed by Adobe\'s shipped shortcut sheet as "Black & White... Opt+Shift+Cmd+B" on macOS, and Ctrl+Alt+Shift+B on Windows; the app binds no shortcut for it.',
+      },
+    ],
     implementation: 'partial',
     implementationRefs: [
-      'src/components/ToolbarsRight/Colors/Color.tsx:123',
+      'src/components/ToolbarsRight/Colors/Color.tsx:134',
       'src/components/ToolbarsRight/Colors/Color.tsx:110',
       'src/tools/colors.ts:12',
       'src/tools/functions.ts:60',
-      'src/tools/settings.ts:53',
-      'src/tools/toolProcessors.ts:126',
-      'src/contexts/useLayer.ts:536',
-      'src/contexts/useLayer.ts:345',
-      'src/contexts/history-replay.ts:152',
+      'src/tools/settings.ts:55',
+      'src/tools/toolProcessors.ts:127',
+      'src/contexts/useLayer.ts:571',
+      'src/contexts/useLayer.ts:348',
+      'src/contexts/history-replay.ts:172',
       'src/contexts/layer-renderer.ts:16',
       'src/contexts/materialization.ts:78',
       'src/test/setup.ts:320',
-      'toolbar-mapping.ts:62',
+      'toolbar-mapping.ts:189',
     ],
     appNotes:
-      "Black and White is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so the app's Colors entry occupies a slot Photoshop's toolbar does not have. None of Photoshop's seven controls is reproduced, and the three sliders that are rendered are not Black and White controls: there is no sextant weighting anywhere in the app, so no per-hue decision can be made and the conversion is a flat luminance desaturation rather than a mix. The grayscale slider is the nearest thing to the whole panel and it is the one control that cannot stand in for it, because a hue-weighted mix and a luminance average differ the moment any of the six families is pushed. Sepia is not the Tint checkbox either: Tint lays a uniform tone color over a conversion whose mix you still control, and applying sepia is a second filter stage that tints the whole image rather than replacing its channel weights, so the two can be combined and the result is not the same look. Saturation belongs to no part of Black and White; it is a Hue/Saturation control, and the fact that this app has one is a leftover from the identity question this tool's shape was chosen to answer. Presets, Auto, the on-image adjustment icon and the six sliders are all absent, and the Reset button that is present does not behave as Photoshop's does: it is disabled unless an uncommitted preview is live, and it restores that panel's own defaults rather than the sextant defaults, so a committed conversion can only be undone. As with Levels, the engine is a CSS filter string, and the surface it is assigned to is the visible canvas: the renderer builds an ordinary HTMLCanvasElement, sets ctx.filter from the layer's operations array and draws the layer stack into it. The OffscreenCanvas processors in src/tools/colors.ts are not on the editing, preview or commit path — color is registered as commit: 'layer-operation', so those paths append the operation and return before a pixel is produced — and the committed conversion is retained on the same terms as Levels, with the layer's own bitmap untouched and undo replaying the operation rather than a raster. The string is built once, so the renderer and the durable materializer cannot drift, and the test harness exposes filter as a writable property, so the emitted string is assertable; the jsdom mock still cannot rasterize it, so no test here shows what the filter looks like.",
+      "Black & White is an Image > Adjustments command, or an adjustment layer — not a toolbar tool — so it has no rail entry, and the app reaches the same three CSS filters from Image > Adjustments > Desaturate, which is the Adobe command the bar's grayscale slider actually computes. That name is a bounded divergence rather than a match: sepia and saturation are controls Desaturate does not have. Adobe's Photo Filter is a separate command in the same submenu and it is a disabled item, because it is a lens filter with a Density slider and a Preserve Luminosity option and this bar reproduces none of those. No control of Photoshop's seven is reproduced, and the three sliders that are rendered are not Black & White controls: there is no sextant weighting anywhere in the app, so no per-hue decision can be made and the conversion is a flat luminance desaturation rather than a mix. The one control whose name the app shares is Reset, and it does not behave as Photoshop's does: it is disabled unless an uncommitted preview is live, and it restores that panel's own defaults rather than the sextant defaults, so a committed conversion can only be undone. The grayscale slider is the nearest thing to the whole panel and it is the one control that cannot stand in for it, because a hue-weighted mix and a luminance average differ the moment any of the six families is pushed. Sepia is not the Tint checkbox either: Tint lays a uniform tone color over a conversion whose mix you still control, and applying sepia is a second filter stage that tints the whole image rather than replacing its channel weights, so the two can be combined and the result is not the same look. Saturation belongs to no part of Black & White; it is a Hue/Saturation control, and the fact that this app has one is a leftover from the identity question this tool's shape was chosen to answer. Presets, Auto, Tint, Tint Color, the on-image adjustment icon and the six sliders are all absent. As with Levels, the engine is a CSS filter string, and the surface it is assigned to is the visible canvas: the renderer builds an ordinary HTMLCanvasElement, sets ctx.filter from the layer's operations array and draws the layer stack into it. The OffscreenCanvas processors in src/tools/colors.ts are not on the editing, preview or commit path — color is registered as commit: 'layer-operation', so those paths append the operation and return before a pixel is produced — and the committed conversion is retained on the same terms as Levels, with the layer's own bitmap untouched and undo replaying the operation rather than a raster. The string is built once, so the renderer and the durable materializer cannot drift, and the test harness exposes filter as a writable property, so the emitted string is assertable; the jsdom mock still cannot rasterize it, so no test here shows what the filter looks like.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html',
       'https://helpx.adobe.com/photoshop/using/color-adjustments.html',
@@ -505,6 +516,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://photoshoptrainingchannel.com/black-white-photos-photoshop/',
       'https://glensmith.co.uk/photoshop/tools',
       'https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview',
+      'https://training-nyc.com/legacy/photoshop_cs6_all_keyboard_shortcuts_sheet.pdf',
     ],
   },
 };

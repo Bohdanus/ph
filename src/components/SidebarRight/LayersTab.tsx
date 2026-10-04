@@ -2,8 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
+import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
@@ -16,8 +18,10 @@ import {
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId }] = useStore();
-  const { toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
+  const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
+  const { toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer, convertBedrockLayer } =
+    useLayers();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
@@ -28,6 +32,29 @@ export default function LayersTab() {
   const [animatingLayerId, setAnimatingLayerId] = useState<LayerId | null>(null);
   const [isShrinking, setIsShrinking] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
+
+  const selectLayer = (id: LayerId) => {
+    setActiveLayer(id);
+    const source = layers[id]?.source;
+    if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
+      if (source.args.toolName === 'text' && source.args.rect) {
+        const frame = documentFrame ?? documentFrameFromSize(totalSize);
+        const offsetX = layers[id].pos.x - frame.x;
+        const offsetY = layers[id].pos.y - frame.y;
+        setToolArgs({
+          ...source.args,
+          rect: {
+            x1: source.args.rect.x1 + offsetX,
+            y1: source.args.rect.y1 + offsetY,
+            x2: source.args.rect.x2 + offsetX,
+            y2: source.args.rect.y2 + offsetY,
+          },
+        });
+      } else {
+        setToolArgs(source.args);
+      }
+    }
+  };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
   const dragImageRef = useRef<HTMLDivElement>(null);
@@ -62,6 +89,21 @@ export default function LayersTab() {
   /////
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
+  const activeLayer = activeLayerId ? layers[activeLayerId] : null;
+  // The same two conditions `convertBedrockLayer()` refuses on, kept in step so the
+  // control is never present for an action that would be a no-op. The second one is
+  // the backing layer being the whole stack: a conversion above any other layer
+  // would stack an opaque copy of the frame over it.
+  const canConvertBackground = Boolean(activeLayer?.isBedrock && Object.keys(layers).length === 1);
+
+  function handleConvertBackground(layerId: LayerId) {
+    // `createImageBitmap` is the only step that can reject, and it rejects out of
+    // an async function, so the refusal is reported rather than left as an
+    // unhandled rejection.
+    convertBedrockLayer(layerId).catch((error) => {
+      console.error('Unable to convert the backing layer into an editable layer', error);
+    });
+  }
 
   function animateMove(layerToMoveId: LayerId, layerToPlaceAfterId?: LayerId) {
     // Start shrinking layerToMove
@@ -87,11 +129,19 @@ export default function LayersTab() {
     removeLayer(layerId);
   }
 
-  function handleNameChange(layerId: LayerId, newName: string) {
+  function handleNameChange(layerId: LayerId, newName: string, labelNode: HTMLElement) {
     const trimmed = newName.trim();
-    if (trimmed && trimmed !== layers[layerId]?.name) {
+    const committed = Boolean(trimmed && trimmed !== layers[layerId]?.name);
+    if (committed) {
       updateLayer(layerId, { name: trimmed }, RENAME_LAYER_ACTION);
+    } else {
+      // A refused rename leaves the stored name untouched, so React re-renders with the very
+      // same text child and writes nothing — the blank text node the browser left behind would
+      // survive and the row would show a nameless layer. Writing the stored name back, the way
+      // the Escape branch does, has to happen before edit mode ends.
+      labelNode.textContent = layers[layerId]?.name ?? '';
     }
+    // Ending edit mode re-renders with the same text child, so the write-back must land first.
     setEditingLayerId(null);
   }
 
@@ -171,7 +221,8 @@ export default function LayersTab() {
                     e.preventDefault();
                     animateMove(draggedLayerId, layer.id);
                   }}
-                  onClick={() => setActiveLayer(layer.id)}
+                  onClick={() => selectLayer(layer.id)}
+                  onDoubleClick={() => selectLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',
@@ -213,7 +264,7 @@ export default function LayersTab() {
                         e.stopPropagation();
                       }}
                       onBlur={(e) => {
-                        handleNameChange(layer.id, e.currentTarget.textContent || '');
+                        handleNameChange(layer.id, e.currentTarget.textContent || '', e.currentTarget);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -268,6 +319,21 @@ export default function LayersTab() {
         </ul>
       )}
       {isOverBottom && draggedLayerId && <div className="relative -top-1 mx-2 h-2 bg-blue-500 rounded" />}
+      {canConvertBackground && activeLayer && (
+        <button
+          type="button"
+          data-testid="layers-convert-background-button"
+          className="mx-1 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+          // Adobe's own command label. `Background` is not a model field here —
+          // `isBedrock` is the document's backing image — so the control does not
+          // claim to be a Background row.
+          aria-label="Layer from Background"
+          title="Layer from Background"
+          onClick={() => handleConvertBackground(activeLayer.id)}
+        >
+          Layer from Background
+        </button>
+      )}
       <div
         className="flex-1 min-h-[20px]"
         onDragOver={(e) => {

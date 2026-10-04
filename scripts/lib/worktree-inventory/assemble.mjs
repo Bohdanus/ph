@@ -115,6 +115,8 @@ export function buildInventory({
       nowMs: effectiveNow,
       boardAgents,
       writeHistory,
+      shellHistory,
+      readHistory,
       liveWritersSuppressed,
     });
 
@@ -177,6 +179,13 @@ export function buildInventory({
       mergedIntoMain: wt.mergedIntoBase,
       dirty: wt.workingTree.modified,
       untracked: wt.workingTree.untracked,
+      // The subset of `dirty` whose content main does NOT already hold, plus
+      // every untracked path. Reported beside `dirty` and never instead of it:
+      // `dirty` counts what differs from this worktree's own HEAD, so on a
+      // branch behind main it is mostly "main moved on", and a reader who
+      // treats it as the size of the salvage gets an answer several times too
+      // large. `dirty` stays the number the disposal test uses.
+      notOnMain: wt.workingTree.notOnBase,
       dirtyPaths: wt.workingTree.paths,
 
       lastCommit: wt.tip,
@@ -195,6 +204,12 @@ export function buildInventory({
       note: curated?.note ?? null,
       liveNote: curated?.liveNote ?? null,
       mustNotPrune: Boolean(curated?.mustNotPrune),
+
+      // Merges on `main` whose subject already carried this branch's name.
+      // Advisory and verdict-free — it exists so a reader about to read a name as
+      // proof of landing sees, in the same record, that the name proves nothing.
+      // `git.mjs` carries the reasoning and the 2026-10-01 sweep it replaces.
+      nameCollisions: wt.nameCollisions ?? [],
 
       chats: {
         count: chatSummary.count,
@@ -258,6 +273,7 @@ export function buildInventory({
       // "nobody is working here" was derived or declared.
       live: verdict.live,
       derivedLive: verdict.derivedLive,
+      liveSignals: verdict.liveSignals,
       liveSuppressed: verdict.liveSuppressed,
 
       board: {

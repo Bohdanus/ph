@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from './fixtures/extended-test';
 import {
   type BoundingBox,
   drawLine,
@@ -94,8 +94,50 @@ const layerRow = (page: Page, name: string): Locator => layerRows(page).filter({
 const hideButton = (row: Locator): Locator => row.getByRole('button', { name: 'Hide layer' });
 const showButton = (row: Locator): Locator => row.getByRole('button', { name: 'Show layer' });
 
-/** The `<span>` holding the layer name, which is the only element `LayersTab` renames. */
-const layerName = (row: Locator): Locator => row.locator('div.flex-1 > span');
+/**
+ * The `<span>` holding the layer name, which is the only element `LayersTab` renames.
+ *
+ * By the test id rather than by the structure around it. `div.flex-1 > span` resolves today
+ * and breaks on a cosmetic class rename - `flex-1 min-w-0` is styling, not a contract - with
+ * a locator error that reads as a broken spec rather than as a product signal; and a
+ * structural selector that ever resolved to two nodes turns every `click()` on it into a
+ * strict-mode violation instead of a rename. `LayersTab` publishes `data-testid="layer-name"`
+ * on the element itself (`LayersTab.tsx:211`), so this moves when the element moves and not
+ * when the styling does.
+ */
+const layerName = (row: Locator): Locator => row.getByTestId(LAYER_NAME);
+
+/**
+ * The row's own resolved background. Read from computed style rather than from its class
+ * list, so it follows the styling rather than its spelling.
+ *
+ * `borderColor` is the channel this is NOT read from, and the reason is worth writing down so
+ * that it is not re-derived: `LayersTab.tsx:185`'s `border-transparent` is on EVERY row and it
+ * WINS the cascade, so the active row's resolved border is transparent too and the border
+ * carries no state at all. Measured on the row the click had just made active — whose class
+ * list read `… border border-transparent hover:bg-white/70 dark:hover:bg-gray-700/40 bg-white
+ * dark:bg-gray-700/60 border-gray-200 dark:border-gray-600` — `borderTopColor` was
+ * `rgba(0, 0, 0, 0)`, identical to every inactive row's. `:187` is the only branch in that
+ * class list that names a border colour, and it names one that loses.
+ */
+const rowFill = (row: Locator): Promise<string> => row.evaluate((node) => getComputedStyle(node).backgroundColor);
+
+/**
+ * What `bg-transparent` (`LayersTab.tsx:187`) resolves to, and so — once nothing is hovering
+ * the row — the one value a row that is NOT the active layer can report here. The active
+ * branch's `bg-white` is opaque, so "not transparent" and "is the active layer" are the same
+ * claim read off the resolved value.
+ */
+const TRANSPARENT_FILL = 'rgba(0, 0, 0, 0)';
+
+/**
+ * Whether the pointer is resting on this row, which is what decides whether its resolved
+ * background means anything. Read through `:hover` rather than inferred from the fill,
+ * because the hover fill is not a value any other state produces: `LayersTab.tsx:186`'s
+ * `hover:bg-white/70` is emitted AFTER `:187`'s `bg-white`, so it overrides it, and a row under
+ * the pointer computes `oklab(… / 0.7)` whether it is the active layer or not.
+ */
+const isHovered = (row: Locator): Promise<boolean> => row.evaluate((node) => node.matches(':hover'));
 
 /**
  * Clicks the row itself rather than anything inside it. `setActiveLayer` hangs off the
@@ -107,9 +149,49 @@ const layerName = (row: Locator): Locator => row.locator('div.flex-1 > span');
  * 8px gap puts it at 40..56 — which is a real element inside the row and has no handler of
  * its own, so the event reaches the row. Its left-hand geometry is fixed by the row's own
  * classes, so it does not move when the panel is resized.
+ *
+ * And then it WAITS for the click to have taken effect, which is the half that matters and
+ * the half a bare `click()` cannot give. `setActiveLayer` is a store dispatch, so the
+ * selection lands on the render after the click's discrete-event flush, and a gesture
+ * driven straight after `click()` can be picked up by the PREVIOUS active layer — which on
+ * the eraser is a layer holding no ink where the new gesture is aimed, so not one pixel
+ * moves and the gesture is indistinguishable from one that was never aimed anywhere.
+ *
+ * `other` is a row that must NOT become active, and the wait is for the clicked row to be the
+ * opaque one while `other` is the transparent one: `LayersTab`'s own statement of who is
+ * active, read rather than guessed. The DIRECTION is load-bearing, which is why this is not
+ * "the two rows' fills differ". A click that changed nothing at all leaves the clicked row
+ * inactive and the previously-active `other` still active, and those two differ in exactly
+ * the shape a successful click produces. Requiring BOTH is what pins the direction;
+ * `LayersTab.tsx:113` derives `isActive` from one `activeLayerId`, so `other` going transparent
+ * is the same fact as the clicked row going opaque, read from the other side.
+ *
+ * The poll samples rather than reading once, because it is carrying two waits: the re-render
+ * after the dispatch, and the browser applying the pointer's departure from the row.
  */
-async function activateRow(row: Locator): Promise<void> {
+async function activateRow(row: Locator, other: Locator): Promise<void> {
   await row.click({ position: { x: 48, y: 16 } });
+  // Off the row before either fill is read, because Playwright leaves the pointer ON the
+  // click point. That is what made the old `rowFill(row) !== rowFill(other)` unsatisfiable
+  // as a gate: `hover:bg-white/70` overrode `bg-transparent` on the clicked row, so the two
+  // fills differed on the first sample with `setActiveLayer` deleted outright — measured, with
+  // `onClick` commented out, the poll passed and the run only failed later on a pixel
+  // assertion. The viewport's top-left corner is off every row — the panel is docked to the
+  // right edge — and nothing else is being asserted about what is under the pointer.
+  await row.page().mouse.move(0, 0);
+  await expect
+    .poll(
+      async () => {
+        if (await isHovered(row)) return false;
+        const clicked = await rowFill(row);
+        const untouched = await rowFill(other);
+        return clicked !== TRANSPARENT_FILL && untouched === TRANSPARENT_FILL;
+      },
+      {
+        message: 'the clicked row never became the active layer, so the next gesture would edit the wrong one',
+      }
+    )
+    .toBe(true);
 }
 
 test.describe('Layers panel', () => {
@@ -259,6 +341,17 @@ test.describe('Layers panel', () => {
 
     await page.keyboard.press('Enter');
 
+    // The rename PATCHED the row that was there. It is the only claim a row count can make
+    // from outside: `LayersTab.tsx:90` is the only writer, and it publishes nothing about
+    // which record it touched — the row carries `data-testid="layer-row"` but no layer id
+    // (`LayersTab.tsx:122-138` puts the element in a ref map, not in the DOM), so an id
+    // assertion would need a product change to be available at all.
+    //
+    // Without this, a rename that ADDED a renamed copy beside the original leaves two rows
+    // and this test fully green: `row` is `rows.first()`, a fresh layer gets
+    // `maxLayerOrder + 1` and is therefore topmost, and every text assertion below reads
+    // the copy.
+    await expect(page.getByTestId(LAYER_ROW), 'the rename created a second layer').toHaveCount(2);
     await expect(row).toContainText('Sky');
     await expect(row).not.toContainText('draw 2');
     await expect(row.getByTestId(LAYER_NAME)).toHaveAttribute('contenteditable', 'false');
@@ -289,7 +382,7 @@ test.describe('Layers panel', () => {
   test('Merge all collapses the document to one layer and keeps the artwork', async ({ page }, testInfo) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
-    const { region, capture, stroke, colorAt, hasBothStrokes } = await setup(page);
+    const { region, capture, stroke, colorAt, hasBothStrokes, hasRed, hasGreen } = await setup(page);
     const rows = page.getByTestId(LAYER_ROW);
 
     await stroke('#ff0000', RED_STROKE);
@@ -313,6 +406,35 @@ test.describe('Layers panel', () => {
     const merged = await capture('layers-panel-merged', testInfo);
     expect(isRed(await colorAt(merged, RED_SAMPLE, STROKE_SAMPLE_RADIUS))).toBe(true);
     expect(isGreen(await colorAt(merged, GREEN_SAMPLE, STROKE_SAMPLE_RADIUS))).toBe(true);
+
+    // WHOSE artwork is that? Everything above is a read of pixels that were already on the
+    // canvas before the merge ran, and that is the trap: `mergeAllLayers` derives its raster
+    // FROM the canvas it is about to replace (`createImageBitmap(canvasRef.current)`,
+    // `useLayer.ts:732`), and `drawLayersToCanvas` is built to leave the last visible canvas
+    // intact when a source or processor fails (`layer-renderer.ts:130-137,160-163`). So a
+    // merge that publishes one row named `Merged Layer` whose layer never composites leaves
+    // the pre-merge composite on the glass, and this test stays green — the assertions above
+    // are read against the very pixels the flatten was supposed to replace.
+    //
+    // Hiding the merged layer is the only read that separates the two: if the merged layer
+    // owns the artwork, hiding it takes the artwork with it.
+    //
+    // Read as "these colours are gone" rather than through `isBare`, because the bare
+    // reading has a floor this document sits below: with the merged layer hidden the canvas
+    // is fully transparent, so the workspace's `#f3f3f3`/`#fff` CHESSBOARD shows through
+    // (`src/index.scss:140`) and `isBare` — which skips only pixels above 250 in every
+    // channel — cannot call that nothing painted.
+    const mergedRow = rows.first();
+    await hideButton(mergedRow).click();
+    await expect(showButton(mergedRow), 'the eye now offers to show the merged layer').toBeVisible();
+    await waitForCanvasPixels(
+      page,
+      region,
+      async (screenshot) => !(await hasRed(screenshot)) && !(await hasGreen(screenshot)),
+      {
+        description: 'the merged layer owns the artwork, so hiding it takes the artwork off the canvas',
+      }
+    );
   });
 
   /**
@@ -390,19 +512,42 @@ test.describe('Layers panel', () => {
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
     await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForCanvasPixels(page, canvasRedrawClip(box), hasDarkPixels, { description: 'the stroke' });
+    const clip = canvasRedrawClip(box);
+    await waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'the stroke' });
 
     // Visibility is a document edit, so it belongs on the timeline. A layer attribute
     // that only lived in component state would pass the pixel test above and be lost on
     // the next undo, which is what this pins.
     const drawn = layerRow(page, 'draw 2');
+    // The count the hide's own entry is measured AGAINST, asserted rather than read off a
+    // first poll: a count taken before the stroke's entry lands is one low, which would turn
+    // "exactly one entry" into "at most one". One stroke is the document entry plus one.
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    await expect(historyRows, 'the document entry plus the stroke').toHaveCount(2);
+    const beforeHide = await historyRows.count();
+
     await hideButton(drawn).click();
     await expect(showButton(drawn)).toBeVisible();
-    await expect(page.getByTestId('undo-button')).toBeEnabled();
+    // And the hide has to have REPAINTED before the undo means anything. Without this the
+    // wait at the end is the same predicate as the one above — dark pixels over this clip —
+    // and the canvas is still dark from before the hide, so it is satisfied on the first
+    // poll and an undo that restored nothing passes. Going bare first is what makes the
+    // restored stroke a claim about the undo rather than about the stroke.
+    await waitForCanvasPixels(page, clip, hasNoDarkPixels, { description: 'the hidden layer' });
+    // ONE history entry, read off the panel's own rows rather than off the undo button.
+    // `canUndo()` is `historyIndex > 0` — defined at `src/contexts/useHistory.ts:46-47`, and
+    // consumed at `HistoryControls.tsx:46` as `disabled={!canUndo()}`. It is true for one
+    // entry and for fifty, so `toBeEnabled()` cannot tell a hide from a hide that appended
+    // three — and one undo then lands somewhere else entirely while every assertion here
+    // still passes. Every row is counted, not the visible ones: a row the user has toggled
+    // off is still on the timeline.
+    await expect(historyRows, 'the hide is ONE entry of its own').toHaveCount(beforeHide + 1);
+    // And the hide changed the layer's visibility, not the document's layer list.
+    await expect(layerRows(page), 'a hide added or removed a layer').toHaveCount(2);
 
     await page.getByTestId('undo-button').click();
     await expect(hideButton(drawn), 'undo put the layer back on the canvas').toBeVisible();
-    await waitForCanvasPixels(page, canvasRedrawClip(box), hasDarkPixels, { description: 'the restored stroke' });
+    await waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'the restored stroke' });
   });
 
   test('clicking a row makes that layer the one the next tool gesture edits', async ({ page }) => {
@@ -438,45 +583,98 @@ test.describe('Layers panel', () => {
     const eraserBox = await canvasBox(page);
     const eraserFirst = canvasRedrawClip(eraserBox);
     const eraserSecond = { ...eraserFirst, y: eraserFirst.y + 200 };
+    /**
+     * Erasing `drawY` pixels below the top of the box the strokes were drawn in. Both
+     * erases go through it so the two are aimed the same way, at the same bands the clips
+     * above are cut from — which is the whole reason the second erase can be aimed at the
+     * SECOND stroke instead of at the first one's band a second time.
+     */
+    const eraseBand = (drawY: number) =>
+      drawLine(page, eraserBox, LINE_START_X, drawY, LINE_END_X, drawY, { steps: 20 });
 
-    await activateRow(layerRow(page, 'draw 2'));
-    await drawLine(page, eraserBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y, { steps: 20 });
+    // The precondition of the second half, asserted rather than assumed: the band the
+    // second erase is about to be aimed at is dark now, so "it went bare" afterwards is a
+    // transition and not a state that already held.
+    await expect
+      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
+        message: 'the second stroke is on its own layer, and it is still there before anything erases it',
+      })
+      .toBe(true);
+
+    await activateRow(layerRow(page, 'draw 2'), layerRow(page, 'draw 3'));
+    await eraseBand(LINE_START_Y);
     // The history row is the observable that the erase was PROCESSED. Without it the pixel
     // check below passes on its first poll, before the app has done anything, and the test
     // is green whether or not `activateRow` worked.
     await expect(historyRows, 'the erase committed an entry on the active layer').toHaveCount(4);
+    // The erase went through, on the FIRST stroke: this is the transition the whole test is
+    // about, and it can only happen on the layer that holds it.
+    await waitForCanvasPixels(page, eraserFirst, hasNoDarkPixels, {
+      description: 'the first stroke, erased on the layer that was activated',
+    });
     await expect
       .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
         message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
       })
       .toBe(true);
 
-    await activateRow(layerRow(page, 'draw 3'));
-    await drawLine(page, eraserBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y, { steps: 20 });
+    // And the SAME GESTURE aimed at the OTHER band. Aimed at `LINE_START_Y` instead — which
+    // is where the first erase went — this half could not fail: `draw 3` carries nothing in
+    // that band, so whether the row click activated `draw 3`, `draw 2`, or nothing at all,
+    // not one pixel moved, and only the history count below was ever live. Aimed at
+    // `eraserSecond`, the band goes bare only if the active layer really is the one that
+    // holds the second stroke — which is the named claim.
+    await activateRow(layerRow(page, 'draw 3'), layerRow(page, 'draw 2'));
+    await eraseBand(LINE_START_Y + 200);
     await expect(historyRows, 'and the second erase committed one too').toHaveCount(5);
-    await waitForCanvasPixels(page, eraserFirst, hasNoDarkPixels, {
-      description: 'the erased stroke, on the layer that is active now',
+    await waitForCanvasPixels(page, eraserSecond, hasNoDarkPixels, {
+      description: 'the second stroke, erased on the layer that was activated',
     });
+    // The first erase's effect is still there: erasing the other layer is not undoing this
+    // one. Checked once the transition above has landed, so it is read against the state the
+    // second gesture produced rather than against the state before it.
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
-        message: 'the other layer is untouched by both erases',
+      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserFirst })), {
+        message: 'the second erase put the first stroke back — it edited the wrong layer',
       })
-      .toBe(true);
+      .toBe(false);
   });
 
   test('renaming a layer is one history entry', async ({ page }) => {
     const undo = page.getByTestId('undo-button');
     await expect(undo, 'a freshly opened document has nothing to undo').toBeDisabled();
 
-    const name = layerName(layerRow(page, 'Blank 1'));
-    await name.click();
-    await name.click();
+    // The count the rename is measured AGAINST, asserted rather than read off a first poll.
+    // A freshly opened document carries exactly one entry — the open itself
+    // (`useApp.ts:120` seeds the timeline with it) — so the precondition is a fact about the
+    // panel rather than a zero, and "one entry" below means two rather than "one more than
+    // whatever happened to be there".
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    await expect(historyRows, 'the entry the document opens with').toHaveCount(1);
+    const beforeRename = await historyRows.count();
+
+    const row = layerRow(page, 'Blank 1');
+    await enterRenameMode(row);
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.type('Backdrop');
     await page.keyboard.press('Enter');
 
     await expect(layerRows(page).filter({ hasText: 'Backdrop' })).toHaveCount(1);
-    await expect(undo, 'the rename is a document edit').toBeEnabled();
+    // The rename PATCHED the row that was there rather than publishing a renamed copy beside
+    // it. Every other assertion in this test filters on the name, so a document that went
+    // from one row to two — `Backdrop` on one of them, `Blank 1` on the other — sails
+    // through all of them and the undo below then removes the copy and leaves both names
+    // where they were. The row count is the strongest channel available from outside: the
+    // row publishes no layer id (`LayersTab.tsx:122-138` keeps the element in a ref map, not
+    // in the DOM), so asserting on identity would take a product change to be possible.
+    await expect(layerRows(page), 'the rename created a second layer instead of renaming the first').toHaveCount(1);
+    // ONE history entry, read off the panel's own rows rather than off the undo button.
+    // `canUndo()` is `historyIndex > 0` — defined at `src/contexts/useHistory.ts:46-47`, and
+    // consumed at `HistoryControls.tsx:46` as `disabled={!canUndo()}`. It is true for one
+    // entry and for fifty: a rename that committed on every keystroke appends eight, the
+    // undo button is still enabled, and one undo still restores `Blank 1` — so nothing above
+    // would notice. The count is the one-entry claim, and it is the whole claim.
+    await expect(historyRows, 'the rename is ONE history entry, not one per keystroke').toHaveCount(beforeRename + 1);
 
     await undo.click();
     await expect(layerRows(page).filter({ hasText: 'Blank 1' })).toHaveCount(1);
@@ -496,9 +694,16 @@ test.describe('Layers panel', () => {
  * mousedown sets `editingLayerId`, and a second click, which is the browser's own default
  * action of placing a caret inside what is by then a `contentEditable` span. The first click
  * is what enters edit mode; the second is what makes the caret deterministic.
+ *
+ * Both steps ASSERT their state, which is the reason this exists rather than two bare
+ * clicks: `LayersTab.tsx:214-218` enters edit mode on `onMouseDown`, and the second click
+ * only lands a caret once React's discrete-event flush has re-rendered the span as
+ * `contentEditable`. Without the assertions, a late flush makes `ControlOrMeta+a` select the
+ * document, the typed text goes into the body, `Enter` does nothing, and the caller fails
+ * several lines later with an unexplained "expected 1, received 0" on the layer count.
  */
 async function enterRenameMode(row: Locator): Promise<void> {
-  const name = row.getByTestId(LAYER_NAME);
+  const name = layerName(row);
   await name.click();
   await expect(name).toHaveAttribute('contenteditable', 'true');
   await name.click();

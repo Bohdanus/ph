@@ -5,6 +5,7 @@ import { HIDE_LAYER_ACTION, REMOVE_ACTION, RENAME_LAYER_ACTION, SHOW_LAYER_ACTIO
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import { createMockLayer, createMockLayers } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvas } from '@/__tests__/fixtures/canvas.ts';
+import { createMockHistory } from '@/__tests__/fixtures/history.ts';
 import { DURABLE_SCHEMA_VERSION } from '@/contexts/history-model.ts';
 
 /**
@@ -29,10 +30,16 @@ const { storeRef, uuidMock } = vi.hoisted(() => ({
   uuidMock: vi.fn((): string => 'history-id'),
 }));
 
+const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+
 vi.mock('uuid', () => ({ v4: uuidMock }));
 
 vi.mock('@/contexts/StoreContext.tsx', () => ({
   useStore: () => [storeRef.current as StoreWithDispatch, (storeRef.current as StoreWithDispatch).dispatch],
+}));
+
+vi.mock('@/contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
 }));
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
@@ -49,6 +56,8 @@ function seedStore(overrides: Partial<MockStoreState> = {}) {
       layers: createMockLayers(3),
       activeLayerId: 'layer-2',
       totalSize: { width: 200, height: 120 },
+      history: createMockHistory(1),
+      historyIndex: 0,
       // `removeLayer` clears the tool overlay, so a real (mocked) context is required.
       toolOverlayRef: { current: createMockCanvas() as unknown as HTMLCanvasElement },
       ...overrides,
@@ -142,6 +151,7 @@ describe('LayersTab actions reaching the store', () => {
           actionName: HIDE_LAYER_ACTION,
           args: { visible: false },
         },
+        durableDiagnostics: [],
         durableEntry: {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
@@ -183,6 +193,7 @@ describe('LayersTab actions reaching the store', () => {
           actionName: SHOW_LAYER_ACTION,
           args: { visible: true },
         },
+        durableDiagnostics: [],
         durableEntry: {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
@@ -226,6 +237,7 @@ describe('LayersTab actions reaching the store', () => {
           actionName: RENAME_LAYER_ACTION,
           args: { name: 'Sky' },
         },
+        durableDiagnostics: [],
         durableEntry: {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { drawLayersToCanvas } from '../layer-renderer.ts';
 import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
-import type { AffineTransform } from '../affine-transform.ts';
+import { MAX_AFFINE_PIXELS, type AffineTransform } from '../affine-transform.ts';
 import type { BitmapSource, Pos } from '../general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
@@ -358,10 +358,10 @@ describe('drawLayersToCanvas', () => {
 
     expect(consoleError).not.toHaveBeenCalled();
     expectNoContextCalls(target.context);
-    // The resize happens before the context lookup, so the visible canvas dimensions change
-    // even though nothing is ever cleared or blitted.
-    expect(target.canvas.width).toBe(640);
-    expect(target.canvas.height).toBe(480);
+    // Context validation happens before the visible canvas is resized, so a missing
+    // destination leaves both the pixels and dimensions untouched.
+    expect(target.canvas.width).toBe(300);
+    expect(target.canvas.height).toBe(150);
   });
 
   it('reports a publish failure when clearing the visible canvas throws', () => {
@@ -380,7 +380,9 @@ describe('drawLayersToCanvas', () => {
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
-    expect(target.context.drawImage).not.toHaveBeenCalled();
+    expect(target.context.drawImage).toHaveBeenCalledTimes(1);
+    expect(target.canvas.width).toBe(300);
+    expect(target.canvas.height).toBe(150);
   });
 
   it('reports a publish failure when blitting the staging canvas throws', () => {
@@ -390,8 +392,8 @@ describe('drawLayersToCanvas', () => {
 
     expect(drawLayersToCanvas(target.canvas, [], frame(0, 0, 640, 480))).toBe(false);
 
-    expect(consoleError).toHaveBeenCalledTimes(1);
-    expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
+    expect(consoleError).toHaveBeenNthCalledWith(1, 'Unable to restore runtime layer presentation', failure);
+    expect(consoleError).toHaveBeenNthCalledWith(2, 'Unable to publish runtime layer presentation', failure);
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
   });
 
@@ -607,7 +609,83 @@ describe('drawLayersToCanvas', () => {
     expect(target.context.filter).toBe('none');
   });
 
-  it('resizes the staging canvas and then the visible canvas before publishing', () => {
+  it('leaves the visible canvas intact when the publish blit throws with no resize to undo', () => {
+    // The steady state: the target already carries the frame's dimensions, so `resizeCanvas`
+    // writes nothing and there is no resize for the restore to reverse. `clearRect` had
+    // already emptied this canvas by the time the blit threw, and nothing was put back, so the
+    // document went blank while the caller was told only that publishing failed. The previous
+    // pixels must reach the target even when the dimensions never changed.
+    const target = createTargetCanvas(640, 480);
+    const failure = new Error('blit failed');
+    target.context.drawImage.mockImplementationOnce(throwing(failure));
+
+    expect(
+      drawLayersToCanvas(
+        target.canvas,
+        [createImageLayer('layer-1', { x: 4, y: 6, width: 20, height: 10 })],
+        frame(0, 0, 640, 480)
+      )
+    ).toBe(false);
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
+    // The wipe did happen, and the restore undid it: the second draw is the snapshot, not the
+    // staging canvas, so the frame that was on screen is back.
+    const stagingCanvas = stagingCanvasFor(target.canvas);
+    const [blit, restore] = target.context.drawImage.mock.calls as Array<[unknown, number, number]>;
+    expect(blit[0]).toBe(stagingCanvas);
+    expect(restore[0]).not.toBe(stagingCanvas);
+    expect((restore[0] as HTMLCanvasElement).width).toBe(640);
+    expect((restore[0] as HTMLCanvasElement).height).toBe(480);
+    expect(target.canvas.width).toBe(640);
+    expect(target.canvas.height).toBe(480);
+  });
+
+  it('publishes a document whose layer is larger than the affine pixel cap', () => {
+    // 81 Mpx. `useApp.ts:159` caps nothing when a non-PSD image is opened, and this path sizes
+    // no surface from the layer extent, so such a layer used to abort the WHOLE publish: its
+    // own bounds exceeded MAX_AFFINE_PIXELS, and one refused layer took the document with it.
+    const target = createTargetCanvas();
+    const size = { x: 0, y: 0, width: 9000, height: 9000 };
+    const bitmap = createBitmap(9000, 9000);
+    const layer = createImageLayer('large', size, { bitmap });
+
+    expect(size.width * size.height).toBeGreaterThan(MAX_AFFINE_PIXELS);
+    expect(drawLayersToCanvas(target.canvas, [layer], frame(0, 0, 9000, 9000))).toBe(true);
+
+    const staging = contextMockFor(stagingCanvasFor(target.canvas));
+    expect(staging.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 9000, 9000);
+    // Published rather than skipped: a refusal would have logged a skip for this layer.
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('drops only the layer whose filter argument cannot be rendered, and publishes the rest', () => {
+    const target = createTargetCanvas();
+    // A JSON round trip is allowed to turn `radius` into a string; it is not allowed to turn it
+    // into a CSS keyword, and `LayerOperationArgs` says as much.
+    const corrupt = createImageLayer(
+      'corrupt',
+      { x: 0, y: 0, width: 20, height: 10 },
+      {
+        operations: [
+          { id: 'blur-1', args: { toolName: 'blur', radius: 'wide' }, enabled: true } as unknown as LayerOperation,
+        ],
+      }
+    );
+    const healthy = createImageLayer('healthy', { x: 4, y: 6, width: 20, height: 10 });
+
+    expect(drawLayersToCanvas(target.canvas, [corrupt, healthy], frame(0, 0, 100, 100))).toBe(true);
+
+    const staging = contextMockFor(stagingCanvasFor(target.canvas));
+    // The corrupt layer is refused rather than drawn unfiltered: a browser discards an
+    // unparseable `ctx.filter` outright, which would present it with no blur at all.
+    expect(staging.drawImage.mock.calls.map(([bitmap]) => bitmap)).toEqual([healthy.bitmap]);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError.mock.calls[0][0]).toBe('skipped layer whose filter arguments cannot be rendered');
+    expect(consoleError.mock.calls[0][1]).toBe('corrupt');
+  });
+
+  it('resizes the staging canvas and then the visible canvas on successful publication', () => {
     const target = createTargetCanvas();
     const { createElement, stagingResizes } = trackStagingCanvasResizes();
     const targetResizes = trackCanvasResizes(target.canvas);
