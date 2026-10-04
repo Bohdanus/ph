@@ -1,0 +1,33 @@
+// The dim a tool that does not work yet wears, on a rail tile and on a flyout row alike.
+//
+// A CSS FILTER and not the `opacity` property, because that is what the operator asked for and
+// because the filter is the only one of the two that can carry the desaturate. Photoshop's
+// greyed-out tools show no hue at all: a merely faint tile still reads as a live one, and the
+// tile that most needs the message is the SELECTED placeholder, which is painted blue. The
+// filter desaturates that case as well, so a tool that is both chosen and unfinished reads as
+// unfinished, which is the honest reading.
+//
+// The fraction is the button's own: `TOOL_BUTTON_BASE_CLASS` already carries
+// `disabled:opacity-40`, so this matches the dim the component would already draw for a
+// genuinely disabled control. A tile is not disabled — see `UNIMPLEMENTED_TOOL_CLASS` in
+// `SidebarLeft.tsx` — but the two should not disagree about what "greyed out" looks like.
+//
+// One value for both themes, and not an oversight. Photoshop uses one treatment in its light
+// and dark interfaces, and the rail's own chrome already varies with the theme underneath this
+// filter rather than in it: the tile is `text-gray-700` on `bg-gray-200/80` in light and
+// `text-gray-200` on `bg-gray-900/60` in dark, so 40% of a grey is a different pixel value in
+// each and lands at the same perceived weight. A separate dark value would be this repository
+// inventing a second chrome Adobe does not have.
+//
+// VISUAL ONLY, deliberately: no `pointer-events`, no reduced contrast for anything but the
+// dimmed pixels. The tile is still a button and the row is still a menu item, so the hover,
+// focus-ring and selection states all still reach the user — which is the point, because a
+// dimmed control that has stopped responding would read as broken rather than as unfinished.
+//
+// Unlayered on purpose, the same as `src/components/Main/Main.scss`: an unlayered rule outranks
+// every Tailwind utility, and nothing on a tile or a flyout row sets `filter` today, so there is
+// nothing for it to outrank. It is stated because that is exactly what would break first — a
+// future `blur-sm` on the same element would be silently overridden by this line.
+.tool-unimplemented {
+  filter: opacity(0.4) grayscale(1);
+}

@@ -12,6 +12,7 @@ export type ToolIconName =
   | 'magic-wand'
   | 'quick-selection'
   | 'eyedropper'
+  | 'ruler'
   | 'eraser'
   | 'clone-stamp'
   | 'paint-bucket'

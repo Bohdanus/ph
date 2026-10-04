@@ -39,13 +39,19 @@ describe('eyedropper args', () => {
 
 describe('eyedropper registry absence', () => {
   it('has no processor, because it rasterizes nothing and records no history', () => {
-    expect(PIXEL_FREE_TOOLS).toEqual(['eyedropper']);
+    expect(PIXEL_FREE_TOOLS).toContain('eyedropper');
     expect(findToolProcessor('eyedropper')).toBeUndefined();
     expect(Object.hasOwn(toolProcessors, 'eyedropper')).toBe(false);
   });
 
-  it('is the only tool in the pixel-free set, so the set cannot grow unnoticed', () => {
-    // Every other tool rasterizes, so a second entry here would be a claim that has to be earned.
-    expect([...PIXEL_FREE_TOOLS]).toHaveLength(1);
+  it('shares the pixel-free set only with tools that earn it, so the set cannot grow unnoticed', () => {
+    // Every other tool rasterizes. The set's other member is the Ruler, which measures a
+    // nonprinting line and commits no pixels either — so this pins the whole set rather than the
+    // eyedropper's place in it, and a third entry has to be earned the same way.
+    expect([...PIXEL_FREE_TOOLS].sort()).toEqual(['eyedropper', 'ruler']);
+    for (const name of PIXEL_FREE_TOOLS) {
+      expect(Object.hasOwn(toolProcessors, name)).toBe(false);
+      expect(findToolProcessor(name)).toBeUndefined();
+    }
   });
 });

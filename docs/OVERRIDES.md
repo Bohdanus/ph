@@ -80,3 +80,32 @@ Suspends [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) on `draw`: "No
 invented tools", and "`draw` is a live tile, and it is the
 last deletion". No keyboard letter — Adobe's single cycling
 `B` already serves four tools.
+
+### OVR-3 — Photoshop's Tools panel has no dimmed tools
+
+**This app:** A rail tile and a flyout row whose tool is
+unimplemented — `pen`, `freeform-pen`, `curvature-pen`,
+`add-anchor-point`, `delete-anchor-point`, `convert-point` and
+`custom-shape` — render at `filter: opacity(0.4) grayscale(1)`.
+The tile is dimmed when the tool it displays is unimplemented, so
+the Pen tile is dimmed and the Shape tile is not, even though the
+Shape tile's flyout carries the unimplemented Custom Shape.
+
+**Operator decided:** 2026-10-04
+
+**Why:** The rail is a clone, so the seven tools sit in it with
+Adobe's names and Photoshop's grouping even though six of them
+mount an inert surface. The dimming is the only honest signal
+that they are in the panel as SPECIFICATION and not as working
+buttons, and it is why this is an override rather than a defect:
+Photoshop greys a control that is disabled for a reason it can
+name, and it never presents a tool it cannot run as available.
+
+The dimming is visual only. Every one of the seven stays
+clickable, still mounts its stub options bar, and keeps its
+`data-testid` and its tooltip, because a tool the app cannot do
+is still a place the user can go to read what is missing. The set
+is derived from `toolProcessors`'s `commit: 'unimplemented'` at
+runtime (`UNIMPLEMENTED_TOOL_NAMES` in `SidebarLeft.tsx`) rather
+than listed, so a tool that lands stops being dimmed without
+anything here being edited.

@@ -65,6 +65,12 @@ export type ToolArgsByName = {
   'magic-eraser': FillToolArgs;
   'paint-bucket': FillToolArgs;
   eyedropper: EyedropperToolArgs;
+  /**
+   * The Ruler carries no args beyond its own name. Every number it reports is a property of the
+   * gesture the user just made, not a setting they chose, so there is nothing here to persist —
+   * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
+   */
+  ruler: { toolName: 'ruler' };
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };

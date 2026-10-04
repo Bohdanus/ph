@@ -91,8 +91,16 @@ export type ToolProcessorDefinition = {
  * tool does not work yet", and it is read as exactly that by `src/components/Main/Main.tsx`'s tool
  * dispatch. Naming the set is also what lets a consumer of `toolProcessors` distinguish "this tool
  * has no processor" from "this tool name does not exist".
+ *
+ * The Ruler is the second member, and it earns the set by the same rule rather than by affinity
+ * with the Eyedropper. Adobe describes the measuring line as a **nonprinting** line and gives its
+ * removal as dragging it out of the image or clicking Clear — not as undoing an edit — so a
+ * measurement changes no pixel and there is nothing for a history state to restore. `HANDOFF.md`
+ * §74 groups it as the measurement band "because these are `PIXEL_FREE_TOOLS` like the Eyedropper,
+ * committing no pixels and needing no durable operation", and that decision is the app-side answer
+ * to a question Adobe never states outright.
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler'] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;

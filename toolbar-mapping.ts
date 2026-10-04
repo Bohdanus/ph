@@ -64,9 +64,20 @@ export const toolbarMap = [
       { label: 'Magic Wand Tool', name: 'magic-wand', shortcut: 'W' },
       { label: 'Quick Selection Tool', name: 'quick-selection' },
     ],
-    // Its own single-tool tile, so it gets no flyout of its own and stays directly after the
-    // Magic Wand it reads its Sample Size from in Photoshop.
-    [{ label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' }],
+    // The `I` family, which Photoshop cycles with `Shift+I`: "Eyedropper, Color Sampler, Ruler, Note,
+    // and Count Tool I". Only the tile's FIRST entry declares `shortcut`, exactly as the tonal and
+    // marquee groups above do, so the letter belongs to the tile and the Ruler is reached by the
+    // cycle rather than by a second binding on the same key.
+    //
+    // The three members Photoshop cycles to that this app does not have are absent rather than
+    // represented by placeholder values, per the rule the doc comment above states. Adobe prints no
+    // order for the cycle, and the pair that exists keeps the Eyedropper first because it is the
+    // tile's identity: a tile's name is its first entry, so leading with the Ruler would rename
+    // the tile and move every `tool-button-eyedropper` selector with it.
+    [
+      { label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' },
+      { label: 'Ruler Tool', name: 'ruler' },
+    ],
   ],
   [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
@@ -177,6 +188,7 @@ export const availableTools: readonly ToolName[] = [
   'magic-wand',
   'quick-selection',
   'eyedropper',
+  'ruler',
   'eraser',
   'magic-eraser',
   'clone-stamp',

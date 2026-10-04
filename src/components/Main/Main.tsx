@@ -16,6 +16,7 @@ import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
 import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea.tsx';
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
+import { RulerToolArea } from './RulerToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -128,6 +129,11 @@ const Main = () => {
     interactionMode = 'quick-selection';
   } else if (toolName === 'eyedropper') {
     interactionMode = 'eyedropper';
+  } else if (toolName === 'ruler') {
+    // Its own mode, not a mode shared with the Eyedropper: the two are one `I`-family tile but they
+    // do different things with a pointer — one samples a pixel, the other drags a nonprinting line
+    // across the overlay — and one mode mounts one area, so a shared mode would mount one of them.
+    interactionMode = 'ruler';
   } else if (toolName === 'eraser') {
     // A brush, but NOT the `draw` mode: `DrawToolArea` creates a new layer from a
     // `{ ...args, points }` and draws the `DrawToolArgs` preview, where the eraser
@@ -252,6 +258,7 @@ const Main = () => {
       | typeof SingleRowColumnMarqueeToolArea
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
+      | typeof RulerToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
@@ -279,6 +286,7 @@ const Main = () => {
       else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
+      else if (interactionMode === 'ruler') EventHandler = RulerToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
@@ -346,6 +354,10 @@ const Main = () => {
               'single-row-column-marquee',
               'quick-selection',
               'clone-stamp',
+              // The Ruler paints its measuring line here and nowhere else: it commits no pixels, so
+              // there is no layer to preview through `tempUpdateLayer`, and the line is chrome that
+              // must survive on top of the document rather than be composited into it.
+              'ruler',
             ].includes(interactionMode)
               ? 'block'
               : 'none',
