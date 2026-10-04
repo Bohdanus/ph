@@ -221,11 +221,11 @@ this wave implemented.
   (`rect.ts` — `calculateNewRect`'s point arm). It is not a **transform** box and does not reflow on
   a later resize in the sense §8 requires.
 
-**The largest fidelity gap in the tool is now CLOSED for a placement, and still open for a committed
-layer.** "Click to place type, type to replace it" works: clicking places a box holding Adobe's
-placeholder, pre-selected, with a live caret over it (§3). The remaining half is the way BACK IN —
-double-clicking a committed type layer to edit its characters — which needs a durable operation that
-records "this layer's source args changed" and does not exist (§7.3).
+**The largest fidelity gap in the tool is now CLOSED for placement and panel re-entry.** "Click to
+place type, type to replace it" works: clicking places a box holding Adobe's placeholder, pre-selected,
+with a live caret over it (§3). A committed text layer can also be re-entered from its Layers row while
+the Type tool is active; the existing layer-source replacement is recorded as a durable operation
+(§7.3). Canvas-click re-entry remains tracked in `HANDOFF.md`.
 
 ---
 
@@ -352,19 +352,16 @@ Adobe).
 
 ### 3.1 Getting back into a committed layer is still open
 
-Adobe offers three routes and none of them exists here. "Double-click the type layer's thumbnail or
-double-click the type layer with the Type tool" re-enters editing (which is the app's §3.2 overlay,
-applied to a layer rather than to a draft); "Choose the Type tool, and then click inside the type
-layer" is the same thing reached with the tool already selected; and the `T`/`Type` icon in the
-options bar re-enters the layer that is currently selected.
+Adobe offers three routes. This app supports double-clicking a text row and selecting the row while the
+Type tool is active; both re-enter the app's §3.2 overlay with the source arguments hydrated into
+canvas space. Choosing the Type tool and clicking inside a committed text layer is still open and is
+tracked in `HANDOFF.md`; the options-bar `T`/`Type` icon has no separate implementation.
 
-**The blocker is not the gesture and it is not the ink.** A layer keeps its `TextToolArgs` in
-`source.args`, so the string, the face, the size, the colour and the rect are all readable back at
-runtime and `renderText` could re-rasterise them. The blocker is that changing them has to be
-RECORDED, and neither half exists: there is no runtime function that replaces an existing layer's
-source (only `createLayerFromTool`, which mints a new layer), and no durable operation for "an
-existing layer's source args changed". Applying the change without recording it would fix the pixels
-and lose them on the next replay. `HANDOFF.md` carries the work.
+**The source-editing path is implemented, but the layer remains raster at runtime.** A layer keeps
+its `TextToolArgs` in `source.args`, and `replaceLayerSource` records changes through the durable
+`replace-layer-source` operation, so edits survive replay. The runtime renderer still draws the
+committed bitmap for text layers; scaling therefore resamples the raster instead of re-rendering live
+glyphs. `HANDOFF.md` carries the remaining vector-rendering gap.
 
 ### 3.2 Why the in-place editor is a contenteditable `div` and not a `<textarea>`
 

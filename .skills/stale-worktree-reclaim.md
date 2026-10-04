@@ -535,6 +535,13 @@ header of `scripts/dispose-worktree.mjs`). The
 cleanliness probe it ran first — `git status --porcelain` — reads the same for an
 abandoned worktree and a busy one, so it could not have caught that.
 
+**A refusal you expected is a finding, not an obstacle — and it may not name you.** Only the
+write arm of `derived-live-writer` names a chat; every other arm prints "a chat". Report it and move
+on. `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is
+the one home for the mechanism, and the Never list's entry against reaching for the removal command
+by hand is what you do instead. **Do not fold it into "skipped"**: a pending removal is a claim
+about a directory that outlives the session.
+
 **0 commits ahead of `main` is not evidence a worktree is disposable.** It is the single most
 expensive mistake available here: such a branch can hold uncommitted work that exists on no ref
 at all. `git status --porcelain` being non-empty is the only check that sees it, and the
@@ -654,6 +661,11 @@ than silently dropping it.
 - Count a branch's value by its commit count. A branch can be several commits of real fixes and
   a branch one commit of scratch.
 - Release another agent's claim or file lock before `doctor` says it is expired.
+- Route around a `dispose` refusal. Every refusal names the signal that produced
+  it, and the one you are most likely to hit is **you** — see case (a). The gate
+  is the only thing standing between a sweep and the 2026-10-01 incident, and a
+  refusal you argued with is a refusal that taught its reader to discount the
+  next one.
 
 ## Report
 

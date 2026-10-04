@@ -219,7 +219,7 @@ describe('StoreContext initial state contract', () => {
         <div data-testid="initial-durable">{`${store.durableStatus}:${store.durableDocument === null}`}</div>
         <div data-testid="initial-colors">{`${store.color}:${store.backgroundColor}`}</div>
         <div data-testid="initial-refs">
-          {[store.canvasRef, store.toolOverlayRef, store.rectOverlayRef, store.containerRef, store.textareaRef]
+          {[store.canvasRef, store.toolOverlayRef, store.rectOverlayRef, store.containerRef]
             .map((ref) => `${ref.current === null ? 'detached' : 'attached'}`)
             .join(',')}
         </div>
@@ -242,7 +242,7 @@ describe('StoreContext initial state contract', () => {
     expect(screen.getByTestId('initial-durable').textContent).toBe('unavailable:true');
     expect(screen.getByTestId('initial-colors').textContent).toBe('#000000:#ffffff');
     // Every live DOM ref starts detached; production code null-checks them.
-    expect(screen.getByTestId('initial-refs').textContent).toBe('detached,detached,detached,detached,detached');
+    expect(screen.getByTestId('initial-refs').textContent).toBe('detached,detached,detached,detached');
   });
 
   it('ships a no-op clearPreviewLayers before any preview exists', () => {

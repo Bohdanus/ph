@@ -137,11 +137,10 @@ describe('useRect mask drawing', () => {
     expect(ctx.lineWidth).toBe(2);
 
     const handle = HANDLE_SIZE;
-    const half = handle / 2;
-    expect(ctx.fillRect).toHaveBeenCalledWith(100 - half, 100 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 100 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(100 - half, 250 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 250, handle, handle);
   });
 
   it('reports the sorted rect to onRepaint but not to onChange while idle', () => {
@@ -252,7 +251,7 @@ describe('useRect mask drawing', () => {
     expect(ctx.setLineDash).toHaveBeenCalledWith([2.5, 2.5]);
     expect(ctx.lineWidth).toBe(1);
     const handle = HANDLE_SIZE / 2;
-    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle / 2, 100 - handle / 2, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
   });
 });
 
@@ -786,11 +785,10 @@ describe('useRect painting outside the canvas', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
 
     const handle = HANDLE_SIZE;
-    const half = handle / 2;
-    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, -50 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -50 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, 60 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - handle, -50 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50, -50 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - handle, 60, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50, 60, handle, handle);
   });
 
   it('leaves the clamped painting and handles in place for a consumer that does not opt in', () => {
@@ -802,11 +800,10 @@ describe('useRect painting outside the canvas', () => {
     // The handles are derived from the painted rect, so the clamp moves them too — which is the
     // snap-back this prop exists to switch off, pinned for everyone who does not set it.
     const handle = HANDLE_SIZE;
-    const half = handle / 2;
-    expect(ctx.fillRect).toHaveBeenCalledWith(-half, -half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(-half, 60 - half, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-handle, -handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50, -handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-handle, 60, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50, 60, handle, handle);
   });
 
   it('paints a rect that stays inside the document identically with and without the prop', () => {
