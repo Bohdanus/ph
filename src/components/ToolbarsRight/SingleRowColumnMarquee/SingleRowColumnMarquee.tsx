@@ -51,7 +51,7 @@ const SingleRowColumnMarquee: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleClear = () => {
+  const handleDeselect = () => {
     clearSelections();
   };
 
@@ -68,8 +68,8 @@ const SingleRowColumnMarquee: React.FC<{}> = () => {
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePaste}>
           Paste
         </button>
-        <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={handleClear}>
-          Clear
+        <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={handleDeselect}>
+          Deselect
         </button>
       </div>
     </div>

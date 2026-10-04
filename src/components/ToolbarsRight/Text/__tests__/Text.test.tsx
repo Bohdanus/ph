@@ -217,6 +217,10 @@ describe('Text toolbar', () => {
     // And from the other side: the old pair is gone, not merely outranked.
     expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear' })).not.toBeInTheDocument();
+    // `Deselect` is the name the selection bars now carry, so naming it here keeps this the
+    // negative assertion it was when the seven bars said `Clear`: without it the rename would
+    // leave the Text bar free to grow a deselect of its own and this would still pass.
+    expect(screen.queryByRole('button', { name: 'Deselect' })).not.toBeInTheDocument();
   });
 
   it('names the style toggles for assistive technology, not by their glyph', () => {
@@ -529,20 +533,24 @@ describe('Text toolbar', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
   });
 
-  it('refuses to commit a draft that carries no rect, even when the bar is told a draft is open', () => {
-    // `applyText` guards on `editing` AND on `rect`, and the `rect` half is the one a disagreement
-    // needs: with `hasPendingText` honest, `editing` true already implies a rect, so the pair is
-    // already disabled and the guard is unreachable through the button — defence in depth, which
-    // is only pinned if something can reach it. The predicate is overridden to report a draft the
-    // args do not actually carry, which is precisely the state the guard exists for.
-    pendingTextOverride.value = true;
+  it('offers no commit control for text that has no box, because the RECTANGLE is the edit session', () => {
+    // This is the rule the bar actually enforces, stated so that breaking it turns the test red.
+    // `editing` is `Boolean(rect)`, not `hasPendingText(args)`, so text alone opens no session: there
+    // is nothing to commit into and nothing for the canvas overlay to draw. The previous version of
+    // this case asserted that no layer was created and that `setToolArgs` was not called, which
+    // followed from the Commit button simply not being rendered — it passed with `applyText`'s own
+    // guard deleted, and with the guard's `rect` half deleted, because neither was ever reached.
+    //
+    // MEASURED: `editing = Boolean(text)` instead renders the pair, and `disabled={!editing || !text}`
+    // then leaves Commit ENABLED for text with no box — a commit that would reach
+    // `createLayerFromTool` with a null rect and throw `Missing rect in args` from a React handler.
+    pendingTextOverride.value = null;
     resetToolArgs({ text: 'Hi', rect: null });
     renderWithProvider(<Text />);
 
-    expect(screen.queryByRole('button', { name: 'Commit' })).not.toBeInTheDocument();
-
+    expect(screen.queryByRole('button', { name: 'Commit' }), 'a rect-less draft opened an edit session').toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
-    expect(mockSetToolArgs).not.toHaveBeenCalled();
   });
 
   it('calls createLayerFromTool with the draft args when Commit is clicked', () => {

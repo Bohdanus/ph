@@ -5,7 +5,6 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
-import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts';
@@ -20,7 +19,7 @@ import {
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
+  const [{ layers, activeLayerId }] = useStore();
   const {
     toggleVisibility,
     removeLayer,
@@ -48,7 +47,7 @@ export default function LayersTab() {
     const source = layers[id]?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
       if (source.args.toolName === 'text') {
-        const target = textLayerEditTarget(layers[id], documentFrame ?? documentFrameFromSize(totalSize));
+        const target = textLayerEditTarget(layers[id]);
         if (target) {
           beginTextLayerEdit(target.layerId);
           setToolArgs(target.args);
@@ -62,7 +61,7 @@ export default function LayersTab() {
   const enterTextLayer = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
-    const target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
+    const target = textLayerEditTarget(layer);
     if (!target) return;
     if (toolArgs.toolName !== 'text') goToTool('text');
     setActiveLayer(id);
