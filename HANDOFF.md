@@ -307,30 +307,9 @@ pin the unbounded behaviour as load-bearing:
   case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
-**Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
-they must be re-derived to assert a creation entry that precedes the target, not deleted to make the
-bound pass. The unbounded behaviour was a live feature, so a fix that makes one of them fail without
-re-deriving it has removed a user-visible capability, not corrected a pin.
-
-Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
-cursor argument) and be threaded through `replayHistory` in `history-replay.ts` and
-`legacyHistoryToDurable` in `history-adapter.ts`
-together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
-exists to close.
-
-**Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
-them:**
-
-- The doc comment above `deriveSelectionBaseline` in `selection-baseline.ts`. The claim is in that
-  comment, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
-  record that the selection ever existed", restated there for the durable baseline.
-- The comment above the `deriveSelectionBaseline(legacyHistory)` call in `legacyHistoryToDurable`
-  (`history-adapter.ts`) repeats it in the adapter's own voice: "It cannot be narrowed to the
-  pre-first-entry state
-  **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
-  the only record that the selection existed." Rewriting only the first leaves the rule's owner
-  corrected and its caller still advertising the reason it must not be bounded, so the next reader
-  takes the call site as exempt from the bound being introduced at the signature.
+**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline. Any future selection
+authority migration must preserve that rule and keep the two tests above as tripwires; bounding one
+consumer but not the other would reopen the parity divergence this helper exists to close.
 
 **Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
 `src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
@@ -2081,8 +2060,9 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
 
 **Files.** `src/contexts/history-replay.ts`
 
-The append-boundary test citations are a separate drift cluster, not part of this file's
-`history-replay.ts` arithmetic; they are recorded in §204.
+The append-boundary test citations were a separate drift cluster, not part of this file's
+`history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
+outstanding.
 
 ---
 
@@ -5523,41 +5503,33 @@ judgement and belongs to the operator.
 
 ---
 
-## 203. No browser seam distinguishes durable and legacy presentation authorities
+## 203. No Playwright assertion distinguishes the durable authorities, and no seam exposes the cursor or the published layers
 
-**Problem.** The only durable Playwright assertion is the status string read by
-`error-boundary.spec.ts` through `error-boundary-durable-status`. No testid or `window` hook exposes
-the durable status, cursor, or which layers were published from a durable composition. The current
-history e2e tests therefore pass identically when the durable presentation mount is declined.
+**Problem.** Durable status IS already reachable from Playwright — `ErrorBoundary.tsx` renders
+`error-boundary-durable-status`, and `DevStatusStrip.tsx` renders `dev-status-strip` with
+`data-status={durableStatus}`. The strip is DEV-gated, and `playwright.config.ts` runs
+`npm run dev` as its `webServer`, so it is reachable in every e2e run. What does not exist is any
+exposure of the durable CURSOR or of WHICH LAYERS were published from a durable composition: no
+`window` hook in `src/`, nothing in `e2e/helpers/` or `e2e/fixtures/`.
 
-**Consequence.** Browser evidence cannot prove that navigation published durable pixels or that a
-declined composition left the legacy presentation in place.
+The only durable assertions in `e2e/` are the status string and two absence checks —
+`error-boundary.spec.ts` reads `error-boundary-durable-status`, and also asserts
+`dev-status-strip` and `error-boundary-durable-status` are absent outside an error. None of them
+reads a cursor or a published-layer set, so the history specs pass identically whether a navigation
+published durable pixels or the mount declined it.
 
-**Fix.** Add a development-only Playwright seam carrying durable status, cursor and published-layer
-state. Add one test for a successful durable navigation publication and one for a declined
-composition falling back to the legacy presentation. Assert the seam, not pixel colours.
+**Consequence.** Browser evidence cannot prove that navigation published durable composition, nor
+that a declined composition left the legacy presentation in place. The pixel differential proves the
+compositions agree; nothing proves the browser ever shows them.
 
-**Files.** `src/contexts/StoreContext.tsx`, `e2e/error-boundary.spec.ts`, and the history navigation
-specs
+**Fix.** Extend the existing seam rather than inventing one: put the durable cursor and the published
+layer ids beside `data-status` on `DevStatusStrip`, which already reaches Playwright. Add one
+history-navigation spec asserting a published durable composition and one asserting the declined
+fallback. Assert the seam values, not pixel colours — the pixel claim belongs to
+`history-migration.pixel-parity.test.ts` and is duplicated nowhere.
 
----
-
-## 204. History-append pin citations drifted outside the history-replay citation inventory
-
-**Problem.** The `KNOWN GAP 1` block in `history-append.test.ts` carried source citations that no
-longer resolve to the units they name, among them `decideDurableAppend()` and the related
-`StoreContext.tsx` builder. These are not the `history-replay.ts` shifts owned by §99, so that entry's
-arithmetic cannot repair them.
-
-**Consequence.** A reader following the append-boundary pin is sent to the wrong code and can miss
-the live defect or misread a guard as already fixed.
-
-**Fix.** Re-derive every remaining stale citation against the current symbols and replace line ranges
-with unit citations. Do not change the pin to make the citation check green.
-
-**Files.** `src/contexts/__tests__/history-append.test.ts`, `src/contexts/history-append.ts` —
-`decideDurableAppend()`, `validatePlannedDurableEntry()`, `translate()`,
-`src/contexts/StoreContext.tsx` — `buildDurableDocument()`
+**Files.** `src/components/DevStatusStrip/DevStatusStrip.tsx`, `src/contexts/StoreContext.tsx`,
+`e2e/error-boundary.spec.ts`, and the history navigation specs
 
 ---
 
@@ -5598,31 +5570,46 @@ a tripwire and starts being a lie.
 
 ---
 
-## 206. The export axis is blind exactly where the runtime axis diverges
+## 206. Export parity was never proven for any layer, and the first export axis could not fail
 
-**Problem.** The pixel differential compares the export surface by mounting durable compositions into
-the legacy records' `tmpCanvas`, which only happens for layers
-`durablePresentationIsRendererIdentical()` accepts: no retained operations, matching bounds, and a
-`raster` or `blank` source. Every transformed, filtered and text layer is **declined**, so the export
-comparison falls back to the legacy presentation and compares legacy against itself. Six declines are
-measured: `reposition and affine transform@2:layer-a`, `filter chain@1,2,3:layer-a`,
-`text source@1:text-layer`, `raster processor on a non-flat baseline@1:layer-a` — pinned by the
-`mounts every composed layer …` `it.fails` title in the same file.
+**Problem.** The pixel differential's export axis mounted durable compositions into the legacy
+records and then called `renderExportCanvas()` on both sides. That comparison was structurally
+incapable of failing. The mount keeps the LEGACY record's `pos`, `visible`, `opacity`, `blendMode`
+and `operations`, and `renderExportCanvas()` is handed the legacy frame and size on both sides; the
+only durable input was a `tmpCanvas` swap. And because `durablePresentationIsRendererIdentical()`
+(`StoreContext.tsx`) accepts a layer only when it has no retained operations and
+`isEqual(bounds, existing.pos)`, the bitmap it accepted was a byte-identical copy of the legacy
+record's own — 30 accepted mounts, zero differing bytes, on every cursor.
 
-**Why it matters more than a coverage gap.** §205's divergence sits on the runtime axis only, and the
-export axis reports agreement there **because it never compared anything**. A green export assertion
-is therefore not evidence of export parity for any transformed, filtered or text layer — the same
-"simultaneously live and uninformative" shape §1 records about the mount itself.
+**Measured, not inferred.** Stamping the durable compositor's layer 7px off turns the RUNTIME axis
+red and leaves the OLD export axis at zero differing bytes: `renderExportCanvas()` places by
+`layer.pos` and never reads `materialized.bounds`, and the accept predicate required those two to be
+equal, so the one value worth comparing was equal by precondition. The blindness was **every
+cursor**, not the six declines the mount records.
 
-**Fix.** Widen `durablePresentationIsRendererIdentical()` per source kind, gated on the pixel
-differential being green for that kind, so each widening is separately provable. The export axis goes
-green for a layer only when the mount accepts it; until then, treat export parity for those kinds as
-unproven rather than passing. Remove the pin with the widening that satisfies it.
+**Consequence.** Export parity is unproven for every layer kind, including plain raster and blank —
+not merely for the transformed, filtered and text layers the six declines name. A reader of the green
+suite would reasonably conclude the opposite. This is the "simultaneously live and uninformative"
+shape §1 records about the mount itself, one level down.
+
+**Fixed here.** The export axis now derives the durable side entirely from the durable composition:
+`pos` from `materialized.bounds`, `visible`/`opacity`/`blendMode`/`order`/`name` from the durable
+replay layer's own snapshot, `operations` empty because the retained presentation is already baked in,
+and size and frame from the durable replay rather than the legacy one. Nothing on that side is read
+off legacy replay. The same 7px mutation now turns the export axis red on 30 cursors, so it is a
+gate. Run in `src/contexts/__tests__/history-migration.pixel-parity.test.ts` —
+`durableExportRecords()`.
+
+**What is still owed.** Export parity is now _enforced_, but two of the scenarios remain unproven in
+BOTH directions for jsdom reasons rather than compared-and-agreed: `filter chain`, because
+`PixelContext` records `ctx.filter` without applying it, and `text source`, because `fillText`
+rasterizes nothing. Those are the two `it.fails` titles naming the limitation. Widening
+`durablePresentationIsRendererIdentical()` remains the production question, and it is now separable
+from the harness: the harness no longer depends on the mount.
 
 **Files.** `src/contexts/StoreContext.tsx` — `durablePresentationIsRendererIdentical()`,
-`src/contexts/durable-compositor.ts` — `composeDurableDocument()`,
-`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the
-`mounts every composed layer …` `it.fails` title
+`src/contexts/export-canvas.ts` — `renderExportCanvas()`,
+`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — `durableExportRecords()`
 
 ---
 

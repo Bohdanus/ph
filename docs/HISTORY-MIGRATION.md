@@ -148,17 +148,16 @@ variant or an equivalent atomic history action.
 
 1. Record the operator rulings below and make the requirements document part of
    the tracked architecture map.
-2. Close the current append-boundary defects and keep every currently
-   appendable durable operation replayable without changing production
-   authority. The runtime retained-operation boundary, supported raster append
-   path, and navigation presentation mount are closed; §87 is the open
-   append-boundary defect.
+2. Keep every currently appendable durable operation replayable without changing
+   production authority. The runtime retained-operation boundary, the supported
+   raster append path and the navigation presentation mount are closed, and the
+   §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity and a pixel/export
    differential both exist; what is still owed is the divergence the differential
-   found (§205), the export axis it cannot yet see (§206), history-panel parity
-   (§207), options-bar rehydration, the browser authority seam (§203), and the
-   pinned `args.enabled` divergence.
+   found (§205), the two scenarios jsdom cannot render in either direction (§206),
+   history-panel parity (§207), options-bar rehydration, the browser authority
+   seam (§203), and the pinned `args.enabled` divergence.
    Do not read the landed operation as a closed requirement; the
    operator's ruling was that the operation and its visible consumer land as one
    slice, and the consumer is still legacy-sourced.
@@ -166,9 +165,12 @@ variant or an equivalent atomic history action.
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Extend the durable materialization/compositor boundary to render and export.
-   Stage successfully before publication and delete the old authority only
-   after the differential and failure-contract gates pass.
+6. Transfer RENDER AUTHORITY, which render already reads, and keep EXPORT
+   legacy-authoritative until its own differential is green for every layer kind
+   (§206). Stage successfully before publication and delete the old authority only
+   after the differential and failure-contract gates pass. This is no longer a
+   mounting question: durable pixels already reach both surfaces through
+   `getLayerBitmap()`, and what is unmounted is durable STATE authority.
 
 ## Operator rulings
 
