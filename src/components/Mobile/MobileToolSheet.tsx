@@ -45,7 +45,11 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          aria-controls="mobile-tool-options"
+          // Only while the panel it names exists. The panel is rendered under `isOpen` below, so a
+          // closed sheet's header advertised a region that was not in the tree beside
+          // `aria-expanded="false"` — the same dangling IDREF `PanelGroup`'s tab control was fixed
+          // for, and the same omit-and-unmount convention.
+          aria-controls={isOpen ? 'mobile-tool-options' : undefined}
           className="flex min-h-11 w-full items-center justify-between gap-2 px-4 py-2 text-left bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 cursor-pointer"
         >
           <span className="flex min-w-0 items-center gap-2">

@@ -98,7 +98,10 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
           aria-label="Open navigation menu"
           aria-haspopup="dialog"
           aria-expanded={isMenuOpen}
-          aria-controls="mobile-menu-panel"
+          // Only while the drawer it names exists. `MobileMenuDrawer` returns null when closed, so a
+          // closed header's `aria-expanded="false"` sat beside a reference to an id that was not in
+          // the tree — the same dangling IDREF `PanelGroup`'s tab control was fixed for.
+          aria-controls={isMenuOpen ? 'mobile-menu-panel' : undefined}
           data-testid="mobile-menu-button"
           className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-300 hover:text-white hover:bg-gray-800 transition-colors"
         >
@@ -141,7 +144,9 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
           aria-label="Toggle layers panel"
           aria-haspopup="dialog"
           aria-expanded={isLayersOpen}
-          aria-controls="mobile-layers-panel"
+          // Gated for the same reason as the menu button above: `MobileLayersDrawer` returns null
+          // when closed, so the reference would name nothing while `aria-expanded` says "false".
+          aria-controls={isLayersOpen ? 'mobile-layers-panel' : undefined}
           data-testid="mobile-layers-toggle-button"
           className={`relative flex min-h-11 min-w-11 items-center justify-center rounded-lg text-sm transition-colors ${
             isLayersOpen ? 'bg-blue-600 text-white' : 'text-gray-300 hover:text-white hover:bg-gray-800'
