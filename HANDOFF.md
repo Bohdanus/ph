@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 48-54, 65, 69-71, 75, 84-85, 100, 104-105, 111, 125, 127, 131, 141, 154, 161 — deleted
+### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 48-54, 65, 69-71, 75, 84-85, 88, 89, 100, 104-105, 111, 125, 127, 131, 141, 154, 161, 201 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -46,10 +46,11 @@ case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — i
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
-**Why it matters.** The navigation cache is the first user-visible durable projection, but render,
-export, and durable logical replay remain legacy-authoritative. Every additional surface must keep
-the same staged publication and lease ownership contract; the migration is not a full authority
-cutover yet.
+**Why it matters.** The navigation cache is the first user-visible durable projection, and its
+`tmpCanvas` reaches both runtime rendering and export through `layer-renderer.ts` —
+`getLayerBitmap()`. Durable logical state remains legacy-authoritative. Every additional surface
+must keep the same staged publication and lease ownership contract; the migration is not a full
+authority cutover yet.
 
 **Trap for whoever wires it.** Neither the affine composition nor the vector-argument rescale is
 duplicated, so the drift warning this entry used to carry is withdrawn — `materialization.ts` owns no
@@ -61,15 +62,16 @@ through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 now the first real caller; the remaining surfaces still need independent parity gates before they
 are mounted.
 
-**Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap — `layer.tmpCanvas
-?? layer.bitmap` — straight into a pixel processor, and both live in `tempUpdateLayer` in
-`useLayer.ts`; the durable path materializes the retained presentation first (in
-`renderRetainedSegment`). Wiring the durable path without reconciling these changes pixel-tool
-results.
+**Also wrong at the boundary.** The runtime path reads `layer.tmpCanvas` before `layer.bitmap` through
+`getLayerBitmap()`, with vector-source handling between those fallbacks; the durable path materializes
+the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
+reconciling these changes pixel-tool results.
 
-**Fix.** Extend the navigation-only presentation mount to render and export only after each surface
-has a differential parity gate. Keep legacy logical state as the authority until those projections
-are staged, lease-safe, and failure-contained; do not mount all remaining consumers at once.
+**Fix.** Close the divergence the pixel differential found (§204) and the export axis it cannot see
+(§205), add the history-panel state axis (§206), then make the presentation authority explicit and
+rehydrate the options bar from durable sources. Keep legacy logical state as the authority until those
+projections are staged, lease-safe, and failure-contained; do not mount all remaining consumers at
+once.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
@@ -288,10 +290,10 @@ timeline wholesale — `replayHistory` in `history-replay.ts` and `legacyHistory
 and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
 extracted this rule to own.
 
-Bounding the lookup by replay target looks like a correctness fix, and it was a data-loss bug until
-every selection-creating gesture recorded its own entry. That precondition now holds, so **this entry
-is actionable: the bound is safe to make.** Two tests still pin the unbounded behaviour as
-load-bearing, not stale:
+Bounding the lookup by replay target looks like a correctness fix, but it would reintroduce a
+data-loss bug. A selection can be created by a gesture that writes no history entry, so bounding
+the lookup at the replay target makes undoing a tool-switch deselect a silent visual no-op. Two tests
+pin the unbounded behaviour as load-bearing:
 
 - The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
   `useHistory.test.tsx` — "restores a cleared selection when undoing the
@@ -305,30 +307,9 @@ load-bearing, not stale:
   case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
-**Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
-they must be re-derived to assert a creation entry that precedes the target, not deleted to make the
-bound pass. The unbounded behaviour was a live feature, so a fix that makes one of them fail without
-re-deriving it has removed a user-visible capability, not corrected a pin.
-
-Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
-cursor argument) and be threaded through `replayHistory` in `history-replay.ts` and
-`legacyHistoryToDurable` in `history-adapter.ts`
-together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
-exists to close.
-
-**Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
-them:**
-
-- The doc comment above `deriveSelectionBaseline` in `selection-baseline.ts`. The claim is in that
-  comment, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
-  record that the selection ever existed", restated there for the durable baseline.
-- The comment above the `deriveSelectionBaseline(legacyHistory)` call in `legacyHistoryToDurable`
-  (`history-adapter.ts`) repeats it in the adapter's own voice: "It cannot be narrowed to the
-  pre-first-entry state
-  **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
-  the only record that the selection existed." Rewriting only the first leaves the rule's owner
-  corrected and its caller still advertising the reason it must not be bounded, so the next reader
-  takes the call site as exempt from the bound being introduced at the signature.
+**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline. Any future selection
+authority migration must preserve that rule and keep the two tests above as tripwires; bounding one
+consumer but not the other would reopen the parity divergence this helper exists to close.
 
 **Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
 `src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
@@ -760,7 +741,7 @@ for mobile rather than copied across.
 
 ---
 
-## 59. Five selection tools claim `creator: true` and cannot create anything
+## 59. Seven selection tools claim `creator: true` and cannot create anything
 
 **Problem.** `materializeLayer` trusts the `creator` flag as its only gate
 (`materialization.ts` — `sourceBitmap()`, the `processor?.creator` refusal). **Seven**
@@ -1849,75 +1830,6 @@ same change.
 
 ---
 
-## 88. The append boundary never re-validates a planned frame's `next`
-
-**Problem.** `validatePlannedDurableEntry`'s frame branch (`history-append.ts` —
-`validatePlannedDurableEntry()`) proves only
-that `planned.operation.next` equals the legacy `args.nextFrame` structurally (`sameFrame`) and
-that `nextFrame` is present. It never asks whether either is a **document frame** —
-`isValidDocumentFrame` is not called anywhere in the boundary. The shared derivation the boundary
-relies on does call it (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, reached from
-`history-append.ts` — `translate()`), so the two
-routes disagree about one legacy item by construction.
-
-**User-visible failure.** A published `0x0` crop. Durable replay applies `next` with no validation
-at all (the `'set-document-frame'` case in `durable-replay.ts`) and `documentFrameSize()` in
-`document-frame.ts` clamps to a 1×1 minimum,
-so the shadow comes to describe a **one-pixel-square document** rather
-than a zero — the loss is invisible as a degenerate size. The conversion route for the same item
-publishes nothing and names the loss (the `SET_DOCUMENT_FRAME_ACTION` arm of
-`legacyHistoryToDurable()`, whose `invalid-history-entry` **warning** says the entry was not
-published), so of the two routes only one
-says anything.
-
-**Latent.** Only a **supplied** entry reaches it: every production `durableEntry` is
-`planHistoryAppend`'s output, which refuses the frame in `history-append.ts` — `translate()`, or
-`deriveReorderLayersEntry()`, which is not a frame action (`StoreContext.tsx` — its
-`deriveReorderLayersEntry()` call).
-
-**Fix.** In the frame branch, reject a `planned.operation.next` that fails `isValidDocumentFrame`
-before comparing it to the legacy arg, and treat the refusal as a `mismatch` so the store records
-it. Pinned as a KNOWN-GAP pin as the `it('publishes a planned frame whose next frame is not a
-document frame, and the shadow replays it anyway')` title in `history-append.test.ts`; the fix must
-re-point it.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
-
----
-
-## 89. The baseline document source's id is not in the duplicate-id set
-
-**Problem.** The duplicate-id guard records an id only when an entry is actually published
-(the `publishedEntryIds` check inside `legacyHistoryToDurable()` in `history-adapter.ts`). The
-baseline document source is adopted, not published: its branch
-`continue`s — pushing cursor `-1` — long before the publication guard,
-so the baseline's id never reaches `publishedEntryIds` and a later entry reusing it
-is published as a first occurrence. No diagnostic is raised, and the two id-based resolvers now
-disagree: `updateHistoryTimeline` finds the **first** match in the legacy timeline
-(`history-timeline.ts` — `updateHistoryTimeline()`) while `toggleDurableEntry()` in
-`history-adapter.ts` finds the first in the durable document,
-so one History-panel eye click disables a different edit in each model.
-
-**User-visible failure.** A click that toggles the wrong row, and a durable document whose entries
-carry an id the legacy timeline already used. Silent: `status` stays `current` and no diagnostic
-names the id.
-
-**Reachable only by accident today.** Production mints a fresh `uuidv4()` per commit
-(`history-utils.ts` — `createHistoryItem()`, whose `id` parameter defaults to `uuidv4()`), so the
-baseline id and a later entry's id are unrelated values. Note that
-this is the one hole where the "does not consume its id" rule is **not** a safe answer, unlike the
-refused replacement and the entry that threw: the baseline id is not a durable entry, so this set
-structurally cannot see it, while the legacy timeline still holds it.
-
-**Fix.** Add the baseline's id to `publishedEntryIds` when it is adopted, or widen the guard to
-compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin as the
-`it('reports a later entry that reuses the baseline open-document id')` title in
-`history-adapter.diagnostics.test.ts`; the fix must delete or re-point it.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.diagnostics.test.ts`
-
----
-
 ## 91. The durable baseline's bedrock frame rule is implemented and no test reaches it at index 0
 
 **The rule, and why it is right, so nobody re-derives it.** Legacy replay takes the document frame
@@ -2333,6 +2245,9 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
   block)
 
 **Files.** `src/contexts/history-replay.ts`
+
+The append-boundary test citations are a separate drift cluster, not part of this file's
+`history-replay.ts` arithmetic; they are recorded in §203.
 
 ---
 
@@ -5937,3 +5852,136 @@ guard fix rather than alongside it.
 **Provenance.** Found by review. An earlier correction in this area added a blur handler that turned
 out to be dead code — its guard tested a value `resolveTextStyle` had already clamped — and while
 establishing that it was dead, the intermediate-value problem became visible.
+
+---
+
+## 202. No browser seam distinguishes durable and legacy presentation authorities
+
+**Problem.** The only durable Playwright assertion is the status string read by
+`error-boundary.spec.ts` through `error-boundary-durable-status`. No testid or `window` hook exposes
+the durable status, cursor, or which layers were published from a durable composition. The current
+history e2e tests therefore pass identically when the durable presentation mount is declined.
+
+**Consequence.** Browser evidence cannot prove that navigation published durable pixels or that a
+declined composition left the legacy presentation in place.
+
+**Fix.** Add a development-only Playwright seam carrying durable status, cursor and published-layer
+state. Add one test for a successful durable navigation publication and one for a declined
+composition falling back to the legacy presentation. Assert the seam, not pixel colours.
+
+**Files.** `src/contexts/StoreContext.tsx`, `src/components/ErrorBoundary/ErrorBoundary.tsx`,
+`e2e/error-boundary.spec.ts`, and the history navigation specs
+
+---
+
+## 203. History-append pin citations drifted outside the history-replay citation inventory
+
+**Problem.** The `KNOWN GAP 1` block in `history-append.test.ts` — the §87 pin — carries five stale
+source citations, all of them line ranges. They point at moved units in `decideDurableAppend()` (the
+precondition guard list, the legacy-tip refusal, the published cursor and the cursor guard) and at
+the rebuild that maps a legacy cursor in `StoreContext.tsx` — `buildDurableDocument()`. These are not
+the `history-replay.ts` shifts owned by §99, so that entry's arithmetic cannot repair them.
+
+**Consequence.** A reader following the append-boundary pin is sent to the wrong code and can miss the
+live defect or misread the guard as already fixed.
+
+**Fix.** Re-derive all five stale citations against the current symbols and replace the line ranges
+with unit citations. Do not change the pin to make the citation check green.
+
+**Files.** `src/contexts/__tests__/history-append.test.ts`,
+`src/contexts/history-append.ts` — `decideDurableAppend()`,
+`src/contexts/StoreContext.tsx` — `buildDurableDocument()`
+
+## 204. The durable composition resamples a retained affine twice, and the two authorities disagree on the pixels
+
+**Problem.** `materializeLayer()` — `renderRetainedSegment()` draws a layer's retained affine into
+an intermediate surface sized `Math.ceil(localBounds)`, and `composeDurableDocument()` then stamps
+that surface at `bounds.width`/`bounds.height` — the un-rounded `getAffineBounds()` numbers. So the
+durable side runs the affine through two resamples at a fractional scale. `drawLayerSource()`
+(`layer-renderer.ts`) applies the same affine in ONE `drawImage` straight into the document surface.
+The legacy side resamples once; the durable side resamples twice.
+
+**Measured, not inferred.** `history-migration.pixel-parity.test.ts` — the
+`diverges today: reposition and affine transform at cursor 2 …` `it.fails` title: **764 of 480000
+bytes differ**, first at (45, 41), where the legacy presentation is opaque white
+(`rgba 255,255,255,255`) and the durable one is transparent (`rgba 0,0,0,0`). Removing that row from
+`DECLARED_DIVERGENCES` puts the same failure on the hard matrix, so the harness detects it rather
+than merely recording it.
+
+**Consequence.** Any layer carrying a retained affine reaches the screen through a different
+resample chain than the legacy authority, so the two paint measurably different edges on the same
+history. This is the divergence the pixel differential was built to find, and it is latent for every
+durable presentation that carries a transform.
+
+**Fix — a ruling, then an edit.** Decide which side is correct: either the durable composition must
+not round its intermediate bounds, or `composeDurableDocument()` must stamp at the surface's actual
+size, or the legacy renderer must adopt the same two-step. The two-step arrangement is the durable
+model's own, so the un-rounded bounds are its own output and the cheapest fix is to make the stamp
+use the surface it was handed. Whichever is chosen, re-derive the answer with the harness as the
+oracle and remove the `it.fails` pin **in the same change** — a pin that outlives its fix stops being
+a tripwire and starts being a lie.
+
+**Files.** `src/contexts/materialization.ts` — `renderRetainedSegment()`,
+`src/contexts/durable-compositor.ts` — `composeDurableDocument()`,
+`src/contexts/presentation-evaluator.ts` — `getAffineBounds()`,
+`src/contexts/layer-renderer.ts` — `drawLayerSource()`,
+`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — `DECLARED_DIVERGENCES`
+
+---
+
+## 205. The export axis is blind exactly where the runtime axis diverges
+
+**Problem.** The pixel differential compares the export surface by mounting durable compositions into
+the legacy records' `tmpCanvas`, which only happens for layers
+`durablePresentationIsRendererIdentical()` accepts: no retained operations, matching bounds, and a
+`raster` or `blank` source. Every transformed, filtered and text layer is **declined**, so the export
+comparison falls back to the legacy presentation and compares legacy against itself. Six declines are
+measured: `reposition and affine transform@2:layer-a`, `filter chain@1,2,3:layer-a`,
+`text source@1:text-layer`, `raster processor on a non-flat baseline@1:layer-a` — pinned by the
+`mounts every composed layer …` `it.fails` title in the same file.
+
+**Why it matters more than a coverage gap.** §204's divergence sits on the runtime axis only, and the
+export axis reports agreement there **because it never compared anything**. A green export assertion
+is therefore not evidence of export parity for any transformed, filtered or text layer — the same
+"simultaneously live and uninformative" shape §1 records about the mount itself.
+
+**Fix.** Widen `durablePresentationIsRendererIdentical()` per source kind, gated on the pixel
+differential being green for that kind, so each widening is separately provable. The export axis goes
+green for a layer only when the mount accepts it; until then, treat export parity for those kinds as
+unproven rather than passing. Remove the pin with the widening that satisfies it.
+
+**Files.** `src/contexts/StoreContext.tsx` — `durablePresentationIsRendererIdentical()`,
+`src/contexts/durable-compositor.ts` — `composeDurableDocument()`,
+`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the
+`mounts every composed layer …` `it.fails` title
+
+---
+
+## 206. The history-panel differential cannot be built without a durable title mapping, and none exists
+
+**Problem.** RQ-4 names history-panel state as one of the surfaces that must agree. `HistoryTab.tsx`
+labels each row with `getHistoryItemTitle()` (`useHistory.ts`) — a pure function of a **legacy**
+`HistoryItem`, dispatching on `layerSource.kind`, `actionName` and `TOOL_ACTION`. The durable document
+carries `operation.kind` and has no title field anywhere in the tree; no `durableEntryTitle` exists.
+Only `item.disabled` and `entry.enabled` correspond field-for-field, so a title differential has
+nothing to compare today.
+
+**Why this is filed and not built.** The `operation.kind` to title mapping is a **product decision**,
+not a derivation — `apply-raster-processor` to a processor id, `apply-affine-transform` to
+"transform", `set-document-frame` to "crop", and a tool source to its tool name are all choices about
+what the panel should say. Inventing one inside a test would make every assertion about the invention
+rather than about the two models. Pinned as a fact in
+`history-migration.pixel-parity.test.ts` — the `it('has one authority today: the durable document
+carries no title to difference')` title — so the limitation is visible in the suite rather than only
+here.
+
+**Fix.** Derive `durableEntryTitle()` from `operation.kind` in production, mirroring
+`getHistoryItemTitle()`'s existing vocabulary so the panel's wording does not change at cutover, and
+add the panel-state axis beside the pixel axes. The wording itself is the operator's call if any
+durable kind has no legacy counterpart; every kind in the union has one today.
+
+**Files.** `src/contexts/useHistory.ts` — `getHistoryItemTitle()`,
+`src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
+`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
+
+---
