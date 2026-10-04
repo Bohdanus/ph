@@ -3060,24 +3060,39 @@ rider survives.
 `src/tools/settings.ts` — the five figure entries in `defaultSettings`;
 `src/components/Main/ShapeToolArea.tsx`
 
-## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
+## 129. The worktree-inventory suite's per-test timeout is I/O-bound on the shared session database, so it fails under concurrent readers and is indistinguishable from a real break
 
 **Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
-to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
-and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
-with 56 worktrees:
+to protect a worktree whose protection is derived` runs the inventory generator over every worktree.
+Measured on `main` with 56 worktrees:
 
 ```
 full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
 the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
+the same test under branch load   : 147s wall, user 8.78s / sys 16.07s
 ```
 
-So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
-bare `Test timed out` with no assertion — the same output a genuine break produces.
+**This entry's stated cause was wrong and is corrected here.** It used to say the cost grows with
+the fleet because the generator runs git per worktree. The third measurement refutes that:
+**147 seconds of wall clock against 24.85 seconds of CPU is about 17% utilisation**, and a
+CPU- or process-bound workload cannot look like that. It is **blocked on I/O**, not spending
+anything — three generator modules open the same file independently (`chats.mjs`'s `openDb()`,
+`board.mjs`'s `openBoard()`, `writes.mjs`'s `openDb()`), and that store is the operator's 14 GB
+session database, not repository content. So the cost scales with **concurrent readers of one
+shared store**, which is worse exactly when the swarm is busiest, and a measurement taken on a
+quiet machine is not evidence. `chats.mjs`'s own module docstring already says the dominant cost
+is two unindexed `LIKE` scans over `part`.
+
+The 53s figure is also not the worst case: the 76957ms above is already over budget, and 147s is
+the real headroom. Both are observations with their dates, on a store that has since grown — quote
+them as measurements, not as constants.
+
+The knife edge and the indistinguishability are unchanged and are the reason this is an entry rather
+than a re-run: the failure it produces is a bare `Test timed out` with no assertion, which is the
+same output a genuine break produces.
 
 **Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
-started with makes this test cross the line, and CI cannot tell the difference. A green local run at
-99 worktrees and a red CI run at 56 would be the same defect with a different cause.
+started with makes this test cross the line, and CI cannot tell the difference.
 
 **Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
 worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
@@ -5765,7 +5780,208 @@ it is the operator's to settle: `AGENTS.md` bans `file.ext:‹line›` in every 
 `docs/TOOLS.md` is excluded from the citation check because it is generated — so the banned form is
 enforced nowhere the form is mandatory.
 
-## 214. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
+## 214. An interrupted merge with no `MERGE_HEAD` is never detected or anchored, so its conflicted paths exist only in a working tree
+
+**Problem.** `.kilo/worktrees/migration-review-sweep` sits mid conflict-resolution: **12 unmerged
+paths** in 24 dirty entries, `AUTO_MERGE` and `MERGE_MSG` present with **no `MERGE_HEAD`**, on a
+**detached HEAD** at a commit on `main`. Its owning session and its two conflict-resolving
+subagents last wrote there at 2026-10-03 16:38Z and stopped. **The conflicted content is in no
+commit on any ref**, so that working tree is the only copy — and this entry exists because it
+nearly was not: nothing in the repository detects this state, and the salvage convention already in
+use here (a commit under `refs/keep/salvage/` whose own message states the tree carries conflict
+markers and is **not** a resolution) had not been applied. It has been now, at
+`refs/keep/salvage/migration-review-sweep-partial`.
+
+**It made `npm run test` red on `main`, and that symptom has since cleared for an unrelated
+reason — recorded here so the next reader is not misled.** The inventory suite failed with
+`migration-review-sweep … status=unreadable … (tip unreadable or detached)`, from a case that
+correctly refuses to let a green run mean "the guard checked everything". The cause was
+`classify()` reaching `undecided` for a worktree whose tip it cannot name. A separate change —
+`classify.mjs` now reading recent I/O as `in-use` "whatever git says" — reclassified it, the
+`undecided` branch stopped firing, and the suite is green with the worktree's 12 unmerged paths
+still there. **So the red suite was a symptom and the unmerged paths are the defect**, and they
+are still unmerged.
+
+**Affected.** `scripts/lib/worktree-inventory/classify.mjs` — the detached / unreadable-tip path,
+now correctly `in-use` rather than `undecided`, which is why the suite is green. The absent
+program is the gap: nothing anywhere checks for `AUTO_MERGE` with no `MERGE_HEAD`.
+
+**What would close it.** A check that finds an interrupted merge state and **anchors it** rather
+than leaving it as the only copy, with a message recording that the tree is not a resolution —
+`docs/ORCHESTRATION.md` names the shape under _Worktrees_ — _After any interrupted or abandoned
+merge_ — and there is no program behind it. **The disposition of the 12 unmerged paths belongs to
+the operator**, because only the operator may stop a writing chat, and that is deliberately not
+decided here.
+
+## 215. `kilo.jsonc` matches one spelling of the destructive commands it names, and the others return `allow`
+
+**Problem.** The permission table denies `git worktree remove` and `rm -rf` against a path containing
+`kilo/`, and puts `git branch -D` behind `ask`. Its own comment says `-D` "reaches a human rather
+than a silent block" — which reads as a property of force-deleting a branch and is a property of
+one token. Verified `allow` today:
+
+```
+git branch --delete --force <b>    semantically identical to -D, no prompt
+git branch -d -f <b>               split short flags
+git update-ref -d refs/heads/<b>   deletes a local branch, no flag at all
+git push origin --delete <b>       deletes the REMOTE branch
+git worktree prune                 drops registrations for vanished directories
+```
+
+`git branch -D` has in fact been executed twice in this repository against branches then lost
+outright. `update-ref -d` is the sharpest: no flag and no `-d`/`-D` distinction, so it deletes a
+local branch outright where a careful agent choosing `-d` would have been stopped by git's own
+unmerged-branch refusal.
+
+**Affected.** `kilo.jsonc` — the `permission.bash` table.
+
+**What would close it.** Literal-glob additions for the three local spellings, each with a comment
+naming the documented claim it protects, and a `kilo/`-scoped `deny` for `worktree prune`. **Say in
+the comment that this layer matches command strings and is a speed bump**, which
+`docs/ORCHESTRATION.md` already says; every demonstrated bypass here was spelling, not evasion.
+**Remote branch deletion is not an agent's call and is deliberately not listed** — it is the only
+one of the five whose loss is not recoverable from `refs/keep/disposed/`, and it belongs to the
+operator.
+
+## 216. An agent cannot release its own recorded ownership, so `npm run dispose` refuses its own caller
+
+**Problem.** `collectOwnership()` keys every signal on the worktree's **absolute path** and never
+calls `resolveIdentity` — verified, zero references in the program. There is no "unless the holder is
+me" anywhere. Liveness is recency-only over recorded writes, so the chat that wrote in a worktree is
+its own live writer for the whole window. Run `npm run dispose` on a worktree you have been working
+in and it refuses itself, with text addressed to somebody else.
+
+**There is no escape from inside the agent.** No `--force` exists — the CLI rejects the flag
+outright, because a dirty tree is a finding rather than something to override — and
+`--max-age-minutes` is ceiling-clamped to the same 15 minutes the inventory-freshness check
+imposes. The only exit is `npm run swarm -- release <issue> --force`, which is the operator's move.
+
+Measured over the program's own refusal line: **24 sessions on 2026-10-01 and 2026-10-02, 35 to
+date.** Each escalated to the operator; each left landed, inert branches behind.
+
+**Affected.** `scripts/dispose-worktree.mjs` — `collectOwnership()` and the `board-claim`,
+`board-lock` and `derived-live-writer` entries of its `REFUSALS` table.
+`scripts/lib/worktree-inventory/classify.mjs` — the live-window constant.
+`docs/ORCHESTRATION.md` — _Removal goes through one program_, which now names the deadlock and does
+not fix it.
+
+**What would close it.** An owner-side release recording **who** released **which** claim and
+**when**, refusing a live board agent or a peer with recent I/O, and distinguishable in
+`WORKTREES.json` from an operator override. A bare flag on `dispose` is not enough: it must be
+auditable in the inventory, or it becomes the `--force` this repository keeps declining to build.
+The operator's own rule releases a chat's write ownership when its branch is merged, which makes
+this automatic on a landing — so the gap is a chat that finishes work it will never land: an
+abandoned feature, or one folded into another branch.
+
+## 217. CI retries every e2e test twice, and no document says so
+
+**Problem.** `playwright.config.ts` sets `retries: process.env.CI ? 2 : 0`. Locally that is `0`, so
+the local suite cannot observe the CI behaviour at all, and **a green CI e2e job is compatible with
+a locally-red defect**. The `e2e` job runs a bare `npx playwright test` with no `--retries`
+override, so it inherits the retry.
+
+`AGENTS.md` and `docs/TESTING.md` both describe only the local configuration. Exhaustive grep for
+`retries`, `process.env.CI` and `flaky` across both finds three hits, all about the local
+`retries: 0`, and one of them is an instruction not to add retries — which reads as a repo-wide rule
+and is in fact only true of the local run. There is no recorded CI run observed green while hiding a
+defect, so this is a **structural** claim: `retries: 2` plus a green job is definitionally
+compatible with a first-attempt failure, and nothing in the repository says a reader must treat
+"flaky, passed on retry" as a failure to investigate rather than a pass.
+
+**Affected.** `playwright.config.ts` — the `use` block's `retries`. `AGENTS.md` — _Known failures and
+how to read one_. `docs/TESTING.md` — its CI job list.
+
+**What would close it.** Two sentences: that CI retries twice, and that a "flaky, passed on retry"
+line is a **failure to investigate, not a pass**. **Whether CI should retry at all is the operator's
+call and is deliberately not decided here** — it is real practice and removing it is not obviously
+right. If the answer is "no", the fix is `retries: 0` in CI; if "yes", the fix is the two sentences.
+
+## 218. The no-line-numbers gate covers three markdown documents, and 1,932 citations live outside it
+
+**Problem.** `scripts/__tests__/agents-citations.test.mjs` enumerates `git ls-files '*.md'`, and
+`LINE_NUMBER_GATED` names exactly three paths. Everything else is caught only while it is _dirty_,
+by the assertion that the maintained corpus carries no citation — which means **a migrated document
+can regress silently the moment it reaches zero**.
+
+Two verified consequences. **`docs/LAYERS-PANEL.md` was migrated by hand, is in the maintained
+corpus, and is not in `LINE_NUMBER_GATED`**, so it has zero citations today and nothing would report
+a re-added one — the same state as `HANDOFF.md`, `docs/TESTING.md` and `TEST-FLAKES.md`. And
+**`MIGRATION_NEXT_STEPS_SUNDAY.md` carries 139 citations while being excluded outright**, because
+`docs/README.md` lists it as a point-in-time report. That exclusion is right for the retired-symbol
+leg, whose mentions in such a document are all true. It is **wrong for the line-number leg**, where
+139 unswept coordinates are residue no assertion reports.
+
+Extending the gate to source files is **a 271-file migration, not a scope change**: 1,932 citations
+across 740 tracked non-markdown files, 459 of them in `e2e/*.spec.ts` and 42 in
+`scripts/__tests__/*.mjs`. Two thirds sit in `src/tools/descriptions/*.ts` and in e2e comments.
+
+**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `trackedMarkdown()`,
+`LINE_NUMBER_GATED`, `DOCUMENTS_NOT_CHECKED`. `docs/README.md` — the point-in-time table.
+
+**What would close it.** Decide, and write the reason into the document either way: either widen
+`LINE_NUMBER_GATED` to every maintained document, so a clean one is pinned rather than merely quiet,
+or state that the gate is a migration's to-do list and not a permanent invariant. The source-file
+question is separate and larger, and the honest answer may be that comments in `.ts` are not prose
+and the rule should not reach them.
+
+## 219. Nothing stops a test from asserting on a path another process owns, and all three repairs are prose
+
+**Problem.** Every existing instance of this defect was repaired **by hand, with a comment describing
+the repair rather than a check**. `scripts/__tests__/e2e-run.test.mjs` asserted
+`isPortFree(await findFreePort())` — two binds with the port released in the gap — which
+`scripts/e2e-run.mjs` explicitly disclaims. `reservePort`, the production mechanism that exists
+_because_ one pick is not a guarantee, had **zero** test references. The repair was hardened,
+mutation-proved green, and 0 losses were observed in 10,250 find→check→bind cycles — so it declined
+to assert a trigger it had not seen and said so in the file.
+
+That honesty is the right call and it leaves the class open. `node_modules` walking up to the parent
+checkout, `.kilo/e2e-last-run.json`, the e2e queue sentinel and the board database are all shared,
+and nothing enforces it. A scan that claimed three live siblings in that file was wrong within a day
+of the repair, which is this repository's own failure class and the reason the class needs a check
+rather than a fourth repair.
+
+**Affected.** `scripts/__tests__/e2e-run.test.mjs`; `scripts/lib/**` for the shared-path helpers;
+`node_modules` resolution, `.kilo/e2e-last-run.json`, the e2e queue sentinel, `board.db`.
+
+**What would close it.** A rule with a check behind it: a test in this repository may not **write** a
+path outside a per-test temp directory, and the machine-shared paths get an explicit allowlist for
+reads. `scripts/__tests__/suite-budgets.test.mjs` already derives every spawning suite from the tree
+and asserts the derived set against a hard-coded list, so the mechanism for a derived inventory
+exists here already.
+
+## 220. The merge guard cannot see a branch that committed a stale file, and no merge-time check can
+
+**Problem.** `merge-takeover-guard.mjs` compares a merge result against one whole side's content, and
+it is now good at that — the seven shapes an adversarial review measured as silent passes are closed,
+and it reports correctly on all 407 merges on `main` with no verdict changed. What it still cannot
+see is the defect **upstream** of it: a branch that _committed_ a stale copy of a tracked file, from
+a checkout sitting at another HEAD. The merge inherits it. That is the shape `git add -A` in a
+worktree at another HEAD produces, and it is the one that cost this repository 17 files and 1,835
+lines with no conflict anywhere in it.
+
+No check at merge time can distinguish that from a deliberate edit, because the information does not
+exist in the trees — whether the branch's author knew lives in the commit message. Two shapes are
+reachable today:
+
+- **`git add -A` in a worktree that is not at `main`**, committing the stale content. The guard sees
+  only that the result is one whole side's blob, which it now reports as shape 1 — but by then the
+  stale commit is already on the branch and the loss happened when it was written.
+- **`git merge --squash -X ours`**, which produces a staged tree identical to HEAD's, so `git commit`
+  answers "nothing to commit", there is no commit, no `MERGE_HEAD`, and neither hook fires. The
+  branch's payload disappears with no event to hang a check on. Plain `--squash` is fine and stages
+  the real merge result.
+
+**Affected.** `scripts/merge-takeover-guard.mjs`; `docs/ORCHESTRATION.md` — the
+`merge-takeover-guard` limits, which now names this.
+
+**What would close it.** A check in the **branch's own** hook, where a diff against `main` has two
+sides to compare: for each path the branch changed whose result equals some ancestor's content and
+is not the merge-base content, report it — and make it discriminating rather than universal by
+requiring that the branch's first-parent line contains no merge commit. `.husky/pre-push` already
+runs in the branch and already has `main...HEAD`. Do **not** solve this by making the merge guard
+refuse more; it is already refusing correctly, and widening it fires on ordinary landings.
+
+## 221. The unit suite still has assertions that cannot fail, and one dangling ARIA reference
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
 assertions that pass on any non-null value, but six classes of defect remain, and one of them is a
