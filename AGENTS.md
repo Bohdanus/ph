@@ -31,19 +31,11 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 
 ## Subagents
 
-### Delegation
-
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
-- Never exceed 9 simultaneous subagents/processes.
 - A task subagent inherits the working directory. Give it the absolute worktree path and never let two agents edit the same file.
-
-### Model policy
-
-**THE DEFAULT MODEL IS `Poolside: Laguna S 2.1 (free)` ON PROVIDER `kilo`, AT VARIANT `thinking`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
-
-- **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
-- A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
-- GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
+- **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION.
+- Specify provider. `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is the catalog.
+- GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds!
 - `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
 - Findings need evidence. The formatted board message cap is 4096 bytes; its body has about 3840 bytes: 3800 ASCII characters or 1200 characters when non-ASCII may occur. Put longer findings in a file or swarm issue.
 
@@ -89,7 +81,7 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
-| `npm run test:staged` | **NOWHERE**         | manual `vitest related` command                                |
+| `npm run test:staged` | nowhere             | manual `vitest related` command                                |
 | `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
