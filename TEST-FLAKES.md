@@ -675,16 +675,27 @@ default it is guarding. Two properties were checked rather than assumed and are
 worth keeping: the budget is scoped to the file that declares it (a body several
 times the default in an undeclared sibling still died at the 5s default in the same
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
-budget, which is how the two tests that read git in every worktree keep their
+budget, which is how the three tests that read git in every worktree keep their
 declared `60_000`.
 
 ### The worktree-inventory suite, which is this family plus a shared store
 
-`scripts/__tests__/worktree-inventory.test.mjs` carries two cases that run the inventory
-generator over every worktree git reports, with a per-test `it(name, fn, 60_000)` argument
-that wins over the file budget. On a fleet past 150 worktrees that budget is a function of the
-operator's environment, not of the repository's content, so the knife edge moves when a sweep
-grows the fleet and when nothing is committed.
+`scripts/__tests__/worktree-inventory.test.mjs` carries **three** cases that run the inventory
+generator over every worktree git reports, each with its own per-test `it(name, fn, 60_000)`
+argument that wins over the file budget. They are `never asks the table to protect a worktree
+whose protection is derived`, `never offers a live worktree that holds uncommitted work on no
+ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
+about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
+it — but each carries its own budget, so which of them runs out first is not something the budget
+may depend on. On a fleet past 150 worktrees that budget is a function of the operator's
+environment, not of the repository's content, so the knife edge moves when a sweep grows the
+fleet and when nothing is committed.
+
+Observed 2026-10-05 on `main` at `3abe6ce0`, fleet past 150 worktrees: two different cases from
+that list timed out on different `npm run test` runs while the file passed alone. Note that the
+same file also fails, differently, when the SHARED main checkout is dirty — that is the
+`classify` defect `HANDOFF.md` §142 records, it reports a `keep` verdict rather than timing out,
+and no amount of budget fixes it.
 
 Two costs compound, and it is worth keeping them apart because only one was ever measured:
 
@@ -717,7 +728,44 @@ was not an available substitute, and it was merged on the operator's decision wi
 the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
 fixed two false claims in the new comments, but that is not the review.
 
-## 15. Files
+## 15. The `currentDevicePixelRatio` SSR guard cannot be reached from any test in this suite
+
+**Status: OPEN. Not a flake — an unreachable assertion. No test asserts this branch.**
+
+`src/hooks/useDevicePixelRatio.ts` opens with
+`if (typeof window === 'undefined') return 1;`, and that guard is the only thing
+between a server render and a `ReferenceError`. Nothing in the suite reaches it.
+
+Under `vitest.config.ts`'s `environment: 'jsdom'` the global `window` is a
+**non-configurable accessor** on the vm context global — its own property descriptor
+reports `configurable: false` — so it can be neither redefined nor deleted. The
+obvious attempt, `vi.stubGlobal('window', undefined)`, throws
+`TypeError: Cannot redefine property: window` before the assertion under it runs. That
+failure was carried into this repository as a red test rather than diagnosed: the
+salvaged `unit-hardening` work asserted this case in
+`src/hooks/__tests__/useDevicePixelRatio.test.ts`, and it cannot pass in this
+environment at all.
+
+A Node-environment test file is also not a way out. `@vitest-environment node` loads
+`src/test/setup.ts` — the suite's global `setupFiles` — and that file spies on
+`HTMLCanvasElement.prototype` at module scope, so the run dies in setup before the test
+body is reached.
+
+**Actionable fix.** Declare a second Vitest project for DOM-free files, with
+`environment: 'node'` and its own (empty) `setupFiles`, and move the assertion there. It
+has to be a project rather than a per-file `environmentMatchGlobs`, which Vitest
+removed; and it has to carry its own `setupFiles` rather than inherit the shared one. The
+pair of files then pins the contract from both sides: the Node project shows the value is
+1 with no `window`, and the existing jsdom cases in `useDevicePixelRatio.test.ts` show
+the same function returns the live ratio when there is one. Either half alone is
+satisfiable by a function that is wrong in the other direction.
+
+## 16. Files
+
+- `src/hooks/useDevicePixelRatio.ts` — the `typeof window === 'undefined'` guard section 15 is about
+- `src/hooks/__tests__/useDevicePixelRatio.test.ts` — the file that carried the unreachable assertion
+- `src/test/setup.ts` — the module-scope `HTMLCanvasElement` spy that blocks a `@vitest-environment node` file
+- `vitest.config.ts` — the `environment` and `setupFiles` a second project would have to diverge from
 
 - `vitest.config.ts` — the `test` block whose `pool`, `maxWorkers` and `isolate` this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved

@@ -64,6 +64,53 @@ describe('documentPointToLayerLocal', () => {
     // is what stops a caller mutating a hook's live accumulator in place.
     expect(documentPointToLayerLocal(point, ORIGIN)).toEqual(point);
   });
+
+  /**
+   * A non-finite origin is deliberately NOT guarded, and the module doc says so: "a NaN
+   * origin is a corrupt store rather than an absent layer, and quietly treating it as (0, 0)
+   * would paint the stroke correctly onto the wrong raster".
+   *
+   * No existing case reaches this, because every fixture pos is integral. The mutant is the
+   * one the docstring argues against: adding a `Number.isFinite(layerPos.x) ? ... : 0` guard
+   * would make the result identical to the origin and every stroke on a corrupt layer would
+   * land on the right pixel of the wrong raster — which is precisely the failure mode this
+   * whole module exists to make impossible. Asserting the NaN through pins the decision
+   * rather than the accident, and `NaN` is the only value that distinguishes the two.
+   */
+  it('propagates a non-finite origin instead of silently treating it as the origin', () => {
+    const corrupt: Pos = { x: Number.NaN, y: 25, width: 100, height: 80 };
+
+    const rebased = documentPointToLayerLocal({ x: 10, y: 10 }, corrupt);
+
+    expect(rebased.y).toBe(-15);
+    expect(Number.isNaN(rebased.x)).toBe(true);
+    // Explicitly the behaviour a guard would remove: NaN is NOT the point unchanged.
+    expect(rebased).not.toEqual({ x: 10, y: 10 });
+    expect(rebased).toEqual(documentPointToLayerLocal({ x: 10, y: 10 }, { x: Number.NaN, y: 25, width: 1, height: 1 }));
+  });
+
+  it('propagates an infinite origin rather than clamping it', () => {
+    const rebased = documentPointToLayerLocal(
+      { x: 10, y: 10 },
+      {
+        x: Number.POSITIVE_INFINITY,
+        y: Number.NEGATIVE_INFINITY,
+        width: 100,
+        height: 80,
+      }
+    );
+
+    expect(rebased.x).toBe(Number.NEGATIVE_INFINITY);
+    expect(rebased.y).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('rebases against a missing field the same as a missing position', () => {
+    // `?? 0` is on the FIELD, not the object: a pos that exists with no `x` reads as the
+    // origin exactly as `undefined` does, because `??` catches undefined on the way through.
+    const partial = { width: 100, height: 80 } as unknown as Pos;
+
+    expect(documentPointToLayerLocal({ x: 5, y: 9 }, partial)).toEqual({ x: 5, y: 9 });
+  });
 });
 
 describe('documentPointsToLayerLocal', () => {
@@ -150,6 +197,24 @@ describe('documentPointsToLayerLocal', () => {
     expect(() => documentPointsToLayerLocal(stroke, null)).not.toThrow();
     expect(documentPointsToLayerLocal(stroke, undefined)).toEqual(stroke);
     expect(documentPointsToLayerLocal(stroke, null)).toEqual(stroke);
+  });
+
+  it('propagates a non-finite origin through the whole gesture, one point at a time', () => {
+    // The array form must inherit the point form's NaN rather than filtering or defaulting
+    // it: a rewrite that mapped through a guarded helper, or that dropped non-finite points,
+    // would return a shorter or a finite array here.
+    const stroke = [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+      { x: 5, y: 6 },
+    ];
+    const result = documentPointsToLayerLocal(stroke, { x: Number.NaN, y: 0, width: 8, height: 8 });
+
+    expect(result).toHaveLength(3);
+    expect(result.every((point) => Number.isNaN(point.x))).toBe(true);
+    // The y axis is untouched by a NaN in x, so it still translates: a rewrite that made the
+    // whole point NaN on one bad field would fail here.
+    expect(result.map((point) => point.y)).toEqual([2, 4, 6]);
   });
 
   it('reverses cleanly under the translation, which is the round trip there is', () => {

@@ -1681,30 +1681,6 @@ describe('the hand edit that leaves no conflict marker', () => {
     expect(stderr).toContain('renamed-after-clean-merge');
   });
 
-  it('refuses to merge when the census could not run', () => {
-    // A census that could not look and a merge nobody touched would otherwise both print one line
-    // and exit 0, and the second of those is the lie this guard exists to stop. Exit 2 is what the
-    // whole-file layer already returns for "I could not look".
-    cleanTwoSidedFixture('f.txt');
-    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
-    // A conflict style git does not know makes `merge-tree` fail without producing a tree, which
-    // is the reachable shape of "it could not look".
-    const previous = process.env.GIT_CONF_PARAMETERS;
-    process.env.GIT_CONF_PARAMETERS = "'merge.conflictStyle'='bogus'";
-    try {
-      const seen = findHandResolutions({ cwd: dir, incoming: git(['rev-parse', 'feat']) });
-      if (seen.skipped === null) return; // this git tolerates the bad style; nothing to pin here
-      expect(seen.skipped).toMatch(/merge-tree/);
-      const stderr = captureStderr(() => {
-        expect(main([], { cwd: dir })).toBe(2);
-      });
-      expect(stderr).toContain('merge-takeover-guard:');
-    } finally {
-      if (previous === undefined) delete process.env.GIT_CONF_PARAMETERS;
-      else process.env.GIT_CONF_PARAMETERS = previous;
-    }
-  });
-
   it('counts the lines an erasure removed, and says a binary has none to count', () => {
     cleanTwoSidedFixture('suite.test.ts');
     const headBefore = sha();
@@ -1717,6 +1693,41 @@ describe('the hand edit that leaves no conflict marker', () => {
     });
     // The merged file has the base's 12 lines plus each side's one, so 14.
     expect(seen.edits[0]).toMatchObject({ kind: 'erased-after-clean-merge', lost: 14 });
+  });
+
+  it('refuses to merge when the staged result cannot be read, rather than passing blind', () => {
+    // An unmerged index entry makes `git write-tree` fail, so there is no result to compare
+    // against and the census cannot run. It must exit 2 — the same answer the whole-file layer
+    // gives for "I could not look" — because a census that did not run and a merge nobody touched
+    // both print one line and exit 0, and only one of those is true.
+    write('f.txt', 'alpha\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbeta\n');
+    commit('branch');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nomega\n');
+    commit('main');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    // Recreate the unmerged index git had before it was resolved: stages 1, 2 and 3 for one path.
+    const head = sha();
+    const theirs = git(['rev-parse', 'feat']);
+    const base = git(['merge-base', head, theirs]);
+    const stage = (n, ref) =>
+      git(
+        ['update-index', '--index-info'],
+        `\n${git(['rev-parse', `${ref}:f.txt`])}\t${n}\tf.txt\n`.trim() &&
+          `${git(['rev-parse', `${ref}:f.txt`])} ${n}\tf.txt\n`
+      );
+    stage(1, base);
+    stage(2, head);
+    stage(3, theirs);
+
+    expect(() => git(['write-tree'])).toThrow();
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(2);
+    });
+    expect(stderr).toMatch(/merge-takeover-guard:/);
   });
 
   it('names every test path shape this repository writes', () => {

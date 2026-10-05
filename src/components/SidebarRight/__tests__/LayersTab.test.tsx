@@ -662,7 +662,18 @@ describe('LayersTab drag and drop guards', () => {
 
     expect(dataTransfer.effectAllowed).toBe('move');
     expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-layer-id', 'layer-3');
-    expect(dataTransfer.setDragImage).toHaveBeenCalled();
+    // WHICH element, and at WHICH offset — both of which decide what the user actually sees
+    // dragged. The ghost is an off-screen node whose label is rewritten to the dragged layer's
+    // name, so `toHaveBeenCalled()` alone would pass on a ghost left reading "Dragging...",
+    // or on the layer row itself being handed over as the drag image.
+    expect(dataTransfer.setDragImage).toHaveBeenCalledTimes(1);
+    const [ghost, offsetX, offsetY] = dataTransfer.setDragImage.mock.calls[0] as unknown as [
+      HTMLElement,
+      number,
+      number,
+    ];
+    expect(ghost.textContent, "the ghost wears the dragged layer's name").toBe('Top Layer');
+    expect([offsetX, offsetY], 'the ghost is anchored at the cursor, not offset from it').toEqual([0, 0]);
   });
 
   it('resets the drag state and the grabbing cursor on drag end', () => {

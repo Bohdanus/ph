@@ -416,8 +416,17 @@ describe('remove-layer append boundary', () => {
       const reason = validatePlannedDurableEntry(tool, correct);
 
       // Every generic check passes first — same id, schema version, and enabled
-      // state — so the action is the only thing left that can refuse it.
-      expect(reason).toEqual(expect.any(String));
+      // state — so the action is the only thing left that can refuse it, and the
+      // reason says which refusal fired. `expect.any(String)` here would also pass
+      // a boundary that fell out of its action dispatch and reported anything at
+      // all, which is the failure this pins.
+      //
+      // The reason used to be the generic `no durable translation is published for
+      // "tool" yet`, which is the message a boundary that never reached the tool arm
+      // would also produce. It now names BOTH sides — the action that arrived and the
+      // operation kind it carried — so the refusal is attributable to the mismatch
+      // rather than merely to the action, which is what this assertion always wanted.
+      expect(reason).toBe(`a ${TOOL_ACTION} action produced a "remove-layer" operation`);
     });
 
     it('reports an operation of another kind', () => {
@@ -426,7 +435,7 @@ describe('remove-layer append boundary', () => {
         operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
       });
 
-      expect(reason).toEqual(expect.any(String));
+      expect(reason).toBe('a layer removal produced a "set-layer-properties" operation');
     });
 
     it.each([
@@ -453,7 +462,7 @@ describe('remove-layer append boundary', () => {
         operation: { kind: 'remove-layer', layerId: 'layer-2' },
       });
 
-      expect(reason).toEqual(expect.any(String));
+      expect(reason).toBe('the durable layer id does not match the legacy entry');
     });
 
     it('reports a plan that would re-enable a disabled removal', () => {
@@ -467,13 +476,15 @@ describe('remove-layer append boundary', () => {
 
       const reason = validatePlannedDurableEntry(disabled, reenabled);
 
-      expect(reason).toEqual(expect.any(String));
+      // The gate, not the operation: publishing this would hand durable replay an
+      // edit `replayHistory` skips, so the two models would undo differently.
+      expect(reason).toBe('the durable enabled state does not match the legacy entry');
     });
 
     it('reports a plan that would disable an enabled removal', () => {
       const reason = validatePlannedDurableEntry(item, { ...correct, enabled: false });
 
-      expect(reason).toEqual(expect.any(String));
+      expect(reason).toBe('the durable enabled state does not match the legacy entry');
     });
   });
 
@@ -515,13 +526,19 @@ describe('remove-layer append boundary', () => {
 
         // Control: the same spies DO fire on the conversion fallback the store takes
         // when a publication is refused, so the two assertions above are read from a
-        // live path rather than from an inert mock.
+        // live path rather than from an inert mock. Named on the document id,
+        // because a bare `toHaveBeenCalled()` would be satisfied by a conversion of
+        // some other document and would leave "not called" passing for the wrong
+        // reason. The empty set is the reachable-asset set of a history that holds
+        // a blank layer and a removal, so it is the whole argument.
         const fallback = convertLegacyHistorySafely([baselineItem(), plan.entry], {
           documentId: controlDocumentId,
         });
         expect(fallback.status).toBe('current');
-        expect(begin).toHaveBeenCalled();
-        expect(reconcile).toHaveBeenCalled();
+        expect(begin).toHaveBeenCalledTimes(1);
+        expect(begin).toHaveBeenCalledWith(controlDocumentId);
+        expect(reconcile).toHaveBeenCalledTimes(1);
+        expect(reconcile).toHaveBeenCalledWith(controlDocumentId, new Set());
       } finally {
         registry.disposeDocument(controlDocumentId);
         begin.mockRestore();

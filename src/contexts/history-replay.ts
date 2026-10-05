@@ -11,6 +11,7 @@ import { createAffineLayerOperation, createLayerOperation, reorderLayers } from 
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 import type { ActionType } from '../util/constants.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
@@ -257,7 +258,7 @@ export function replayHistory(
     // replay for it. Unreachable today, because such a tool never writes a history item.
     if (!processor) continue;
 
-    if (processor.commit === 'layer-operation') {
+    if (processor.commit === 'layer-operation' && !isRasterStrokeArgs(toolArgs)) {
       // A retained filter this browser cannot apply must not be re-appended: the layer would then
       // present unchanged pixels that no replay reproduces, and `layer-renderer` would refuse to
       // draw it at all. Skipping is the same refusal the commit path makes, at replay time.

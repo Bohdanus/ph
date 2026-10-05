@@ -6,7 +6,8 @@ import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.t
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
+import { MAX_AFFINE_COORDINATE, MAX_AFFINE_PIXELS } from './affine-transform.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentation,
@@ -274,7 +275,41 @@ export async function materializeLayer(
           if (processor.replay.version !== operation.version) {
             throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
           }
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          const toolArgs = operation.args as ToolArgs;
+          // A tight legacy layer is widened only for this raster operation. The frame is part of
+          // the stroke args, so durable materialization uses the same origin and transparent
+          // padding as runtime replay instead of silently clipping an outward stroke.
+          if (isRasterStrokeArgs(toolArgs)) {
+            const requested = toolArgs.rasterBounds;
+            // The same cap the live staging path applies, for the same reason: a frame is sized
+            // from a stroke's extent, and an unallocatable one must be refused rather than
+            // allocated here as well. Both paths then decline the same edit, which is the only
+            // way their pixels stay in agreement.
+            const allocatable =
+              Number.isFinite(requested.width) &&
+              Number.isFinite(requested.height) &&
+              Math.ceil(requested.width) >= 1 &&
+              Math.ceil(requested.height) >= 1 &&
+              Math.abs(requested.x) <= MAX_AFFINE_COORDINATE &&
+              Math.abs(requested.y) <= MAX_AFFINE_COORDINATE &&
+              requested.width <= MAX_AFFINE_COORDINATE &&
+              requested.height <= MAX_AFFINE_COORDINATE &&
+              requested.width * requested.height <= MAX_AFFINE_PIXELS;
+            if (
+              allocatable &&
+              (requested.x !== origin.x ||
+                requested.y !== origin.y ||
+                requested.width !== size.width ||
+                requested.height !== size.height)
+            ) {
+              const widened = createCanvas(requested.width, requested.height);
+              context2d(widened).drawImage(bitmap, origin.x - requested.x, origin.y - requested.y);
+              replaceOwnedBitmap(await toOwnedBitmap(widened));
+              origin = { x: requested.x, y: requested.y };
+              size = { width: requested.width, height: requested.height };
+            }
+          }
+          const [processed, patch] = processor.imageProcessor({ bitmap, size })(toolArgs);
           if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
           replaceOwnedBitmap(processed);
           origin = {

@@ -529,14 +529,32 @@ describe('FontSelect viewport fit', () => {
   });
 
   it('never positions the list further from an edge than the room available', () => {
-    // The general property: whatever the geometry, the list's height cannot exceed the space
-    // on the side it opens into, or part of it is off-viewport with no way to scroll it in.
-    for (const [height, top, bottom] of [
-      [300, 100, 136],
-      [400, 300, 320],
-      [800, 700, 716],
-      [200, 20, 60],
-    ] as const) {
+    // The general property, as an EXACT value per case rather than a range. `FontSelect.tsx:74-92`
+    // is `min(240, max(0, openUpwards ? top - 4 - 8 : innerHeight - bottom - 4))` where
+    // `openUpwards` is `top - 12 > innerHeight - bottom - 4`. Every term in that expression is
+    // observable here, and the previous form (`toBeGreaterThan(0)` plus `<= 240` plus a
+    // re-derived `<= room`) left the arithmetic unpinned: any value between 1 and the cap passed,
+    // and the two cases that open upward both saturate at the cap, so the `top - 4 - 8` branch was
+    // never load-bearing at all. A regression that dropped `VIEWPORT_MARGIN` from `spaceAbove`, or
+    // turned the `>` into a `>=`, kept every assertion green.
+    //
+    // `maxHeight` is spelled out per row rather than recomputed from the formula, so this cannot
+    // pass by agreeing with a wrong implementation of that same formula.
+    const cases = [
+      // [innerHeight, top, bottom, openUpwards, expected maxHeight]
+      [300, 100, 136, false, 160], // below wins: 300 - 136 - 4
+      [400, 300, 320, true, 240], // above wins by more than the cap: 300 - 4 - 8 = 288
+      [800, 700, 716, true, 240], // above wins by far more than the cap: 700 - 4 - 8 = 688
+      [200, 20, 60, false, 136], // below wins in a short window: 200 - 60 - 4
+      // Above wins by less than the cap, so `top - 4 - 8` — and only that — decides the height.
+      [400, 200, 216, true, 188], // 200 - 4 - 8 = 188 against 400 - 216 - 4 = 180 below
+      // An exact tie: 140px of room on each side. `openUpwards` is a strict `>`
+      // (FontSelect.tsx:86), so the below side is taken. Widening it to `>=` leaves the HEIGHT at
+      // 140 either way, which is why the side is asserted before the height here.
+      [300, 152, 156, false, 140], // below 300 - 156 - 4 = 140, above 152 - 4 - 8 = 140
+    ] as const;
+
+    for (const [height, top, bottom, openedUp, expected] of cases) {
       withInnerHeight(height, () => {
         vi.restoreAllMocks();
         stubTriggerRect({ top, left: 40, bottom, width: 200 });
@@ -545,14 +563,14 @@ describe('FontSelect viewport fit', () => {
 
         const list = popupList() as HTMLElement;
         const maxHeight = Number.parseFloat(list.style.maxHeight);
-        const openedUp = list.style.top === '';
+        const didOpenUp = list.style.top === '';
 
-        expect(maxHeight, `height ${height}, trigger at ${top}`).toBeGreaterThan(0);
-        expect(maxHeight).toBeLessThanOrEqual(240);
-        const room = openedUp ? top - 12 : height - bottom - 4;
-        expect(maxHeight, `list must fit the ${openedUp ? 'above' : 'below'} space`).toBeLessThanOrEqual(
-          Math.max(0, room)
-        );
+        // The side it actually opened into, pinned before the height: a flipped popup carrying the
+        // below-side height is the failure mode, and checking the height first would hide it.
+        expect(didOpenUp, `height ${height}, trigger at ${top}: which side`).toBe(openedUp);
+        expect(list.style.bottom === '').toBe(!openedUp);
+        expect(maxHeight, `height ${height}, trigger at ${top}`).toBe(expected);
+        // Each case renders into the same document, so the next iteration would find this list.
         cleanup();
       });
     }

@@ -338,5 +338,13 @@ describe('document loader dispatch to the real codecs', () => {
     expect(imported).toMatchObject({ fileName: 'favicon.ico' });
     expect('image' in imported).toBe(true);
     expect(vi.mocked(URL.createObjectURL)).toHaveBeenCalledTimes(1);
+    // The whole chain, not just the count: the Blob the loader hands the browser has to be the
+    // exact PNG `encodeIco` embedded, so a re-wrap or a re-slice anywhere between them shows up
+    // here. `putImageData` staying empty is the other half — the entry is a PNG, so a
+    // container that fell through to `decodeBmpIcon` would have rasterised instead.
+    const [source] = vi.mocked(URL.createObjectURL).mock.calls[0] as [Blob];
+    expect(source.type).toBe('image/png');
+    expect(Array.from(new Uint8Array(await source.arrayBuffer()))).toEqual(Array.from(png));
+    expect(putImageData).not.toHaveBeenCalled();
   });
 });

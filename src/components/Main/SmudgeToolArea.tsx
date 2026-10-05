@@ -5,6 +5,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
 import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointsToLayerLocal } from '../../util/layer-space.ts';
+import { rasterBoundsForStroke, strokeExitsRasterBounds } from '../../util/raster-bounds.ts';
 import type { SmudgeToolArgs } from '../../tools/smudge.ts';
 
 type smudgeToolAreaProps = {
@@ -102,9 +103,18 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
          * `tempUpdateLayer` runs the processor synchronously over the copy, so nothing here
          * retains it.
          */
+        const baseBounds = rasterBounds ?? activeLayer!.pos;
+        const widens = strokeExitsRasterBounds(baseBounds, points);
+        const bounds = widens
+          ? rasterBoundsForStroke(baseBounds, points, args.size / 2, args.rasterBounds)
+          : baseBounds;
         tempUpdateLayer({
           id: activeLayerId!,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
+          toolArgs: {
+            ...args,
+            points: documentPointsToLayerLocal(points, bounds),
+            ...(widens ? { rasterBounds: bounds } : {}),
+          },
         });
       },
       onCommit: async (points) => {
@@ -112,9 +122,18 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
         // the hook is about to reset, and the same rebase as the preview, so what history
         // retains is what the processor addresses on replay
         // (`src/contexts/useHistory.ts` — `applyRasterTool`).
+        const baseBounds = rasterBounds ?? activeLayer!.pos;
+        const widens = strokeExitsRasterBounds(baseBounds, points);
+        const bounds = widens
+          ? rasterBoundsForStroke(baseBounds, points, args.size / 2, args.rasterBounds)
+          : baseBounds;
         await updateLayerByTool({
           id: activeLayerId!,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
+          toolArgs: {
+            ...args,
+            points: documentPointsToLayerLocal(points, bounds),
+            ...(widens ? { rasterBounds: bounds } : {}),
+          },
         });
       },
     }

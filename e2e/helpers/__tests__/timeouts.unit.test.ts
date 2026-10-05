@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { DEFAULT_TEST_TIMEOUT_MS, PAINT_TOOLS_TEST_TIMEOUT_MS } from '../timeouts';
+import {
+  DEFAULT_TEST_TIMEOUT_MS,
+  PAINT_TOOLS_TEST_TIMEOUT_MS,
+  SEQUENTIAL_LAYER_TEST_TIMEOUT_MS,
+  THIRD_PARTY_PAGE_TEST_TIMEOUT_MS,
+} from '../timeouts';
 
 const E2E_DIR = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -21,7 +26,27 @@ function specNames(): string[] {
     .sort();
 }
 
-const specSources = new Map(specFiles(E2E_DIR).map((file) => [file.slice(E2E_DIR.length), readFileSync(file, 'utf8')]));
+/**
+ * Every spec path, absolute — the single traversal both scans below are built from, so the
+ * two of them cannot disagree about which files exist.
+ */
+const SPECS = specFiles(E2E_DIR);
+
+const specSources = new Map(SPECS.map((file) => [file.slice(E2E_DIR.length), readFileSync(file, 'utf8')]));
+
+/**
+ * The same set, collected by a different traversal: one flat recursive `readdirSync`
+ * instead of a hand-rolled recursion over `statSync`. An input that silently shrinks turns
+ * the guard it feeds into a pass — a traversal that stopped descending would report no
+ * offenders and the guard would be green for the rest of time. Two mechanisms have to
+ * agree for this to pass, so neither one can rot alone.
+ */
+function specFilesIndependently(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.spec.ts'))
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort();
+}
 
 /**
  * A bare number in a per-test budget is the one constant that is free to write and
@@ -153,6 +178,107 @@ describe('per-test timeouts are named, not inlined', () => {
     // most-used names resolve to the values the suite was passing inline before.
     expect(DEFAULT_TEST_TIMEOUT_MS).toBe(60_000);
     expect(PAINT_TOOLS_TEST_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it('actually reads the specs, rather than passing on an empty scan', () => {
+    // The scan above is green for an empty suite, a renamed extension and a traversal that
+    // stopped descending, and every one of those is the guard being switched off rather
+    // than satisfied. Two independent traversals have to agree, and the set has to be
+    // non-empty.
+    expect(SPECS.length).toBeGreaterThan(0);
+    expect(SPECS.slice().sort()).toEqual(specFilesIndependently(E2E_DIR));
+  });
+
+  it('reaches the specs that spend a budget, so a widening there is visible', () => {
+    // Named rather than counted, for the reason the repo applies elsewhere: a count rots
+    // every time a spec is added. These three are the files whose budget is a named
+    // constant, so they are also the files where "raise the timeout" is the tempting fix —
+    // and the one place the guard can prove it is still looking at them.
+    const names = SPECS.map((file) => file.slice(E2E_DIR.length));
+    expect(names).toContain('layers.spec.ts');
+    expect(names).toContain('paint-tools.spec.ts');
+    expect(names).toContain(join('export', 'photopea.spec.ts'));
+  });
+
+  it('resolves every budget to the value the suite was passing inline before', () => {
+    // A renamed constant breaks the specs at compile time rather than here, so this is the
+    // only place the VALUES are pinned. Each one is the exact number the inline literals
+    // used to be, and raising any of them is how a slow run gets laundered into a green
+    // one: a budget that outlasts the work it pays for fails nothing, it just hides the
+    // flake. `SEQUENTIAL_LAYER` and `THIRD_PARTY` were unpinned entirely before this.
+    expect(DEFAULT_TEST_TIMEOUT_MS).toBe(60_000);
+    expect(PAINT_TOOLS_TEST_TIMEOUT_MS).toBe(120_000);
+    expect(SEQUENTIAL_LAYER_TEST_TIMEOUT_MS).toBe(90_000);
+    expect(THIRD_PARTY_PAGE_TEST_TIMEOUT_MS).toBe(90_000);
+  });
+
+  it('orders the budgets so the longest is still below the two-minute mark', () => {
+    // Not a threshold in place of a value: this is the relationship the comments on each
+    // constant claim, and it is what makes the four numbers above readable as a policy
+    // rather than as four independent choices. `THIRD_PARTY` and `SEQUENTIAL_LAYER`
+    // sharing 90s is deliberate — they are not the same kind of test, so they do not get
+    // one name — so the pair is asserted as equal rather than merely ordered.
+    expect(DEFAULT_TEST_TIMEOUT_MS).toBeLessThan(SEQUENTIAL_LAYER_TEST_TIMEOUT_MS);
+    expect(PAINT_TOOLS_TEST_TIMEOUT_MS).toBeGreaterThan(SEQUENTIAL_LAYER_TEST_TIMEOUT_MS);
+    expect(SEQUENTIAL_LAYER_TEST_TIMEOUT_MS).toBe(THIRD_PARTY_PAGE_TEST_TIMEOUT_MS);
+  });
+
+  describe('the pattern the guard is built on', () => {
+    // The guard is a regex over other people's files, so the regex is itself the piece with
+    // no coverage. Each case below is a spec-shaped string that must be caught; a guard
+    // whose pattern has drifted passes while the literal it exists to forbid is written.
+    // The rows are the shapes a person actually types — whitespace inside the parens, a
+    // sibling key, a trailing comma, a call nested inside a describe body — none of which
+    // the tree happens to contain today.
+    const CAUGHT: [string, string][] = [
+      ['the original shape', 'test.setTimeout(90_000);'],
+      ['no separators', 'test.setTimeout(90000);'],
+      ['padded', 'test.setTimeout( 90_000 );'],
+      ['a describe.configure with the timeout first', 'test.describe.configure({ timeout: 90_000 });'],
+      ['a describe.configure with a sibling option first', 'test.describe.configure({ retries: 0, timeout: 90_000 });'],
+      ['a describe.configure spread over lines', 'test.describe.configure({\n  retries: 0,\n  timeout: 90_000,\n});'],
+      ['a trailing comma after the value', 'test.describe.configure({ timeout: 90_000, });'],
+      ['a decimal budget', 'test.setTimeout(1.5);'],
+      ['an exponent budget', 'test.setTimeout(1.5e5);'],
+      ['inside a describe body', 'test("x", async () => {\n  test.setTimeout(90_000);\n});'],
+    ];
+
+    const ALLOWED: [string, string][] = [
+      ['the named constant', 'test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);'],
+      ['a named constant scaled', 'test.setTimeout(DEFAULT_TEST_TIMEOUT_MS * VIEWPORTS.length);'],
+      ['a spec-local named budget', 'test.setTimeout(SAVE_DIALOG_TEST_TIMEOUT_MS);'],
+      ['a configure with no timeout at all', 'test.describe.configure({ retries: 0 });'],
+      ['a named configure timeout', 'test.describe.configure({ timeout: UNDO_REDO_TIMEOUT_MS });'],
+      ['a helper named similarly', 'await setTimeoutForTest(90_000);'],
+    ];
+
+    it.each(CAUGHT)('catches %s', (_name, source) => {
+      expect(INLINE_TIMEOUT.test(source)).toBe(true);
+    });
+
+    it.each(ALLOWED)('does not flag %s', (_name, source) => {
+      // The false-positive half. A guard that also refused `DEFAULT_TEST_TIMEOUT_MS`
+      // would be silenced by deleting it, which is the same weakening in the other
+      // direction, and one that matched `setTimeoutForTest` would fail on every spec.
+      expect(INLINE_TIMEOUT.test(source)).toBe(false);
+    });
+
+    it('flags a literal that only appears in a COMMENT, which is a false positive kept on purpose', () => {
+      // The pattern is a raw text scan with no comment stripping, so
+      // `// the old test.setTimeout(90_000) is gone` is reported as an offender. Every real
+      // spec today passes only because none of them writes that sentence — the module
+      // docstring in `../timeouts.ts` says it, and that file is not a spec.
+      //
+      // It is left as it is, and pinned, because the two ways to remove it are both
+      // weakenings: stripping `//` to end-of-line truncates the rest of the line, so a
+      // literal after a `'http://…'` string on the same line stops being scanned, and
+      // skipping comment lines entirely is the same hole with more steps. A guard that
+      // cries wolf over a comment is loud and harmless; a guard that misses a literal is
+      // the outcome this whole file exists to prevent. So: a spec that explains a past
+      // inline timeout has to rephrase, and the failure names the file.
+      expect(INLINE_TIMEOUT.test('// the old test.setTimeout(90_000) is gone')).toBe(true);
+      expect(INLINE_TIMEOUT.test('/** was test.describe.configure({ timeout: 90_000 }) */')).toBe(true);
+    });
   });
 });
 
