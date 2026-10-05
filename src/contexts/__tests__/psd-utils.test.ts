@@ -433,6 +433,49 @@ describe('PSD codec binary roundtrip', () => {
     expect(input.pos).toEqual({ x: -0.5, y: 0.25, width: 1.75, height: 1.5 });
   });
 
+  it('exports a retained blur at the extent the filter reaches, not at the layer rectangle', async () => {
+    // The defect this pins: the PSD layer's rectangle was the affine extent, and `drawLayerSource`
+    // blurs into a canvas that stops at its edge — so the halo the canvas the user was looking at
+    // drew in full was cut off here, in the export, and nowhere else.
+    //
+    // Hand-derived for a radius-2 blur (three sigmas, 6 pixels per edge) on a 20x10 layer sitting at
+    // document (150, 100) inside a frame whose origin is (100, 50): the extent is
+    // (144, 94, 32, 22) and the frame moves it to (44, 44, 32, 22) inside the 200x150 document. The
+    // layer's own rectangle would have exported at (50, 50, 20, 10).
+    const input = layer({
+      pos: { x: 150, y: 100, width: 20, height: 10 },
+      operations: [{ id: 'op-blur', kind: 'filter', enabled: true, args: { toolName: 'blur', radius: 2 } }],
+    });
+    const frame = { x: 100, y: 50, width: 200, height: 150 };
+
+    const saved = await savePsd({ input }, { width: frame.width, height: frame.height }, frame);
+    const exported = readPsd(saved, { useImageData: true }).children![0];
+
+    expect(exported).toMatchObject({ left: 44, top: 44, right: 76, bottom: 66 });
+    // The layer's own canvas is allocated at the same extent, which is what the blur needs room in:
+    // 32x22 rather than the 20x10 the layer rectangle would have given it.
+    expect(exported.imageData).toMatchObject({ width: 32, height: 22 });
+  });
+
+  it('exports a pointwise adjustment at the layer rectangle, because it moves no pixel', async () => {
+    const input = layer({
+      pos: { x: 150, y: 100, width: 20, height: 10 },
+      operations: [
+        {
+          id: 'op-colors',
+          kind: 'filter',
+          enabled: true,
+          args: { toolName: 'color', grayscale: 100, sepia: 0, saturation: 0 },
+        },
+      ],
+    });
+    const frame = { x: 100, y: 50, width: 200, height: 150 };
+
+    const exported = readPsd(await savePsd({ input }, frame, frame), { useImageData: true }).children![0];
+
+    expect(exported).toMatchObject({ left: 50, top: 50, right: 70, bottom: 60 });
+  });
+
   it('uses smart object previews and warns when previews are absent', async () => {
     const placedLayer: NonNullable<PsdLayer['placedLayer']> = {
       id: '12345678-1234-1234-1234-123456789abc',

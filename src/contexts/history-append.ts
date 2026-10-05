@@ -526,6 +526,14 @@ export type SourceBackedEntryContext = Readonly<{
   documentId: string;
   registry: AssetRegistry;
   preLayers: ReadonlyMap<LayerId, DurableLayerSnapshot>;
+  /**
+   * The document frame the planned layer is authored against, supplied by the
+   * store because it is the store's live frame and not something this module can
+   * derive. It is recorded on the resulting `DurableLayerSnapshot`, so a plan
+   * made against one frame and published against another is visible rather than
+   * indistinguishable from a correct plan.
+   */
+  documentFrame: DocumentFrame;
   /** Runtime layer record used for merge removal ids; durable snapshots remain the order oracle. */
   liveLayers?: Readonly<Record<LayerId, Layer>>;
 }>;
@@ -534,7 +542,7 @@ function durableLayerForSource(item: HistoryItem, context: SourceBackedEntryCont
   const source = sourceFromEntry(item);
   if (!source) return null;
   const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, new Map(context.preLayers));
-  const layer = convertLayer(runtimeLayer, context.documentId, context.registry);
+  const layer = convertLayer(runtimeLayer, context.documentId, context.registry, context.documentFrame);
   if (layer.source.kind === 'legacy-tool') {
     throw new UnsupportedHistoryFeatureError(
       `Tool ${layer.source.toolName} has no durable source representation`,
@@ -673,6 +681,25 @@ export type DurableAppendInput = Readonly<{
    * but cannot prove a merge's complete removal set.
    */
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null;
+  /**
+   * The document frame the append is being made against, and the frame every
+   * planned `DurableLayerSnapshot` must name as its provenance.
+   *
+   * This is the rebase question the provenance field exists to answer. A plan is
+   * derived from a live layer record and a live frame, and a snapshot records
+   * which frame it was authored in, so a plan whose snapshot names a DIFFERENT
+   * frame than the store's was made against geometry that has since moved — a
+   * crop between planning and publishing. Publishing it would put a layer in the
+   * document whose `pos` and `sourcePos` were measured against a frame the
+   * document no longer has, and nothing downstream can detect that: the snapshot
+   * is frozen, correct, and describes a document that never existed.
+   *
+   * Refused as a `mismatch` rather than a `preconditions` refusal when supplied,
+   * because a store that supplies the frame CAN answer and the disagreement is a
+   * defect in the plan. Omitted, the store cannot answer and the check is skipped
+   * — the same "cannot check" contract `preLayers` and `registry` already use.
+   */
+  documentFrame?: DocumentFrame | null;
   /**
    * The asset registry, for the raster liveness question only.
    *
@@ -1403,6 +1430,7 @@ export function decideDurableAppend({
   preLayerOrder,
   durableLayerOrder,
   preLayers,
+  documentFrame,
   registry: suppliedRegistry,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
@@ -1497,6 +1525,20 @@ export function decideDurableAppend({
     return {
       outcome: 'preconditions',
       reason: `the planned durable raster layer names asset ${plannedSnapshot.source.assetId}, which cannot be verified without the asset registry`,
+    };
+  }
+
+  // The rebase gate, and the only place a frame change can refuse a durable
+  // append. `plannedSnapshot` is the ONLY planned payload that carries layer
+  // geometry, so it is the only one with provenance to check; every other kind
+  // names layers by id or writes the frame itself, and the `documentRevision`
+  // comparison above has already refused an append planned against another
+  // revision.
+  if (plannedSnapshot && documentFrame && !sameFrame(plannedSnapshot.frame, documentFrame)) {
+    return {
+      outcome: 'mismatch',
+      reason:
+        'the planned durable layer was authored against another document frame, so publishing it would place geometry measured in a frame the document no longer has',
     };
   }
 

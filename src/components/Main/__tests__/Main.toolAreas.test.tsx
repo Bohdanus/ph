@@ -939,9 +939,13 @@ describe("Main's ownership of the Ruler's document-scoped line", () => {
   });
 
   /** Establishes a line against `documentId`, the way a measurement on that document would. */
-  const measureOn = (documentId: string, size: { width: number; height: number }) => {
+  const measureOn = (
+    documentId: string,
+    size: { width: number; height: number },
+    origin: { x: number; y: number } = { x: 0, y: 0 }
+  ) => {
     act(() => {
-      syncRulerFrame(documentId, size);
+      syncRulerFrame(documentId, size, origin);
       setRulerMeasurement({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
     });
   };
@@ -988,5 +992,33 @@ describe("Main's ownership of the Ruler's document-scoped line", () => {
     measureOn('doc-A', { width: 640, height: 480 });
 
     expect(currentLine()).toBeNull();
+  });
+
+  it('discards a line when a CROP moves the frame origin and leaves the frame SIZE alone', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-under-test';
+    measureOn('doc-under-test', { width: 640, height: 480 });
+
+    // `totalSize` is `documentFrameSize(frame)`, so this is the crop the size half of the key
+    // cannot see: the store mock keeps its 640×480 while the frame's origin moves, exactly as
+    // `applyDocumentCrop` leaves it after the same-size band off the top and the same-size band
+    // off the left. Keyed on `totalSize` alone, this line survived and the bar reported X/Y
+    // against frame pixels the crop had just removed.
+    storeState.documentFrame = { x: 90, y: 45, width: 640, height: 480 };
+
+    expect(currentLine()).toBeNull();
+  });
+
+  it('keeps a line whose frame is re-reported with a new object identity and the same values', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-under-test';
+    measureOn('doc-under-test', { width: 640, height: 480 });
+
+    // `Main` depends on the frame OBJECT, and `StoreContext` clones it on every document write, so
+    // identity churns on commits that change nothing. A key built from identity would drop the
+    // line on the first of those; a key built from the values does not.
+    storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
+
+    expect(currentLine()).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
   });
 });

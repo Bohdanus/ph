@@ -6,8 +6,9 @@ import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { ShapeToolArgs } from '../tools/shape.ts';
 import type { TextToolArgs } from '../tools/text.ts';
+import { toolIsStrokeShaped } from '../tools/toolProcessors.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
-import type { ToolArgs } from '../contexts/tool-types.ts';
+import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import type { Point, Pos } from '../contexts/general-types.ts';
 
 export function isTextToolArgs(args: ToolArgs | null | undefined): args is TextToolArgs & { toolName: 'text' } {
@@ -44,12 +45,26 @@ export function isBlurToolArgs(args: ToolArgs | null | undefined): args is BlurT
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'blur';
 }
 
-/** A focus-family stroke carries local points and the document-space frame they address. */
+/**
+ * A stroke-shaped argument set: local points plus the document-space frame they address.
+ *
+ * Which tools may answer true at all is the registry's `strokeShaped` capability, read through
+ * `toolIsStrokeShaped`, and NOT a tool name written here. Six classifiers depend on the answer —
+ * `history-replay.ts`, `useLayer.ts`, `useHistory.ts`, `materialization.ts`, `history-adapter.ts`
+ * and `history-append.ts` — and a name list in this predicate was six places to forget the same
+ * tool, with the durable and legacy paths free to disagree about whether an edit was a stroke.
+ * Registering the capability is now the whole of that change: see `ToolProcessorDefinition`'s
+ * `strokeShaped` for what a stroke changes downstream, which is the same for all of them.
+ *
+ * `draw` carries `points` too, and so do several raster tools, so the capability is the only thing
+ * separating a focus-family stroke from an ordinary paint one. Without it every paint tool would
+ * start widening its layer to the frame the brush happens to be inside.
+ */
 export function isRasterStrokeArgs(
   args: ToolArgs | null | undefined
 ): args is ToolArgs & { points: Point[]; rasterBounds: Pos } {
   if (!args || typeof args !== 'object' || !('toolName' in args)) return false;
-  if (!['blur', 'sharpen', 'smudge'].includes(args.toolName as string)) return false;
+  if (!toolIsStrokeShaped(args.toolName as ToolName)) return false;
   const candidate = args as unknown as { points?: unknown; rasterBounds?: unknown };
   const points = candidate.points;
   const bounds = candidate.rasterBounds;

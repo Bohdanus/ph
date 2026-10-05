@@ -11,6 +11,7 @@ import {
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
@@ -411,6 +412,46 @@ describe('replayHistory layer bookkeeping actions', () => {
 
     expect(result.layers).toEqual({});
     expect(dependencies.createLayer).not.toHaveBeenCalled();
+  });
+
+  it('keeps the retained operations of a layer whose source is replaced', () => {
+    // The load-bearing half of "a text layer with a filter on it can be retyped": the replace arm
+    // installs the replacement's name, `pos`, `source` and rasters and copies the EXISTING layer's
+    // `operations` across, so a source edit is an edit of the layer's arguments rather than of the
+    // edits already applied to it. `replayDurableDocument` keeps the list for the same reason and
+    // pins it in `durable-replay.source-edit.test.ts`; without this half the two replay authorities
+    // would disagree about a retyped layer, and both renderers re-apply the list to the new source
+    // (`drawLayerSource` at draw time, `materializeLayer`'s retained segment).
+    //
+    // The arm is otherwise unobservable from this file's other cases: nothing here seeds a layer
+    // that already carries an operation, so a replace that dropped the list passed every other test.
+    const dependencies = createDependencies();
+    const blur: FilterLayerOperation = { id: 'blur', args: { toolName: 'blur', radius: 4 }, enabled: true };
+    const replacement: LayerSource = {
+      kind: 'tool',
+      args: { toolName: 'text', text: 'Retyped' },
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 60, height: 40 },
+    } as LayerSource;
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'layer-1',
+        documentSource: {
+          layers: { 'layer-1': createTestLayer('layer-1', { operations: [blur] }) },
+          size: initialSize,
+          frame: { x: 0, y: 0, width: 400, height: 300 },
+        },
+      },
+      { id: 'retype', actionName: REPLACE_LAYER_SOURCE_ACTION, layerId: 'layer-1', args: { source: replacement } },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].operations).toEqual([blur]);
+    // The replacement still took the source, so the layer is retyped rather than untouched.
+    expect(result.layers['layer-1'].source).toEqual(replacement);
   });
 
   it('creates a layer from a tool layer source on a tool action', () => {

@@ -1203,11 +1203,16 @@ describe('calculateNewRect', () => {
       { width: 100, height: 100 }
     );
 
-    // The ±1 widening is still applied — it is what makes a zero-area press's mask visible — and it
-    // is clamped away at BOTH edges of a document-sized box. So the published rect is the document's
-    // own, and the frame cannot move on the first keystroke.
+    // The published rect is the document's own on every edge, so the frame cannot move on the
+    // first keystroke.
+    //
+    // Stated precisely, because this fixture CANNOT show that the ±1 widening is still applied:
+    // at document size the widening is clamped away at both edges, so the result is identical
+    // whether the inset is 1 or 0. The two `not.toBe` lines this replaces were restatements of
+    // the `toEqual` above them and could not fail independently of it. That the inset survives
+    // at all is pinned elsewhere, on an INTERIOR point box where `-1`/`+1` are inside the
+    // document and therefore observable — the case named "leaves a point box at its own
+    // one-pixel widening".
     expect(result).toEqual({ x1: 0, y1: 0, x2: 100, y2: 16 * 1.2 + 2 * 5 });
-    expect(result!.x1).not.toBe(-1);
-    expect(result!.x2).not.toBe(101);
   });
 });
