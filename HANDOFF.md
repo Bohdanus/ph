@@ -5852,9 +5852,15 @@ The remaining test defects, each with the fix that was proven to work:
   form `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` uses. **Four of the same
   shape remain live, all in that same file:** `declaredCommitKinds` copies `ToolCommitKind`,
   `declaredReplayKinds` copies `ToolReplayKind`, `replayKinds` copies the registry's 43 `replay.kind`
-  literals, and `realBarControlIds` copies the control ids of fifteen options bars. Each resolves
-  against its own list, so a production table that gains or renames a member fails nothing until the
-  copy is updated by hand. `placeholderNames` and `icons` in the same file are **not** instances:
+  literals, and `realBarControlIds` copies the control ids of fifteen options bars. All four ARE pinned
+  to production, so the copies are a maintenance cost and not a hole: `commitKinds` is derived from
+  `findToolProcessor(toolName)!.commit` over the registry and compared to `declaredCommitKinds`,
+  `kinds` is derived the same way from `replay.kind` and compared to `replayKinds` with `toEqual` on
+  two records so a tool entering or leaving the registry cannot slip past, `declaredReplayKinds` is
+  compared to the union those same derived kinds produce, and `realBarControlIds` is compared to the
+  `id` set each bar actually renders. A production table that gains or renames a member therefore
+  fails today; the residual work is deleting the copies, which is a de-duplication and not a
+  detection fix. `placeholderNames` and `icons` in the same file are **not** instances:
   the first is an independent claim about which cards render, and the second has a coverage test.
 
 **Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
@@ -6213,14 +6219,18 @@ toggle covers and not the other half.
 **Affected.** `src/contexts/ThemeContext.tsx` — the two-value `Theme` union and the context type;
 `src/index.scss` — no size custom property and no `:root` font size.
 
-**What would close it.** Add the control, or state the gap where appearance is described.
-`docs/FEATURES.md` documents the theme toggle; an interface-size entry beside it that names what is
-missing is enough to stop the theme toggle reading as the whole of appearance. If the control is
-built, the property it writes has to reach every size the interface expresses — a root font size
-scales the rem-based type but not the fixed pixel control heights, so the honest first step is
+**What would close it.** Add the control, or state the gap where appearance is described. Note first
+that `docs/FEATURES.md` does NOT document the theme toggle — a search of it for `theme`, `appearance`,
+`dark mode` and `toggleTheme` returns nothing — so this entry's remedy cannot be carried out by
+adding a neighbour to an entry that is not there. The only maintained prose on the subject is
+`docs/ARCHITECTURE.md`'s note that the two `localStorage` keys are `theme` and `panelLayout`, which
+is about persistence rather than appearance. An interface-size entry there, beside that note, naming
+what is missing, is enough to stop the theme toggle reading as the whole of appearance. If the
+control is built, the property it writes has to reach every size the interface expresses — a root font
+size scales the rem-based type but not the fixed pixel control heights, so the honest first step is
 naming which of the two the control drives.
 
-**Files.** `src/contexts/ThemeContext.tsx`, `src/index.scss`, `docs/FEATURES.md`
+**Files.** `src/contexts/ThemeContext.tsx`, `src/index.scss`, `docs/ARCHITECTURE.md`
 
 ## 235. The paint cursor is a crosshair, so it carries neither the tip's position nor its width
 
@@ -6229,9 +6239,15 @@ naming which of the two the control drives.
 about where the brush tip is or how wide it is, which for the one tool whose cursor carries
 information is the whole content of the cursor. `DrawToolArea.tsx` draws no outline of its own, and
 no modifier anywhere switches to a precise cursor — the class carries no precise variant and the
-component consults no modifier key. Sixteen other tool areas do set their own cursor, so this is not
-a general absence of per-tool cursors and must not be described as one; what is missing is the
-cursor for the tool whose cursor is load-bearing.
+component consults no modifier key. This is not a general absence of per-tool cursors and must not
+be described as one; what is missing is the cursor for the tool whose cursor is load-bearing. The
+count, stated exactly: 23 of the 25 tool areas in `src/components/Main/` set some `cursor-` class,
+22 of them other than `DrawToolArea`, and 7 of those 22 set something other than the shared
+`cursor-crosshair` — `cursor-crop` on `CropToolArea`, `cursor-move` on `MoveToolArea` (which also
+adds `cursor-grabbing` imperatively while a move is in flight), `cursor-text` on `TextToolArea`,
+`cursor-draw` on `EraserToolArea` and `ShapeToolArea`, `cursor-cell` on `ColorReplacementToolArea`
+outside its colour-sample mode, and `cursor-not-allowed` on `CloneStampToolArea` while it is
+disabled. `DrawToolArea`'s own `cursor-draw` is the crosshair this entry is about.
 
 **Affected.** `src/components/Main/DrawToolArea.tsx`; the cursor rules in
 `src/components/Main/Main.scss` for the precise variant.

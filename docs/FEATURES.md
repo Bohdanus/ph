@@ -403,10 +403,12 @@ and the Burn, so the Sponge must be the active tool.
 Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
 only save is Save As, which is what `File > Save` opens
 (`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
-`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two. `T` is the one key
-with two bindings: bare it selects the Type tool, and `Ctrl+T` selects Free Transform,
+`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two. `T` carries
+two bindings: bare it selects the Type tool, and `Ctrl+T` selects Free Transform,
 which is Adobe's accelerator and the only keyboard route to that panel — the tool has no
-rail tile, so `Edit ▸ Free Transform` was its sole entry before this binding.
+rail tile, so `Edit ▸ Free Transform` was its sole entry before this binding. A bare letter
+that also answers a `Ctrl` accelerator is the norm here, not the exception: `Ctrl+V` pastes and
+bare `V` is the Move tool, `Ctrl+C` copies and bare `C` is the Crop tool.
 
 **Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
 Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while
