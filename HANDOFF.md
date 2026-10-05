@@ -4644,7 +4644,7 @@ compiler-enforced rule. Third, grading `opacity` against the live record decides
 own text says the decision comes before the edit.
 
 **Triaged 2026-10-05; the verdict holds and the arithmetic has moved.** Measured then: `5d388e02` is
-1 ahead and 589 behind, and **24 of its 24 paths** now conflict (`git merge-tree --write-tree
+1 ahead and 630 behind, and **19 conflict lines across 19 paths** (`git merge-tree --write-tree
 --name-only main fix/migration-review-sweep` reports 19 CONFLICT lines; only
 `history-append.tool.test.ts`, `materialization.assets.test.ts`,
 `materialization.ordering.test.ts`, `history-model.ts` and `canvas-filter.ts` merge clean). §179's own
@@ -4659,8 +4659,10 @@ content, and no resolution was ever started.
 **Three claims in this entry are wrong and are corrected here, not by editing its verdict.**
 
 `hasAsset` and `registryResolvesAsset` are **not** the same predicate. The branch's `hasAsset` is an
-optional probe and **omitting it skips the check silently**; `main`'s `registryResolvesAsset` is
-required and **omitting it falls back to the process registry**. A merge would pick one by hunk
+optional probe; **omitting it does not skip the check** — a raster plan without `hasAsset` returns a
+`preconditions` refusal. Only direct low-level validation can skip it. Conversely, `main`'s
+`registryResolvesAsset` is required and **omitting it falls back to the process registry** via
+`getAssetRegistry()` in `history-append.ts:1524`. A merge would pick one by hunk
 context and leave the other arm reading a field that is no longer sent.
 
 `validateBounds` is **not** compiler-enforced on `main` — `git grep validateBounds main -- src` returns
@@ -4680,8 +4682,8 @@ planned snapshot against a layer **re-derived from the same source by the same a
 (`sourceToRuntimeLayer(entry.layerId, source, new Map(preLayers ?? []))`), so several fields are
 compared with themselves. The branch grades it against the live store record instead. Two changes, and
 the second is the first's prerequisite: pass `action.payload.updates?.layers ?? currentState.layers` as
-`liveLayers` where `main` passes `state.layers`, then compare against that record. Port the second
-without the first and the check is unrunnable — a source-backed create's own layer is absent from the
+`liveLayers` to `decideDurableAppend` (where `main` currently passes no `liveLayers` argument), then
+compare against that record. Port the second without the first and the check is unrunnable — a source-backed create's own layer is absent from the
 pre-append record. Second, compare the merge removal set as a **set**: `sameJsonValue(removedLayerIds,
 expectedRemoved)` compares two independent orderings (`Object.keys(liveLayers)` in record insertion
 order against `preLayers.keys()` in durable `Map` order), so a divergence degrades a correct merge to
