@@ -52,6 +52,27 @@
  */
 
 export const CURATED = {
+  'agents-architecture-sweep-2026-10-04': {
+    summary:
+      'Superseded documentation correction; current main already carries the durable navigation-cache architecture status.',
+    landed: true,
+  },
+  'citation-anchors': {
+    summary: 'Explicitly superseded salvage branch; its citation rule and tests are already on main.',
+    landed: true,
+  },
+  'review-architecture-fixes-2026-10-04': {
+    summary: 'Superseded documentation sweep; its stale architecture counts and claims are overtaken by main.',
+    landed: true,
+  },
+  'history-plan-sweep-2026-10-04': {
+    summary: 'Superseded documentation sweep; its architecture corrections are overtaken by main.',
+    landed: true,
+  },
+  'history-research-sweep-2026-10-04': {
+    summary: 'Superseded research-document sweep; current main has newer history-core documentation.',
+    landed: true,
+  },
   /* ---------------------------------------------------------------- board */
   'agent-board': {
     summary:
