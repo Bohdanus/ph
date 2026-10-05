@@ -6,10 +6,50 @@ import { clearRulerMeasurement, useRulerMeasurement } from '../../../tools/ruler
 
 const BAR_CLASS = 'flex h-full flex-row items-center gap-5 overflow-x-auto';
 const READOUT_CLASS = 'flex min-w-14 flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300';
+
+/**
+ * The box a number is drawn in, and why the dark fill is DARKER than the bar.
+ *
+ * A recessed field is what Adobe's bar shows and what the light theme already had: `bg-white` on a
+ * `bg-gray-100` bar is a hole in the surface. The dark version had it the other way round —
+ * `dark:bg-gray-800` on a `dark:bg-gray-800` bar — so the fill was the bar's own colour at 1.00:1
+ * and the box existed only as its 1px border, which at `dark:border-gray-600` is 1.94:1. On the
+ * dark bar the seven readouts rendered as seven empty outlines with text floating in front of them,
+ * which is the screenshot the operator reported.
+ *
+ * So the fill goes to `dark:bg-gray-900` and the BORDER is what carries the box, at
+ * `dark:border-gray-500`: 3.04:1 against the bar, which is the 1.4.11 floor for the boundary of a
+ * user-interface component. The fill-vs-bar pair stays low by design and is not a defect — a
+ * recessed field is *meant* to be a small step from its surface, and it is the border that tells
+ * the user where to click and where a number lives.
+ */
 const VALUE_CLASS =
-  'h-7 rounded border border-gray-300 bg-white px-2 text-xs tabular-nums dark:border-gray-600 dark:bg-gray-800';
+  'h-7 rounded border border-gray-300 bg-white px-2 text-xs tabular-nums dark:border-gray-500 dark:bg-gray-900';
+
+/**
+ * Adobe's `Clear`, and the one control on this bar that was previously unreadable in the dark theme.
+ *
+ * `CLEAR_CLASS` carried no text-colour utility and no ancestor in the chain supplies one: neither
+ * `ToolbarHorizontal`'s `TOOLBAR_BASE_CLASS`, nor `App`, nor `body`, nor `html` sets `color`, and
+ * Tailwind's preflight only sets `color: inherit` on `button`. The button therefore inherited the
+ * user agent's initial `canvastext`, which is `#000000` in BOTH themes — 10.31:1 on the light bar
+ * and **1.43:1** on the dark one, where "Clear" was drawn in black on near-black and was invisible.
+ * It reads perfectly in light, which is exactly why it survived: the defect is only visible in one
+ * theme, and the suite pins light. The replacement, `dark:text-gray-200` on `dark:bg-gray-700`, is
+ * 8.33:1.
+ *
+ * It also had no `disabled:` variant while being `disabled={!measurement}`, so a Clear with nothing
+ * to clear was pixel-identical to a live one. `buttonStyles.ts` records the identical omission on
+ * `SECONDARY_BUTTON` and why it mattered there, so this repeats that pair deliberately.
+ *
+ * The vocabulary — fill, border, text, hover, disabled — is `SECONDARY_BUTTON`'s, at this bar's own
+ * `h-7` rather than the shared `h-9`, because the bar is 50px tall and a 36px button in it would be
+ * the tallest thing on the strip. It is given a FILL as well as a border so it cannot be mistaken
+ * for a seventh readout, which is what it looked like: a bare "Clear" in a box the same size and
+ * shape as the six value boxes beside it, in a bar whose every other control is a readout.
+ */
 const CLEAR_CLASS =
-  'h-7 self-end rounded border border-gray-300 px-3 text-xs dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700';
+  'h-7 self-end rounded border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * The Ruler's options bar is a readout, not a control panel.

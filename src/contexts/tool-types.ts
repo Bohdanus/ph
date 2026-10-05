@@ -77,6 +77,7 @@ export type ToolArgsByName = {
    * `satisfies RulerToolArgs`, and two spellings of one contract is how a tool that grows an arg
    * ends up with a settings default the registry cannot see. Every implemented tool in this record
    * names its type.
+
    */
   ruler: RulerToolArgs;
   pen: { toolName: 'pen' };
