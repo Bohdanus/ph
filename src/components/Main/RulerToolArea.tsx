@@ -17,7 +17,6 @@ import {
 import {
   clearRulerMeasurement,
   setRulerMeasurement,
-  syncRulerFrame,
   useRulerMeasurement,
 } from '../../tools/ruler-measurement-store.ts';
 
@@ -308,7 +307,7 @@ const resizeMeasurement = (
  * `e2e/ruler.spec.ts` pins through the app's own `beforeunload` handler.
  */
 export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) => {
-  const [{ containerRef, documentId, totalSize }] = useStore();
+  const [{ containerRef, totalSize }] = useStore();
   /**
    * The fit the paint effect draws at, as state rather than off `dimensionsRef`.
    *
@@ -339,11 +338,12 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
     setFitScale(dimensionsRef.current.scale);
   }, [dimensionsRef]);
 
-  // A document or frame change is the signal that the line under this gesture is a different one's,
-  // so the line is dropped rather than measured against an origin that has moved.
-  useEffect(() => {
-    syncRulerFrame(documentId, totalSize);
-  }, [documentId, totalSize]);
+  // A document or frame change dropping the line is NOT done here, and it used to be. This area is
+  // mounted for one of the registry's tools, so a line measured and then left behind by switching
+  // tools survived the document open that should have discarded it. `Main` owns it, in a layout
+  // effect, because `Main` is mounted whatever the active tool is and because a layout effect is
+  // what keeps the previous document's line off the screen for the frame it would otherwise paint.
+  // Do not move it back without re-reading that effect.
 
   useEffect(() => {
     const ctx = overlayCtxRef?.current;
