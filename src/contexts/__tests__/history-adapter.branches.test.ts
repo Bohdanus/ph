@@ -462,9 +462,11 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     expect(converted.diagnostics[0]).toMatchObject({
       historyId: 'frame-without-next',
       actionName: SET_DOCUMENT_FRAME_ACTION,
-      // WARNING, not error: `convertLegacyHistorySafely` withholds the ENTIRE
-      // durable document on the first error diagnostic, so an error here would
-      // punish every later entry for a defect the legacy timeline tolerates.
+      // WARNING, not error: the entry is withheld either way, but an error would
+      // also tell every consumer of this document that it is missing an edit the
+      // legacy timeline has — which is a stronger claim than the one that holds.
+      // `publishDurableNavigationPresentation` reads that difference and declines
+      // to navigate on the shadow.
       severity: 'warning',
       code: 'invalid-history-entry',
     });
@@ -940,7 +942,7 @@ describe('disabled durable baseline reporting', () => {
     registry.shutdown();
   });
 
-  it('keeps the shadow available for a disabled opening entry, where an error diagnostic would void it', () => {
+  it('keeps the shadow available for a disabled opening entry, where an error diagnostic would mark it incomplete', () => {
     const registry = new AssetRegistry();
 
     const attempt = convertLegacyHistorySafely([openingEntry('opening-row', true)], {
@@ -948,11 +950,11 @@ describe('disabled durable baseline reporting', () => {
       registry,
     });
 
-    // The SEVERITY is what this pins. `convertLegacyHistorySafely` rolls the asset
-    // transaction back and returns `status: 'unavailable'` with a NULL document on
-    // the first error diagnostic, so an error-severity naming of this divergence
-    // would discard every later entry over a defect the legacy timeline already
-    // tolerates — a strictly worse outcome than the divergence it reports.
+    // The SEVERITY is what this pins. An error-severity naming of this divergence
+    // would tell `publishDurableNavigationPresentation` that the document is
+    // missing an edit, so navigation would stop descending through it — a cost the
+    // divergence does not earn, because a DISABLED opening entry is an entry the
+    // legacy timeline itself skips without an opinion.
     expect(attempt.diagnostics).toHaveLength(1);
     expect(attempt.diagnostics[0]?.severity).toBe('warning');
     expect(attempt.status).toBe('current');
@@ -1689,8 +1691,9 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     );
 
     // A property action resolves no layer, so it must not turn a rename of a
-    // removed layer into the `Layer is unavailable` failure that voids the whole
-    // conversion: the legacy timeline replays all three.
+    // removed layer into the `Layer is unavailable` failure that costs the entry:
+    // the legacy timeline replays all three, so a document missing the third
+    // would not describe it.
     expect(converted.diagnostics).toEqual([]);
     expect(converted.document.history.map((entry) => entry.operation)).toEqual([
       { kind: 'remove-layer', layerId: 'layer-1' },

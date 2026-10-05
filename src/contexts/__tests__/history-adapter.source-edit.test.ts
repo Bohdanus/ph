@@ -296,9 +296,10 @@ describe('legacyHistoryToDurable source edit', () => {
         args: { source: toolSource(args, secondBox) },
       });
 
-      // An unreadable source is withheld as an error, and
-      // `convertLegacyHistorySafely` voids the whole document over it rather than
-      // publishing one holding a source the model cannot read.
+      // An unreadable source is withheld, and the entry that carried it is named by
+      // an ERROR diagnostic rather than the entry being published holding a source
+      // the model cannot read. The severity is what tells every consumer that the
+      // document is missing this edit.
       expect(document.history).toHaveLength(0);
       expect(diagnostics[0]?.severity).toBe('error');
       expect(diagnostics[0]?.code).toBe('invalid-history-entry');
