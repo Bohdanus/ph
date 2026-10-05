@@ -160,41 +160,53 @@ describe('toolDescriptions', () => {
     ).toEqual([]);
   });
 
-  it('names the crop commit controls this app renders, and promises no double-click commit', () => {
-    // A tripwire for two named claims, in the app-facing surfaces only.
+  it("keeps the crop record's Adobe-scoped fields Adobe's and its app-scoped fields app's", () => {
+    // This record has been edited wrong in both directions, and each mistake was invisible to a
+    // green suite, so the two directions are pinned together here.
     //
-    // `CropToolArea`'s own window `keydown` listener is the crop's whole keyboard contract: Enter
-    // calls the commit and Escape the cancel, both through a ref refreshed every render. The crop
-    // panel adds the same two actions as buttons, and it labels them `Apply` and `Clear` — the
-    // record this test guards used to call them `Done / Cancel`, which is Adobe's naming and not
-    // this app's, and it told the reader that "a double-click inside the box" also commits. No
-    // double-click handler exists anywhere in the crop path: `CropToolArea.tsx`, `useRect.ts`,
-    // `document-gesture.ts` and `Crop.tsx` carry no `dblclick`, no `detail` read and no
-    // `onDoubleClick`. Both halves shipped into `docs/TOOLS.md` by the generator, so the record
-    // was the only place the claim could be corrected from.
+    // WRONG TOWARD THE APP: the `Enter / Return` shortcut row read "the same as the Done button".
+    // `shortcuts[]` is an app record — its sibling rows say "Unbound in the app" — and the crop
+    // panel renders `Apply` and `Clear`, so that sentence told the reader to press a button this
+    // app has no name for.
     //
-    // What is deliberately NOT pinned is the crop's `purpose`, which describes Photoshop and says
-    // so; Adobe's Done button and its double-click are true there, and the sentence is a
-    // fidelity record rather than a description of this app.
+    // WRONG TOWARD ADOBE: the `options[]` row's `control` was rewritten to 'Apply / Clear'. The
+    // field is defined as "The control's name in Photoshop's options bar, verbatim … Not the app's
+    // name for it", `detail` is "What the control does in Photoshop", and
+    // `scripts/generate-tool-docs.mjs` renders the pair under the header `| Control | Photoshop |
+    // In this app |`. So the rewrite put an app name in the Photoshop column, pushed app prose
+    // under "Photoshop", and deleted a sentence that was entirely Adobe-scoped and entirely TRUE.
+    // It also orphaned the pair: `purpose` still commits with "the Done button or a double-click
+    // inside the box", correctly scoped to Photoshop, so the page described the same control twice
+    // in two different scopes with no way to tell them apart.
     //
-    // Not vacuous: before the correction the control row read `Done / Cancel` and carried the
-    // double-click sentence, so both assertions below fail on the state that shipped.
-    // Identified by the two buttons it names rather than by position or by `appRef`, because every
-    // control on this panel shares one `appRef` and the row that commits the crop is not the first.
-    const commitRow = toolDescriptions.crop.options.find(
-      (option) => /\bApply\b/.test(option.detail) && /\bClear\b/.test(option.detail)
-    );
-
-    expect(commitRow?.control, 'the crop record no longer names the pair that commits and clears it').toBe(
-      'Apply / Clear'
-    );
+    // Where the app's naming belongs is `appNotes`, which is this record's home for divergence, and
+    // it is where it now reads. `purpose` keeps Adobe's names because Adobe really does bind them.
+    //
+    // Not vacuous: each of the three assertions below fails on a state this file has actually
+    // carried, and each prints the offending value rather than a boolean.
     expect(
-      toolDescriptions.crop.options.map((option) => option.detail).filter((detail) => /double-?click/i.test(detail)),
-      'a crop control row promises a double-click commit the app has no handler for'
+      toolDescriptions.crop.options.map((option) => option.control),
+      'the crop record no longer names the commit pair the way Adobe names it'
+    ).toContain('Done / Cancel');
+
+    // ONLY the surfaces a reader takes as a claim about this app: `summary` reaches the user
+    // through `tooltips.ts` and `ToolTooltip.tsx`, and `modifiers`/`shortcuts` rows describe what
+    // pressing does while this tool is active. `options[].detail` and `purpose` are Adobe's, and
+    // `appNotes` is the divergence record — a mention in any of those three is correct, and
+    // banning them would be banning the fix.
+    const claimsAboutThisApp = [
+      toolDescriptions.crop.summary,
+      ...toolDescriptions.crop.modifiers.map((modifier) => modifier.action),
+      ...toolDescriptions.crop.shortcuts.map((shortcut) => shortcut.action),
+    ];
+
+    expect(
+      claimsAboutThisApp.filter((text) => /\bDone \/ Cancel\b|\bDone button\b/.test(text)),
+      'a surface read as a claim about this app names a commit control the crop panel does not render'
     ).toEqual([]);
     expect(
-      toolDescriptions.crop.shortcuts.filter((shortcut) => /Done button/.test(shortcut.action)),
-      'a crop shortcut names a Done button this app does not render'
+      claimsAboutThisApp.filter((text) => /double-?click/i.test(text)),
+      'a surface read as a claim about this app promises a double-click commit the crop path has no handler for'
     ).toEqual([]);
   });
 

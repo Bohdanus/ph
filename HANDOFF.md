@@ -6450,8 +6450,22 @@ capabilities (`commit`, `requiresCanvasFilter`, `compositesOntoInput`), so this 
 
 ## 242. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
 
-**The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate every
-viewport-relative screenshot clip passes through. It decides the region is already on screen only when
+**The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate the two
+helpers that prepare a viewport-relative clip go through, `takeLineScreenshot` and
+`waitForCanvasPixels`. Specs that call `page.screenshot({ clip })` themselves bypass it, and two
+in-repo comments say so — `e2e/layers-panel.spec.ts` records that `page.screenshot({clip})` "comes
+back clipped to the viewport, while the CDP helper returns the whole clipped rect", and
+`e2e/selection-tools.spec.ts` notes its clips are chosen to be in view precisely because they skip
+this gate. Two in-repo comments record that restriction from the other side:
+`e2e/layers-panel.spec.ts` notes that `page.screenshot({clip})` "comes back clipped to the viewport,
+while the CDP helper returns the whole clipped rect", and `e2e/selection-tools.spec.ts` records the
+consequence it has to work around — "the workspace canvas is taller than the viewport in the default
+Playwright window, so a clip spanning the whole canvas box would be reading outside the rendered
+page", which is why every clip there is built from a rectangle the spec chose to be in view. That
+second comment is also the closest thing to a reproduction on the tree: an over-tall clip is the
+suite's normal case, worked around by hand at the call site rather than refused by the gate.
+
+It decides the region is already on screen only when
 
 ```
 pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height
@@ -6464,16 +6478,27 @@ path, and the returned clip keeps its full height untouched — only `y` is rewr
 clip: { ...clip, y: pageRect.y - scrolledTo },
 ```
 
-Nothing compares `clip.height` against `viewport.height`, and no clamp exists anywhere in `e2e/` or
-`src/`.
+Nothing compares `clip.height` against `viewport.height`, and nothing bounds the region's extent.
+The `clamp` at the top of the same file does not do it either: it bounds the **scroll target**, not
+the clip — `clamp(pageRect.y - Math.round((viewport.height - pageRect.height) / 2), 0,
+viewport.maxScrollY)` — and because the target is clamped, near the top or bottom of a tall document
+the ideal position is unreachable and the region stays partly off screen.
 
-**Why that is a silent wrong answer rather than a loud one.** The CDP path pins
-`captureBeyondViewport: false`, and the comment beside it states the invariant this breaks:
-"the clip is inside the viewport by construction, so there is nothing beyond it to capture." With
-that flag set, Chrome clips the capture to the viewport and returns successfully, so a caller asking
-for 900px of canvas in a 720px window receives the 720px it could get — a smaller region than was
-requested, at exit 0. Any visual-regression baseline recorded through this path from an over-tall
-clip is then a baseline of the wrong region, and it will keep passing.
+**Why that is a wrong answer rather than a loud one, and the exact condition.** This function's own
+docblock states the mechanism: "`page.screenshot({ clip })` can only photograph what is on screen:
+Playwright trims the clip against the viewport". A region that is **entirely** above or below the
+viewport collapses to zero height and Playwright throws `Clipped area is either empty or outside the
+resulting image` — loud, if it names the wrong thing. The silent case is the one this gate produces:
+after the clamped scroll, an over-tall clip still overlaps the viewport only partially, Playwright
+trims away whatever does not fit, and the call succeeds. A caller asking for 900px of canvas in a
+720px window gets the 720px it could get, at exit 0. Any visual-regression baseline recorded through
+this path from an over-tall clip is then a baseline of the wrong region, and it will keep passing.
+
+The CDP path asserts the same invariant independently: `e2e/helpers/cdp-helpers.ts` pins
+`captureBeyondViewport: false` beside the comment "the clip is inside the viewport by construction, so
+there is nothing beyond it to capture". That is a second, weaker statement of the same rule on the
+second capture path, and `e2e/OPEN_PROBLEMS.md` P2 already records that flag's drift — read it there
+rather than here.
 
 **What makes this a defect rather than an unreachable case.** The function's own docblock calls
 itself "a SAFETY NET, not a workaround for a bug that is present", and the reason it is described as
@@ -6481,16 +6506,23 @@ necessary is that a future layout change reintroducing a scrolling page would ot
 capture. The safety net handles the vertical **offset**; it does not handle the vertical **extent**,
 which is exactly the case the docblock says it exists to absorb.
 
-**What would close it.** Refuse a clip that cannot fit, rather than returning a short one: a
-`clipToViewport`-style helper that throws when `clip.height` exceeds the viewport height, called once
-at the top of `waitForCanvasPixels` before its deadline is armed and in `takeLineScreenshot`, so the
-failure names the caller instead of producing a plausible wrong image. Raising nothing and skipping
-nothing: the current code answers a different question than the one it is asked.
+**What would close it.** Refuse a clip that cannot fit, rather than returning a short one: a helper
+that throws when `clip.height` exceeds the viewport height, called once at the top of
+`waitForCanvasPixels` before its deadline is armed and in `takeLineScreenshot`, so the failure names
+the caller instead of producing a plausible wrong image. Raising nothing and skipping nothing: the
+current code answers a different question than the one it is asked.
 
-**Files.** `e2e/helpers/canvas-helpers.ts` — `onScreenClip()` and its `alreadyVisible` test;
-`e2e/helpers/cdp-helpers.ts` — the `captureBeyondViewport: false` flag and the comment asserting
-viewport-boundedness; `e2e/helpers/history-helpers.ts` — the caller that documents `onScreenClip` as
-private to the module.
+The precondition a fixer must check first, because the fix fires for any caller whose clip exceeds
+the viewport: `windowClip` (`e2e/paint-tools.spec.ts`, `e2e/sponge-tool.spec.ts`) clamps `x` and `y`
+at 0 but does not bound `width` or `height` against the viewport, so it does not guarantee that any
+caller is safe today. Enumerate the callers before turning the throw on.
+
+**Files.** `e2e/helpers/canvas-helpers.ts` — `onScreenClip()`, whose `alreadyVisible` predicate has
+**no unit test anywhere**; that absence is why the defect is unpinned, and
+`e2e/helpers/__tests__/canvas-helpers.unit.test.ts` is where one belongs. The module-private
+`clamp` in the same file, which bounds the scroll target only.
+`e2e/helpers/cdp-helpers.ts` — the `captureBeyondViewport: false` flag and its comment.
+`e2e/helpers/history-helpers.ts` — the caller documenting `onScreenClip` as private to the module.
 
 **Provenance.** Found 2026-10-05 on `main` while triaging `land/audit-falsehoods-verified`, whose
 author had recorded it against a 2026-09-30 tree. Re-derived against the current tree: the
