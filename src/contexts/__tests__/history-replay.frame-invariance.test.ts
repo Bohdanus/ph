@@ -125,7 +125,7 @@ describe('replayHistory document frame invariance', () => {
 
   it('keeps a cropped document when the crop is followed by a bedrock add, as on mobile', () => {
     // The same rule as the case above with the crop in the position production puts
-    // it. `setImageFromUpload()` writes the opening `documentSource` frame as
+    // it. `setImageFromUpload()`'s PSD arm writes the opening `documentSource` frame as
     // `documentFrameFromSize(size)`, so a real timeline reaches the moved origin
     // through a `SET_DOCUMENT_FRAME` entry, not through the baseline — which is why
     // this ordering is the one a user can actually hit.

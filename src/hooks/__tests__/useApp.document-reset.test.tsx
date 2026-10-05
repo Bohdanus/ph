@@ -273,8 +273,8 @@ async function seedOutgoingDocument(result: Result) {
   // the document frame's extent, and this harness never runs it — so without this the canvas
   // stays at jsdom's default 300x150 whatever the document is, and every canvas assertion in
   // `expectOutgoingDocumentIntact` is red for EVERY implementation, correct or defective.
-  // Verified by deleting this line: all three cases that call the helper then fail on
-  // `{ width: 300, height: 150 }` against the seeded `{ width: 800, height: 600 }`.
+  // Verified by deleting this line: all three cases that call `expectOutgoingDocumentIntact` then
+  // fail on `{ width: 300, height: 150 }` against the seeded `{ width: 800, height: 600 }`.
   act(() => {
     resizeCanvas(result.current.store.canvasRef.current!, PREVIOUS_SIZE.width, PREVIOUS_SIZE.height);
   });
@@ -407,13 +407,23 @@ const createImage = (width: number, height: number) =>
  * single-layer raster open never exercises. `psd-vector`'s source geometry matches
  * its own `pos`, which `makeLayer`'s default would not.
  */
-function createPsdDocument(warnings: string[] = []): PsdDocument {
+function createPsdDocument(warnings: string[] = [], rasterKind: 'immutable' | 'mutable' = 'immutable'): PsdDocument {
   const raster = makeLayer('psd-raster', 0, {
-    bitmap: { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+    // `rasterKind: 'mutable'` omits `close`, which is what `immutableRaster` early-returns on, so
+    // the same function forwards to `createImageBitmap` and the decode becomes a real failure site.
+    bitmap:
+      rasterKind === 'immutable'
+        ? ({ width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap)
+        : ({ width: 20, height: 30 } as unknown as ImageBitmap),
     pos: { x: 0, y: 0, width: 20, height: 30 },
     source: {
       kind: 'image',
-      bitmap: { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+      // `rasterKind: 'mutable'` omits `close`, which is what `immutableRaster` early-returns on, so
+      // the same function forwards to `createImageBitmap` and the decode becomes a real failure site.
+      bitmap:
+        rasterKind === 'immutable'
+          ? ({ width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap)
+          : ({ width: 20, height: 30 } as unknown as ImageBitmap),
       pos: { x: 0, y: 0, width: 20, height: 30 },
     },
   });
@@ -748,6 +758,45 @@ describe('opening an image kills the outgoing document history and layers', () =
         fileName: 'design.psd',
         document: createPsdDocument(['Masks are unsupported']),
       });
+    });
+
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expectOutgoingDocumentIntact(result, intact);
+  });
+
+  /**
+   * The PSD arm's failure path, which had no control at all until now: the only PSD negative case
+   * above is the DECLINED one, and that returns before any work happens. This one reaches the decode.
+   *
+   * `rasterKind: 'mutable'` is what makes it reachable — with the default already-immutable bitmaps
+   * `immutableRaster` early-returns on `close` and `createImageBitmap` is never called, so a stubbed
+   * `createImageBitmap` alone yields a resolve rather than a rejection. It is also what discriminates
+   * the ordering: the resize now runs after every `immutableRaster` has resolved, so a rejection here
+   * leaves the canvas at the OUTGOING extent, where a resize ahead of the `await` would already have
+   * put it at the incoming one.
+   */
+  it('leaves the canvas at the outgoing extent when a PSD raster fails to decode', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const result = setup();
+    await seedOutgoingDocument(result);
+    const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => {
+        throw new Error('psd decode failed');
+      })
+    );
+
+    await act(async () => {
+      await expect(
+        result.current.app.setImageFromUpload({
+          fileName: 'broken.psd',
+          // One warning so the arm's own `window.confirm` gate is exercised on the way in; with
+          // none it returns before touching anything, which is the declined case above.
+          document: createPsdDocument(['Masks are unsupported'], 'mutable'),
+        })
+      ).rejects.toThrow('psd decode failed');
     });
 
     expect(confirmSpy).toHaveBeenCalledOnce();
