@@ -103,6 +103,23 @@ function describeWorktree(finding) {
     lines.push('    no operation marker, so no `git merge --abort` will clean this up — see the index yourself');
   }
 
+  // A record with no worktree directory — an administrative directory git no longer
+  // reports — has nowhere to run `git status` and nothing to abandon from. The header
+  // tells the reader to go inside the worktree and the CAREFUL line hands over a
+  // destructive command; for this shape both are unrunnable, and an earlier version
+  // printed them anyway under a `path` that was a parenthesised sentence rather than a
+  // path any command accepts.
+  if (finding.present === false) {
+    if (finding.destructive) {
+      lines.push(
+        '    Its state lives in the administrative directory above, not in a worktree, so there is',
+        '    nothing to run in and no command here that would abandon it. Recover the state by',
+        '    hand from that directory, or prune it deliberately.'
+      );
+    }
+    return lines.join('\n');
+  }
+
   if (finding.destructive) {
     // Filtered on `destructive`, which the finding already computed, rather than on a
     // second test of the same thing: `git bisect reset` returns a non-null command and
@@ -149,7 +166,7 @@ repair any of it from the main checkout. See docs/ORCHESTRATION.md on landing.
 
 const UNREADABLE = `repo:state — the roster could not be read, so nothing here is a statement about the repository.
 
-  ${'git worktree list --porcelain'}
+  ${'git worktree list --porcelain -z'}
 
 Run it inside a checkout of this repository. This program reports what git's state files
 say, and it will not report a repository it could not look at as clean.
@@ -164,6 +181,13 @@ say, and it will not report a repository it could not look at as clean.
  * and the prose goes nowhere, so a caller parsing this cannot also be reading a
  * warning it did not ask for.
  *
+ * There is deliberately NO exit seam. An earlier version took `exit = process.exit` and
+ * called it right after writing, which a review measured as truncating the report at the
+ * pipe buffer: 28 of 170 worktrees lost and `--json` unparseable at 65536 bytes, while
+ * the same run through a file was complete. It sets `process.exitCode` and returns
+ * instead, so a test asserts the returned `code` rather than intercepting a call — and
+ * there is no longer any way for a caller to be cut off mid-write.
+ *
  * `scan` is a seam, and it exists because of what could not otherwise be tested. Several
  * shapes that matter here — a `gitdir` that will not resolve, a squash beside a bisect,
  * a roster git will not print — are either unreachable on a healthy repository or need a
@@ -176,7 +200,6 @@ export function run({
   cwd = process.cwd(),
   out = process.stdout,
   err = process.stderr,
-  exit = process.exit,
   json = false,
   scan = scanRepository,
 } = {}) {
@@ -187,8 +210,11 @@ export function run({
       out.write(
         `${JSON.stringify({ scanned: 0, ok: false, reason: scanned.reason, detail: scanned.detail, findings: [] }, null, 2)}\n`
       );
-    else err.write(`${UNREADABLE}  ${scanned.reason}: ${scanned.detail}\n`);
-    exit(1);
+    // The reason is prose; the detail is a raw exception message, which can be several
+    // lines of git output. On its own after a blank line, so it cannot be read as part of
+    // the sentence — an earlier version interpolated it inline.
+    else err.write(`${UNREADABLE}  ${scanned.reason}.\n\n${scanned.detail}\n`);
+    process.exitCode = 1;
     return { findings: [], code: 1, ok: false };
   }
 
@@ -200,8 +226,14 @@ export function run({
     err.write(REPORT_HEADER);
     err.write(`${found.map(describeWorktree).join('\n\n')}\n\n`);
     const unreadable = found.filter((f) => f.readError).length;
+    // The denominator is the ROSTER, not the record count. The cross-check re-adds
+    // registrations git dropped, so the record count legitimately exceeds the roster —
+    // and quoting it inflated the denominator by exactly the worktrees it had just
+    // rescued, which is the worst place to be off by one.
+    const extra = scanned.worktrees.length - scanned.roster;
     err.write(
-      `${found.length} of ${scanned.worktrees.length} worktree(s) need${found.length === 1 ? 's' : ''} attention` +
+      `${found.length} of ${scanned.roster} worktree(s) need${found.length === 1 ? 's' : ''} attention` +
+        `${extra > 0 ? `, plus ${extra} administrative director${extra === 1 ? 'y' : 'ies'} git no longer reports` : ''}` +
         `${unreadable > 0 ? `, ${unreadable} of them because they could not be read` : ''}.\n`
     );
   } else {
@@ -209,7 +241,12 @@ export function run({
   }
 
   if (found.length > 0) {
-    exit(1);
+    // `process.exitCode`, NOT `process.exit`. A review measured the difference: with 170
+    // mid-merge worktrees, `err.write` followed by `process.exit` truncated at the pipe
+    // buffer — 28 worktrees lost and the summary line gone, through a pipe but not
+    // through a file — and `--json` stopped parsing at exactly 65536 bytes. Output that
+    // ends mid-path reads like a complete report, which is worse than no report.
+    process.exitCode = 1;
     return { findings: found, code: 1, ok: true };
   }
   return { findings: found, code: 0, ok: true };

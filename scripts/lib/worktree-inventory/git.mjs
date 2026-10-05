@@ -51,15 +51,30 @@ function git(cwd, args, fallback = null) {
   }
 }
 
-/** `git worktree list --porcelain`, parsed into records. */
+/**
+ * `git worktree list --porcelain -z`, parsed into records.
+ *
+ * `-z` IS NOT OPTIONAL HERE EITHER, and the reason is the drift this file's own consumers
+ * were warned about. `scripts/lib/git-operation-state.mjs` reads the same git format and
+ * moved to `-z` because `--porcelain` does NOT quote its paths: a worktree at
+ * `…/wt\nwith-newline` came back as two records and the path was truncated at the
+ * newline. With this parser left on `\n`, `npm run repo:state` and `npm run dispose`
+ * named DIFFERENT worktrees in the same repository — `dispose` reported
+ * `unknown-worktree` for a worktree the report could see. Two parsers of one format
+ * drifting is the documented risk; this is that risk, realised.
+ *
+ * The RECORD SHAPE is unchanged, deliberately: every caller and every test reads these
+ * objects, and the defect was in how the bytes were split, not in what came out.
+ */
 export function listWorktrees(cwd) {
-  const out = git(cwd, ['worktree', 'list', '--porcelain']);
+  const out = git(cwd, ['worktree', 'list', '--porcelain', '-z']);
   if (out === null) throw new Error('git worktree list failed; is this a git repository?');
 
   const worktrees = [];
   let current = null;
 
-  for (const line of out.split('\n')) {
+  for (const line of out.split('\0')) {
+    if (line === '') continue;
     if (line.startsWith('worktree ')) {
       if (current) worktrees.push(current);
       current = { path: line.slice('worktree '.length) };

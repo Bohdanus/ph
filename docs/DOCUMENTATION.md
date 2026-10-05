@@ -211,10 +211,12 @@ is checked against the state the fix replaced, and that state is the parent's bl
 other side. Two things that look like exceptions are not. `git log -p` on the fix prints
 the lines it removed, so it does recover a pre-fix value — but for a file the fix never
 touched there is nothing to recover, because the parent blob and the fix's blob are the
-same bytes, and `git log -p` under that pathspec walks back to some earlier commit rather
-than reporting the fix. And a squashed commit has one parent like any other, so
-`git show <squash>^:<path>` is the baseline for the whole series; what a series cannot do
-is guess which commit is its start, so that has to be named. Two questions do belong to
+same bytes, and `git log -p` under that pathspec walks back to some earlier commit and
+prints those bytes under it, which is a wrong answer wearing the right value. And a
+squashed commit has one parent like any other, so `git show <squash>^:<path>` is the
+baseline for the whole series; what git cannot do is recover that series' individual
+commits once they are unreachable, so anything that needs one of them has to be named.
+Two questions do belong to
 `git log`: `-S'<string>'` and `-G` locate the commit that changed a string, and
 `git log -M --diff-filter=R --name-status` names the old path of a rename, because the
 post-fix path does not exist in the parent and `git show` fails on it rather than

@@ -30,14 +30,15 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 
 import {
   OPERATION_MARKERS,
   abortCommand,
   findings,
+  parseWorktreeListing,
   readOperations,
   resolveAdminDirFor,
   resolveCommonDir,
@@ -162,19 +163,16 @@ afterEach(() => {
 function report(recordsOrCwd) {
   const out = [];
   const err = [];
-  let code = null;
   const cwd = typeof recordsOrCwd === 'function' ? undefined : recordsOrCwd;
   const records = typeof recordsOrCwd === 'function' ? recordsOrCwd() : null;
+  // The returned `code` is the whole signal now — there is no exit to intercept, because
+  // `run` sets `process.exitCode` and returns rather than cutting itself off mid-write.
   const result = run({
     cwd,
     scan: records === null ? undefined : () => ({ ok: true, reason: null, worktrees: records }),
     out: { write: (s) => out.push(s) },
     err: { write: (s) => err.push(s) },
-    exit: (c) => {
-      code = c;
-    },
   });
-  if (code !== null) expect(code).toBe(result.code);
   return { out: out.join(''), err: err.join(''), code: result.code };
 }
 
@@ -290,18 +288,31 @@ describe('readOperations reads what git actually writes', () => {
     expect(readOperations('/nowhere/at/all')).toEqual([]);
   });
 
-  it('derives its marker set from the table, so a marker git adds is covered by data', () => {
-    // The table is the part of this module that has to track git. A reader that
-    // hard-coded the filenames would report every operation correctly today and
-    // silently miss the next one git adds — so this proves the READER consults the
-    // table, by adding an entry git does not have and seeing it reported.
+  it('consults the marker table rather than a hard-coded list', () => {
+    // A mutation review replaced `readOperations`'s table loop with a literal copy of
+    // the same seven rows and this test PASSED, because it read `OPERATION_MARKERS[0]`
+    // — `MERGE_HEAD`, the first row a hard-coded list would also contain. It proved the
+    // table has a first entry, not that the reader consults it.
+    //
+    // So this pushes a row git has never written onto the exported table and asserts
+    // the reader reports it. A hard-coded list cannot see a row added after it was
+    // written; this one can. Popped in a `finally` because the table is module state and
+    // a leaked row would make every later case in this file report a phantom operation.
     const before = readOperations(makeGitDirWith({ GIT_EDITOR_HINT: null }));
     expect(before).toEqual([]);
 
-    const marker = OPERATION_MARKERS[0];
-    expect(readOperations(makeGitDirWith({ [marker.file]: 'abc123' }))).toEqual([
-      { operation: marker.operation, marker: marker.file, value: 'abc123' },
-    ]);
+    OPERATION_MARKERS.push({ operation: 'probe', file: 'PROBE_MARKER', value: true });
+    try {
+      expect(readOperations(makeGitDirWith({ PROBE_MARKER: 'probe-sha' }))).toEqual([
+        { operation: 'probe', marker: 'PROBE_MARKER', value: 'probe-sha' },
+      ]);
+      // And the abort mapping follows the new row, so a row added to the table cannot
+      // arrive without a remedy decision.
+      expect(abortCommand({ operation: 'probe', marker: 'PROBE_MARKER' })).toBe('git probe --abort');
+    } finally {
+      OPERATION_MARKERS.pop();
+    }
+    expect(readOperations(makeGitDirWith({ PROBE_MARKER: 'probe-sha' }))).toEqual([]);
     expect(OPERATION_MARKERS.every((m) => m.file ?? m.dir)).toBe(true);
   });
 });
@@ -466,16 +477,12 @@ describe('it fails closed on what it could not read', () => {
   it('reports a roster it could not read through `run`, on stderr, with exit 1', () => {
     const out = [];
     const err = [];
-    let code = null;
     const result = run({
       cwd: join(tmpdir(), 'definitely-not-a-repository-here'),
       out: { write: (s) => out.push(s) },
       err: { write: (s) => err.push(s) },
-      exit: (c) => {
-        code = c;
-      },
     });
-    expect(code).toBe(1);
+    expect(result.code).toBe(1);
     expect(result.ok).toBe(false);
     expect(err.join('')).toContain('could not be read');
     expect(out.join('')).not.toContain('clean');
@@ -631,7 +638,9 @@ describe('the report says which remedy applies, and warns about the destructive 
       json: true,
       out: { write: (s) => out.push(s) },
       err: { write: (s) => err.push(s) },
-      exit: () => {},
+      // No `exit` argument: `run` sets `process.exitCode` and returns, so there is
+      // nothing to stub. A stub left here asserts a seam the code deliberately does not
+      // have — see `run`'s docstring for why.
     }).code;
 
     expect(code).toBe(1);
@@ -671,28 +680,53 @@ describe("the third review's findings, pinned", () => {
   });
 
   it('refuses rather than reporting an empty roster as clean', () => {
-    // Unreachable on the git measured — a repository always lists its primary — but an
-    // empty parse is the same SHAPE as an unreadable one, and this module's argument is
-    // that it does not report health it has not established.
+    // The previous version of this case asserted `ok: true` and
+    // `worktrees.length > 0` — the opposite of its own title — and its `findings([])`
+    // line could not fail, because `findings` filters. Neither drove the
+    // `entries.length === 0` branch the name promises.
+    //
+    // Driving it needs a git whose `worktree list` succeeds and answers with nothing,
+    // which no real repository does. So the roster reader is driven directly, and the
+    // scan's own empty-parse guard is asserted on the real repository as a floor.
+    expect(parseWorktreeListing('')).toEqual([]);
+    // Attributes before any `worktree` record must not INVENT one. The first version of
+    // this case expected `[{ path: null }]` here, which would have made a lost record
+    // look like a worktree at the filesystem root.
+    expect(parseWorktreeListing('detached\0bare\0')).toEqual([]);
+    expect(parseWorktreeListing('HEAD abc123\0branch refs/heads/main\0')).toEqual([]);
+
     const scanned = scanRepository(makeRepo());
     expect(scanned.ok).toBe(true);
-    expect(scanned.worktrees.length).toBeGreaterThan(0);
-    expect(findings([])).toEqual([]);
+    expect(scanned.worktrees).toHaveLength(1);
   });
 
   it('records an unmerged read that failed instead of throwing out of the scan', () => {
     // `unmergedPaths` throws on a non-zero exit by design, and `scanRepository` has to
     // catch it: the first version let it escape, which killed the report for every
     // worktree over one unreadable registration and contradicted the module's own
-    // docstring. Pinned because the guard was added without a test.
+    // docstring.
+    //
+    // A mutation review DELETED that try/catch and this test still passed, because the
+    // body drove a healthy merge and asserted `readError === null` — which is what a
+    // guarded healthy read returns too. So it now drives a FAILING reader, which is
+    // what the guard exists for; deleting the guard makes it throw.
     const repo = addConflictingBranch(makeRepo(), 'theirs');
     const path = addWorktree(repo, 'linked');
     git(path, 'checkout', '-B', 'wt/linked');
     mergeThatConflicts(path, 'theirs');
-    const found = scanRepository(repo).worktrees.find((w) => realpathSync(w.path) === realpathSync(path));
+
+    const boom = () => {
+      throw new Error('Command failed: git diff --name-only --diff-filter=U -z');
+    };
+    const found = scanRepository(repo, { unmergedOf: boom }).worktrees.find(
+      (w) => realpathSync(w.path) === realpathSync(path)
+    );
+    // The operation is still known — that is the point of recording rather than throwing.
     expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
-    expect(found.unmerged).toEqual(['f.txt']);
-    expect(found.readError).toBeNull();
+    expect(found.unmerged).toEqual([]);
+    expect(found.readError).toMatch(/diff-filter=U/);
+    // And it survives into the report, rather than the worktree being lost.
+    expect(findings([found])).toHaveLength(1);
   });
 
   it('names a discard command that discards, and never `git bisect reset`', () => {
@@ -764,5 +798,225 @@ describe("the third review's findings, pinned", () => {
     const r = report(() => [squash]);
     expect(r.err).toMatch(/None of these has a command that would discard/);
     expect(r.err).not.toContain('git squash --abort');
+  });
+});
+
+describe('the roster cannot be trusted on its own', () => {
+  it('reports a worktree whose administrative directory git can no longer describe', () => {
+    // Found by a review with a single `chmod`, and it is the worst failure this module
+    // can have: `chmod 000 <gitdir>/worktrees/<name>` makes `git worktree list
+    // --porcelain` OMIT the registration entirely — the roster silently shrank from
+    // three entries to two — while `MERGE_HEAD` sat in the directory that had just
+    // become unreadable. The report said "clean" and exited 0, which is the one output
+    // this module exists to never produce, and it falsified both `scanRepository`'s
+    // docstring and the sentence in `docs/ORCHESTRATION.md` about reporting a worktree
+    // it could not describe as unreadable rather than clean.
+    //
+    // `chmod` rather than a stub because the whole point is that git's OWN roster
+    // command loses the entry; an injected reader could only prove the cross-check runs,
+    // not that it has anything to catch.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'hidden');
+    git(path, 'checkout', '-B', 'wt/hidden');
+    mergeThatConflicts(path, 'theirs');
+
+    const before = scanRepository(repo).worktrees;
+    expect(before.map((w) => w.name)).toContain('hidden');
+
+    const adminDir = join(repo, '.git', 'worktrees', 'hidden');
+    chmodSync(adminDir, 0o000);
+    try {
+      // git itself has now lost it. Asserted, because the rest of the case means nothing
+      // if the roster were still complete.
+      expect(
+        spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo, encoding: 'utf8' }).stdout
+      ).not.toContain('hidden\n');
+
+      const after = scanRepository(repo);
+      const found = after.worktrees.find((w) => w.name === 'hidden');
+      expect(found, 'the cross-check must re-add what git dropped').toBeDefined();
+      // A `chmod 000` makes the state genuinely unreadable, so the honest answer is NOT
+      // a recovered `MERGE_HEAD` — it is "here is a registration, and I could not read
+      // it". Claiming the merge was found when it was not would be the same defect in
+      // the opposite direction.
+      expect(found.operations).toEqual([]);
+      // The message names the read that actually failed. It used to be inferred from
+      // `readdirSync`, which at mode 0111 throws while the markers read perfectly — so
+      // it printed "its git state could not be read" directly above the `MERGE_HEAD`
+      // it had just read.
+      expect(found.readError).toMatch(/gitdir file could not be read/);
+      const reported = findings(after.worktrees);
+      expect(reported).toHaveLength(1);
+      expect(reported[0].name).toBe('hidden');
+    } finally {
+      chmodSync(adminDir, 0o755);
+    }
+  });
+
+  it('round-trips a worktree path containing a newline, which the roster does not quote', () => {
+    // `git worktree list --porcelain` does NOT quote its paths, so a worktree at
+    // `…/wt\nwith-newline` came back as two records and the path was truncated at the
+    // newline. The live worktree then read as absent, the tool stated as FACT that git
+    // had dropped state still sitting on disk, and the record for the worktree actually
+    // holding the merge never existed. This is the trap `unmergedPaths` documents for
+    // `git status --porcelain`, in the same module, and the first version had both.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = join(scratch(), 'wt\nwith-newline');
+    git(repo, 'worktree', 'add', '-qb', 'wt/newline', path);
+    git(path, 'checkout', '-q', '-B', 'wt/newline');
+    mergeThatConflicts(path, 'theirs');
+
+    const found = scanRepository(repo).worktrees.find((w) => w.path.includes('\n'));
+    expect(found, 'the newline path must survive parsing').toBeDefined();
+    expect(found.path).toBe(realpathSync(path));
+    expect(found.present).toBe(true);
+    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+    expect(found.unmerged).toEqual(['f.txt']);
+  });
+
+  it('reports how many administrative directories the roster accounted for', () => {
+    // The cross-check needs a floor to compare against, and a reader that wants to know
+    // whether every admin directory was matched gets it here rather than by counting.
+    const scanned = scanRepository(makeRepo());
+    // One admin directory per LINKED worktree; the primary has none of its own.
+    expect(scanned.roster).toBe(scanned.worktrees.length);
+    expect(scanned.adminDirs).toBe(0);
+  });
+
+  it('does not run the work-tree-only probe against a bare repository', () => {
+    // A bare repository is a first-class git layout — what a mirror lives in — and its
+    // only roster entry has no working tree, so `git diff --diff-filter=U` answers
+    // "fatal: this operation must be run in a work tree" on every run. The tool was
+    // therefore permanently red in a valid configuration, which is this module's own
+    // stated reason for not being a hook: a report that is always red gets bypassed.
+    const bare = join(scratch(), 'mirror.git');
+    spawnSync('git', ['init', '--quiet', '--bare', bare], { encoding: 'utf8' });
+    const scanned = scanRepository(bare);
+    expect(scanned.ok).toBe(true);
+    expect(scanned.worktrees).toHaveLength(1);
+    expect(scanned.worktrees[0].bare).toBe(true);
+    expect(scanned.worktrees[0].readError).toBeNull();
+    expect(findings(scanned.worktrees)).toEqual([]);
+  });
+
+  it('still reports an operation in a bare repository, because that state is readable', () => {
+    // The probe is skipped, not the reading: `MERGE_HEAD` in a bare git directory is
+    // still `MERGE_HEAD`.
+    const bare = join(scratch(), 'mid-merge.git');
+    spawnSync('git', ['init', '--quiet', '--bare', bare], { encoding: 'utf8' });
+    writeFileSync(join(bare, 'MERGE_HEAD'), 'deadbeef');
+    const scanned = scanRepository(bare);
+    expect(scanned.worktrees[0].operations).toEqual([{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }]);
+    expect(findings(scanned.worktrees)).toHaveLength(1);
+  });
+});
+
+describe('the cross-check must not invent worktrees either', () => {
+  it('resolves a relative gitdir, which `git worktree add --relative-paths` writes', () => {
+    // A CRITICAL found by an adversarial review. `--relative-paths` is a documented
+    // configuration, and git writes a RELATIVE path into the administrative
+    // directory's `gitdir` — measured as `../../../rel/.git`, relative to the ADMIN
+    // DIRECTORY. Taking `dirname()` of it verbatim yields `../../../rel`, which never
+    // matches a roster entry, so the cross-check invented a false orphan on a healthy
+    // repository: the report told the operator a live worktree was gone and unreadable,
+    // permanently, and `records` exceeded the roster so the worktree was counted twice.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const relative = join(scratch(), 'rel');
+    git(repo, 'worktree', 'add', '-q', '--relative-paths', '-b', 'wt/rel', relative);
+    git(relative, 'checkout', '-q', '-B', 'wt/rel');
+    mergeThatConflicts(relative, 'theirs');
+
+    // The precondition, asserted: git really did write a relative path here.
+    const gitdir = readFileSync(join(repo, '.git', 'worktrees', 'rel', 'gitdir'), 'utf8').trim();
+    expect(isAbsolute(gitdir)).toBe(false);
+
+    const scanned = scanRepository(repo);
+    // No invented record, and no double count.
+    expect(scanned.worktrees).toHaveLength(scanned.roster);
+    const found = scanned.worktrees.find((w) => w.name === 'rel');
+    expect(found.present).toBe(true);
+    expect(found.readError).toBeNull();
+    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+    expect(findings(scanned.worktrees)).toHaveLength(1);
+  });
+
+  it('does not report a stray directory under the admin root as a lost worktree', () => {
+    // A directory with no `gitdir` file is not a worktree git dropped from its roster —
+    // it is a directory that is not a worktree: an interrupted `git worktree add`, a temp
+    // directory, an editor artefact. Calling it a lost registration asserts git's intent
+    // that was never measured, and it made a healthy repository permanently red.
+    const repo = makeRepo();
+    mkdirSync(join(repo, '.git', 'worktrees', 'stray'), { recursive: true });
+
+    const scanned = scanRepository(repo);
+    expect(scanned.worktrees).toHaveLength(scanned.roster);
+    expect(findings(scanned.worktrees)).toEqual([]);
+  });
+
+  it('does not claim a directory whose git state it did read is unreadable', () => {
+    // The previous message inferred readability from `readdirSync`, which throws at mode
+    // 0111 while the markers read perfectly — so it printed "its git state could not be
+    // read" directly above the `MERGE_HEAD` it had just read. A claim about a read that
+    // succeeded is worse than no claim.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'locked');
+    git(path, 'checkout', '-B', 'wt/locked');
+    mergeThatConflicts(path, 'theirs');
+    chmodSync(join(repo, '.git', 'worktrees', 'locked'), 0o111);
+    try {
+      const found = scanRepository(repo).worktrees.find((w) => w.name === 'locked');
+      // Mode 0111 is execute-only: `readdirSync` throws, `readFileSync` of a known name
+      // does not. So the state IS read and the message must not deny it.
+      expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+      // `null` here is the point: nothing failed, so nothing is claimed.
+      expect(found.readError ?? '').not.toMatch(/could not be read/);
+    } finally {
+      chmodSync(join(repo, '.git', 'worktrees', 'locked'), 0o755);
+    }
+  });
+
+  it('reports two administrative directories claiming one worktree as unresolvable', () => {
+    // A Set cannot see this: the second directory's state is then read by nothing at
+    // all. Measured, a `gitdir` naming an already-claimed worktree produced no finding
+    // and its `MERGE_HEAD` was never read — real merge state, in a directory git does
+    // not list, invisible.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'one');
+    git(path, 'checkout', '-B', 'wt/one');
+    mergeThatConflicts(path, 'theirs');
+
+    const twin = join(repo, '.git', 'worktrees', 'twin');
+    mkdirSync(twin, { recursive: true });
+    writeFileSync(join(twin, 'gitdir'), `${join(path, '.git')}\n`);
+    writeFileSync(join(twin, 'MERGE_HEAD'), 'deadbeef\n');
+
+    const scanned = scanRepository(repo);
+    const reported = findings(scanned.worktrees);
+    // The roster entry for the live worktree is still found on its own account; the twin
+    // is the extra fact, and it must be visible rather than absorbed.
+    expect(reported.some((f) => f.operations.length > 0)).toBe(true);
+  });
+
+  it('keeps locked and prunable, which the -z rewrite had been discarding', () => {
+    // `locked` is what stops `git worktree prune` deleting the resolution state this tool
+    // exists to protect, so dropping it drops the answer to "is this about to be
+    // destroyed". `prunable` is the state `dispose-worktree.mjs` refuses on.
+    expect(parseWorktreeListing('worktree /w\0locked because in use\0')).toEqual([
+      { path: '/w', locked: 'because in use' },
+    ]);
+    expect(parseWorktreeListing('worktree /w\0locked\0')).toEqual([{ path: '/w', locked: true }]);
+    expect(parseWorktreeListing('worktree /w\0prunable gitdir file points to non-existent location\0')).toEqual([
+      { path: '/w', prunableReason: 'gitdir file points to non-existent location' },
+    ]);
+  });
+
+  it('carries bare on every record shape, not only on the present one', () => {
+    // Three record shapes exist and `bare` was on one of them, so a single absent
+    // worktree changed the key set a `--json` consumer sees.
+    const repo = makeRepo();
+    const path = addWorktree(repo, 'gone');
+    rmSync(path, { recursive: true, force: true });
+    const shapes = scanRepository(repo).worktrees;
+    for (const shape of shapes) expect(Object.hasOwn(shape, 'bare')).toBe(true);
   });
 });
