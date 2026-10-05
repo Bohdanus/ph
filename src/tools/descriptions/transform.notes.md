@@ -662,15 +662,13 @@ modifier table:
 | `Cmd+Option+T` | duplicate and enter Free Transform on the duplicate |
 | `Enter`        | commit                                              |
 
-The app binds two of the three. `t` alone still selects the Text tool
-(the `mod: false` `t` registration in `AppKeyboardShortcuts.tsx`; what an earlier version cited is
-inside the `Cmd+C` copy handler), and a `mod: true` registration on the same key selects the
-`transform` tool outright, so `Cmd+T` reaches the panel that `Edit ▸ Free Transform` reaches. The
-tool still has no rail entry — `extraTools` in `toolbar-mapping.ts` is where `color`, `levels` and
-`transform` are recorded as
-carrying no Tools-rail entry — so the menu item in `DesktopHeader.tsx` remains the other route.
-`Cmd+Option+T` is unbound: duplicating into an edit of the duplicate is a different operation from
-opening the panel, and nothing in the app enters one from the other.
+The app binds none of the three. `t` alone selects the Text tool
+(the `t` registration in `AppKeyboardShortcuts.tsx`; what an earlier version cited is inside the
+`Cmd+C` copy handler) and there is no `Cmd+T` registration
+anywhere; the tool has no accelerator at all, and no rail entry to declare one on —
+`extraTools` in `toolbar-mapping.ts` is where `color`, `levels` and `transform` are recorded as
+carrying no Tools-rail entry, and `Edit ▸ Free Transform` in the header is what reaches the id
+instead (the `Edit` menu's `Free Transform` item in `DesktopHeader.tsx`).
 
 **`Enter` is now Adobe's, and it was third-party before this pass.** Adobe's Free Transform page
 does not print it, but the Feb 23 2026 reference-point page does, in the imperative: "Press **Enter
@@ -1274,16 +1272,6 @@ through the same handler the rail calls; it was simply carrying tool switches un
 menu's name. The extraction added an `Image ▸ Adjustments` submenu and reshaped `Edit` to Adobe's
 own single `Free Transform` item, and it removed `color`, `levels` and `transform` from the Tools
 menu in the same change. A test now pins that absence.
-
-**That last sentence is history, and the surface is gone.** The `Tools` menu itself was removed on
-2026-10-02, when the menu bar was rebuilt against Adobe's own list — `File, Edit, Image, Layer,
-Type, Select, Filter, View, Window, Help`, with no `Tools` among them, because Photoshop has no such
-menu and `docs/OVERRIDES.md` has never excused one. So there is no longer a second surface to keep
-in step, `TOOL_MENU_ITEMS` no longer exists, and the pin that named the absence has been replaced:
-`SidebarLeft/__tests__/toolbar-mapping.test.ts` now carries the invariant that every registered tool
-is a rail tile or is named in `toolbar-mapping.ts`'s `extraTools`. The reasoning above still stands —
-a tool list is not a single surface — and it is why that invariant lives against the registry rather
-than against a list of menu rows.
 
 What did survive is the reason the first surface was not the only one: a tool list is not a single
 surface, and "delete three rows from `toolbarMap`" was never going to be sufficient on its own.

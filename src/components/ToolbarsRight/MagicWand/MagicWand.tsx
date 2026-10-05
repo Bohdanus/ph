@@ -50,7 +50,7 @@ const MagicWand: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleDeselect = () => {
+  const handleClear = () => {
     clearSelections();
   };
 
@@ -106,8 +106,8 @@ const MagicWand: React.FC<{}> = () => {
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
           Paste
         </button>
-        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleDeselect}>
-          Deselect
+        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleClear}>
+          Clear
         </button>
       </div>
 

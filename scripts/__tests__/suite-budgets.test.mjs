@@ -87,7 +87,6 @@ const BUDGETED = [
   'merge-release.test.mjs',
   'merge-takeover-guard.test.mjs',
   'merge-takeover-guard-install.test.mjs',
-  'repo-state-gate.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
 ];

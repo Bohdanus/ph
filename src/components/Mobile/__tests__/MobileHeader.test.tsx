@@ -130,7 +130,7 @@ describe('MobileHeader', () => {
     expect(redoMock).toHaveBeenCalledTimes(1);
   });
 
-  it('opens the navigation drawer from the header, and names the dialog only while it exists', async () => {
+  it('opens the navigation drawer from the header, which declares the dialog it controls', async () => {
     const user = userEvent.setup();
     const onOpenMenu = vi.fn();
     renderHeader({ onOpenMenu });
@@ -138,23 +138,19 @@ describe('MobileHeader', () => {
     const menu = screen.getByRole('button', { name: 'Open navigation menu' });
     expect(menu).toHaveAttribute('aria-haspopup', 'dialog');
     expect(menu).toHaveAttribute('aria-expanded', 'false');
-    // Closed, the drawer is not in the tree (`MobileMenuDrawer` returns null), so the reference
-    // would name nothing. `aria-expanded="false"` with no `aria-controls` is the honest pair.
-    expect(menu).not.toHaveAttribute('aria-controls');
+    expect(menu).toHaveAttribute('aria-controls', 'mobile-menu-panel');
 
     await user.click(menu);
     expect(onOpenMenu).toHaveBeenCalledTimes(1);
   });
 
-  it('reports the menu as expanded once it is open, and only then names the dialog', () => {
+  it('reports the menu as expanded once it is open', () => {
     renderHeader({ isMenuOpen: true });
 
-    const menu = screen.getByRole('button', { name: 'Open navigation menu' });
-    expect(menu).toHaveAttribute('aria-expanded', 'true');
-    expect(menu).toHaveAttribute('aria-controls', 'mobile-menu-panel');
+    expect(screen.getByRole('button', { name: 'Open navigation menu' })).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('toggles the layers drawer from the header, and names the dialog only while it exists', async () => {
+  it('toggles the layers drawer from the header, which declares the dialog it controls', async () => {
     const user = userEvent.setup();
     const onToggleLayers = vi.fn();
     renderHeader({ onToggleLayers });
@@ -162,19 +158,16 @@ describe('MobileHeader', () => {
     const layers = screen.getByRole('button', { name: 'Toggle layers panel' });
     expect(layers).toHaveAttribute('aria-haspopup', 'dialog');
     expect(layers).toHaveAttribute('aria-expanded', 'false');
-    // Closed, `MobileLayersDrawer` returns null, so the reference would name nothing.
-    expect(layers).not.toHaveAttribute('aria-controls');
+    expect(layers).toHaveAttribute('aria-controls', 'mobile-layers-panel');
 
     await user.click(layers);
     expect(onToggleLayers).toHaveBeenCalledTimes(1);
   });
 
-  it('reports the layers drawer as expanded, and only then names the dialog', () => {
+  it('reports the layers drawer as expanded', () => {
     renderHeader({ isLayersOpen: true });
 
-    const layers = screen.getByRole('button', { name: 'Toggle layers panel' });
-    expect(layers).toHaveAttribute('aria-expanded', 'true');
-    expect(layers).toHaveAttribute('aria-controls', 'mobile-layers-panel');
+    expect(screen.getByRole('button', { name: 'Toggle layers panel' })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('commits the dirty tool before opening the save dialog, so the export carries it', async () => {

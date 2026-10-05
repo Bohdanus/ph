@@ -1,5 +1,5 @@
 import { flushSync } from 'react-dom';
-import { useHistoryCommands } from '../../hooks/useHistoryCommands.ts';
+import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -119,9 +119,7 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 
 export const AppKeyboardShortcuts = () => {
   const [{ fileName, totalSize, documentFrame, hasImage, toolName }] = useStore();
-  // The gesture-gated commands, not `useHistory` directly: a keyboard undo fired while a
-  // pointer gesture is open truncates the redo tail silently. See `useHistoryCommands.ts`.
-  const { canUndo, undo, canRedo, redo } = useHistoryCommands();
+  const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
@@ -565,29 +563,6 @@ export const AppKeyboardShortcuts = () => {
     mod: false,
     enabled: hasImage,
     onKeyDown: () => goToTool('text'),
-  });
-
-  /**
-   * Adobe's Free Transform accelerator, and the only keyboard route to the `transform` tool —
-   * `extraTools` gives it no rail tile, so until this binding the panel was reachable from the
-   * `Edit` menu alone.
-   *
-   * Registered after the bare `t` because the provider walks its registry in reverse and breaks on
-   * the first match, so last registered wins per key. That ordering is not what makes this pair
-   * safe, though: `matchesShortcut` compares `mod` only when a registration declares it, so the
-   * `mod: false` entry above never matches a press carrying Meta and never reaches the tie-break.
-   * The same reasoning as the `v` pair, for the same reason.
-   *
-   * `preventDefault` is not optional here. `Cmd+T` reopens a closed tab on macOS and `Ctrl+T` opens
-   * a new one on Windows and Linux, so without it the accelerator would hand the key to the browser
-   * and change the panel instead of the tab — or rather, fail to change anything the user could see.
-   */
-  useKeyDownShortcut({
-    key: 't',
-    mod: true,
-    preventDefault: true,
-    enabled: hasImage,
-    onKeyDown: () => goToTool('transform'),
   });
 
   useKeyDownShortcut({

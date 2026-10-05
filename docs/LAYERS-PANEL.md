@@ -760,7 +760,7 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 | Name testid        | `data-testid="layer-name"` (the name span in `LayersTab.tsx` — `LayersTab`)                              | one e2e file, through its `LAYER_NAME` constant in `e2e/layers-panel.spec.ts`; no unit file queries it |
 | Row title          | `title="Drag to reorder"` (the row `<div>`'s `title` in `LayersTab.tsx` — `LayersTab`)                   | 8 e2e call sites, 3 unit files, substring-matched — [§7](#7-rename)                                    |
 | Panel header title | `${title} panel — drag this tab to move it, …` (the header's `title` in `PanelGroup.tsx` — `PanelGroup`) | Deliberately avoids the phrase above (the `PanelGroupProps` `title` doc comment)                       |
-| Panel body id      | `id="panel-body-{id}"` (the body's `<div>` in `PanelGroup.tsx` — `PanelGroup`)                           | rendered only while the panel is not rolled up, so `aria-controls` is omitted with it                  |
+| Panel body id      | `id="panel-body-{id}"` (the rolled-up body's `<div>` in `PanelGroup.tsx` — `PanelGroup`)                 | `aria-controls` must name the element that exists                                                      |
 | Default layer name | `Blank 1`                                                                                                | `openWorkspace` waits for the seeded row **by name** — the row name is a test contract                 |
 
 ---

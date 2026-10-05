@@ -1,8 +1,8 @@
-Photoshop clone production-grade photo editor
+Photoshop clone, production-grade photo editor
 
-## Worktree FIRST
+## Work on WORKTREE
 
-Every tracked-file change happens in its own worktree and branch. `main` is for reading
+Every tracked-file change happens in worktree and branch. `main` is for reading
 and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
 
 ```bash
@@ -14,11 +14,11 @@ git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
 
 `main-worktree-guard.mjs` refuses commits made from `main`, but only after the edit;
 create the worktree before writing. Every commit carries a `Chat: ses_<id>` trailer.
-Every merge into `main` also carries `Branch: <source-branch>`; keep the subject unchanged.
-No gate supplies these values, so resolve the chat id before the first commit. It is also
+Every merge into `main` also carries `Branch: <source-branch>`.
+No gate supplies these values, so resolve chat id before the first commit. It is also
 the swarm identity used by `npm run swarm -- --agent ses_…`.
 
-There is no `kilo` CLI. Find the id in the session store with a phrase you typed, matching
+Find the id in the session store with a phrase you typed, matching
 words rather than a multi-line literal:
 
 ```bash
@@ -68,7 +68,6 @@ Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for o
 
 - `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
-- `npm run repo:state` reports every worktree with a merge, rebase or bisect in progress. Nothing else in the tree can see that state, and it lives in no commit, branch name or `git status`. Run it before a sweep or a landing. [`docs/ORCHESTRATION.md#what-git-is-doing-right-now`](docs/ORCHESTRATION.md#what-git-is-doing-right-now) is the detailed source.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
 
 ## Test traps
@@ -141,3 +140,13 @@ as a **navigation presentation cache**; it remains subordinate to legacy replay,
 export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
+
+## Free subagent models
+
+| Model                   | Provider | Variant  | Notes                                            |
+| ----------------------- | -------- | -------- | ------------------------------------------------ |
+| Nemotron 3 Ultra (free) | kilo     | high     | Best quality; thorough                           |
+| Dots3-Note Preview      | kilo     | thinking | Alternative, good for review and summaries, fast |
+| Step 3.7 Flash          | kilo     | high     | Fast, accurate                                   |
+
+Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.

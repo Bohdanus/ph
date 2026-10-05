@@ -162,7 +162,7 @@ const QuickSelection: React.FC<{}> = () => {
           Paste
         </button>
         <button className={SECONDARY_BUTTON} disabled={!activeSelection} onClick={clearSelections}>
-          Deselect
+          Clear
         </button>
       </div>
 

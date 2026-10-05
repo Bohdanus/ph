@@ -184,11 +184,7 @@ describe('TextToolArea', () => {
     vi.mocked(drawOverflowIndicator).mockReset();
   });
 
-  it('renders no text field of its own, because the draft is typed on the canvas', () => {
-    // The old assertion was `not.toThrow()`, which a component returning `null` also satisfies. The
-    // `renders a div carrying the supplied className and the text cursor` case already proves the root
-    // is a div; what is worth pinning here is only that the tool area contributes no input, because a
-    // second field bound to the draft's text would be a second source of truth for it.
+  it('renders without the removed options-bar textarea', () => {
     expect(() => renderArea()).not.toThrow();
   });
 
@@ -204,15 +200,10 @@ describe('TextToolArea', () => {
     expect(container.querySelector('textarea')).toBeNull();
   });
 
-  it('publishes nothing when a rectangle finishes with no measurable box, and says so with no throw', () => {
-    // The assertion used to be `not.toThrow()` alone, which a deleted `onChangeEnd` body satisfies as
-    // happily as a working one. `calculateNewRect` is mocked to `null` by `beforeEach`, so this is the
-    // arm where the component has no box to publish — and the whole point of the case is that it says
-    // so by doing nothing rather than by throwing out of a React handler.
+  it('does not crash when a rectangle finishes while the textarea is unavailable', () => {
     renderArea();
 
     expect(() => act(() => h.useRectProps.current?.onChangeEnd?.({ x1: 0, y1: 0, x2: 10, y2: 10 }))).not.toThrow();
-    expect(h.setToolArgs, 'an unmeasurable rectangle was published anyway').not.toHaveBeenCalled();
   });
 
   it('renders a div carrying the supplied className and the text cursor', () => {

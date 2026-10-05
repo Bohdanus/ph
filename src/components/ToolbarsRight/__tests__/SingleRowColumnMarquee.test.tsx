@@ -17,7 +17,7 @@ const storeState = vi.hoisted((): { toolName: string; selections: Selection[]; a
 }));
 
 /**
- * `history`/`historyIndex` are here so Deselect's writer reaches the SUCCESS branch of the
+ * `history`/`historyIndex` are here so Clear's writer reaches the SUCCESS branch of the
  * append boundary: with them absent, `planHistoryAppend` throws and the writer re-dispatches
  * a byte-identical fallback action minus the durable entry, which every pin below would pass
  * on while proving nothing about the planner.
@@ -158,7 +158,7 @@ describe('SingleRowColumnMarquee toolbar', () => {
   it('clears the band as one undoable document edit', () => {
     render(<SingleRowColumnMarquee />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Deselect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
@@ -179,12 +179,12 @@ describe('SingleRowColumnMarquee toolbar', () => {
     expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
   });
 
-  it('disables Paste with an empty clipboard, and Deselect with no selection', () => {
+  it('disables Paste with an empty clipboard, and Clear with no selection', () => {
     hasSelectionClipboard.current = false;
     resetStoreState({ activeSelectionId: null, selections: [] });
     render(<SingleRowColumnMarquee />);
 
     expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
   });
 });

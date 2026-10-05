@@ -1,5 +1,4 @@
-import type { Point, RectXYSorted, Size } from '../contexts/general-types.ts';
-import { trimRect2 } from '../util/rect.ts';
+import type { Point, RectXYSorted } from '../contexts/general-types.ts';
 import type { ProcessorToolParams } from './toolProcessors.ts';
 
 /**
@@ -101,13 +100,6 @@ export type EllipticalMarqueeDrag = {
   fixedRatio: number;
   fixedWidth: number;
   fixedHeight: number;
-  /**
-   * The document this drag is bounded by — the same `totalSize` the rectangular marquee
-   * clamps to. Required rather than optional because a drag with no bound is the defect:
-   * the tool area's surface is `absolute inset-0` over the letterboxed CONTAINER, so a
-   * pointer can leave the document without leaving the element that receives the gesture.
-   */
-  imageSize: Size;
   /** Shift: hold the drag to a circle, whatever the Style says. */
   constrainToCircle?: boolean;
   /** Alt: grow the marquee from the press point out to the pointer. */
@@ -140,11 +132,7 @@ function applyRatio(size: { width: number; height: number }, ratio: number | nul
   return size;
 }
 
-function marqueeRatio({
-  style,
-  fixedRatio,
-  constrainToCircle,
-}: Pick<EllipticalMarqueeDrag, 'style' | 'fixedRatio' | 'constrainToCircle'>): number | null {
+function marqueeRatio({ style, fixedRatio, constrainToCircle }: EllipticalMarqueeDrag): number | null {
   if (constrainToCircle) return 1;
   if (style !== 'fixed-ratio') return null;
 
@@ -152,9 +140,8 @@ function marqueeRatio({
 }
 
 /**
- * The bounding box the ellipse is inscribed in, BEFORE the document bound, or `null` for a
- * drag that encloses nothing. `resolveEllipseRect` below is the bounded form and the one a
- * caller wants; this is the drag's own arithmetic with nothing outside the document in it.
+ * The bounding box the ellipse is inscribed in, or `null` for a drag that encloses
+ * nothing.
  *
  * `null` is the whole degenerate contract, and it is a real state rather than a failure:
  * a click has no extent on either axis, and a drag can return to its press point. Both
@@ -167,7 +154,7 @@ function marqueeRatio({
  * supplies the centre, and the box is `fixedWidth` x `fixedHeight` whatever the pointer
  * does. It is the one style where a click is a complete gesture.
  */
-function resolveUnclampedEllipseRect({
+export function resolveEllipseRect({
   start,
   end,
   style,
@@ -190,7 +177,7 @@ function resolveUnclampedEllipseRect({
     };
   }
 
-  const ratio = marqueeRatio({ style, fixedRatio, constrainToCircle });
+  const ratio = marqueeRatio({ start, end, style, fixedRatio, fixedWidth, fixedHeight, constrainToCircle, fromCentre });
   const draggedX = end.x - start.x;
   const draggedY = end.y - start.y;
   const constrained = applyRatio({ width: Math.abs(draggedX), height: Math.abs(draggedY) }, ratio);
@@ -216,35 +203,6 @@ function resolveUnclampedEllipseRect({
   const y1 = draggedHeight > 0 ? Math.min(start.y, end.y) : start.y - constrained.height / 2;
 
   return { x1, y1, x2: x1 + constrained.width, y2: y1 + constrained.height };
-}
-
-/**
- * `resolveUnclampedEllipseRect` BOUNDED BY THE DOCUMENT, or `null` for a drag that encloses
- * nothing inside it.
- *
- * The bound is `trimRect2`, all four edges, which CROP rather than shift: a drag past the right
- * edge commits a smaller ellipse. That is what the rectangular marquee does through
- * `normalizeRectangleSelectionRect` and what Photoshop does, because there are no pixels outside
- * the canvas for the rest of the ellipse to select. `trimRect` would round the four edges to whole
- * pixels on the way, which is a quantisation the rectangle marquee's own `pos` wants and float
- * ellipse radii do not.
- *
- * A box lying wholly outside the document trims to a POINT, and a point is the same degenerate
- * answer a zero-extent drag already gets, rather than a ring of `ellipseVertexCount` identical
- * vertices — which `normalizeSelectionPoints` would otherwise commit as a real selection.
- *
- * `imageSize` is the size of the canvas these drag points are already in, and not the document
- * frame: `RectangularSelectionToolArea` passes the same `totalSize` to
- * `createCommittedRectangleSelection`, so on a cropped document the two marquees agree, and
- * tightening either to the frame is one shared change rather than this one.
- */
-export function resolveEllipseRect(drag: EllipticalMarqueeDrag): RectXYSorted | null {
-  const rect = resolveUnclampedEllipseRect(drag);
-  if (!rect) return null;
-
-  const trimmed = trimRect2(rect, drag.imageSize);
-
-  return trimmed.x2 > trimmed.x1 && trimmed.y2 > trimmed.y1 ? trimmed : null;
 }
 
 /**

@@ -131,13 +131,7 @@ const PanelGroup = ({
       >
         <div
           {...handleProps}
-          // Only while the body exists. Rolled up, the id below names nothing, and
-          // `aria-expanded="false"` beside a reference to a missing element is the pair this
-          // control's own accessibility rule calls dishonest: an assistive technology is told
-          // the control governs a region it cannot find. The honest rolled-up pair is
-          // `aria-expanded="false"` and no `aria-controls` at all, so the attribute is gated on
-          // the SAME expression that renders the body further down and the two cannot drift.
-          aria-controls={isRolledUp ? undefined : `panel-body-${id}`}
+          aria-controls={`panel-body-${id}`}
           aria-expanded={!isRolledUp}
           className="flex min-w-0 flex-1 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
           onDoubleClick={() => {

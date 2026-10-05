@@ -106,7 +106,8 @@ Surrounding it, `src/App.tsx`'s provider tree nests seven providers: `File`,
 `Theme`, `Store`, `KeyboardEvents`, `CurrentTool`, `PanelLayout`,
 `RightPanelVisibility`. `CurrentTool` holds live tool args outside the reducer,
 because options bars change at pointer rate and re-rendering the whole tree on
-every slider tick is not acceptable.
+every slider tick is not acceptable. `src/contexts/ImageContext.tsx` is 18 lines,
+entirely commented out.
 
 ## The pipeline, one gesture
 
@@ -426,14 +427,6 @@ dynamically, and its types come from that module's
 `import type … from 'ag-psd'` — dispatched behind `loadDocumentFile()`'s PSD sniff
 branch, and decoded
 `ImageData` → canvas by `psd-utils.ts`'s recursive `visit()` layer reader.
-
-The request and response shapes — `ImageUploadResponse`, `ImageSaveInput` and
-`ImageSaveResponse` — live in `file-types.ts`, a type-only leaf, rather than in
-`useFile.tsx`. That module renders the dialogs it owns, so a dialog taking its
-prop's type from it closed a cycle between the provider and the dialog the
-provider mounts. Calling `useFile()` stays the intended direction in the other
-one; `StoreContext.boundary-gates.test.ts` pins both halves, including that the
-leaf's own four imports are all `import type` and so add no runtime edge.
 
 `createImageBitmap` appears in **seven** production call sites. Four are the
 **immutability boundary** rather than the decode path — `immutableRaster()` in `useLayer.ts`,

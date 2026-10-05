@@ -10,11 +10,35 @@ import React, {
 } from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
 import { renderExportCanvas } from './export-canvas.ts';
+import type { PsdDocument } from './psd-utils.ts';
+import type { LayersRecord } from './layer-types.ts';
+import type { Size } from './general-types.ts';
+import type { DocumentFrame } from './document-frame.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
-import type { ImageSaveInput, ImageSaveResponse, ImageUploadResponse } from './file-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
+
+export type ImageUploadResponse =
+  | { fileName: string; document: PsdDocument }
+  | {
+      image: HTMLImageElement;
+      fileName: string;
+    };
+
+export type ImageSaveInput = {
+  fileName: string;
+  format?: string;
+  layers: LayersRecord;
+  size: Size;
+  documentFrame?: DocumentFrame;
+};
+
+export type ImageSaveResponse = {
+  fileName: string;
+  format: string;
+  quality?: number;
+};
 
 export interface FileContextType {
   openNewImageDialog: () => Promise<NewDocumentBlankParams | null>;

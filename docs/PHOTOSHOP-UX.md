@@ -48,19 +48,10 @@ violations on `main`.
   - **The destination already existed, mislabelled, and two surfaces had to change
     together.** The app's menus were File, Tools, **Edit**, Window. `Edit` already
     dispatched `color`, `blur`, `levels`, `transform`, `draw` and `text` through the
-    header's own tool selection, and `TOOL_MENU_ITEMS` carried all three as well. A tool list is not one surface: "delete three rows from
+    same `handleToolSelection` the rail calls, and `TOOL_MENU_ITEMS` carried all
+    three as well. A tool list is not one surface: "delete three rows from
     `toolbarMap`" was never sufficient on its own, and a non-tool in the Tools menu
     is the same defect one level up.
-    - **The `Tools` menu itself was removed on 2026-10-04**, when the menu bar was
-      rebuilt against Adobe's own list: `File, Edit, Image, Layer, Type, Select,
-Filter, View, Window, Help`, and no `Tools` among them — Photoshop has no such
-      menu, and `docs/OVERRIDES.md` has never had an entry excusing one. So the second
-      surface named above stopped existing rather than being corrected, and
-      `TOOL_MENU_ITEMS` is gone. Tools are reachable the two ways Photoshop reaches
-      them: the rail's tiles and flyouts, and the single-key bindings. The invariant
-      `TOOL_MENU_ITEMS` was carrying — no registered tool without a reachable surface —
-      now lives in `SidebarLeft/__tests__/toolbar-mapping.test.ts`, against the
-      registry rather than against a hand-written list of menu rows.
   - **`levels` is not Adobe's Levels, and moving it unchanged would have been a new
     falsehood.** `LevelsToolArgs` is `{ brightness, contrast }` and the processor
     emits one `ctx.filter` from those two, so the app's "Levels" is

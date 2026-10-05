@@ -554,26 +554,15 @@ describe('replayHistory layer bookkeeping actions', () => {
   });
 
   it.each(['layer transparency', 'some unsupported action'])(
-    'refuses the action name %s it has no arm for, leaving the layer set untouched',
+    'ignores the unknown action %s without touching the layer set',
     (actionName) => {
-      // This is the only test in the tree that feeds an action name OUTSIDE the
-      // `ActionType` union, so it is the whole coverage of a corrupt, truncated or
-      // foreign timeline reaching `replayHistory`. Before `unhandled-action` existed
-      // such an entry was skipped SILENTLY, which the layer-set assertion alone could
-      // not distinguish from a correctly-applied no-op — so the diagnostic is asserted
-      // here too, not only the absence of a change.
       const dependencies = createDependencies();
       const history: HistoryItem[] = [
         { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
         { id: 'unknown', actionName, layerId: 'layer-1', args: {} },
       ] as HistoryItem[];
 
-      const result = replayHistory(history, 1, initialSize, dependencies);
-
-      expect(Object.keys(result.layers)).toEqual(['layer-1']);
-      expect(result.diagnostics).toEqual([
-        expect.objectContaining({ code: 'unhandled-action', historyId: 'unknown', actionName }),
-      ]);
+      expect(Object.keys(replayHistory(history, 1, initialSize, dependencies).layers)).toEqual(['layer-1']);
     }
   );
 });

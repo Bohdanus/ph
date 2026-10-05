@@ -17,7 +17,6 @@ import type { FillToolArgs } from '../tools/fill.ts';
 import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
 import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
 import type { ColorSamplerToolArgs } from '../tools/colorSampler.ts';
-import type { RulerToolArgs } from '../tools/ruler.ts';
 import type { EllipticalSelectionToolArgs } from '../tools/ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from '../tools/quickSelection.ts';
 import type { GradientToolArgs } from '../tools/gradient.ts';
@@ -80,15 +79,8 @@ export type ToolArgsByName = {
    * The Ruler carries no args beyond its own name. Every number it reports is a property of the
    * gesture the user just made, not a setting they chose, so there is nothing here to persist —
    * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
-   *
-   * The NAMED type rather than the inline `{ toolName: 'ruler' }` the placeholder entries below
-   * use, and it is the one difference from those entries that is not about being unimplemented:
-   * `RulerToolArgs` already exists, `src/tools/settings.ts` seeds the default with
-   * `satisfies RulerToolArgs`, and two spellings of one contract is how a tool that grows an arg
-   * ends up with a settings default the registry cannot see. Every implemented tool in this record
-   * names its type.
    */
-  ruler: RulerToolArgs;
+  ruler: { toolName: 'ruler' };
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };

@@ -27,7 +27,7 @@ const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 const clearSelectionsMock = vi.hoisted(() => vi.fn());
 
-/** The three selection-state fields the Copy/Paste/Deselect row reads. */
+/** The three selection-state fields the Copy/Paste/Clear row reads. */
 const selectionState = vi.hoisted((): { activeSelection: Selection | null; hasSelectionClipboard: boolean } => ({
   activeSelection: null,
   hasSelectionClipboard: false,
@@ -101,7 +101,7 @@ const getTolerance = () => screen.getByLabelText('Tolerance') as HTMLInputElemen
 const getMode = () => screen.getByLabelText('Mode') as HTMLSelectElement;
 const getCopy = () => screen.getByRole('button', { name: 'Copy' });
 const getPaste = () => screen.getByRole('button', { name: 'Paste' });
-const getClear = () => screen.getByRole('button', { name: 'Deselect' });
+const getClear = () => screen.getByRole('button', { name: 'Clear' });
 
 /** The visible caption of the control, label text plus live readout. */
 const caption = (slider: HTMLElement) => slider.parentElement?.textContent ?? '';
@@ -366,7 +366,7 @@ describe('QuickSelection toolbar', () => {
   });
 
   describe('selection actions', () => {
-    it('disables Copy and Deselect until there is an active selection', () => {
+    it('disables Copy and Clear until there is an active selection', () => {
       render(<QuickSelection />);
 
       expect(getCopy()).toBeDisabled();
@@ -378,7 +378,7 @@ describe('QuickSelection toolbar', () => {
       resetSelectionState({ hasSelectionClipboard: true });
       render(<QuickSelection />);
 
-      // Copy and Deselect are about the CURRENT selection; Paste is about the clipboard. They are
+      // Copy and Clear are about the CURRENT selection; Paste is about the clipboard. They are
       // gated on different state and must not be gated on the same thing.
       expect(getPaste()).toBeEnabled();
       expect(getCopy()).toBeDisabled();

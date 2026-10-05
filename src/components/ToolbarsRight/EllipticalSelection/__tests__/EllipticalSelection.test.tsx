@@ -30,7 +30,7 @@ const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 const clearSelectionsMock = vi.hoisted(() => vi.fn());
 
-/** The three selection-state fields the Copy/Paste/Deselect row reads. */
+/** The three selection-state fields the Copy/Paste/Clear row reads. */
 const selectionState = vi.hoisted((): { activeSelection: Selection | null; hasSelectionClipboard: boolean } => ({
   activeSelection: null,
   hasSelectionClipboard: false,
@@ -96,7 +96,7 @@ const getWidth = () => screen.getByLabelText('Width') as HTMLInputElement;
 const getHeight = () => screen.getByLabelText('Height') as HTMLInputElement;
 const getCopy = () => screen.getByRole('button', { name: 'Copy' });
 const getPaste = () => screen.getByRole('button', { name: 'Paste' });
-const getClear = () => screen.getByRole('button', { name: 'Deselect' });
+const getClear = () => screen.getByRole('button', { name: 'Clear' });
 
 /**
  * The label text of every numeric field currently on screen, in DOM order.
@@ -365,7 +365,7 @@ describe('EllipticalSelection toolbar', () => {
   });
 
   describe('selection actions', () => {
-    it('disables Copy and Deselect until there is an active selection', () => {
+    it('disables Copy and Clear until there is an active selection', () => {
       render(<EllipticalSelection />);
 
       expect(getCopy()).toBeDisabled();
@@ -377,7 +377,7 @@ describe('EllipticalSelection toolbar', () => {
       resetSelectionState({ hasSelectionClipboard: true });
       render(<EllipticalSelection />);
 
-      // Copy and Deselect are about the CURRENT selection; Paste is about the clipboard. They are
+      // Copy and Clear are about the CURRENT selection; Paste is about the clipboard. They are
       // gated on different state and must not be gated on the same thing.
       expect(getPaste()).toBeEnabled();
       expect(getCopy()).toBeDisabled();

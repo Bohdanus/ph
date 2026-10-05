@@ -55,9 +55,9 @@ platform limit.
 | Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only              |
 | History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                                 |
-| Menu bar          | `divergent` | Adobe's ten menus; Type, Select, Filter, View and Help carry no enabled row         |
-| View / navigation | `absent`    | No zoom or pan at all; the Ruler measures, but there are no canvas rulers or guides |
-| Keyboard          | `partial`   | 46 bindings against Photoshop's ~200                                                |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                               |
+| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                             |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                |
 | Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                      |
 | Export options    | `partial`   | JPEG quality is the only user-controllable option                                   |
 | Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all             |
@@ -264,9 +264,8 @@ Actions, Measurement Log — dockable, with panel groups.
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
 (`PanelLayout.tsx` — `PanelId`). They dock, drag-reorder, resize, collapse to
 icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
-plus `PanelGroup.tsx`), and Window nests the workspace reset where Adobe nests it,
-at `Workspace ▸ Reset Essentials` (`DesktopHeader.tsx` — the `menus` array's
-`Workspace` submenu, which calls `PanelLayout`'s `resetWorkspace()`).
+plus `PanelGroup.tsx`), and Window has Reset Workspace
+(`DesktopHeader.tsx` — its `handleResetWorkspace`).
 
 **Status:** `partial`
 
@@ -279,85 +278,34 @@ which are options bars, not panels.
 
 ## Menu bar
 
-**Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help.
-The macOS bar prefixes that with the application menu, `Photoshop`, and a `Plugins`
-menu appears when a third-party plugin is installed. There is **no `3D` menu** — Adobe
-removed the 3D features outright in 2020 — and no top-level `Analysis` menu, whose
-commands sit at `Image ▸ Analysis`. There is **no `Tools` menu**: Photoshop exposes the
-tool set through the Tools panel, its flyouts and the single-key bindings
-(<https://helpx.adobe.com/photoshop/kb/3d-faq.html>,
-<https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html>).
+**Photoshop:** File, Edit, Image, Layer, Type, Select, Filter, 3D, View, Window,
+Help.
 
-**This app:** Adobe's ten — `File, Edit, Image, Layer, Type, Select, Filter, View,
-Window, Help` — and nothing else decides the list, which is the order the `menus` array
-renders them in (`DesktopHeader.tsx` — the `menus` array). Membership inside a host is Adobe's; how
-much of it runs is not Adobe's business, and the rule is the one `ADJUSTMENTS_ITEMS` was built on:
-**a command this app can run renders enabled, a command it cannot renders `disabled`, and a
-capability with no entry anywhere is recorded in this document rather than invented in the menu.**
-
-- **File** has New, Open, Save.
-- **Edit** opens with Adobe's history group — `Undo`, `Step Forward`, then a disabled `Step
-Backward` — and carries `Free Transform` plus a `Transform` submenu whose mode rows
-  (`Scale`, `Rotate`, `Skew`, `Distort`, `Perspective`, `Warp`) are all disabled. `Free
-Transform` sits at the top level beside `Transform` rather than inside it, which is where
-  Adobe nests it; that placement is this app's own and the file's comment says so.
-- **Image** carries one submenu, `Adjustments`, holding Adobe's item list with **two
-  enabled** — `Brightness/Contrast` and `Desaturate` — and twenty **disabled**
-  (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`). Membership is Adobe-confirmed item by item,
-  but the submenu's ORDER is reconstructed rather than published, and everything from
-  `Vibrance` down is a hypothesis. `Desaturate` is the row that hosts the `color` bar;
-  `Photo Filter` was moved out of the enabled position and is disabled, because Adobe's
-  Photo Filter is a lens filter with a Density slider and a Preserve Luminosity option and
-  the bar computes none of the three.
-- **Layer** carries `Flatten Image`, the only enabled row, over eight Adobe rows this app
-  cannot run.
-- **Type**, **Select**, **Filter**, **View** and **Help** render rows, every one disabled.
-  Those rows are not claimed to be Adobe's order — see the gap below. `Select` is the
-  largest of them: `All`, `Deselect`, `Reselect`, `Inverse`, `Select and Mask…`, a
-  `Modify` submenu carrying its five leaves, `Grow`, `Similar`, `Load Selection…` and `Save
-Selection…`, all disabled, which is the honest state of a document model with selection
-  tools and no selection commands.
-- **Window** carries `Workspace ▸ Reset Essentials`, nested where Adobe nests it.
+**This app:** five menus — `file`, `tools`, `image`, `edit`, `window`
+(`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses). File has New, Open,
+Save. Tools lists every rail tool. Image carries one submenu, `Adjustments`, holding
+Adobe's item list with **two enabled** — `Brightness/Contrast` and `Desaturate` — and
+twenty **disabled** (`DesktopHeader.tsx` — `ADJUSTMENTS_ITEMS`); a disabled item
+records a capability
+the app does not have rather than faking it. Edit holds one item, `Free Transform`,
+which is where Adobe puts it (`DesktopHeader.tsx` — `handleFreeTransform`). Window
+has Reset Workspace.
 
 **Status:** `divergent`
 
-**Gap:** Membership inside each host, not the structure. `File` has no `Close`,
-`Save As`, `Place`, `Export` or `Print`. `Edit` has no `Cut`, `Copy`, `Paste`,
-`Fill`, `Stroke`, `Content-Aware Fill` or `Puppet Warp`. `Image` has no `Mode`,
-`Image Size`, `Canvas Size`, `Crop`, `Trim`, `Image Rotation` or `Analysis`. `Layer`
-has no `New` or `Delete`, and `Layer Mask`, `Vector Mask`, `Create Clipping Mask`,
-`Group Layers`, `Arrange` and `Merge Layers` are on screen but disabled.
-`Type`, `Select`, `Filter`, `View` and `Help` are inert in full, and the
-category submenus — `Filter ▸ Blur`, `Type ▸ OpenType`, `View ▸ Proof Setup`,
-`View ▸ Show` — are not rendered at all, because every one of their leaves is
-unbuildable and Adobe publishes no stable order for them. `Window` has no `Arrange`,
-no panel toggles and no open-document list.
+**Gap:** The Layer, Type, Select, Filter, 3D, View and Help menus do not exist, and
+Image and Edit are each a stub — Image has no Mode, Image Size, Canvas Size, Crop,
+Trim or Canvas Rotation, and Edit has nothing but Free Transform. So Undo, Cut, Copy,
+Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask, Group, Merge, Select All,
+Deselect, Modify, the Filter gallery, Zoom, Fit Screen, Rulers, Guides and Print are
+unreachable from the menu bar — several are unreachable entirely.
 
-So Cut, Copy, Paste, Image Size, Canvas Size, Layer Mask, Clipping Mask,
-Group, Merge, Select All, Deselect, Modify, the Filter gallery, Zoom, Fit Screen,
-Rulers, Guides and Print are unreachable from the menu bar — several are unreachable
-entirely. Zoom is the load-bearing one: `docs/FEATURES.md`'s next section records that
-the canvas cannot be magnified or panned at all, so every `View` row is inert for the
-same reason.
-
-A row the app cannot run renders `disabled` rather than being omitted, so the gap is
-visible where a user looks for it. That is why `Select ▸ All` is on screen and greyed:
-this app has selection tools and no selection commands, and an absent menu would hide
-that in a document instead.
-
-Tools are reachable the two ways Photoshop reaches them: the rail
-(`SidebarLeft.tsx`, with its `role="menu"` flyouts) and the single-key bindings
-(`AppKeyboardShortcuts.tsx`). `SidebarLeft/__tests__/toolbar-mapping.test.ts` pins that
-every registered tool is a rail tile or is named in `toolbar-mapping.ts`'s `extraTools` —
-which is where the "no tool is unreachable" guarantee lives now that the menu bar has no
-`Tools` menu to be complete.
-
-Undo and Redo also exist as buttons (`HistoryControls.tsx` — its `undo-button` and
-`redo-button`) and are bound to `Ctrl+Z` / `Shift+Ctrl+Z` (`AppKeyboardShortcuts.tsx` —
-the two `key: 'z'` `useKeyDownShortcut` registrations). `Edit ▸ Undo` and `Edit ▸ Step
-Forward` are the same two commands through the same guarded pair
-(`src/hooks/useHistoryCommands.ts`), so a pointer gesture cannot truncate the redo tail
-from any of the three surfaces.
+Undo and Redo exist as buttons (`HistoryControls.tsx` — its `undo-button` and
+`redo-button`)
+and are bound to `Ctrl+Z` / `Shift+Ctrl+Z`
+(`AppKeyboardShortcuts.tsx` — the two `key: 'z'` `useKeyDownShortcut`
+registrations); they are missing
+from the menu, not from the app.
 
 ## View and navigation
 
@@ -387,7 +335,7 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 
 **Photoshop:** about 200 default bindings.
 
-**This app:** 46. Thirty-seven registrations in
+**This app:** 45. Thirty-six registrations in
 `AppKeyboardShortcuts.tsx`, eight in the two polygon tool areas
 (`PolygonClickToolArea.tsx` and `FeatherMagneticLassoToolArea.tsx` — four
 `useKeyDownShortcut` registrations each), and one `Escape` in `FontSelect`'s font popup.
@@ -395,7 +343,7 @@ why mobile has no pinch-zoom — that gap is inherited, not native.
 **Status:** `partial`
 
 **Present:** V, M, L, W, C, I, J, S, T, P, U, G, B, E, O; `Ctrl+Z`, `Shift+Ctrl+Z`,
-`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`, `Ctrl+T`; `[` and `]` for brush size; `0` and `1`
+`Ctrl+Y`, `Ctrl+C`, `Ctrl+V`, `Ctrl+J`, `Ctrl+S`; `[` and `]` for brush size; `0` and `1`
 for opacity; and `Shift+Alt+D` / `Shift+Alt+S` for the Sponge's Desaturate and
 Saturate, which are tool-conditional — the same `Alt+Shift+S` is Shadows on the Dodge
 and the Burn, so the Sponge must be the active tool.
@@ -403,10 +351,7 @@ and the Burn, so the Sponge must be the active tool.
 Every `Ctrl+` chord above is also `Cmd+` on macOS. `Ctrl+S` is bound because the app's
 only save is Save As, which is what `File > Save` opens
 (`useFile.tsx` — its `proposedName` of `"<name> (copy)"`), so Adobe's
-`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two. `T` is the one key
-with two bindings: bare it selects the Type tool, and `Ctrl+T` selects Free Transform,
-which is Adobe's accelerator and the only keyboard route to that panel — the tool has no
-rail tile, so `Edit ▸ Free Transform` was its sole entry before this binding.
+`Cmd+S`/`Cmd+Shift+S` pair has one destination here rather than two.
 
 **Gap:** `A`, `H`, `Z`, `X` and bare `D` are unbound — Automatic Select, Hand, Zoom,
 Swap Colours and Default Colours. `D` is bound only as `Shift+Alt+D`, and only while

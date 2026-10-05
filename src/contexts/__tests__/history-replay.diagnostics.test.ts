@@ -1,20 +1,16 @@
 /**
- * `replayHistory` refuses three kinds of history entry, and a refusal loses a user
- * edit, so the refusal has to be reported. All three refusals inside the per-entry
+ * `replayHistory` refuses two kinds of history entry, and a refusal loses a user
+ * edit, so the refusal has to be reported. Both catch sites inside the per-entry
  * loop now push onto a `diagnostics` array instead of logging (`ReplayDiagnostic`),
  * because replay runs on every undo, redo and history-panel click: a per-item log
  * would print the same line on every navigation, forever. `resetHistoryTo` reports
- * the whole set once per replay. Two of the three are CAUGHT exceptions; the third,
- * `unhandled-action`, is not a throw at all, which is why pinned claim 2 below is
- * scoped to a caught refusal.
+ * the whole set once per replay.
  *
  * What is pinned here, in the order the change could regress:
  *
  *  1. a CLEAN replay reports nothing — the collection must not become a scrub
- *  2. a CAUGHT refusal is COLLECTED, carrying the raw thrown Error OBJECT, so a
- *     `String(error)` substitution is visible instead of merely plausible — a
- *     refusal that is not a throw synthesises its own `Error`, so this claim does
- *     not extend to `unhandled-action` and does not pretend to
+ *  2. a refused entry is COLLECTED, carrying the raw thrown Error OBJECT, so a
+ *     `String(error)` substitution is visible instead of merely plausible
  *  3. each refusal reports its own code against its own history entry
  *  4. two refusals are two diagnostics, in TIMELINE order — not grouped by code
  *

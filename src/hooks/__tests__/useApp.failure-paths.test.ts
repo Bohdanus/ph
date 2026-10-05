@@ -7,7 +7,7 @@ import type { Selection } from '../../contexts/general-types.ts';
 import type { ImageLayerSource, Layer } from '../../contexts/layer-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
-import type { ImageUploadResponse } from '../../contexts/file-types.ts';
+import type { ImageUploadResponse } from '../../contexts/useFile.tsx';
 
 /**
  * Failure paths and rejection surface of `useApp`: the paths where an async

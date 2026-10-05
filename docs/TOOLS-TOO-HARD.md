@@ -106,20 +106,18 @@ workspace where the result is refined with a Refine Edge Brush, a plain Brush, a
 Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a layer mask, a new layer or
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
-**What this app does.** The `Select` menu exists, and every item in it is disabled. The menu bar
-carries Adobe's ten (`DesktopHeader.tsx` — the `menus` array) and `Select ▸ All`, `Reselect`,
-`Deselect`, `Inverse`, `Select and Mask…`, `Modify ▸`, `Grow`, `Similar`, `Load Selection…` and
-`Save Selection…` are all on screen and inert — a disabled row records a capability as unbuilt,
-which is why `Select and Mask` has somewhere to hang from even though there is nothing behind it.
+**What this app does.** There is no `Select` menu. The menu bar exists and has five menus — File,
+Tools, Image, Edit, Window (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses) — and
+`Select` is not one of them, so there is nothing for Select and Mask to hang from.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
-modes above as its substrate. Building it means giving the disabled `Select ▸ Select and Mask…` row
-its workspace, a per-tool `Select and Mask` button, a Refine Edge Brush with its own edge-detection
-model, and an output dialog. That is a build, not a feature.
+modes above as its substrate. Building it means adding a `Select` menu, a per-tool
+`Select and Mask` button, a Refine Edge Brush with its own edge-detection model, and an output
+dialog. That is a build, not a feature.
 
-**What the app does instead.** Nothing on any selection tool's bar, and the menu row is greyed rather
-than omitted. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
+**What the app does instead.** Nothing, and the app does not pretend otherwise — the controls are
+absent rather than rendered inert. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
 the marquee, lasso, wand and quick-selection bars.
 
 ### Select ▸ Modify, Inverse, Deselect, Grow and Quick Mask
@@ -130,10 +128,9 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. The `Select` menu hosts them — `Modify` with its
-five leaves in Adobe's order, and `Inverse`, `Deselect`, `Grow` and `Similar` beside it
-(`DesktopHeader.tsx` — the `select` entry of the `menus` array) — and every one of those rows is
-disabled, because no selection operation implements them: `src/util/selection.ts`
+**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
+that exist are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`'s five `menuHostRefs` hosts) —
+and no selection operation implements them: `src/util/selection.ts`
 exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
 does compute a feathered alpha, but only on the clipboard copy path
 (`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
@@ -146,7 +143,7 @@ missing substrate as Select and Mask above, and it is the reason the first entry
 type change.
 
 **What the app does instead.** No selection can be inverted, grown, shrunk or feathered after the
-fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
+fact. A selection is what the last tool drew, and the only edits available are copy, paste and clear
 from the marquee's bar.
 
 ### Regions with holes
@@ -716,21 +713,19 @@ implements them as if they were engineering judgements.
 ### What an enabled `Image ▸ Adjustments` item may promise
 
 `color`, `levels` and `transform` left the Tools rail on 2026-10-01 — the operator's ruling, recorded
-in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Free Transform`
-**commands** — the `Transform` submenu beside that row carries only disabled rows — and
-`toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
+in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Transform`
+**commands**, and `toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
 rail entry. **What the two enabled items are called was settled on 2026-10-01 and is implemented:**
 `Brightness/Contrast` and `Desaturate`.
 
 `ADJUSTMENTS_ITEMS` (`DesktopHeader.tsx`) carries Adobe's list in
-a reconstructed order, with **two items enabled and twenty disabled**. A row is enabled by carrying a
+a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
 `toolName` and nothing else, and the rule has two halves rather than one: the optional `toolName?` on
-the `AdjustmentItem` type declares it (`DesktopHeader.tsx` — `AdjustmentItem`), and
-`adjustmentMenuItem` branches on exactly that field (`DesktopHeader.tsx` — `adjustmentMenuItem`), so a
-disabled item is a recorded absence rather than a fake — and it still gets a test id derived from its
-label, which is what keeps a gap something a test can point at. The type alone does not enforce it —
-an optional field states no such rule — and the branch alone does not explain it, which is why the
-claim needs both.
+the `MenuHostItem` type declares it (`DesktopHeader.tsx` — `MenuHostItem`), and the
+`disabled={toolName === undefined}` on each button of the `ADJUSTMENTS_ITEMS` submenu render enforces
+it (`DesktopHeader.tsx` — that submenu's `ADJUSTMENTS_ITEMS.map()`), so a disabled item is a
+recorded absence rather than a fake. The type alone does not enforce it — an optional field states no
+such rule — and the gate alone does not explain it, which is why the claim needs both.
 
 **`levels` is `Brightness/Contrast`, not Levels — and that is honest, not a dodge.**
 `LevelsToolArgs` is `{ brightness, contrast }` (`levels.ts` — `LevelsToolArgs`) and the processor

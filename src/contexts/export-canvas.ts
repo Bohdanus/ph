@@ -34,7 +34,7 @@ import { getSortedLayersArray } from './layer-utils.ts';
  *
  * THE FRAME IS NOT OPTIONAL IN EFFECT. `documentFrame` supplies both the output extent
  * (`documentFrameSize`) and the coordinate origin (every layer is stamped at
- * `position.x - documentFrame.x`, in `presentation-evaluator.ts`), so passing the
+ * `position.x - documentFrame.x`, `presentation-evaluator.ts:163-164`), so passing the
  * wrong one crops or offsets the export.
  * It is therefore validated here rather than trusted, and a caller that omitted it is
  * given the frame its own `size` implies — the fallback `savePsd` applies when its frame

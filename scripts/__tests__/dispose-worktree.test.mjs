@@ -35,16 +35,14 @@ import {
   locateInventory,
   preflight,
   protectedContentOnDisk,
-  REFUSALS,
   readGitState,
-  readOperationState,
   rebuildCommand,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
 // Imported from its own module, not re-exported: the test asserts against the
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
-import { ACTION, LIVE_WINDOW_MS } from '../lib/worktree-inventory/classify.mjs';
+import { ACTION } from '../lib/worktree-inventory/classify.mjs';
 
 const NOW = 1_800_000_000_000;
 
@@ -103,24 +101,11 @@ const greenBoard = {
 };
 const greenSessions = { available: true, dbPath: '/home/x/kilo.db', error: null, live: [] };
 
-/**
- * A worktree git is not doing anything to.
- *
- * Supplied by `green()` rather than defaulted inside `preflight`, because the refusal
- * for an ABSENT signal is itself a case below: a helper that filled this in would
- * make that case unreachable, and the check it guards is the one whose absence is
- * unrecoverable if it is ever wrong.
- */
-function greenOperationState(overrides = {}) {
-  return { gitDir: '/repo/.git/worktrees/task', operations: [], unmerged: [], readError: null, ...overrides };
-}
-
 function green(overrides = {}) {
   return preflight({
     target: 'task',
     nowMs: NOW,
     gitState: greenState(),
-    operationState: greenOperationState(),
     inventory: greenInventory(),
     board: greenBoard,
     sessions: greenSessions,
@@ -142,44 +127,6 @@ describe('dispose preflight', () => {
     const cases = [
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
-      [
-        'a merge is in progress in it',
-        {
-          operationState: greenOperationState({
-            operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
-          }),
-        },
-        'operation-in-progress',
-      ],
-      [
-        'a rebase is in progress in it',
-        {
-          operationState: greenOperationState({
-            operations: [{ operation: 'rebase', marker: 'rebase-merge', value: null }],
-          }),
-        },
-        'operation-in-progress',
-      ],
-      [
-        'its index holds unmerged paths and no operation marker',
-        { operationState: greenOperationState({ unmerged: ['f.txt', 'g.ts'] }) },
-        'operation-in-progress',
-      ],
-      [
-        'its git state could not be read at all',
-        { operationState: greenOperationState({ readError: 'exit 128' }) },
-        'operation-state-unreadable',
-      ],
-      ['no git state was supplied for it', { operationState: undefined }, 'operation-state-absent'],
-      [
-        'a squash is in progress, which has no abandon command at all',
-        {
-          operationState: greenOperationState({
-            operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
-          }),
-        },
-        'operation-in-progress',
-      ],
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
@@ -313,7 +260,6 @@ describe('dispose preflight', () => {
     const verdict = preflight({
       target: 'stale-citations',
       nowMs: NOW,
-      operationState: greenOperationState(),
       gitState: greenState({
         name: 'stale-citations',
         branch: 'fix/stale-citations',
@@ -348,7 +294,6 @@ describe('dispose preflight', () => {
       target: 'task',
       nowMs: NOW,
       gitState: greenState({ isPrimary: true, modified: 2, dirtyPaths: ['a', 'b'] }),
-      operationState: greenOperationState(),
       inventory: { ok: false, reason: 'missing' },
       board: { ...greenBoard, claims: [{ agentId: 'x' }] },
       sessions: { available: true, live: [{ id: 's' }] },
@@ -657,110 +602,6 @@ describe('a signal that could not be read is not an empty signal', () => {
     expect(codes(green({ gitState: greenState({ statusError: null }) }))).toEqual([]);
   });
 
-  it('names no command to run when git has none, rather than naming a wrong one', () => {
-    // Measured: `git merge --abort` answers "fatal: There is no merge to abort
-    // (MERGE_HEAD missing)" during a squash, and `git squash` is not a command. An
-    // earlier version substituted `git status` — a report, not a remedy — so the
-    // refusal read "Finish or abandon it deliberately — git status".
-    const squash = green({
-      operationState: greenOperationState({ operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }] }),
-    });
-    const message = squash.failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).toMatch(/no command that abandons a squash|No operation marker is set/);
-    expect(message).not.toMatch(/git status/);
-    expect(message).not.toMatch(/git squash --abort/);
-  });
-
-  it('names `git am --abort` for a rebase-apply, which `git rebase --abort` cannot do', () => {
-    // Both rebase rows are operation `rebase`, and taking the operation NAME produced
-    // `git rebase --abort` for `git am` — which fatals with "It looks like 'git am' is
-    // in progress".
-    const am = green({
-      operationState: greenOperationState({
-        operations: [{ operation: 'rebase', marker: 'rebase-apply', value: null }],
-      }),
-    });
-    expect(am.failures.find((f) => f.code === 'operation-in-progress').message).toContain('git am --abort');
-  });
-
-  it('tells the operator who else is in the worktree before they read an abort command', () => {
-    // The refusal names a command that DISCARDS work, and `preflight` already holds
-    // the ownership facts. It used to run ahead of every ownership check and drop
-    // them, so the advice to consider `git merge --abort` arrived with no hint that a
-    // live session was mid-merge in it.
-    const message = green({
-      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
-      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
-    }).failures.find((f) => f.code === 'operation-in-progress')?.message;
-    // With no operation there is no refusal at all, which is the first thing to check.
-    expect(message).toBeUndefined();
-
-    const withMerge = green({
-      operationState: greenOperationState({
-        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
-      }),
-      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
-      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
-    }).failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(withMerge).toContain('1 board claim(s)');
-    expect(withMerge).toContain('1 live session(s)');
-    expect(withMerge).toMatch(/before you abort anything/);
-  });
-
-  it('adds no ownership sentence when nothing is live, because that is absence of evidence', () => {
-    const message = green({
-      operationState: greenOperationState({
-        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
-      }),
-    }).failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).not.toContain('Others are recorded');
-    expect(message).toContain('deadbee');
-  });
-
-  it('reads an operation state as no-operation rather than as no-answer', () => {
-    // The reader's whole contract with `preflight`: a worktree git is not touching
-    // reads as an empty ANSWER, and only a read that actually failed reads as a
-    // question. Conflating them would put the new refusal on every clean worktree,
-    // which is how a guard gets switched off.
-    const dir = join(TMP, 'op-state-clean');
-    mkdirSync(dir, { recursive: true });
-    expect(readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: () => [] })).toMatchObject({
-      gitDir: dir,
-      operations: [],
-      unmerged: [],
-      readError: null,
-      unmergedError: null,
-    });
-  });
-
-  it('records a failed read as readError instead of throwing, so the refusal can name it', () => {
-    // `git diff` exiting non-zero has to arrive at `preflight` as a FIELD. A throw
-    // here would escape `preflight`, which is a pure decision function with no
-    // try/catch of its own, and the operator would see a stack trace instead of the
-    // refusal that says which command failed.
-    const dir = join(TMP, 'op-state-failed');
-    mkdirSync(dir, { recursive: true });
-    const boom = () => {
-      throw new Error('Command failed: git diff');
-    };
-    const state = readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: boom });
-    expect(state.readError).toMatch(/git diff/);
-    expect(state.unmerged).toEqual([]);
-
-    const verdict = green({ operationState: state });
-    expect(codes(verdict)).toEqual(['operation-state-unreadable']);
-    expect(verdict.failures[0].message).toMatch(/UNKNOWN rather than no/);
-  });
-
-  it('treats a worktree whose git directory cannot be resolved as unreadable, not clean', () => {
-    // The shape that would otherwise pass every check: `gitDirOf` returns null, which
-    // a `?? []` would read as "no operations". A disposal on that answer removes
-    // `.git/worktrees/<name>/` and with it the only record of a merge.
-    const state = readOperationState('/nowhere', { gitDirOf: () => null });
-    expect(state.readError).toMatch(/absolute-git-dir/);
-    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
-  });
-
   it('refuses on gitignored content that no command rebuilds', () => {
     // `git status --porcelain` honours .gitignore, and `ls-files --others
     // --exclude-standard` — which is what salvage() reads — honours it too. So a
@@ -1007,7 +848,6 @@ describe('readGitState reads the ignored content it is supposed to refuse on', (
       target: 'task',
       nowMs: NOW,
       gitState: state,
-      operationState: greenOperationState(),
       inventory: greenInventory(),
       board: greenBoard,
       sessions: greenSessions,
@@ -1257,126 +1097,5 @@ describe('locating the inventory', () => {
     });
     expect(asked).toHaveLength(1);
     expect(asked[0]).toContain('--git-common-dir');
-  });
-});
-
-describe("the third review's findings, pinned on the disposal side", () => {
-  it('reads the operation state of a worktree whose own directory is gone', () => {
-    // The largest hole the third review found. `resolveGitDir` runs git INSIDE the
-    // worktree, so for a worktree that has been removed by hand it answers null — and
-    // the state was never read, while the `prunable` refusal told the operator there was
-    // "nothing to salvage and no state to verify. Run `git worktree prune`". That is
-    // precisely the state `prune` deletes, with no reflog entry and nothing for
-    // `git fsck` to recover. So the git directory is matched by content when the
-    // directory cannot be asked.
-    const dir = join(TMP, 'gone-worktree');
-    mkdirSync(dir, { recursive: true });
-    const state = readOperationState('/nowhere', {
-      gitDirOf: () => null,
-      fallbackGitDir: '/repo/.git/worktrees/gone',
-      readOps: (gitDir) => [{ operation: 'merge', marker: 'MERGE_HEAD', value: `sha-of-${gitDir}` }],
-      unmergedOf: () => [],
-    });
-    expect(state.readError).toBeNull();
-    expect(state.operations).toEqual([
-      { operation: 'merge', marker: 'MERGE_HEAD', value: 'sha-of-/repo/.git/worktrees/gone' },
-    ]);
-    expect(codes(green({ operationState: state }))).toEqual(['operation-in-progress']);
-  });
-
-  it('still refuses when there is no fallback either, rather than reporting clean', () => {
-    const state = readOperationState('/nowhere', { gitDirOf: () => null, fallbackGitDir: null });
-    expect(state.readError).toMatch(/no administrative directory/);
-    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
-  });
-
-  it('reports an unmerged read that failed only when the operations were empty', () => {
-    // A merge whose index cannot be diffed because its directory is gone is still a
-    // merge in progress. Reporting only the read failure would hide the finding.
-    const boom = () => {
-      throw new Error('spawnSync git ENOENT');
-    };
-    expect(
-      readOperationState('/w', {
-        gitDirOf: () => '/d',
-        readOps: () => [{ operation: 'merge', marker: 'MERGE_HEAD' }],
-        unmergedOf: boom,
-      })
-    ).toMatchObject({
-      readError: null,
-      unmergedError: expect.stringMatching(/ENOENT/),
-    });
-    expect(readOperationState('/w', { gitDirOf: () => '/d', readOps: () => [], unmergedOf: boom }).readError).toMatch(
-      /ENOENT/
-    );
-  });
-
-  it('guards the operations reader too, because preflight has no try/catch of its own', () => {
-    const boom = () => {
-      throw new Error('EACCES');
-    };
-    const state = readOperationState('/w', { gitDirOf: () => '/d', readOps: boom, unmergedOf: () => [] });
-    expect(state.readError).toMatch(/EACCES/);
-    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
-  });
-
-  it('leaves no empty slot where a command would be, when one operation has no remedy', () => {
-    // `.filter(Boolean)` on the remedy list was unpinned: removing it failed zero tests
-    // and printed "Finish or abandon it deliberately —  / git merge --abort". A squash
-    // beside a merge is what produces the null, so that is the shape asserted here.
-    const message = green({
-      operationState: greenOperationState({
-        operations: [
-          { operation: 'squash', marker: 'SQUASH_MSG', value: null },
-          { operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' },
-        ],
-      }),
-    }).failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).toMatch(/— git merge --abort —/);
-    expect(message).not.toMatch(/—\s+\/|—\s+—|\/\s+\//);
-  });
-
-  it('names the operation git cannot abandon, instead of claiming no marker is set', () => {
-    // The self-contradicting sentence: a refusal whose own detail read
-    // "squash (SQUASH_MSG)" and which then said "No operation marker is set".
-    const message = green({
-      operationState: greenOperationState({
-        operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
-        unmerged: ['f.txt'],
-      }),
-    }).failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).toContain('SQUASH_MSG');
-    expect(message).toMatch(/no command that abandons a squash/);
-    expect(message).not.toContain('No operation marker is set');
-  });
-
-  it('still says no marker is set when there is genuinely no marker', () => {
-    const message = green({
-      operationState: greenOperationState({ unmerged: ['f.txt'] }),
-    }).failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).toContain('No operation marker is set');
-  });
-
-  it('states the recency window instead of claiming the sessions are there right now', () => {
-    // Every one of these sources is a window, so "RIGHT NOW" asserted a strength the
-    // data does not have, and the refusal printed beside it stated the same fact
-    // correctly.
-    const message = green({
-      operationState: greenOperationState({
-        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
-      }),
-      board: { ...greenBoard, liveAgents: [{ id: 'a' }] },
-      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
-    }).failures.find((f) => f.code === 'operation-in-progress').message;
-    expect(message).not.toContain('RIGHT NOW');
-    expect(message).toContain(`inside the last ${LIVE_WINDOW_MS / 60000} min`);
-  });
-
-  it('no longer tells the operator to prune a worktree whose state may still exist', () => {
-    // `git worktree prune` deletes `.git/worktrees/<name>/`, which is where a merge's
-    // state lives. The refusal recommended it unconditionally, in the same run that
-    // could not rule out a merge being there.
-    expect(REFUSALS.prunable('')).toMatch(/repo:state/);
-    expect(REFUSALS.prunable('')).toMatch(/DELETES it with no reflog entry/);
   });
 });

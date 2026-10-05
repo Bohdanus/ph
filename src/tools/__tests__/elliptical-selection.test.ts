@@ -15,7 +15,7 @@ import {
   type EllipticalMarqueeDrag,
 } from '../ellipticalSelection.ts';
 import { isPointInPolygon } from '../../util/selection.ts';
-import type { Point, Size } from '../../contexts/general-types.ts';
+import type { Point } from '../../contexts/general-types.ts';
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
 
@@ -40,18 +40,6 @@ class RecordingOffscreenCanvas {
 
 const bitmap = createMockImageBitmap(40, 24);
 
-/** The same 200x120 the tool area's store mock carries, so both levels clamp against one bound. */
-const DOCUMENT: Size = { width: 200, height: 120 };
-/**
- * A document no case can reach the edge of, and the DEFAULT every case below resolves against.
- *
- * It is the default so that a case about the drag's own arithmetic does not have to say anything
- * about the document: `trimRect2` is the identity on any box inside 4000x4000, and every
- * pre-existing expectation in this file is about such a box. The cases that ARE about the bound
- * pass `imageSize: DOCUMENT` explicitly.
- */
-const ROOMY: Size = { width: 4000, height: 4000 };
-
 const marquee = (overrides: Partial<EllipticalMarqueeDrag>): EllipticalMarqueeDrag => ({
   start: { x: 0, y: 0 },
   end: { x: 0, y: 0 },
@@ -59,7 +47,6 @@ const marquee = (overrides: Partial<EllipticalMarqueeDrag>): EllipticalMarqueeDr
   fixedRatio: 1,
   fixedWidth: 100,
   fixedHeight: 100,
-  imageSize: ROOMY,
   ...overrides,
 });
 
@@ -253,14 +240,11 @@ describe('resolveEllipseRect', () => {
 
   it('leaves a fixed-size drag on its fixed extents even with the modifiers held', () => {
     // Fixed Size already locks the size, so a circle constraint has nothing left to say
-    // and the press point still supplies the centre. The press point is at (60, 60) rather than
-    // near the origin so the 100x60 box lands inside `DOCUMENT` whole: this case is about the
-    // extents surviving the modifiers, and a box the document bound crops would be evidence
-    // about the bound instead. The overflow case for this style is below.
+    // and the press point still supplies the centre.
     expect(
       resolveEllipseRect(
         drag(
-          { x: 60, y: 60 },
+          { x: 20, y: 20 },
           { x: 0, y: 0 },
           {
             style: 'fixed-size',
@@ -268,101 +252,10 @@ describe('resolveEllipseRect', () => {
             fixedHeight: 60,
             constrainToCircle: true,
             fromCentre: true,
-            imageSize: DOCUMENT,
           }
         )
       )
-    ).toEqual({ x1: 10, y1: 30, x2: 110, y2: 90 });
-  });
-
-  it('trims a drag whose end point is past the right and bottom edges to the document', () => {
-    // The unclamped box is (150, 100) to (260, 140), so the far edges are 60px and 20px outside.
-    expect(resolveEllipseRect(drag({ x: 150, y: 100 }, { x: 260, y: 140 }, { imageSize: DOCUMENT }))).toEqual({
-      x1: 150,
-      y1: 100,
-      x2: 200,
-      y2: 120,
-    });
-  });
-
-  it('trims a drag whose start point is at negative coordinates to the document origin', () => {
-    // No document can hold a negative edge: `clampEdge` is `min(max(0, v), n)`, so the left and
-    // top of this box are 0 under every `imageSize` and only the far pair is in question.
-    expect(resolveEllipseRect(drag({ x: -30, y: -20 }, { x: 60, y: 40 }, { imageSize: DOCUMENT }))).toEqual({
-      x1: 0,
-      y1: 0,
-      x2: 60,
-      y2: 40,
-    });
-  });
-
-  it('leaves a drag that is already inside the document exactly as the drag resolved it', () => {
-    const start = { x: 20, y: 10 };
-    const end = { x: 90, y: 70 };
-
-    expect(resolveEllipseRect(drag(start, end, { imageSize: DOCUMENT }))).toEqual({
-      x1: 20,
-      y1: 10,
-      x2: 90,
-      y2: 70,
-    });
-    // The control that makes the four assertions above mean "trimmed" rather than "smaller": a
-    // document no edge of this box can reach returns the same four numbers.
-    expect(resolveEllipseRect(drag(start, end, { imageSize: ROOMY }))).toEqual({
-      x1: 20,
-      y1: 10,
-      x2: 90,
-      y2: 70,
-    });
-  });
-
-  it('trims a fixed-size ellipse that overflows the document, with no pointer involvement at all', () => {
-    const click = { x: 20, y: 20 };
-    const fixed = { style: 'fixed-size', fixedWidth: 100, fixedHeight: 60 } as const;
-
-    // A 60x40 document and a 100x60 press point: the box hangs 30px off the left, 10px off the
-    // top, 10px off the right and 10px off the bottom, and `end` never moves from `start`.
-    expect(resolveEllipseRect(drag(click, click, { ...fixed, imageSize: { width: 60, height: 40 } }))).toEqual({
-      x1: 0,
-      y1: 0,
-      x2: 60,
-      y2: 40,
-    });
-    // The control: the same fixed box at a press point the document holds is untrimmed, so the
-    // assertion above is the bound and not a smaller ellipse.
-    expect(resolveEllipseRect(drag({ x: 60, y: 60 }, { x: 60, y: 60 }, { ...fixed, imageSize: DOCUMENT }))).toEqual({
-      x1: 10,
-      y1: 30,
-      x2: 110,
-      y2: 90,
-    });
-  });
-
-  it('squares a shift drag before it is trimmed to the document, so the circle stops at the canvas', () => {
-    // 260x40 under Shift squares to 260x260 at the origin, which a 200x120 document cannot hold.
-    expect(
-      resolveEllipseRect(drag({ x: 0, y: 0 }, { x: 260, y: 40 }, { constrainToCircle: true, imageSize: DOCUMENT }))
-    ).toEqual({ x1: 0, y1: 0, x2: 200, y2: 120 });
-    // The ORDER is what this case pins, and only the assertion above can see it: trimming the
-    // drag first would square 200x40 instead and commit a box 80px below the document. The
-    // control is not an order control — it is the same "the trim is conditional" control as
-    // above, since a 260x260 box fits inside 4000x4000 untouched.
-    expect(
-      resolveEllipseRect(drag({ x: 0, y: 0 }, { x: 260, y: 40 }, { constrainToCircle: true, imageSize: ROOMY }))
-    ).toEqual({ x1: 0, y1: 0, x2: 260, y2: 260 });
-  });
-
-  it('reads a drag that lands wholly outside the document as no selection at all', () => {
-    // (300, 200) to (340, 240) in a 200x120 document: every edge is past the far corner, so the
-    // bound leaves a point, and a point has no ellipse to inscribe. This is the only case that
-    // can see the positive-extent guard — every other overflow trims to a real box.
-    expect(resolveEllipseRect(drag({ x: 300, y: 200 }, { x: 340, y: 240 }, { imageSize: DOCUMENT }))).toBeNull();
-    expect(resolveEllipseRect(drag({ x: 300, y: 200 }, { x: 340, y: 240 }, { imageSize: ROOMY }))).toEqual({
-      x1: 300,
-      y1: 200,
-      x2: 340,
-      y2: 240,
-    });
+    ).toEqual({ x1: -30, y1: -10, x2: 70, y2: 50 });
   });
 
   it('grows an alt drag from the press point out to the pointer', () => {
@@ -522,22 +415,5 @@ describe('ellipsePointsFromDrag', () => {
     expect(small).toHaveLength(ellipseVertexCount(50, 50));
     expect(big).toHaveLength(ellipseVertexCount(1000, 1000));
     expect(big.length).toBeGreaterThan(small.length);
-  });
-
-  it('commits a polygon whose every vertex is inside the document the drag was bounded by', () => {
-    const points = ellipsePointsFromDrag(drag({ x: 150, y: 100 }, { x: 260, y: 140 }, { imageSize: DOCUMENT }))!;
-
-    expect(points).not.toBeNull();
-    // The first vertex is at angle 0, so the rightmost one sits exactly on `x2` and no tolerance
-    // is wanted there. Every other extreme stops short of its edge by at most the declared
-    // sagitta, which is the geometry's own bound rather than a number invented for a test.
-    expect(Math.max(...points.map((point) => point.x))).toBe(200);
-    expect(Math.max(...points.map((point) => point.y))).toBeGreaterThan(120 - ELLIPSE_MAX_SAGITTA_PX);
-    for (const point of points) {
-      expect(point.x).toBeLessThanOrEqual(200);
-      expect(point.x).toBeGreaterThanOrEqual(150);
-      expect(point.y).toBeLessThanOrEqual(120);
-      expect(point.y).toBeGreaterThanOrEqual(100);
-    }
   });
 });

@@ -367,13 +367,6 @@ export const useLayers = () => {
       layer.pos.x === nextSource.pos.x &&
       layer.pos.y === nextSource.pos.y
     ) {
-      // The preview for this layer was already deleted above, so the composited canvas is showing a
-      // document WITHOUT its raster — and `beginTextLayerEdit` nulled that raster precisely because the
-      // contenteditable overlay stood in for it. Returning here dispatched nothing, and `Main`'s redraw
-      // effect is keyed on `layers`, which no dispatch changed, so nothing repainted: the type simply
-      // vanished. MEASURED on the default Esc-to-commit path — re-enter a text layer, press Esc with no
-      // edit, and the ink is gone. Redraw before returning; the store is already correct.
-      drawAllLayers();
       return layer;
     }
     // The replacement is RENDERED, not merely recorded. `getLayerBitmap` re-runs a creator only for
@@ -932,15 +925,6 @@ export const useLayers = () => {
   const beginTextLayerEdit = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
-    // ONE edit at a time, and this map was never emptied by the text arm of `commitDirtyTool`, which
-    // returns in all four of its branches before the clear further down. So entering a second layer
-    // left the first one's preview behind: its raster is nulled, `text` is excluded from
-    // `vectorToolNames` so nothing re-renders it, and `drawAllLayers`' silent-missing set suppresses the
-    // usual "skipped layer without bitmap" report — the earlier layer's type disappeared from the
-    // canvas and stayed gone across any number of tool switches, while the export still contained it.
-    for (const previewId of Object.keys(previewLayersRef.current)) {
-      if (previewId !== id) delete previewLayersRef.current[previewId];
-    }
     previewLayersRef.current[id] = {
       // Remove only the runtime raster from this preview. The contenteditable overlay is the sole
       // visible representation while the source is being edited; the marker is never persisted.

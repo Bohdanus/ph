@@ -24,7 +24,7 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
       selections: storeState.selections,
       activeSelectionId: storeState.activeSelectionId,
       // An empty timeline at cursor -1 is what a store with nothing appended yet
-      // actually looks like, and it is what puts the Deselect writer on the append
+      // actually looks like, and it is what puts the Clear writer on the append
       // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
       // planner's `timeline`, `validateTimeline` reports the out-of-range cursor
       // as a diagnostic instead of throwing on `undefined`, and the writer
@@ -57,7 +57,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
 }
 
 /**
- * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
  * edit that appends to history, so a deselect can be undone. The contract is one
  * `COMMIT_DOCUMENT_EDIT` carrying both the history item and the resulting
  * selection state.
@@ -190,7 +190,7 @@ describe('RectangularSelection toolbar', () => {
   it('clears committed selections as one undoable document edit', () => {
     render(<RectangularSelection />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Deselect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
   });
@@ -225,10 +225,10 @@ describe('RectangularSelection toolbar', () => {
     expect(copyActiveSelectionMock).not.toHaveBeenCalled();
   });
 
-  it('appends a selection history entry when Deselect clicked', () => {
+  it('appends a selection history entry when Clear clicked', () => {
     render(<RectangularSelection />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Deselect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
   });
@@ -248,14 +248,14 @@ describe('RectangularSelection toolbar', () => {
       ],
     };
 
-    it('disables Copy and Deselect when the active selection is not a rectangle', () => {
+    it('disables Copy and Clear when the active selection is not a rectangle', () => {
       resetStoreState({ activeSelectionId: POLYGON_SELECTION.id, selections: [POLYGON_SELECTION] });
       render(<RectangularSelection />);
 
       // `getActiveRectangularSelection` (src/util/selection.ts:111-118) returns null for any
       // non-rectangle geometry, so a lasso selection cannot be copied from this toolbar.
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
     });
 
     it('falls back to the flagged selection when the active id is null', () => {
@@ -271,7 +271,7 @@ describe('RectangularSelection toolbar', () => {
       render(<RectangularSelection />);
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
     });
 
     it('treats a rectangle without a lifecycle flag as copyable (RectangularSelection.tsx:11-13)', () => {
@@ -298,7 +298,7 @@ describe('RectangularSelection toolbar', () => {
 
       // `hasRect` is a truthiness check on the rect object, not on its area.
       expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled();
-      expect(screen.getByRole('button', { name: 'Deselect' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeEnabled();
     });
   });
 
@@ -309,7 +309,7 @@ describe('RectangularSelection toolbar', () => {
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Deselect' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       copyButton.focus();
       expect(copyButton).toHaveFocus();
@@ -333,12 +333,12 @@ describe('RectangularSelection toolbar', () => {
       expect(copyButton).toHaveFocus();
     });
 
-    it('allows enter/space to trigger copy, paste, and Deselect buttons', async () => {
+    it('allows enter/space to trigger copy, paste, and clear buttons', async () => {
       const user = userEvent.setup();
       render(<RectangularSelection />);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Deselect' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       copyButton.focus();
       expect(copyButton).toHaveFocus();
@@ -373,7 +373,7 @@ describe('RectangularSelection toolbar', () => {
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Deselect' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       expect(copyButton).not.toBeDisabled();
       expect(clearButton).not.toBeDisabled();
@@ -402,7 +402,7 @@ describe('RectangularSelection toolbar', () => {
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
 
       await user.tab();
       expect(document.activeElement).toBe(document.body);

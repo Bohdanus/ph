@@ -3,21 +3,21 @@ import type { RefObject } from 'react';
 type sharpenToolAreaProps = {
   className?: string;
   /**
-   * Optional, and accepted for the mount contract and deliberately not read. Two separate
-   * reasons, one for each half of that sentence.
+   * Accepted for the mount contract and deliberately not read.
    *
-   * It is OPTIONAL so every tool area in the union can be rendered with one prop set, and read
-   * from the store rather than the prop when it is needed. `Main` passes only
+   * Sharpen is a ONE-SHOT filter like Blur and Levels: the options bar previews it through
+   * `tempUpdateLayer` (`src/contexts/useLayer.ts:473`) and `commitDirtyTool` (`:323`) bakes
+   * it on tool switch, on export and in `mergeAllLayers`. There is no gesture on the canvas
+   * for this area to own, so both contexts belong to the layer republish rather than to a tool
+   * painting by hand — which is the un-undoable defect `usePaintStroke`'s JSDoc warns about,
+   * and the reason a Sharpen may not reach for the shared stroke hook.
+   */
+  /**
+   * Optional: accepted so every tool area in the union can be rendered with one prop set, and
+   * read from the store rather than the prop when it is needed. `Main` passes only
    * `overlayCtxRef`, so a required declaration here is a type error at the call site and a
    * `undefined` at runtime. `EllipticalSelectionToolArea` and `QuickSelectionToolArea` already
    * declare it this way.
-   *
-   * It is UNREAD because Sharpen is a ONE-SHOT filter like Blur and Levels: the options bar
-   * previews it through `tempUpdateLayer` and `commitDirtyTool` bakes it on tool switch, on
-   * export and in `mergeAllLayers`. There is no gesture on the canvas for this area to own, so
-   * both contexts belong to the layer republish rather than to a tool painting by hand — which
-   * is the un-undoable defect `usePaintStroke`'s JSDoc warns about, and the reason a Sharpen may
-   * not reach for the shared stroke hook.
    */
   canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
   /** The sibling of `canvasCtxRef`, unused for the same reason. */
