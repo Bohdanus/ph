@@ -399,7 +399,13 @@ describe('unhandled rejection visibility', () => {
       assetRegistry.shutdown();
     });
 
-    it('reports the same abort through the awaited promise and never through the void', async () => {
+    it('reports the same abort through the awaited promise', async () => {
+      // Titled for what it asserts. `expect(rejections).toHaveLength(0)` below is NOT part
+      // of that: the `.catch` above attaches a handler synchronously, and Node cannot emit
+      // `unhandledRejection` for a promise that already has one, so that line is true by
+      // construction rather than by anything `materializeDocument` does. It is kept because
+      // the rest of this file asserts the same way and a lone departure would read as an
+      // unexplained difference — but the evidence for the awaited half is the line above it.
       const controller = new AbortController();
       controller.abort();
       const { assetRegistry, payload } = request(controller.signal);

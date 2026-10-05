@@ -6617,3 +6617,43 @@ be measured against a fleet before it lands.
 
 **Provenance.** Found and measured by a review of `fix/repo-state-roster` on 2026-10-05, and
 reproduced by removing one administrative directory from a fixture with a live worktree beside it.
+
+---
+
+## 247. One malformed `previousSelectionState` voids the entire durable shadow, and the same shape one entry later is tolerated
+
+**Problem.** `legacyHistoryToDurable` derives the selection baseline with
+`deriveSelectionBaseline(legacyHistory)` **before** its per-entry loop and outside any
+`try`, so a single malformed argument anywhere in the timeline is not a per-entry
+diagnostic — it is the failure of the whole conversion.
+
+`deriveSelectionBaseline` (`selection-baseline.ts`) takes the first non-disabled
+`SELECTION_ACTION` and passes `previous?.selections` straight to `selectionSnapshot`.
+That function's parameter is `readonly Selection[] = []`, so the default rescues
+`undefined` and nothing else: a first entry carrying `previousSelectionState: { selections:
+null }` supplies `null`, and `null.map` throws a `TypeError`. The result is
+`status: 'unavailable'`, `document: null`, and one `conversion-failed` diagnostic with
+**no `historyId`** — the user is told the document is unavailable and is given nothing to
+blame. Undo and redo for the whole document stop working.
+
+The asymmetry is the defect. `deriveSetSelectionEntry` reads the same field **through a
+three-clause structural guard** and falls back to the tracked baseline when it fails, so a
+malformed `previousSelectionState` one entry later is merely ignored. Identical data,
+opposite blast radius, decided only by position in the timeline.
+
+Current behaviour is pinned as a tripwire by
+`it('voids the whole conversion for an unreadable previous state on the FIRST selection entry')`
+in `src/contexts/__tests__/history-adapter.safety.test.ts`, whose docblock states that a fix
+must DELETE that test rather than edit it.
+
+**Fix.** Give `deriveSelectionBaseline` the same structural tolerance
+`deriveSetSelectionEntry` already has — an unreadable `previousSelectionState` falls back to
+the empty selection snapshot — and move the derivation inside the conversion's error boundary
+so a failure is attributable rather than fatal. The type says `previousSelectionState?: SelectionSnapshot`,
+so `{ selections: null }` is already outside the contract; the defect is that nothing checks
+it before dereferencing. Do NOT fix this by bounding the baseline lookup: that is §31's rule
+and reopening it reintroduces a data-loss bug.
+
+**Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`, `selectionSnapshot`),
+`src/contexts/history-adapter.ts` (`legacyHistoryToDurable`),
+`src/contexts/__tests__/history-adapter.safety.test.ts`

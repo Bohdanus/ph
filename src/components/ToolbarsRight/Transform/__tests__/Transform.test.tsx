@@ -208,9 +208,11 @@ describe('Transform toolbar', () => {
      * Every bound in `Transform.tsx` is a hardcoded literal (`:185-186`, `:205-206`, `:220-221`,
      * `:238-239`, `:256-257`, `:271-272`) and none of them was asserted before this table, so a
      * bound could be edited and nothing in this file would report it. `Rotate` is the load-bearing
-     * one: the three rotate BUTTONS wrap through 360 (`Transform.tsx:95-105`) while the slider is
-     * capped at ±90, so a `max` quietly widened to 180 would give the panel a second, unwrapped
-     * route to a rotate the buttons cannot produce.
+     * one: the three rotate BUTTONS — `Rotate 90° Left`, `Rotate 180°` and `Rotate 90° Right`,
+     * whose handlers are `handleRotateLeft` and `handleRotateRight` plus the inline `% 360` for
+     * the middle one — wrap through 360 while the slider is capped at ±90, so a `max` quietly
+     * widened to 180 would give the panel a second, unwrapped route to a rotate the buttons
+     * cannot produce.
      */
     it.each([
       ['rotate-slider', 'Rotate', '-90', '90'],
@@ -229,8 +231,9 @@ describe('Transform toolbar', () => {
     });
 
     /**
-     * The five handlers `trapezoid exclusivity` does not reach. Each one clears `trapezoid` on the
-     * way out (`Transform.tsx:113`, `:118`, `:123`, `:137`, `:142`) and preserves every other
+     * The five handlers `trapezoid exclusivity` does not reach — `handleRotateSliderChange`,
+     * `handleSkewXChange`, `handleSkewYChange`, `handleResizeXChange` and
+     * `handleResizeYChange` — each clear `trapezoid` on the way out and preserve every other
      * field, so the payload below is the full seeded args with `trapezoid` zeroed — which is what
      * makes a handler that forgot the `trapezoid: 0` visible: it would publish a transform in which
      * a trapezoid correction and a rotation compose.
