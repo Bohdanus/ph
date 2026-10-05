@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { DEFAULT_THRESHOLD, compareScreenshots } from '../image-comparison';
-import type { ChannelDelta, ChannelName, CompareOptions, CompareResult } from '../image-comparison';
+import type { CaptureSize, ChannelDelta, ChannelName, CompareOptions, CompareResult } from '../image-comparison';
 
 type Rgba = { r: number; g: number; b: number; alpha: number };
 type Rect = { left: number; top: number; width: number; height: number };
@@ -204,6 +204,7 @@ describe('Image Comparison Helpers', () => {
         diffPixels: 0,
         diffRatio: 0,
         channelDelta: NO_MOVEMENT,
+        sizeMismatch: null,
       });
     });
 
@@ -255,8 +256,13 @@ describe('Image Comparison Helpers', () => {
      * `channelDelta` is part of the sentinel, not absent from it: every channel reports
      * `Infinity`, so a caller gating on `channelDelta.r.max` fails here instead of reading a
      * size mismatch as a perfect colour match.
+     *
+     * Built from the two sizes rather than a frozen constant, because `sizeMismatch` reports
+     * them and a constant here could not assert what they are. Every assertion that used one
+     * frozen object would pass even if the reported sizes were swapped or copied from the
+     * wrong side, which is the whole failure this row exists to remove.
      */
-    const sentinelVerdict = {
+    const sentinelVerdict = (actual: Size, expected: Size) => ({
       matches: false,
       diffPixels: Number.MAX_SAFE_INTEGER,
       diffRatio: 1,
@@ -266,47 +272,88 @@ describe('Image Comparison Helpers', () => {
         b: { mean: Infinity, max: Infinity },
         a: { mean: Infinity, max: Infinity },
       },
-    };
+      sizeMismatch: {
+        actual: { width: actual.width, height: actual.height },
+        expected: { width: expected.width, height: expected.height },
+      },
+    });
 
     it('does not match when both dimensions differ', async () => {
-      const result = await compareScreenshots(
-        await redPng100(),
-        await solidPng({ width: SQUARE_100.width * 2, height: SQUARE_100.height * 2 }, OPAQUE_GREEN)
-      );
+      const larger = { width: SQUARE_100.width * 2, height: SQUARE_100.height * 2 };
+      const result = await compareScreenshots(await redPng100(), await solidPng(larger, OPAQUE_GREEN));
 
-      expect(result).toEqual(sentinelVerdict);
+      expect(result).toEqual(sentinelVerdict(SQUARE_100, larger));
     });
 
     it('does not match when only the width differs', async () => {
-      const result = await compareScreenshots(
-        await solidPng({ width: SQUARE_100.width * 2, height: SQUARE_100.height }, OPAQUE_GREEN),
-        await redPng100()
-      );
+      const wider = { width: SQUARE_100.width * 2, height: SQUARE_100.height };
+      const result = await compareScreenshots(await solidPng(wider, OPAQUE_GREEN), await redPng100());
 
-      expect(result).toEqual(sentinelVerdict);
+      expect(result).toEqual(sentinelVerdict(wider, SQUARE_100));
     });
 
     it('does not match when only the height differs', async () => {
-      const result = await compareScreenshots(
-        await solidPng({ width: SQUARE_100.width, height: SQUARE_100.height * 2 }, OPAQUE_GREEN),
-        await redPng100()
-      );
+      const taller = { width: SQUARE_100.width, height: SQUARE_100.height * 2 };
+      const result = await compareScreenshots(await solidPng(taller, OPAQUE_GREEN), await redPng100());
 
-      expect(result).toEqual(sentinelVerdict);
+      expect(result).toEqual(sentinelVerdict(taller, SQUARE_100));
     });
 
-    it('reports the same sentinel regardless of argument order', async () => {
+    /**
+     * The verdict is symmetric and the REPORT is not, deliberately, and this is the one place
+     * that distinction is pinned.
+     *
+     * Swapping the arguments swaps `actual` and `expected` and nothing else: `matches`,
+     * `diffPixels`, `diffRatio` and `channelDelta` are identical either way. An earlier shape
+     * asserted the entire object was equal under both orders, which was only possible while
+     * the verdict said nothing about which image was which — i.e. it was asserting the very
+     * absence this row removes. The direction is the feature: "exported 800x600 against a
+     * baseline of 800x601" is only actionable in that order, because the exported buffer is
+     * what the current build produced and the baseline is the committed record.
+     */
+    it('reports the same verdict under either argument order, and swaps only the sizes', async () => {
       const tall = await solidPng({ width: SQUARE_100.width, height: SQUARE_100.height * 2 }, OPAQUE_GREEN);
       const short = await redPng100();
 
-      expect(await compareScreenshots(tall, short)).toEqual(await compareScreenshots(short, tall));
+      const forward = await compareScreenshots(tall, short);
+      const reverse = await compareScreenshots(short, tall);
+
+      const { sizeMismatch: forwardSizes, ...forwardVerdict } = forward;
+      const { sizeMismatch: reverseSizes, ...reverseVerdict } = reverse;
+
+      expect(forwardVerdict).toEqual(reverseVerdict);
+      expect(forwardSizes).toEqual({
+        actual: { width: SQUARE_100.width, height: SQUARE_100.height * 2 },
+        expected: SQUARE_100,
+      });
+      expect(reverseSizes).toEqual({ actual: SQUARE_100, expected: forwardSizes?.actual });
     });
 
     it('applies the sentinel even when the size-mismatched images share a single colour', async () => {
       const small = await solidPng(SQUARE_10, OPAQUE_RED);
       const larger = await solidPng({ width: SQUARE_10.width * 2, height: SQUARE_10.height * 2 }, OPAQUE_RED);
 
-      expect(await compareScreenshots(small, larger)).toEqual(sentinelVerdict);
+      expect(await compareScreenshots(small, larger)).toEqual(
+        sentinelVerdict(SQUARE_10, { width: SQUARE_10.width * 2, height: SQUARE_10.height * 2 })
+      );
+    });
+
+    /**
+     * The reason this row exists. A one-pixel size disagreement produced a verdict
+     * indistinguishable from "the picture is completely different": same `matches: false`,
+     * same `diffPixels: Number.MAX_SAFE_INTEGER`, same `diffRatio: 1`. An operator triaging a
+     * red export diff could only see a budget failure, when the actual defect was a dimension.
+     */
+    it('names both sizes when a single pixel of height differs, rather than only reporting a total failure', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: SQUARE_100.width, height: SQUARE_100.height + 1 }, OPAQUE_RED),
+        await redPng100()
+      );
+
+      expect(result.sizeMismatch).toEqual({
+        actual: { width: SQUARE_100.width, height: SQUARE_100.height + 1 },
+        expected: SQUARE_100,
+      });
     });
 
     it('still matches the smallest possible image against itself', async () => {
@@ -317,6 +364,7 @@ describe('Image Comparison Helpers', () => {
         diffPixels: 0,
         diffRatio: 0,
         channelDelta: NO_MOVEMENT,
+        sizeMismatch: null,
       });
     });
 
@@ -442,6 +490,141 @@ describe('Image Comparison Helpers', () => {
       const result = await compareScreenshots(await redPng100(), await greenPng100(), { maxDiffPixels: 0 });
 
       expect(result.diffPixels).toBe(SQUARE_100_PIXELS);
+      expect(result.matches).toBe(false);
+    });
+  });
+
+  /**
+   * The ratio's DENOMINATOR, on an image that is not a square.
+   *
+   * Every successful comparison in this file up to here is square — 100x100, 50x50, 10x10,
+   * 1x1 — so `actualInfo.width * actualInfo.height` and `width * width` and
+   * `(width + height) / 2` all produce the same number on all of them, and a denominator
+   * that quietly stopped using the height passes the whole file. The screenshots this
+   * helper judges are captures of whatever region a caller measured, and a region is
+   * rectangular and routinely not square.
+   *
+   * 100x50 with a 10x5 patch: 50 differing pixels out of 5000, which is exactly
+   * `DEFAULT_MAX_DIFF_PIXEL_RATIO` (0.01) and exactly half of the default pixel budget.
+   */
+  describe('compareScreenshots - the ratio divides by the image AREA, not the width', () => {
+    const WIDE: Size = { width: 100, height: 50 };
+    const WIDE_PIXELS = WIDE.width * WIDE.height;
+    const WIDE_PATCH: Rect = { left: 0, top: 0, width: 10, height: 5 };
+    const WIDE_PATCH_PIXELS = WIDE_PATCH.width * WIDE_PATCH.height;
+
+    it('computes the ratio over width x height, so a half-height image doubles it', async () => {
+      // 50 / 5000. A `width * width` denominator answers 0.005 here.
+      const result = await compareScreenshots(
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH]),
+        await solidPng(WIDE, OPAQUE_RED)
+      );
+
+      expect(result.diffPixels).toBe(WIDE_PATCH_PIXELS);
+      expect(result.diffRatio).toBe(WIDE_PATCH_PIXELS / WIDE_PIXELS);
+      expect(result.diffRatio).toBe(0.01);
+    });
+
+    it('does not take the height from the expected image when only the widths agree', async () => {
+      // Both images are the same shape here, so a denominator mixing the two images'
+      // geometry is also caught — and `width * height` of the EXPECTED image is the shape a
+      // refactor is most likely to reach for, because `expectedInfo` is the other name in
+      // scope at the top of the function.
+      const result = await compareScreenshots(
+        await solidPng(WIDE, OPAQUE_RED),
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH])
+      );
+
+      expect(result.diffPixels).toBe(WIDE_PATCH_PIXELS);
+      expect(result.diffRatio).toBe(0.01);
+    });
+
+    it('sits on the default ratio allowance on a non-square image, and one pixel over leaves it', async () => {
+      const EXTRA: Rect = { left: 99, top: 49, width: 1, height: 1 };
+
+      const onTheLimit = await compareScreenshots(
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH]),
+        await solidPng(WIDE, OPAQUE_RED)
+      );
+      expect(onTheLimit.diffRatio).toBe(0.01);
+      expect(onTheLimit.matches).toBe(true);
+
+      const oneOver = await compareScreenshots(
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH, EXTRA]),
+        await solidPng(WIDE, OPAQUE_RED)
+      );
+      expect(oneOver.diffPixels).toBe(WIDE_PATCH_PIXELS + 1);
+      expect(oneOver.diffRatio).toBe((WIDE_PATCH_PIXELS + 1) / WIDE_PIXELS);
+      expect(oneOver.matches).toBe(false);
+    });
+
+    it('reports every pixel of a fully different non-square image as a ratio of 1', async () => {
+      // The one case a square assumption cannot disguise at all: the ratio saturates at 1
+      // only when the denominator is the true area.
+      const result = await compareScreenshots(await solidPng(WIDE, OPAQUE_RED), await solidPng(WIDE, OPAQUE_GREEN));
+
+      expect(result.diffPixels).toBe(WIDE_PIXELS);
+      expect(result.diffRatio).toBe(1);
+      expect(result.matches).toBe(false);
+    });
+  });
+
+  /**
+   * `ensureAlpha()` on both decodes.
+   *
+   * Every fixture above is built with `channels: 4`, so pixelmatch is always handed two
+   * RGBA buffers of the same length and the `.ensureAlpha()` calls are never the thing that
+   * made that true. A capture that comes back without an alpha channel — a JPEG, an
+   * `image/jpeg` data URL, any `format` other than `'png'` on the CDP capture, a format a
+   * future caller adds — decodes to three bytes per pixel instead of four, and the raw
+   * buffers handed to pixelmatch are then a quarter too short: it reads past the end of
+   * both, and the result is a diff count and a ratio that mean nothing.
+   */
+  describe('compareScreenshots - decodes images that carry no alpha channel', () => {
+    const rgbPng = (background: Rgba): Promise<Buffer> =>
+      sharp({ create: { width: SQUARE_100.width, height: SQUARE_100.height, channels: 3, background } })
+        .png()
+        .toBuffer();
+
+    it('matches a three-channel image against itself', async () => {
+      // Without `ensureAlpha()` the raw buffer is 30000 bytes where pixelmatch reads 40000,
+      // and the two ends disagree on their length before a single pixel is compared.
+      const image = await rgbPng({ r: 255, g: 0, b: 0, alpha: 1 });
+
+      const { info } = await sharp(image).raw().toBuffer({ resolveWithObject: true });
+      expect(info.channels, 'the fixture really is the three-channel case').toBe(3);
+
+      expect(await compareScreenshots(image, image)).toEqual({
+        matches: true,
+        diffPixels: 0,
+        diffRatio: 0,
+        channelDelta: NO_MOVEMENT,
+        // `toEqual` on the whole verdict, so widening the channels must not turn a decoded
+        // size disagreement into a match: `sizeMismatch` is `null` only because the two decodes
+        // agree, and this assertion now says so.
+        sizeMismatch: null,
+      });
+    });
+
+    it('compares three-channel against four-channel on equal terms', async () => {
+      // Both sides name the same colour, so the only difference between a match and a
+      // whole-image diff is whether both sides were widened to four channels first.
+      const result = await compareScreenshots(await rgbPng({ r: 255, g: 0, b: 0, alpha: 1 }), await redPng100());
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+    });
+
+    it('still counts a real difference in a three-channel image', async () => {
+      // The other half of the contract: widening must not turn every sample into a match.
+      const result = await compareScreenshots(
+        await rgbPng({ r: 0, g: 0, b: 0, alpha: 1 }),
+        await rgbPng({ r: 255, g: 255, b: 255, alpha: 1 })
+      );
+
+      expect(result.diffPixels).toBe(SQUARE_100_PIXELS);
+      expect(result.diffRatio).toBe(1);
       expect(result.matches).toBe(false);
     });
   });
@@ -685,7 +868,13 @@ describe('Image Comparison Helpers', () => {
     it('returns exactly the documented result keys', async () => {
       const result = await compareScreenshots(await redPng100(), await redPng100());
 
-      expect(Object.keys(result).sort()).toEqual(['channelDelta', 'diffPixels', 'diffRatio', 'matches']);
+      expect(Object.keys(result).sort()).toEqual([
+        'channelDelta',
+        'diffPixels',
+        'diffRatio',
+        'matches',
+        'sizeMismatch',
+      ]);
     });
 
     it('returns values of the documented runtime types', async () => {
@@ -695,6 +884,23 @@ describe('Image Comparison Helpers', () => {
       expect(typeof result.diffPixels).toBe('number');
       expect(Number.isFinite(result.diffRatio)).toBe(true);
       expect(Object.keys(result.channelDelta).sort()).toEqual(['a', 'b', 'g', 'r']);
+      // `null` on a measured verdict, so `sizeMismatch !== null` is the whole size test and a
+      // caller never has to read `diffPixels` to find out which verdict it is holding.
+      expect(result.sizeMismatch).toBeNull();
+    });
+
+    /**
+     * Both keys must be present on the mismatch, and they must be the two sides rather than
+     * one size copied twice. A verdict that reported the expected size in both slots would
+     * satisfy `sizeMismatch !== null` and every consumer of it, while naming nothing.
+     */
+    it('reports the two sides distinctly on a size mismatch', async () => {
+      const result = await compareScreenshots(await redPng100(), await solidPng(SQUARE_50, OPAQUE_GREEN));
+
+      expect(result.sizeMismatch).not.toBeNull();
+      expect(result.sizeMismatch?.actual).toEqual(SQUARE_100);
+      expect(result.sizeMismatch?.expected).toEqual(SQUARE_50);
+      expect(result.sizeMismatch?.actual).not.toEqual(result.sizeMismatch?.expected);
     });
 
     it('returns a fresh result object that callers may mutate without affecting later calls', async () => {
@@ -704,6 +910,19 @@ describe('Image Comparison Helpers', () => {
       const second = await compareScreenshots(await redPng100(), await redPng100());
 
       expect(second.matches).toBe(true);
+    });
+
+    /**
+     * The nested object needs this as much as the top-level one: `sizeMismatch` is built per
+     * call, so a shared literal would let one mutation leak into the next comparison.
+     */
+    it('returns a fresh sizeMismatch object on every mismatched call', async () => {
+      const first = await compareScreenshots(await redPng100(), await solidPng(SQUARE_50, OPAQUE_GREEN));
+      if (first.sizeMismatch) first.sizeMismatch.actual.width = 1;
+
+      const second = await compareScreenshots(await redPng100(), await solidPng(SQUARE_50, OPAQUE_GREEN));
+
+      expect(second.sizeMismatch?.actual).toEqual(SQUARE_100);
     });
   });
 
@@ -716,17 +935,22 @@ describe('Image Comparison Helpers', () => {
       }>();
     });
 
-    it('CompareResult has matches, diffPixels, diffRatio and channelDelta', () => {
+    it('CompareResult has matches, diffPixels, diffRatio, channelDelta and sizeMismatch', () => {
       expectTypeOf<CompareResult>().toEqualTypeOf<{
         matches: boolean;
         diffPixels: number;
         diffRatio: number;
         channelDelta: Record<ChannelName, ChannelDelta>;
+        sizeMismatch: { actual: CaptureSize; expected: CaptureSize } | null;
       }>();
     });
 
     it('ChannelDelta carries a mean and a max, both plain numbers', () => {
       expectTypeOf<ChannelDelta>().toEqualTypeOf<{ mean: number; max: number }>();
+    });
+
+    it('CaptureSize is a width and a height', () => {
+      expectTypeOf<CaptureSize>().toEqualTypeOf<{ width: number; height: number }>();
     });
   });
 });

@@ -326,6 +326,83 @@ function scanProductionWriters(): DiscoveredWriter[] {
   return sourceFiles(sourceRoot).flatMap((file) => discoverWriters(file, readFileSync(file, 'utf8')));
 }
 
+/**
+ * The store's own dispatcher. `COMMIT_DOCUMENT_EDIT`, `REPLACE_DOCUMENT` and
+ * `APPLY_HISTORY_REPLAY` are declared, matched and re-dispatched here, so every
+ * `type:` occurrence in this file is the CONSUMER of an action rather than a writer of
+ * history. It is the only file exempt from the completeness scan below, and the scan
+ * asserts that it is the ONLY one.
+ */
+const DISPATCHER_FILE = 'src/contexts/StoreContext.tsx';
+
+/**
+ * Blanks comments while LEAVING string literals intact, which is the opposite of
+ * `maskCommentsAndLiteralInteriors`. The completeness scan needs the action literals
+ * themselves, so masking them would defeat its purpose; `https://` is preserved by
+ * requiring the `//` to start a line or follow whitespace.
+ */
+function maskComments(source: string): string {
+  const output = source.split('');
+  const blank = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) {
+      if (source[index] !== '\n' && source[index] !== '\r') output[index] = ' ';
+    }
+  };
+  let index = 0;
+  while (index < source.length) {
+    const pair = source.slice(index, index + 2);
+    if (pair === '/*') {
+      const start = index;
+      index += 2;
+      while (index < source.length && source.slice(index, index + 2) !== '*/') index += 1;
+      index = Math.min(source.length, index + 2);
+      blank(start, index);
+      continue;
+    }
+    if (pair === '//' && (index === 0 || /[\s(]/.test(source[index - 1]!))) {
+      const start = index;
+      index += 2;
+      while (index < source.length && source[index] !== '\n') index += 1;
+      blank(start, index);
+      continue;
+    }
+    index += 1;
+  }
+  return output.join('');
+}
+
+/**
+ * Every `type: '<history action>'` property written anywhere in production source,
+ * found by a scan that is deliberately WEAKER than `discoverWriters` and therefore a
+ * strict superset of it: it recognises an action literal in ANY object literal, any
+ * dispatch spelling (`dispatch`, `rawDispatch`), any property order, either quote
+ * style, and an action captured into a typed intermediate. `discoverWriters` only
+ * recognises `dispatch({ type: '…'` with `type` first and a single or double quote.
+ *
+ * The difference is the point. A new writer written as `dispatch(action)` after
+ * `const action = { type: 'COMMIT_DOCUMENT_EDIT', … }` is invisible to
+ * `discoverWriters` and would leave the exact-equality census green; this scan sees
+ * it. Comparing the two multisets over the same tree is what makes the census
+ * exhaustive by construction rather than by enumeration.
+ */
+function scanActionTypeProperties(): Array<{ file: string; action: HistoryWritingAction }> {
+  const pattern = /\btype\s*:\s*['"](COMMIT_DOCUMENT_EDIT|REPLACE_DOCUMENT|APPLY_HISTORY_REPLAY|REORDER_LAYERS)['"]/g;
+  const found: Array<{ file: string; action: HistoryWritingAction }> = [];
+  for (const file of sourceFiles(sourceRoot)) {
+    const masked = maskComments(readFileSync(file, 'utf8'));
+    const relativeFile = relative(repositoryRoot, file).replaceAll('\\', '/');
+    for (const match of masked.matchAll(pattern)) {
+      if (!isHistoryWritingAction(match[1]!)) continue;
+      found.push({ file: relativeFile, action: match[1] });
+    }
+  }
+  return found;
+}
+
+function actionPropertyKey(site: Pick<WriterSite, 'file' | 'action'>): string {
+  return `${site.file}|${site.action}`;
+}
+
 function assertExactCensus(writers: readonly DiscoveredWriter[]): void {
   const actualKeys = writers.map(key).sort();
   const expectedKeys = EXPECTED_WRITERS.map(key).sort();
@@ -344,6 +421,70 @@ describe('history writer census', () => {
     };
     expect(counts).toEqual({ 'durable-routed': 6, 'conversion-only': 8, 'reconverts entirely': 3 });
     console.info(`S9 history-writer census: ${writers.length} writers`, counts);
+  });
+
+  it('finds no history-writing action property outside the census and the store dispatcher', () => {
+    // The completeness half. `scanActionTypeProperties` is a strict superset of the
+    // discovery scan, so the two multisets over the same tree must agree everywhere
+    // except inside the dispatcher. If a writer appeared in a shape `discoverWriters`
+    // cannot see — the action captured into a variable first, `type` no longer the
+    // first property, `rawDispatch` instead of `dispatch`, a new quote style — the
+    // superset grows and this fails even though the exact-equality census above stays
+    // green.
+    const writers = scanProductionWriters();
+    const superset = scanActionTypeProperties();
+
+    const outsideDispatcher = superset.filter((site) => site.file !== DISPATCHER_FILE);
+    const exemptFiles = [...new Set(superset.filter((site) => site.file === DISPATCHER_FILE).map((site) => site.file))];
+
+    expect(outsideDispatcher.map(actionPropertyKey).sort()).toEqual(writers.map(actionPropertyKey).sort());
+    // One file, named, and it must not grow: a second exempt file would mean an
+    // unbounded hole.
+    expect(exemptFiles).toEqual([DISPATCHER_FILE]);
+    // The dispatcher must actually be exempt for something, or the exemption is
+    // decorative and the multiset comparison above is the only load-bearing assertion.
+    expect(superset.length - outsideDispatcher.length).toBeGreaterThan(0);
+  });
+
+  it('detects a writer written in a shape the dispatch scan cannot see', () => {
+    // The proof that the scan above is not vacuous: an action captured into a variable
+    // and dispatched by reference is invisible to `discoverWriters` — it finds nothing,
+    // so the exact-equality census would pass — while `scanActionTypeProperties` finds
+    // it. Run against the real tree with the synthetic module added, the completeness
+    // comparison must then fail.
+    const realSuperset = scanActionTypeProperties();
+    const synthetic = `
+      const commit = { type: 'COMMIT_DOCUMENT_EDIT', payload: { updates: {} } };
+      export function sneakyWriter(dispatch: (action: unknown) => void) {
+        dispatch(commit);
+      }
+    `;
+    const syntheticFile = join(sourceRoot, 'contexts', 'synthetic-indirect-writer.ts');
+
+    const undiscovered = discoverWriters(syntheticFile, synthetic);
+    const discoveredBySuperset = maskComments(synthetic).match(
+      /\btype\s*:\s*['"](COMMIT_DOCUMENT_EDIT|REPLACE_DOCUMENT|APPLY_HISTORY_REPLAY|REORDER_LAYERS)['"]/g
+    );
+
+    // The hole is real and reproducible: no dispatch-shaped site, but the action is
+    // written into a live object that the dispatcher receives.
+    expect(undiscovered).toHaveLength(0);
+    expect(discoveredBySuperset).toHaveLength(1);
+
+    // And that one site is exactly what would break the completeness comparison the case
+    // above makes: the superset finds one more action outside the dispatcher than there are
+    // dispatch-shaped writers. An earlier version of this comment claimed the synthetic
+    // module was "run against the real tree", but it was never written to disk —
+    // `syntheticFile` was only a path string handed to `discoverWriters` — so the
+    // completeness claim was an assertion about the REAL tree that merely restated the one
+    // above it. It is computed here instead, because materialising a module under `src/`
+    // to make an identity fail is a side effect this suite has no reason to have.
+    const supersetOutsideDispatcher = realSuperset.filter((site) => site.file !== DISPATCHER_FILE).length;
+    const dispatchShaped = scanProductionWriters().length;
+    expect(supersetOutsideDispatcher).toBe(dispatchShaped);
+    // With the synthetic module in the tree the two would differ by exactly its one site,
+    // which is the failure the completeness comparison exists to report.
+    expect(supersetOutsideDispatcher + (discoveredBySuperset?.length ?? 0)).toBe(dispatchShaped + 1);
   });
 
   it('masks comments and prose but fails closed for an active unclassified writer', () => {

@@ -1,22 +1,20 @@
-import { expect, type Page, test, type TestInfo } from './fixtures/extended-test';
+import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
   type BoundsResult,
   type ClipOptions,
   drawLine,
   getColorAtPoint,
-  getSelectionBounds,
   getWorkspaceCanvas,
   hasRedPixels,
   type ImageDataResult,
   loadImageData,
   scanPixelsForBounds,
-  type SelectionBounds,
-  STROKE_ANALYSIS,
 } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { committedAntsOutline, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   navigateAndSelectInFlyout,
@@ -33,10 +31,13 @@ import {
  * another host. A page coordinate does not need the scale: the pointer handler converts it
  * with the same contain arithmetic the box was measured against.
  *
- * The two places that are genuinely in DOCUMENT space are named as such: the tool's own
+ * The places that are genuinely in DOCUMENT space are named as such. The tool's own
  * `Fixed Size` Width/Height fields, which the implementation compares against document
- * pixels. Everywhere else, a capture's pixel space is reached through `toImagePoint`, which
- * derives its ratio from the DECODED image dimensions — never `devicePixelRatio`.
+ * pixels. And the ants canvas' backing store, which is sized to the document, so the probe
+ * windows handed to `readAntRuns` are document pixels — those go through `antsContentBox`,
+ * which applies the same contain fit as the box they were derived from. A CAPTURE's pixel
+ * space is a different thing again and goes through `toImagePoint`, which derives its ratio
+ * from the DECODED image dimensions — never `devicePixelRatio`.
  */
 
 /** Saturated red: far from the document's white, from the store's initial black, and from every other colour asserted on here, so a wrong answer is unmistakable. */
@@ -71,24 +72,16 @@ const MARQUEE_DRAG_WIDTH_FRACTION = 0.22;
 const MARQUEE_DRAG_HEIGHT_RATIO = 0.5;
 /** The lock `Fixed Ratio` is set to for the aspect test. Deliberately neither 1 nor 2:1, so a bar that ignored the field, or a hardcoded square, both fail. */
 const FIXED_RATIO_VALUE = '1.5';
-/** `Fixed Size` field values in DOCUMENT pixels, which is the space `resolveEllipseRect` reads them in. Deliberately about half the drag's size, so a committed ellipse of the drag's size is distinguishable from one of the fixed size, and still large enough for its outline to be detected. */
+/** `Fixed Size` field values in DOCUMENT pixels, which is the space `resolveUnclampedEllipseRect` reads them in. Deliberately about half the drag's size, so a committed ellipse of the drag's size is distinguishable from one of the fixed size, and still large enough for its outline to be detected. */
 const FIXED_SIZE_WIDTH = '90';
 const FIXED_SIZE_HEIGHT = '45';
-/** Clip margin around a marquee drag. It has to cover what a fixed-size ellipse adds around the press point (half its width) and what a circle constraint adds below the drag, or the capture clips the very outline the assertions read. */
-const MARQUEE_CLIP_MARGIN_PX = 110;
-/** Tolerance when matching a committed outline's bounding box against a rectangle this spec computed in page pixels. The tessellated ellipse's extreme vertices sit exactly on the rectangle, and only the 2px stroke straddling the path extends past them, by about one pixel. */
+/** Tolerance when matching a committed selection's border bounding box against a rectangle this spec computed in page pixels. The tessellated ellipse's extreme vertices sit exactly on the rectangle, and the only thing that extends past them is the border's own stroke straddling the path: the ants are `LINE_WIDTH`, one CSS px, with a round join, so about half a pixel at the two vertices that point outward. MEASURED off the ants canvas for a 214x107 drag at the suite's 1280x720 window, the four deviations were 0.99, 1.07, 0.25 and 0.22 page px — the round join on the outward pair, and the inward half of the stroke failing to reach the other pair's vertex pixel — so five is under five times the largest. The reader also stopped needing a capture-scale factor: it used to be `this value * image.width / clip.width`, which multiplied a page-pixel tolerance by a ratio of two spaces and bought nothing now that both sides are page pixels. */
 const OUTLINE_BOUNDS_TOLERANCE_PX = 5;
-/** Radius, in capture pixels, of the window scanned for selection-coloured pixels when testing whether an outline passes through a point. The committed outline is DASHED (6 on, 4 off in document pixels, about a 12px period once the document is scaled into the canvas box), so a window narrower than one period can land entirely in a gap and report a missing outline for geometry that is correct. Nine pixels either side spans more than a period. Nine is still nowhere near the ~200px gap between a drag rectangle's corner and the ellipse inscribed in it, so the negative half of the same probe is unaffected. */
+/** Radius, in CSS px, of the window scanned for ant pixels when testing whether the border passes through a point. The crawl phase cannot put this window in a gap: `useSelectionMarchingAnts` strokes the path TWICE at the same width, black at the dash offset and white half a dash length along it, so the two passes interleave into continuous coverage and every point along the contour has one of them painted — the earlier 6-on-4-off blue outline it was written for had real gaps, and this has none. Nine either side then covers the 1 CSS px stroke and the rounding of the window's own corners into document pixels. Nine is still nowhere near the ~200px gap between a drag rectangle's corner and the ellipse inscribed in it, so the negative half of the same probe is unaffected. */
 const OUTLINE_PROBE_RADIUS_PX = 9;
 /** A band is a painted region of `KNOWN_RED`; the predicate is deliberately loose so antialiased edge pixels count as band, which makes the containment assertion below run in the safe direction. */
 const isBandPixel = (red: number, green: number, blue: number, alpha: number) =>
   alpha !== 0 && red > green + 30 && red > blue + 30;
-/** The same predicate `getSelectionBounds` uses by default, so "a selection pixel" means one thing in this file. */
-const isSelectionPixel = (red: number, green: number, blue: number, alpha: number) =>
-  alpha !== 0 &&
-  red <= STROKE_ANALYSIS.SELECTION_RED_MAX &&
-  green >= STROKE_ANALYSIS.SELECTION_GREEN_MIN &&
-  blue >= STROKE_ANALYSIS.SELECTION_BLUE_MIN;
 
 type PageRect = { left: number; top: number; width: number; height: number };
 
@@ -146,22 +139,14 @@ function clipAround(box: BoundingBox, rect: PageRect, margin: number): Required<
   };
 }
 
-const clipCorners = (clip: Required<ClipOptions>) => ({
-  left: clip.x,
-  right: clip.x + clip.width - 1,
-  top: clip.y,
-  bottom: clip.y + clip.height - 1,
-});
-
 /**
  * A capture clip over the whole VISIBLE part of the workspace canvas.
  *
  * The canvas is taller than Playwright's viewport, so a clip spanning the whole box reaches
- * past the rendered page; this truncates at the viewport instead. Both readings a quick
- * selection test needs — the painted band and the committed region — come out of ONE such
- * capture, and it is wide enough that a region which grew out of the band is read at its
- * real size and fails a containment assertion with numbers, rather than falling outside the
- * capture and being reported as a missing outline after a ten-second timeout.
+ * past the rendered page; this truncates at the viewport instead. Both readings the quick
+ * selection tests need — the painted band and the stroke to brush over it — come out of ONE
+ * such capture, and it is wide enough that a region which grew out of the band is read at its
+ * real size, rather than landing outside the capture entirely.
  */
 async function visibleCanvasClip(page: Page, box: BoundingBox): Promise<Required<ClipOptions>> {
   const viewportHeight = await page.evaluate(() => window.innerHeight);
@@ -260,63 +245,87 @@ const marqueeBottomRight = (box: BoundingBox, rect: PageRect): PagePoint => {
   return { x: absolute.left + rect.width, y: absolute.top + rect.height };
 };
 
-/** The drag's outline, read from `clip` and converted to absolute page-pixel bounds. */
-async function readOutline(
-  page: Page,
-  testInfo: TestInfo,
-  name: string,
-  clip: Required<ClipOptions>
-): Promise<SelectionBounds | null> {
+/** A committed selection's border bounding box, in PAGE pixels: what `committedAntsOutline` returns. */
+type CommittedBounds = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * The committed selection's border bounds in page pixels, read at a known scroll position.
+ *
+ * A committed selection is drawn ONLY on `[data-testid="selection-ants-canvas"]`: `drawSelectionOutline`
+ * is gone, both of these tools' tool areas now paint nothing on `tool-overlay-canvas` for a committed
+ * selection, and the ants trace the same contour the blue dashed outline traced. So this is the one
+ * reading that distinguishes a committed selection from the draft preview still under the pointer.
+ *
+ * The scroll is `measureCanvas`'s precondition rather than politeness: Playwright's `boundingBox()` is
+ * viewport-relative and so is the `getBoundingClientRect()` the ants canvas is measured with, so the two
+ * sides of every comparison below are the same page coordinates only while both were taken at the same
+ * scroll — which is exactly what the old screenshot reader had to do for the same reason.
+ */
+async function committedOutline(page: Page): Promise<CommittedBounds | null> {
   await scrollToTop(page);
-  const bounds = await getSelectionBounds(await captureCanvasScreenshot(page, clip, testInfo, name));
-  if (!bounds) return null;
-  const corners = clipCorners(clip);
-  return {
-    ...bounds,
-    left: corners.left + (bounds.left * clip.width) / bounds.imageWidth,
-    right: corners.left + (bounds.right * clip.width) / bounds.imageWidth,
-    top: corners.top + (bounds.top * clip.height) / bounds.imageHeight,
-    bottom: corners.top + (bounds.bottom * clip.height) / bounds.imageHeight,
-  };
+  return committedAntsOutline(page);
 }
 
-const outlineWidth = (bounds: SelectionBounds) => bounds.right - bounds.left;
-const outlineHeight = (bounds: SelectionBounds) => bounds.bottom - bounds.top;
-const outlineAspect = (bounds: SelectionBounds) => outlineWidth(bounds) / outlineHeight(bounds);
-const outlineCenter = (bounds: SelectionBounds): PagePoint => ({
+/** Whether a committed selection's border is on the ants canvas at all. */
+const antsPainted = async (page: Page): Promise<boolean> => (await committedOutline(page)) !== null;
+
+const outlineWidth = (bounds: CommittedBounds) => bounds.right - bounds.left;
+const outlineHeight = (bounds: CommittedBounds) => bounds.bottom - bounds.top;
+const outlineAspect = (bounds: CommittedBounds) => outlineWidth(bounds) / outlineHeight(bounds);
+const outlineCenter = (bounds: CommittedBounds): PagePoint => ({
   x: (bounds.left + bounds.right) / 2,
   y: (bounds.top + bounds.bottom) / 2,
 });
 
-/** Waits for a selection outline to reach the backing store inside `clip`. */
-async function waitForOutline(page: Page, clip: Required<ClipOptions>): Promise<void> {
+/** The contain fit on the ants canvas: CSS px per document px, and where its letterboxed content starts. */
+type AntsContentBox = { scale: number; left: number; top: number };
+
+/**
+ * That fit, measured from the ants canvas' own bounding rect.
+ *
+ * `committedOutline` maps a border OUT of the backing store into page pixels, while `readAntRuns` takes
+ * its window IN document pixels, so a probe placed at a page point needs this to go the other way. It is
+ * the same `object-contain` arithmetic `committedAntsOutline` applies, inverted and spelled out here
+ * rather than imported, because the helper module exports only the forward direction of it.
+ */
+async function antsContentBox(page: Page): Promise<AntsContentBox> {
   await scrollToTop(page);
-  await waitForCanvasPixels(page, clip, async (shot) => (await getSelectionBounds(shot)) !== null, {
-    description: 'a selection outline',
+  return page.getByTestId('selection-ants-canvas').evaluate((element) => {
+    if (!(element instanceof window.HTMLCanvasElement)) {
+      throw new Error('antsContentBox: the ants canvas is not an HTMLCanvasElement');
+    }
+    const rect = element.getBoundingClientRect();
+    const scale = Math.min(rect.width / element.width, rect.height / element.height);
+    return {
+      scale,
+      left: rect.left + (rect.width - element.width * scale) / 2,
+      top: rect.top + (rect.height - element.height * scale) / 2,
+    };
   });
 }
 
-const outlineExists = async (page: Page, clip: Required<ClipOptions>) => {
-  await scrollToTop(page);
-  return (await getSelectionBounds(await page.screenshot({ clip }))) !== null;
-};
-
-/** Whether any selection-coloured pixel lies within `radius` capture pixels of a clip-relative point. */
-async function hasSelectionPixelNear(
-  image: ImageDataResult,
-  pointX: number,
-  pointY: number,
-  radius: number
-): Promise<boolean> {
-  for (let y = pointY - radius; y <= pointY + radius; y++) {
-    for (let x = pointX - radius; x <= pointX + radius; x++) {
-      if (x < 0 || y < 0 || x >= image.width || y >= image.height) continue;
-      const index = (y * image.width + x) * 4;
-      if (isSelectionPixel(image.data[index], image.data[index + 1], image.data[index + 2], image.data[index + 3]))
-        return true;
-    }
-  }
-  return false;
+/**
+ * Whether any ant pixel lies within `radiusPx` of a page point, read off the ants canvas itself.
+ *
+ * The radius is in CSS px and is divided by the fit on the way in, because a screen-space radius is what
+ * `OUTLINE_PROBE_RADIUS_PX` has always been: the blue outline it was written for was measured in capture
+ * pixels, which are that capture's own scale times the page. A screenshot cannot make this read at all —
+ * the ants are black and white, which are the document's own two colours, so only the canvas' own backing
+ * store distinguishes a border the app painted from a dark pixel of the picture under it.
+ */
+async function hasAntsNear(page: Page, frame: AntsContentBox, point: PagePoint, radiusPx: number): Promise<boolean> {
+  const radius = radiusPx / frame.scale;
+  const runs = await readAntRuns(
+    page,
+    {
+      x: (point.x - frame.left) / frame.scale,
+      y: (point.y - frame.top) / frame.scale,
+      width: radius * 2,
+      height: radius * 2,
+    },
+    'row'
+  );
+  return runs.some((line) => line.length > 0);
 }
 
 const marqueeBar = (page: Page) => page.getByRole('combobox', { name: 'Style' });
@@ -540,18 +549,17 @@ test.describe('Elliptical marquee', () => {
     await selectEllipticalMarqueeFromSidebar(page);
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
 
     // Many pointer moves, because "one commit per gesture" is only a claim if the drag is
     // long enough that a per-move commit would have left several entries behind.
     await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 20 });
-    await waitForOutline(page, clip);
+    await waitForCommittedAnts(page, 'the committed selection border after the drag');
     await expect(page.getByTestId('undo-button')).toBeEnabled();
 
     await page.getByTestId('undo-button').click();
     expect
       .soft(
-        await neverHappened(page, () => outlineExists(page, clip), NEGATIVE_WINDOW_MS),
+        await neverHappened(page, () => antsPainted(page), NEGATIVE_WINDOW_MS),
         'one undo must remove the whole selection, which it cannot if the drag committed per pointer move'
       )
       .toBe(true);
@@ -560,54 +568,45 @@ test.describe('Elliptical marquee', () => {
 
   test('the committed elliptical marquee is an ellipse inscribed in the drag, not the drag itself', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await selectEllipticalMarqueeFromSidebar(page);
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
 
     await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 12 });
-    await waitForOutline(page, clip);
-    const outline = await readOutline(page, testInfo, 'elliptical-inscribed', clip);
-    expect.soft(outline, 'the drag should have committed an outline').not.toBeNull();
+    await waitForCommittedAnts(page, 'the committed elliptical border');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the drag should have committed a border').not.toBeNull();
 
-    const image = await loadImageData(
-      await captureCanvasScreenshot(page, clip, testInfo, 'elliptical-inscribed-pixels')
-    );
-    const scaleX = image.width / clip.width;
-    const scaleY = image.height / clip.height;
     const absolute = inCanvas(box, rect);
-    const tolerance = OUTLINE_BOUNDS_TOLERANCE_PX * Math.max(scaleX, scaleY);
 
     // Inscribed: every extreme vertex of the tessellated ellipse sits on the drag rectangle.
-    expect.soft(Math.abs(outline!.left - absolute.left) <= tolerance, 'outline left').toBe(true);
-    expect.soft(Math.abs(outline!.top - absolute.top) <= tolerance, 'outline top').toBe(true);
-    expect.soft(Math.abs(outline!.right - (absolute.left + rect.width)) <= tolerance, 'outline right').toBe(true);
-    expect.soft(Math.abs(outline!.bottom - (absolute.top + rect.height)) <= tolerance, 'outline bottom').toBe(true);
+    expect.soft(Math.abs(outline!.left - absolute.left) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline left').toBe(true);
+    expect.soft(Math.abs(outline!.top - absolute.top) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline top').toBe(true);
+    expect
+      .soft(Math.abs(outline!.right - (absolute.left + rect.width)) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline right')
+      .toBe(true);
+    expect
+      .soft(Math.abs(outline!.bottom - (absolute.top + rect.height)) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'outline bottom')
+      .toBe(true);
 
-    // Round, not rectangular: an axis-aligned rectangle outline of the same box would put
-    // selection pixels in all four corners, and an inscribed ellipse puts none there while
-    // still passing through the middle of all four edges.
-    const cornerInImage = toImagePoint(image, clip, { x: absolute.left, y: absolute.top });
-    const leftEdgeInImage = toImagePoint(image, clip, { x: absolute.left, y: absolute.top + rect.height / 2 });
-    const topEdgeInImage = toImagePoint(image, clip, { x: absolute.left + rect.width / 2, y: absolute.top });
+    // Round, not rectangular: an axis-aligned rectangle border of the same box would carry ant pixels
+    // through all four corners, and an inscribed ellipse carries none there while still passing through
+    // the middle of all four edges. The ants now draw this border, so all three probes read it off their
+    // own canvas — the tool overlay holds nothing at all once the drag is committed.
+    const frame = await antsContentBox(page);
     expect
       .soft(
-        await hasSelectionPixelNear(
-          image,
-          Math.round(cornerInImage.x),
-          Math.round(cornerInImage.y),
-          OUTLINE_PROBE_RADIUS_PX
-        ),
+        await hasAntsNear(page, frame, { x: absolute.left, y: absolute.top }, OUTLINE_PROBE_RADIUS_PX),
         'the drag rectangle corner should be outside an inscribed ellipse'
       )
       .toBe(false);
     expect
       .soft(
-        await hasSelectionPixelNear(
-          image,
-          Math.round(leftEdgeInImage.x),
-          Math.round(leftEdgeInImage.y),
+        await hasAntsNear(
+          page,
+          frame,
+          { x: absolute.left, y: absolute.top + rect.height / 2 },
           OUTLINE_PROBE_RADIUS_PX
         ),
         'the middle of the drag rectangle left edge should be on the ellipse'
@@ -615,12 +614,7 @@ test.describe('Elliptical marquee', () => {
       .toBe(true);
     expect
       .soft(
-        await hasSelectionPixelNear(
-          image,
-          Math.round(topEdgeInImage.x),
-          Math.round(topEdgeInImage.y),
-          OUTLINE_PROBE_RADIUS_PX
-        ),
+        await hasAntsNear(page, frame, { x: absolute.left + rect.width / 2, y: absolute.top }, OUTLINE_PROBE_RADIUS_PX),
         'the middle of the drag rectangle top edge should be on the ellipse'
       )
       .toBe(true);
@@ -652,7 +646,7 @@ test.describe('Elliptical marquee', () => {
     await expect(ratio).toBeHidden();
   });
 
-  test('a fixed-ratio elliptical marquee locks the committed aspect to the Ratio field', async ({ page }, testInfo) => {
+  test('a fixed-ratio elliptical marquee locks the committed aspect to the Ratio field', async ({ page }) => {
     await selectEllipticalMarqueeFromSidebar(page);
     const style = marqueeBar(page);
     await style.selectOption('fixed-ratio');
@@ -664,12 +658,11 @@ test.describe('Elliptical marquee', () => {
     // Re-measured after the options panel opened, for the reason `measureCanvas` documents.
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
 
     await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), { steps: 12 });
-    await waitForOutline(page, clip);
-    const outline = await readOutline(page, testInfo, 'elliptical-fixed-ratio', clip);
-    expect.soft(outline, 'the locked drag should have committed an outline').not.toBeNull();
+    await waitForCommittedAnts(page, 'the committed border after the locked drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the locked drag should have committed a border').not.toBeNull();
 
     const dragAspect = rect.width / rect.height;
     expect
@@ -710,7 +703,7 @@ test.describe('Elliptical marquee', () => {
 
   test('a fixed-size elliptical marquee ignores the drag and commits Width x Height centred on the press', async ({
     page,
-  }, testInfo) => {
+  }) => {
     await selectEllipticalMarqueeFromSidebar(page);
     const style = marqueeBar(page);
     await style.selectOption('fixed-size');
@@ -723,13 +716,12 @@ test.describe('Elliptical marquee', () => {
 
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
     const press = marqueeTopLeft(box, rect);
 
     await dragOnCanvas(page, press, marqueeBottomRight(box, rect), { steps: 12 });
-    await waitForOutline(page, clip);
-    const outline = await readOutline(page, testInfo, 'elliptical-fixed-size', clip);
-    expect.soft(outline, 'the fixed-size drag should have committed an outline').not.toBeNull();
+    await waitForCommittedAnts(page, 'the committed border after the fixed-size drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the fixed-size drag should have committed a border').not.toBeNull();
 
     const absolutePress = inCanvas(box, rect);
     const pressPoint = { x: absolutePress.left, y: absolutePress.top };
@@ -748,19 +740,18 @@ test.describe('Elliptical marquee', () => {
       .toBeCloseTo(Number(FIXED_SIZE_WIDTH) / Number(FIXED_SIZE_HEIGHT), 1);
   });
 
-  test('holding Shift constrains an elliptical marquee drag to a circle', async ({ page }, testInfo) => {
+  test('holding Shift constrains an elliptical marquee drag to a circle', async ({ page }) => {
     await selectEllipticalMarqueeFromSidebar(page);
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
 
     await dragOnCanvas(page, marqueeTopLeft(box, rect), marqueeBottomRight(box, rect), {
       steps: 12,
       modifiers: ['Shift'],
     });
-    await waitForOutline(page, clip);
-    const outline = await readOutline(page, testInfo, 'elliptical-shift', clip);
-    expect.soft(outline, 'the Shift drag should have committed an outline').not.toBeNull();
+    await waitForCommittedAnts(page, 'the committed border after the Shift drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the Shift drag should have committed a border').not.toBeNull();
 
     const dragAspect = rect.width / rect.height;
     expect.soft(dragAspect, 'the drag is deliberately not square').not.toBeCloseTo(1, 1);
@@ -773,17 +764,16 @@ test.describe('Elliptical marquee', () => {
     expect.soft(outlineHeight(outline!)).toBeGreaterThan(rect.height);
   });
 
-  test('holding Alt draws an elliptical marquee from its press point outwards', async ({ page }, testInfo) => {
+  test('holding Alt draws an elliptical marquee from its press point outwards', async ({ page }) => {
     await selectEllipticalMarqueeFromSidebar(page);
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
     const press = marqueeTopLeft(box, rect);
 
     await dragOnCanvas(page, press, marqueeBottomRight(box, rect), { steps: 12, modifiers: ['Alt'] });
-    await waitForOutline(page, clip);
-    const outline = await readOutline(page, testInfo, 'elliptical-alt', clip);
-    expect.soft(outline, 'the Alt drag should have committed an outline').not.toBeNull();
+    await waitForCommittedAnts(page, 'the committed border after the Alt drag');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the Alt drag should have committed a border').not.toBeNull();
 
     // Same size as the drag — Alt changes where the ellipse grows from, not how big it is —
     // but centred on the press point rather than laid out from it towards the pointer.
@@ -799,7 +789,6 @@ test.describe('Elliptical marquee', () => {
     await selectEllipticalMarqueeFromSidebar(page);
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
     const press = {
       x: box.x + rect.left + rect.width / 2,
       y: box.y + rect.top + rect.height / 2,
@@ -814,7 +803,7 @@ test.describe('Elliptical marquee', () => {
 
     expect
       .soft(
-        await neverHappened(page, () => outlineExists(page, clip), NEGATIVE_WINDOW_MS),
+        await neverHappened(page, () => antsPainted(page), NEGATIVE_WINDOW_MS),
         'a click with no movement encloses nothing, so it must not commit a selection'
       )
       .toBe(true);
@@ -826,7 +815,6 @@ test.describe('Elliptical marquee', () => {
     await selectEllipticalMarqueeFromSidebar(page);
     const box = await measureCanvas(page);
     const rect = marqueeRect(box);
-    const clip = clipAround(box, rect, MARQUEE_CLIP_MARGIN_PX);
     const press = { x: box.x + rect.left + rect.width / 2, y: box.y + rect.top + rect.height / 2 };
     const away = { x: press.x + 80, y: press.y + 60 };
     // See the sibling test: the baseline is asserted, not assumed.
@@ -840,7 +828,7 @@ test.describe('Elliptical marquee', () => {
 
     expect
       .soft(
-        await neverHappened(page, () => outlineExists(page, clip), NEGATIVE_WINDOW_MS),
+        await neverHappened(page, () => antsPainted(page), NEGATIVE_WINDOW_MS),
         'a drag back to its start point encloses nothing, so it must not commit a selection'
       )
       .toBe(true);
@@ -898,9 +886,9 @@ test.describe('Quick selection', () => {
       { x: bandLeft + (bandRight - bandLeft) * 0.65, y: bandCentreY },
       { steps: 12 }
     );
-    await waitForOutline(page, clip);
-    const outline = await readOutline(page, testInfo, 'quick-selection-region', clip);
-    expect.soft(outline, 'the brushed region should have committed an outline').not.toBeNull();
+    await waitForCommittedAnts(page, 'the committed border around the brushed region');
+    const outline = await committedOutline(page);
+    expect.soft(outline, 'the brushed region should have committed a border').not.toBeNull();
 
     // "Covers the near region": the committed boundary traces the band's own edges, and takes
     // in nearly all of its width. Containment with a small margin is the direction that
@@ -940,13 +928,13 @@ test.describe('Quick selection', () => {
     // A long stroke: a per-pointer-move commit would leave one history entry per sample, and
     // a single undo would then leave a selection behind.
     await dragOnCanvas(page, { x: left + 20, y: centreY }, { x: right - 20, y: centreY }, { steps: 24 });
-    await waitForOutline(page, clip);
+    await waitForCommittedAnts(page, 'the committed border around the brushed region');
     await expect(page.getByTestId('undo-button')).toBeEnabled();
 
     await page.getByTestId('undo-button').click();
     expect
       .soft(
-        await neverHappened(page, () => outlineExists(page, clip), NEGATIVE_WINDOW_MS),
+        await neverHappened(page, () => antsPainted(page), NEGATIVE_WINDOW_MS),
         'one undo must remove the whole brushed region'
       )
       .toBe(true);

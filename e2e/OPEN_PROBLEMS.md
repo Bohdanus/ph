@@ -287,17 +287,144 @@ no 404 to account for, and per the lifecycle rule in `docs/DOCUMENTATION.md` the
 entry goes with it. Verify with `npm run test:e2e` and by confirming no 404 remains
 in the `console-police.json` report attachment.
 
-## P3 — 10 orphaned committed baselines (2.1 MB)
+## P2 — one committed baseline set is asked to match every operating system's rasterisation
+
+`e2e/export/visual-regression.spec.ts` — `baselineFile()`, `compareScreenshots()`
+(`e2e/helpers/image-comparison.ts`), `e2e/helpers/canvas-helpers.ts` —
+`STROKE_ANALYSIS`, `measureInk()`, `e2e/README.md` — "Baseline layout",
+`.github/workflows/ci.yml`
+
+**What is committed.** `baselineFile()` resolves through `testInfo.snapshotDir`, not
+`testInfo.snapshotPath`, and its own docblock gives the reason: `snapshotPath`'s default
+template appends `-<projectName>-<platform>`, so it would resolve to a per-OS name that no
+two operating systems share. That decision is why ONE set of PNGs at
+`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/` has to match every
+rasteriser: seven of them, one per `browser-pixels` format in `browserVerifiedFormats`,
+each compared by `compareScreenshots()` at `threshold: 0.01` and `maxDiffPixels: 100`.
+The thresholds are two different numbers — `threshold` is pixelmatch's per-pixel YIQ
+distance (at 0.01 it forgives a uniform shift of 4 red, 3 green or 7 blue steps over the
+whole picture), `maxDiffPixels` is the count budget, and `includeAA: true` means an
+anti-aliased pixel counts as a difference. Over an 800x600 baseline the count budget is
+100 of 480,000 pixels, or 0.021%.
+
+**Two places document the OPPOSITE decision, and the fix changes both.** `e2e/README.md`
+— "Baseline layout" — states that committed baseline paths come from `testInfo.snapshotDir`
+and not `snapshotPath()`, "the latter appends the project name and the OS, which would make
+a baseline committed on one machine read as missing on another", and then lists the
+directory as a flat tree of seven `drawing.<ext>.png` files. The `baselineFile()` docblock
+in `e2e/export/visual-regression.spec.ts` is the second, and it is the longer of the two:
+it names the `snapshotPath` default template's `-<projectName>-<platform>` suffix and the
+resulting `drawing.png-Google-Chrome-darwin.png` as a file that is not committed. Both
+were right about `snapshotPath` and both are wrong the moment the path carries the platform
+itself, because the hazard they describe is a per-OS FILE NAME, not the absence of a
+directory level. A fix that changes only `baselineFile()` leaves two documents asserting
+the opposite rule, and one of them is the e2e suite's own documentation.
+
+**Why that budget does not survive an operating-system change.** The same call site's
+comment carries the measurement: a 0.0154-document-pixel **vertical** shift of the
+export line — the line is 174x11, so a vertical move relights every column of the band —
+produces **330** diff pixels against the committed baseline. A rasteriser that places an
+anti-aliased edge a fraction of a pixel differently does that on its own, with no code
+change anywhere. `measureInk()`'s own docblock in `e2e/helpers/canvas-helpers.ts`
+measures the same phenomenon at a different shift and reports **741** for a full
+1.0-document-pixel vertical shift, against 88 for that same 1.0-pixel shift
+horizontally. The two figures are consistent, not contradictory: the same 174x11 band
+measured at two shift magnitudes about sixty-five times apart, producing counts about
+twice apart. Both are far over the 100-pixel budget, while a whole document pixel
+sideways produces 88 and passes it. The asymmetry is real at either magnitude; only the
+distance you have to move the line differs, so quote the shift WITH the number — 330 is
+not a one-pixel shift and 741 is not a sub-pixel one.
+
+**Which platform recorded them is NOT recorded anywhere, and this entry does not claim
+one.** The operator's own runs are macOS, so the recording platform is an inference from
+the machine rather than a fact the tree carries, and `baselineFile()`'s docblock and the
+Chrome-version note at the same call site both say the stronger thing plainly: nothing in
+this repository records which rasteriser produced the committed pixels. Treat "recorded on
+macOS" as the likely answer and "recorded on which platform" as an open question the
+platform directory in the fix below would answer for the future.
+
+**Why it is a gate question now.** The `e2e` job in `.github/workflows/ci.yml` runs on
+`ubuntu-latest`, declares no `continue-on-error`, and installs its browser with `npx
+playwright install --with-deps chrome` — apt, unpinned, so the encoder on a given day is
+whatever the runner image and the archive currently offer. Its first run as a gate is
+also its first run on Linux at all. The export visual-regression specs are therefore
+expected to be red on that run, and that red is a rasterisation fact rather than a product
+defect. `assertExportGeometry()` runs after the pixel diff, so it reads the same baseline
+and reports the same mismatch in geometric form.
+
+**The same first run reports a second, independent rasteriser dependency.**
+`STROKE_ANALYSIS.DARK_THRESHOLD` (50) and `NEAR_WHITE_THRESHOLD` (250) in
+`e2e/helpers/canvas-helpers.ts` are calibrated to one palette and one rasteriser, with
+`hasDarkPixels()` reading `DARK_PIXEL_THRESHOLD` (60) beside them. A wait the committed
+calibration satisfies may never be satisfied on a Linux runner, so those specs are the
+second group to read out of the same run.
+
+**Do not "fix" this by widening a tolerance, skipping the specs, or re-recording.** The
+call site's own argument rules out the first — at `maxDiffPixels: 4800` this suite would
+pass a visibly different picture — and `AGENTS.md` and `docs/TESTING.md` rule out the
+third as a fix. Re-recording on Linux is worse than either: it deletes the oracle the
+operator's own runs are compared against, and leaves a single set that again matches
+exactly one operating system while the tree claims to be cross-platform. The transferred
+entry below on the unpinned Chrome version is the other half of the same record: nothing
+in this repository says which rasteriser produced the committed pixels.
+
+**Fix.** Give `baselineFile()` a platform component and commit one baseline set per
+platform — `export-baselines/<platform>/`, selected by `process.platform`, which is the
+shape `testInfo.snapshotPath` already names and this spec deliberately stepped around.
+`e2e/README.md` — "Baseline layout" — and the `baselineFile()` docblock change with it,
+because both currently state the rule this removes. Four consequences follow from that
+shape rather than from a tuning knob:
+
+1. **The fix LEAVES THE `e2e` JOB RED, and an operator must not discover that by pushing.**
+   A platform with no committed set fails as missing, so the moment the path carries
+   `process.platform`, every export visual-regression spec fails on `ubuntu-latest` with
+   `Baseline missing for <format>` until a Linux set exists. That is the job's FIRST run
+   as a gate as well as its first on Linux, so the red lands on the same run. It is a
+   deliberate intermediate state, not a regression and not a reason to put
+   `continue-on-error` back — but it is a state the tree cannot be merged into knowingly.
+2. **Recording the Linux set is an OPERATOR ACTION ON A LINUX RUNNER, not a code change.**
+   No other machine can produce a Linux rasterisation, so `npm run test:e2e:update-baselines`
+   has to be run on Linux, the resulting PNGs reviewed, and the diff committed. It cannot be
+   done from this repository's own checkout, by an agent, or as part of implementing the
+   change above; it is the second half of the work and it is the operator's. Whoever
+   schedules this has to sequence it against the merge, because step 1 says the job is red
+   in between.
+3. **`npm run test:e2e:update-baselines` becomes platform-aware** — it records the set for
+   the platform it runs on, and the spec's record branch writes into the same
+   platform-selected path, so the two cannot disagree about which file is the oracle.
+4. **A platform with no committed set must fail as missing**, which is the state the spec
+   already handles with `Baseline missing for <format>`, rather than falling back to
+   another platform's file. A silent fallback would put one rasteriser's oracle under
+   another's name.
+
+**It collides with the P3 entry below, and an operator renaming this directory by hand
+will meet it.** `Baseline layout` in `e2e/README.md` lists 17 files in
+`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`: the seven the spec
+reads, plus ten orphans — the raw `drawing.<ext>` exports, `drawing-icon.ico.png` and
+`source-baseline.png` — which the P3 entry records as safe to delete and undeleted
+pending authorisation. Moving the seven read baselines into `export-baselines/<platform>/`
+is a `git mv` of a directory whose ten remaining files are unrelated and are themselves an
+open deletion question. Sequence it: authorise the P3 deletion first and the move carries
+seven files, or move only the seven and leave the ten where they are — but do not let a
+platform directory be created by copying the whole directory, because that multiplies the
+orphans by the number of platforms and buries the P3 finding under copies of files nothing
+reads. `e2e/README.md`'s baseline tree is a third thing to update in the same change, for
+the reason given above.
+
+`STROKE_ANALYSIS` is calibrated the same way and needs its constants derived on the same
+Linux run, not adjusted until a suite goes green.
+
+## P3 — 10 orphaned committed baselines (2.05 MB)
 
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
 
-The directory holds 17 files. Seven are read — the formats whose `verification` is
+The directory holds 17 files and 2,051,154 bytes. Seven are read — the formats whose `verification` is
 `browser-pixels` in `e2e/export/helpers.ts`, each read through
 `baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
 
 - the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
   `.avif`, and `drawing-icon.ico`) — no code writes or reads them any more, and
-  `drawing.bmp` alone is most of the 2.1 MB
+  `drawing.bmp` alone is 1,920,070 bytes of the 2.05 MB
 - `drawing-icon.ico.png` (256x256) — the ICO spec compares the export against the
   source canvas in-browser via `CHANGED_CHANNEL_THRESHOLD_ICO` and never calls
   `baselineFile()`
@@ -306,49 +433,14 @@ The directory holds 17 files. Seven are read — the formats whose `verification
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
 
-## P3 — the artifact name is interpolated into a path unsanitised
-
-`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
-
-Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
-name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
-directory that was never created, and a name that traverses (`../escaped`) resolves
-outside `outputDir` — the file is written there, attached from there, and is not
-removed by anything that cleans the output dir. Severity is low only because
-`outputDir` is a throwaway per-test directory under `test-results/`.
-
-Fix: **reject, do not sanitise.** Validate that `name` is a single path component
-(no separator, not `.` or `..`) and throw an error naming the helper, for the same
-reason the `outputDir` guard throws: the caller passed something impossible, and
-silently rewriting it would attach the report under a name the test never asked
-for. Sanitising would also let two distinct names collide into one artifact.
-
-Pinned by `treats a name containing a path separator as a path, not a filename`
-and `writes outside the output directory when the name traverses out of it` in
-`e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
-pins in the same change; the first one's own comment names sanitisation as the
-shape a fix must not take.
-
-## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
-
-`e2e/helpers/cdp-helpers.ts` — the `outputDir` guard in `captureCanvasScreenshot()`
-
-The guard exists and is the same shape as the one at the top of
-`takeLineScreenshot()` in `canvas-helpers.ts`, but it is
-the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — the second
-statement of `captureCanvasScreenshot()` — uncovered, against 100% of its
-functions. The sibling guard is pinned by
-`it('names the helper and the missing field when testInfo has no output directory')`
-in `e2e/helpers/__tests__/canvas-interaction.unit.test.ts`, so nothing fails
-if this one is deleted, and the raw V8 failure it exists to replace
-(`The "path" argument must be of type string. Received undefined`) returns with it.
-
-Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
-`TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
-own message and that no CDP session was opened. `createTestInfoMock()`
-in `e2e/helpers/__tests__/canvas-helpers.fixtures.ts` already makes `outputDir`
-optional, so the double needs no change.
+**This directory is also what the baseline-platform P2 entry above moves, so the two
+have to be sequenced.** That fix relocates the seven READ baselines into
+`export-baselines/<platform>/`, and this directory is where an operator doing that
+`git mv` by hand will land. Authorising this deletion first means the move carries seven
+files; leaving it open means the move must name the seven and not the directory, so the
+ten are neither carried along nor copied once per platform. Either order works; copying
+the whole directory into a platform subdirectory does not, because it multiplies the
+orphans and hides this entry under duplicates of files nothing reads.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
@@ -528,7 +620,7 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
-## P1 — the document-space oracle reached a handful of call sites, so most of the suite still moves when the frame does
+## P1 — the document-space oracle reached four production files, so most of the suite still moves when the frame does
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
 
@@ -536,30 +628,30 @@ differ by the box origin and nothing in the types distinguishes them.
 the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
 longer depends on where the app put the letterbox. That is the right idea and it works.
 
-**What does not.** The idea reached exactly one caller. `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/
-`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box", and nine
-specs import them: `adjustments`, `color`, `document-dialogs`, `erase-fill-eyedropper`, `example`,
-`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, the suite writes its
-gestures as `box.x + <something>` throughout, and **none of them invert the mapping back to document
-space**. Counted, with the counting command, because a number here without one is worse than none
-and an earlier draft of this entry got it wrong twice — once by 7x:
+**What does not.** The idea reached four production files, at seventeen call sites:
+`e2e/canvas-growth.spec.ts` (4), `e2e/filter-tools.spec.ts` (3), `e2e/shape-tools.spec.ts` (6) and
+`e2e/export/helpers.ts` (4), counting the calls and not the imports. `LINE_START_X`/`LINE_START_Y`/
+`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box",
+and thirteen specs import them: `adjustments`, `color`, `document-dialogs`,
+`erase-fill-eyedropper`, `example`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
+`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, the suite
+writes its gestures as `box.x + <something>` throughout, and **none of them invert the mapping back
+to document space**. Counted, with the counting command, because a number here without one is
+worse than none:
 
 ```
-grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 25  canvas-relative LITERALS
-grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 63  any box-relative offset
+grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
+grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 209  any box-relative offset
 grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
 ```
 
-So: 25 gestures add a bare number to the box origin, and 63 add something box-relative. The 63 is
-the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
+So: 36 gestures add a bare number to the box origin, and 209 add something box-relative. The 209
+is the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
 through a named constant rather than a literal — those are the ones the first pattern misses
-entirely, and a count that only looked for literals is how the first draft of this entry said
-"twelve" and the second said "eighty-three". Both were wrong; the zero on the third line is the
-part that matters, because `e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25`
-and that is the one form that survives a layout change by construction.
-
-The ICO export path is still canvas-relative as well: `ICON_STROKE` in `e2e/export/helpers.ts`
-is a set of box offsets, read by the two `documentToCanvasOffset()` calls in `setupIcoTest()`.
+entirely, and a count that only looked for literals sees under a fifth of the sites. The zero on
+the third line is the part that matters, because
+`e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25` and that is the one form
+that survives a layout change by construction.
 
 **Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
 are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
@@ -590,7 +682,7 @@ neither pins a pixel. The panel's 250 is the same defect and still needs the sam
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
 `box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
-box instead of the window. That is the shape every one of the eighty-three should take, via
+box instead of the window. That is the shape every one of them should take, via
 `documentToCanvasOffset`.
 
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
@@ -737,12 +829,15 @@ record of what it was. The commit that carried them in is `4d47904`; the one tha
 them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
 
-**Three `## P…` entries appear below this line, and only two of them are those two.** The
-third, `P3 — re-verification: the tablet band's option-row floor…`, was filed by a later
-pass against this tree and is not one of the 33. It is here rather than above the section
-because it was raised while auditing the fixes, and moving it would break the audit trail
-for no gain — but a reader counting the entries to work out which findings survived will
-count three, and the two-line arithmetic above is the one to trust.
+**Four `## P…` entries appear below this line, and only two of them are those two** —
+`P2 — the visual baselines record no Chrome version, and a pin cannot be invented` and
+`P3 — no mobile or HiDPI project, and no touch anywhere`. The other two,
+`P3 — re-verification: the tablet band's option-row floor…` and
+`P2 — the mobile bottom bar scrolls 615px with no affordance…`, were filed by later passes
+against this tree and are not among the 33. They are here rather than above the section
+because they were raised while auditing the fixes, and moving them would break the audit
+trail for no gain — but a reader counting the entries to work out which findings survived will
+count four, and the two-line arithmetic above is the one to trust.
 
 The source repository is frozen at `78be956` and its own ledger is not maintained, so that
 review has no other home. The list of what it claimed and what turned out to be already

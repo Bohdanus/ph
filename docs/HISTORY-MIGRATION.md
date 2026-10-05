@@ -93,13 +93,16 @@ undo, redo, navigation, and history-panel state must agree. During migration,
 legacy-versus-durable differential checks are allowed; shipping two authorities
 is not.
 
-The retired coordination gate forbids production imports of
-`replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
-allows exactly one production importer for `materialization.ts`,
-`durable-compositor.ts`. The compositor is mounted for navigation presentation
-and its `tmpCanvas` is already consumed by render and export. The remaining
-cutover surfaces stay legacy-authoritative until their differential and
-ownership gates pass.
+The retired coordination gate forbids production imports of `replay-budget.ts`,
+`replay-coordinator.ts` and `replay-checkpoints.ts` by name.
+`replay-coordinator.ts` and `replay-checkpoints.ts` were deleted as dead code —
+nothing imported them outside `__tests__` — and the gate keeps both names rather
+than dropping them with the files, so reintroducing either is reported rather
+than silently absorbed. A separate plain assertion allows exactly one
+production importer for `materialization.ts`, `durable-compositor.ts`. The
+compositor is mounted for navigation presentation and its `tmpCanvas` is already
+consumed by render and export. The remaining cutover surfaces stay
+legacy-authoritative until their differential and ownership gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -154,10 +157,10 @@ variant or an equivalent atomic history action.
    §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity and a pixel/export
-   differential both exist; what is still owed is the divergence the differential
-   found (§205), the two scenarios jsdom cannot render in either direction (§206),
-   history-panel parity (§207), options-bar rehydration, the browser authority
-   seam (§203), and the pinned `args.enabled` divergence.
+   differential both exist and the differential is green on every cursor; what
+   is still owed is the two scenarios jsdom cannot render in either direction
+   (§206), history-panel parity (§207), options-bar rehydration, the browser
+   authority seam (§203), and the pinned `args.enabled` divergence.
    Do not read the landed operation as a closed requirement; the
    operator's ruling was that the operation and its visible consumer land as one
    slice, and the consumer is still legacy-sourced.

@@ -11,10 +11,21 @@ import {
 } from '../StoreContext.tsx';
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
+import { composeDurableDocument as realComposeDurableDocument } from '../durable-compositor.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { BitmapSource } from '../general-types.ts';
 import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+
+// The real compositor, wrapped rather than replaced: the wrapper counts the calls
+// so a refusal can be observed as a call that never happened. A refusal asserted
+// only through the store's visible state would be satisfied by a publication that
+// ran and then failed inside its own `catch`, which is the opposite claim.
+vi.mock('../durable-compositor.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../durable-compositor.ts')>();
+  return { ...actual, composeDurableDocument: vi.fn(actual.composeDurableDocument) };
+});
+const composeDurableDocument = vi.mocked(realComposeDurableDocument);
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -24,8 +35,31 @@ function canvas(width = 100, height = 80): BitmapSource {
   return createMockOffscreenCanvas(width, height) as unknown as BitmapSource;
 }
 
+/**
+ * The source is load-bearing, not decoration. `createMockLayer` leaves it
+ * `undefined`, and a layer with no durable source makes the conversion report
+ * `unsupported-history-feature` — so a document opened from these layers has
+ * `durableStatus: 'unavailable'` and `durableDocument: null`. Every assertion
+ * below that a publication "moves no durable state" then compares `null` with
+ * `null` and passes whether or not the promotion touched the shadow. A blank
+ * source is the cheapest fixture that actually converts, so the shadow is
+ * present and its identity is a real observation.
+ */
 function layerWithCanvas(id = layerId, staged: BitmapSource | null = canvas()): Layer {
-  return { ...createMockLayer({ id, pos: { x: 0, y: 0, width: 100, height: 80 } }), tmpCanvas: staged };
+  const pos = { x: 0, y: 0, width: 100, height: 80 };
+  return {
+    ...createMockLayer({ id, pos }),
+    source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
+    tmpCanvas: staged,
+  };
+}
+
+/** Fails loudly if the fixture ever stops producing a convertible document. */
+function expectConvertedShadow(store: StoreData): NonNullable<StoreData['durableDocument']> {
+  expect(store.durableStatus).toBe('current');
+  expect(store.durableDiagnostics).toEqual([]);
+  if (!store.durableDocument) throw new Error('the fixture document produced no durable shadow');
+  return store.durableDocument;
 }
 
 function baselineItem(layers: LayersRecord, id = 'baseline'): HistoryItem {
@@ -130,6 +164,83 @@ describe('durable render presentation guard', () => {
   });
 });
 
+describe('durable navigation presentation requires a shadow that describes every entry', () => {
+  /**
+   * The pen action has no durable equivalent, so a conversion carrying one omits
+   * that entry and names it. Everything else about the timeline converts, so the
+   * published document's replay layer for this one carries no operations — which
+   * is exactly the state `durablePresentationIsRendererIdentical` ACCEPTS. Absent
+   * the gate, navigation would compose that document, decide the materialization
+   * is renderer-identical, and write the un-edited pixels over the `tmpCanvas` the
+   * renderer draws from.
+   */
+  function timelineWith(entry: HistoryItem) {
+    return {
+      entries: [baselineItem({ [layerId]: layerWithCanvas(layerId, null) }), entry],
+      cursor: 1,
+      branchRevision: 0,
+    };
+  }
+
+  const unconvertibleEntry: HistoryItem = {
+    id: 'pen-edit',
+    actionName: TOOL_ACTION,
+    layerId,
+    args: { toolName: 'pen' },
+  };
+
+  /** Navigates and lets the asynchronous publication settle, either way. */
+  async function navigate(
+    dispatch: StoreDispatch,
+    timeline: { entries: HistoryItem[]; cursor: number; branchRevision: number }
+  ) {
+    await act(async () => {
+      dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: { updates: {}, timeline },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('composes the durable replay for a timeline every entry of which converted', async () => {
+    composeDurableDocument.mockClear();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+
+    await navigate(
+      dispatch(),
+      timelineWith({ id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } })
+    );
+
+    // The control, and the half that makes the refusal below mean something: a
+    // complete shadow DOES reach the compositor.
+    expect(store().durableDiagnostics).toEqual([]);
+    expect(composeDurableDocument).toHaveBeenCalled();
+  });
+
+  it('never composes the durable replay for a shadow that is missing an edit', async () => {
+    composeDurableDocument.mockClear();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+
+    await navigate(dispatch(), timelineWith(unconvertibleEntry));
+
+    // The document is published and usable — that is the diagnostic partition — but
+    // it is missing an edit the legacy timeline has, and the presentation is the
+    // one consumer whose correctness depends on there being none.
+    expect(store().durableStatus).toBe('current');
+    expect(store().durableDocument).not.toBeNull();
+    expect(store().durableDiagnostics[0]).toMatchObject({
+      historyId: 'pen-edit',
+      severity: 'error',
+      code: 'unsupported-history-feature',
+    });
+    expect(composeDurableDocument).not.toHaveBeenCalled();
+  });
+});
+
 describe('PROMOTE_LAYER_PRESENTATIONS', () => {
   it('publishes the cache into the layer that still holds the requesting canvas', async () => {
     const bitmap = createMockImageBitmap(100, 80);
@@ -148,11 +259,21 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
     expect(after.bitmap).toBe(bitmap);
     expect(after.tmpCanvas).toBeNull();
     // A cache is not a document change: no history, no unsaved flag, no shadow churn.
+    // The shadow read here is a live one — `expectConvertedShadow` fails the test if
+    // the fixture ever stops converting, so these two identity comparisons cannot
+    // degenerate into `null === null` and pass for the wrong reason.
+    expectConvertedShadow(before);
     expect(store().history).toBe(before.history);
     expect(store().historyIndex).toBe(before.historyIndex);
     expect(store().hasUnsavedChanges).toBe(before.hasUnsavedChanges);
-    expect(store().durableDocument).toBe(before.durableDocument);
+    expect(store().durableDocument).toBe(expectConvertedShadow(before));
     expect(store().durableStatus).toBe(before.durableStatus);
+    // The layer's LOGICAL state survives the promotion untouched: only the two
+    // presentation slots move. Without this, the identity assertions above would
+    // also be satisfied by a transition that dropped the layer record entirely.
+    const beforeLayer = before.layers[layerId];
+    expect(store().layers[layerId]).not.toBe(beforeLayer);
+    expect(after).toEqual({ ...beforeLayer, bitmap, tmpCanvas: null });
   });
 
   it('refuses and closes a promotion whose canvas was replaced while it materialized', async () => {
@@ -451,8 +572,14 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     expect(store().history).toBe(before.history);
     expect(store().historyIndex).toBe(before.historyIndex);
     expect(store().hasUnsavedChanges).toBe(before.hasUnsavedChanges);
-    expect(store().durableDocument).toBe(before.durableDocument);
+    // The shadow compared here is the live one. `before.durableDocument` alone would
+    // be `null` on an unconvertible fixture document, and `null === null` would hold
+    // for a publication that rebuilt the shadow.
+    expect(store().durableDocument).toBe(expectConvertedShadow(before));
     expect(store().durableStatus).toBe(before.durableStatus);
+    // The payload is installed whole: a publication that re-wrapped the record
+    // would break the identity assertion above while leaving every other one green.
+    expect(store().layers[layerId]).toEqual({ ...before.layers[layerId], tmpCanvas: staged });
   });
 
   /**
@@ -496,6 +623,56 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     const [message] = consoleError.mock.calls[0];
     expect(String(message)).toContain('PUBLISH_RUNTIME_PRESENTATION');
     expect(String(message)).toContain('layer-1, layer-2');
+  });
+
+  /**
+   * The other refusal shape, and the one that loses the most: the guard above
+   * compares fields only for ids BOTH records name, so it also has to refuse on
+   * membership. Dropping `layer-2` from the payload moves no field at all, so the
+   * field comparison alone would accept it and publish a record the document no
+   * longer has a cache-bearing layer for.
+   */
+  it('refuses a payload that drops a layer from the record', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), {
+      [layerId]: layerWithCanvas(layerId, null),
+      'layer-2': layerWithCanvas('layer-2', null),
+    });
+    const before = store().layers;
+    const second = before['layer-2'];
+
+    act(() => {
+      store().publishRuntimePresentation({ [layerId]: { ...before[layerId], tmpCanvas: canvas() } });
+    });
+
+    // The whole record is untouched — including the sibling the payload named
+    // nothing about, which is what a partial refusal would lose.
+    expect(store().layers).toBe(before);
+    expect(store().layers['layer-2']).toBe(second);
+    // `divergentLayerIds` unions both id sets, so the dropped id is named.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message] = consoleError.mock.calls[0];
+    expect(String(message)).toContain('layer-2');
+  });
+
+  it('refuses a payload that adds a layer the record does not have', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+    const before = store().layers;
+
+    act(() => {
+      store().publishRuntimePresentation({
+        [layerId]: { ...before[layerId], tmpCanvas: canvas() },
+        'layer-ghost': layerWithCanvas('layer-ghost', null),
+      });
+    });
+
+    expect(store().layers).toBe(before);
+    expect(store().layers['layer-ghost']).toBeUndefined();
+    const [message] = consoleError.mock.calls[0];
+    expect(String(message)).toContain('layer-ghost');
   });
 
   it('refuses a payload that rewrites a recorded tool edit', () => {

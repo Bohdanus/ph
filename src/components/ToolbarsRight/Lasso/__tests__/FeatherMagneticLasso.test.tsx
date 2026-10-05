@@ -23,7 +23,7 @@ const storeState = vi.hoisted(() => ({
   selections: [] as Selection[],
   totalSize: { width: 800, height: 600 },
   // An empty timeline at cursor -1 is what a store with nothing appended yet
-  // actually looks like, and it is what puts the Clear writer on the append
+  // actually looks like, and it is what puts the Deselect writer on the append
   // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
   // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
   // diagnostic instead of throwing on `undefined`, and the writer dispatches the
@@ -112,10 +112,10 @@ const LASSO_SELECTION: Selection = {
 };
 
 /**
- * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
  * edit that appends to history, so a deselect can be undone. The store mock has
  * to carry a live selection for the writer to read — an already-empty document
- * makes Clear a deliberate no-op, which is a different test.
+ * makes Deselect a deliberate no-op, which is a different test.
  *
  * The component's contract is to PLAN the append and DISPATCH the plan. Whether
  * the planned `durableEntry` is published is the STORE's decision, made in
@@ -242,6 +242,51 @@ describe('FeatherMagneticLasso toolbar', () => {
     });
   });
 
+  /**
+   * The five sliders `Frequency` above did not cover. Each of these bounds is a hardcoded literal
+   * in `FeatherMagneticLasso.tsx` (`:275-277`, `:288-290`, `:301-303`, `:328-330`, `:341-343`)
+   * rather than a shared constant, so they are the cheapest thing in this file to edit by accident
+   * and — before this table — the only ones nothing would have reported.
+   *
+   * `Snap` is the one whose payload and readout disagree: the range is `0..1` and the tool arg is
+   * the raw fraction, while the label prints `Math.round(snapStrength * 100)%` (`Shape`-style
+   * scaling, `:325`). A test that asserted the percentage would pass against a handler that wrote
+   * the percent into `snapStrength`, so the exact emitted fraction is what is pinned here.
+   */
+  describe.each([
+    ['Feather', /^Feather/, '0', '100', '1'],
+    ['Width', /^Width/, '1', '64', '1'],
+    ['Contrast', /^Contrast/, '0', '100', '1'],
+    ['Snap', /^Snap/, '0', '1', '0.01'],
+    ['Smooth', /^Smooth/, '0', '10', '0.5'],
+  ])('%s', (_label, name, min, max, step) => {
+    it(`spans ${min}..${max} in steps of ${step}`, () => {
+      render(<FeatherMagneticLasso />);
+
+      const slider = getSlider(name);
+      expect(slider).toHaveAttribute('min', min);
+      expect(slider).toHaveAttribute('max', max);
+      expect(slider).toHaveAttribute('step', step);
+    });
+  });
+
+  it('emits the Snap slider as the raw 0..1 fraction, not the percentage its label prints', () => {
+    render(<FeatherMagneticLasso />);
+
+    const snap = getSlider(/^Snap/);
+    fireEvent.change(snap, { target: { value: '0.42' } });
+
+    // The label reads `Math.round(snapStrength * 100)%`, so a seeded `0.85` is `85` on screen and a
+    // raw `0.42` into the handler is `0.42` in the args. Writing `42` instead would satisfy a
+    // percentage-based oracle and weaken the snap by two orders of magnitude; `patchNumber` sends
+    // the value through untouched.
+    expect(patchToolArgsMock).toHaveBeenCalledExactlyOnceWith('feather-magnetic-lasso', { snapStrength: 0.42 });
+    // The ×100 and the rounding, pinned from the seeded value. The mocked store republishes no
+    // args, so the label cannot be re-read after the change — which is exactly why the payload
+    // above is the load-bearing half.
+    expect(snap.closest('label')?.textContent).toBe('Snap 85%');
+  });
+
   describe('keyboard navigation', () => {
     it('moves focus through every enabled control in visual order', async () => {
       setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
@@ -260,7 +305,7 @@ describe('FeatherMagneticLasso toolbar', () => {
         getCheckbox(/Preview feather/),
         screen.getByRole('button', { name: 'Copy' }),
         screen.getByRole('button', { name: 'Paste' }),
-        screen.getByRole('button', { name: 'Clear' }),
+        screen.getByRole('button', { name: 'Deselect' }),
       ];
 
       expect(document.body).toHaveFocus();
@@ -277,13 +322,13 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(expectedStops[expectedStops.length - 1]).toHaveFocus();
     });
 
-    it('skips the disabled copy, paste, and clear buttons while tabbing', async () => {
+    it('skips the disabled copy, paste, and Deselect buttons while tabbing', async () => {
       render(<FeatherMagneticLasso />);
       const user = userEvent.setup();
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
 
       const expectedStops = [
         getInfoButton(),
@@ -425,7 +470,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(patchToolArgsMock).toHaveBeenLastCalledWith('feather-magnetic-lasso', { previewFeather: false });
     });
 
-    it('activates copy, paste, and clear with enter and space', async () => {
+    it('activates copy, paste, and Deselect with enter and space', async () => {
       const activeSelection = { id: 'sel-1', geometry: 'lasso' };
       setClipboardState({ activeSelection, hasClipboard: true });
       setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
@@ -434,7 +479,7 @@ describe('FeatherMagneticLasso toolbar', () => {
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      const clearButton = screen.getByRole('button', { name: 'Deselect' });
       expect(copyButton).toBeEnabled();
       expect(pasteButton).toBeEnabled();
       expect(clearButton).toBeEnabled();

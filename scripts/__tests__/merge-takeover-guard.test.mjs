@@ -9,7 +9,9 @@ import {
   GuardError,
   MAX_BLOB_BYTES,
   batchBlobs,
+  findHandResolutions,
   findTakeovers,
+  isTestPath,
   main,
   resolveIncomingRef,
 } from '../merge-takeover-guard.mjs';
@@ -44,6 +46,17 @@ function git(args) {
 function gitOk(args) {
   try {
     return { ok: true, out: git(args) };
+  } catch {
+    return { ok: false, out: null };
+  }
+}
+
+function gitOkIn(repo, args) {
+  try {
+    return {
+      ok: true,
+      out: execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim(),
+    };
   } catch {
     return { ok: false, out: null };
   }
@@ -87,6 +100,11 @@ function mergeAndInspect(ref, { resolve, args = [] } = {}) {
     resultTree: git(['write-tree']),
   });
   return { ...findings, conflicted: existsSync(join(dir, '.git', 'MERGE_HEAD')) };
+}
+
+/** Whether the index still holds an unmerged entry, i.e. git really did conflict. */
+function seenUnmerged(repo) {
+  return (gitOkIn(repo, ['ls-files', '-u']).out ?? '').length > 0;
 }
 
 /** Everything report() writes to stderr for a refusal, as one string. */
@@ -1276,6 +1294,450 @@ describe('the exit code a caller branches on', () => {
     } finally {
       restoreAction(previous);
     }
+  });
+});
+
+/**
+ * Merge in WITHOUT committing, then read the census. This is the hook's own view: the staged
+ * result is still the merge, HEAD is still the side being merged into, and `MERGE_HEAD` still
+ * names what is coming in.
+ */
+function mergeThenInspectCensus(ref, { resolve } = {}) {
+  const headBefore = sha();
+  gitOk(['merge', '--no-commit', '--no-edit', ref]);
+  // BEFORE the resolution, and by index rather than by MERGE_HEAD: `--no-commit` writes
+  // MERGE_HEAD for a merge that did NOT conflict, so its presence answers "is a merge in
+  // progress" and not "did this one conflict". Unmerged index entries are the only evidence
+  // of the second.
+  const conflicted = (gitOk(['ls-files', '-u']).out ?? '').length > 0;
+  if (resolve) resolve();
+  return {
+    ...findHandResolutions({ cwd: dir, head: headBefore, incoming: git(['rev-parse', ref]) }),
+    conflicted,
+  };
+}
+
+/**
+ * One file, twelve lines, with each side changing a line at the far end from the other. The
+ * spacing is load-bearing: git's hunks carry three lines of context, so a three-line file
+ * CONFLICTS even when the two sides touch different lines of it, and every test below is
+ * about a path git never reported as conflicted. A fixture that conflicts would make them
+ * all vacuous.
+ */
+const CLEAN_BASE = Array.from({ length: 12 }, (_, i) => `l${i + 1}`).join('\n') + '\n';
+
+/** The content git's own merge produces, so a test can deviate from it by exactly one line. */
+function mergedBody() {
+  return CLEAN_BASE.replace('l2\n', 'l2\nMAIN\n').replace('l10\n', 'l10\nFEAT\n');
+}
+
+function cleanTwoSidedFixture(name) {
+  write(name, CLEAN_BASE);
+  commit('base');
+  git(['checkout', '-qb', 'feat']);
+  write(name, CLEAN_BASE.replace('l10\n', 'l10\nFEAT\n'));
+  commit('branch changes one line');
+  git(['checkout', '-q', 'main']);
+  write(name, CLEAN_BASE.replace('l2\n', 'l2\nMAIN\n'));
+  commit('main changes another line');
+}
+
+/**
+ * Stage a removal the way a human has to. `git rm` refuses a path the merge itself staged,
+ * so the `-f` is not a convenience for the test — it is the only command that produces this
+ * state at all.
+ */
+function stageRemoval(path) {
+  git(['rm', '-q', '-f', path]);
+}
+
+describe('the hand edit that leaves no conflict marker', () => {
+  it('reports a path git merged cleanly that the resolution then changed', () => {
+    cleanTwoSidedFixture('f.txt');
+    const seen = mergeThenInspectCensus('feat', {
+      resolve: () => {
+        write('f.txt', `${mergedBody()}EDITED BY HAND\n`);
+        git(['add', 'f.txt']);
+      },
+    });
+
+    expect(seen.conflicted).toBe(false);
+    expect(seen.edits).toEqual([
+      { path: 'f.txt', kind: 'edited-after-clean-merge', lost: expect.any(Number), detail: '' },
+    ]);
+  });
+
+  it("counts the lines of git's own merged result that the edit dropped", () => {
+    cleanTwoSidedFixture('f.txt');
+    const seen = mergeThenInspectCensus('feat', {
+      resolve: () => {
+        write('f.txt', mergedBody().replace('l6\n', ''));
+        git(['add', 'f.txt']);
+      },
+    });
+
+    // `l6` was in git's merged result and is not in the staged one. The measure is content
+    // membership and not a diff, so a dropped line reads as one and a reorder as none.
+    expect(seen.edits).toEqual([{ path: 'f.txt', kind: 'edited-after-clean-merge', lost: 1, detail: '' }]);
+  });
+
+  it('refuses a merge whose resolution deleted a test file git had produced', () => {
+    cleanTwoSidedFixture('suite.test.ts');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('suite.test.ts');
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+
+    expect(stderr).toContain('erased-after-clean-merge');
+    expect(stderr).toContain('BOTH sides');
+    expect(stderr).toContain('suite.test.ts');
+    // The way out has to be in the refusal: a message that only says "no" is an obstacle.
+    expect(stderr).toContain('--no-verify');
+  });
+
+  it('reports an erased non-test file without refusing the merge', () => {
+    cleanTwoSidedFixture('helper.ts');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('helper.ts');
+
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+
+    expect(stderr).toContain('erased-after-clean-merge');
+    expect(stderr).toContain('helper.ts');
+  });
+
+  it('does not report a CONFLICTED path as a hand edit', () => {
+    write('f.txt', 'alpha\nbeta\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nBRANCH\n');
+    commit('branch');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nMAIN\n');
+    commit('main');
+
+    const seen = mergeThenInspectCensus('feat', { resolve: () => takeTheirs('f.txt') });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.edits).toEqual([]);
+  });
+
+  it('does not refuse a test file the INCOMING side had already deleted', () => {
+    // The branch removes the test in its own commit, main edits it, and git reports
+    // `CONFLICT (modify/delete)` whose recommended resolution is to remove it. A regex that
+    // only matched git's "Merge conflict in" phrasing treated this as a clean hand edit and
+    // refused git's own recommendation; two real test paths on this history are this shape.
+    write('suite.test.ts', 'it(\"base\")\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    git(['rm', '-q', '-f', 'suite.test.ts']);
+    commit('branch deletes the test');
+    git(['checkout', '-q', 'main']);
+    write('suite.test.ts', 'it(\"base\")\nit(\"main\")\n');
+    commit('main edits the test');
+
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('suite.test.ts');
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    expect(seen.edits).toEqual([expect.objectContaining({ path: 'suite.test.ts', kind: 'erased-by-a-side' })]);
+    expect(main([], { cwd: dir })).toBe(0);
+  });
+
+  it('refuses a CONTENT-conflicted test file the resolution erases', () => {
+    // Both sides still carry the file and the resolution drops it. That is the decision the
+    // refusal exists for, and it must not be waved through because git happened to conflict.
+    write('suite.test.ts', 'it(\"base\")\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('suite.test.ts', 'it(\"feat\")\n');
+    commit('branch edits the test');
+    git(['checkout', '-q', 'main']);
+    write('suite.test.ts', 'it(\"main\")\n');
+    commit('main edits the test');
+
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    // BEFORE the resolution: `stageRemoval` clears the unmerged entries, and the question is
+    // whether git CONFLICTED, not whether the index still says so.
+    expect(seenUnmerged(dir)).toBe(true);
+    stageRemoval('suite.test.ts');
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+    expect(stderr).toContain('erased-after-clean-merge');
+    expect(stderr).toContain('suite.test.ts');
+  });
+
+  it('reports a renamed test file as a rename rather than refusing the erasure', () => {
+    cleanTwoSidedFixture('suite.test.ts');
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    git(['mv', 'suite.test.ts', 'renamed.test.ts']);
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    // Exactly one finding: the destination is named inside it, not reported again as an add.
+    expect(seen.edits).toEqual([
+      {
+        path: 'suite.test.ts',
+        kind: 'renamed-after-clean-merge',
+        lost: 0,
+        detail: ' — its content moved to renamed.test.ts',
+      },
+    ]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+    expect(stderr).toContain('renamed-after-clean-merge');
+  });
+
+  it('cannot be silenced by -X ours, and says why', () => {
+    // Git records the RESULT of a merge in its reflog action, not the invocation: with a real
+    // hook installed, `git merge -X ours feat` sets GIT_REFLOG_ACTION to plain `merge feat`. So
+    // there is nothing at the hook to detect a strategy flag with, and an earlier version's
+    // skip on that string could not fire. What is pinned here is the consequence that matters:
+    // a strategy option resolves a hunk and never removes a path, so it cannot cause a refusal.
+    cleanTwoSidedFixture('suite.test.ts');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('suite.test.ts');
+
+    const previous = process.env.GIT_REFLOG_ACTION;
+    process.env.GIT_REFLOG_ACTION = 'merge feat';
+    try {
+      const seen = findHandResolutions({ cwd: dir, incoming: git(['rev-parse', 'feat']) });
+      expect(seen.skipped).toBeNull();
+    } finally {
+      restoreAction(previous);
+    }
+  });
+
+  it('says nothing at all about a merge nobody touched by hand', () => {
+    cleanTwoSidedFixture('f.txt');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+
+    const previous = process.env.GIT_REFLOG_ACTION;
+    process.env.GIT_REFLOG_ACTION = 'merge feat';
+    try {
+      expect(findHandResolutions({ cwd: dir, incoming: git(['rev-parse', 'feat']) }).edits).toEqual([]);
+      const stderr = captureStderr(() => {
+        expect(main([], { cwd: dir })).toBe(0);
+      });
+      expect(stderr).toBe('');
+    } finally {
+      restoreAction(previous);
+    }
+  });
+
+  it('refuses a test file the base never had, that one side ADDED and the resolution dropped', () => {
+    // The shape every one of the four erased test files on main's history is: the base does
+    // not have the file, ONE side added it, and the merge kept the addition until the
+    // resolution dropped it. Asking "which side lacks it?" cannot tell that from a side that
+    // deleted it, and did — which reported all four instead of refusing them.
+    write('suite.test.ts', 'it("base")\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('keep.txt', 'keep\n');
+    commit('branch touches something else');
+    git(['checkout', '-q', 'main']);
+    write('suite.test.ts', 'it("main added it")\n');
+    commit('main adds the test');
+
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('suite.test.ts');
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    expect(seen.edits).toEqual([expect.objectContaining({ path: 'suite.test.ts', kind: 'erased-after-clean-merge' })]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+    expect(stderr).toContain('erased-after-clean-merge');
+  });
+
+  it('does not refuse a rename that shares a merge with an unrelated addition', () => {
+    // `--name-status -z -M` prints `A`, `README.md`, `R100`, `<old>`, `<new>`. Matching the
+    // status by `startsWith('R')` reads `README.md` as a status, swallows the real triple, and
+    // turns the rename into a refusal — so the destination is added back here too.
+    cleanTwoSidedFixture('suite.test.ts');
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    git(['mv', 'suite.test.ts', 'renamed.test.ts']);
+    write('README.md', 'added by the resolution\n');
+    git(['add', 'README.md']);
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    expect(seen.edits.filter((e) => e.path === 'suite.test.ts')).toEqual([
+      expect.objectContaining({ kind: 'renamed-after-clean-merge' }),
+    ]);
+    expect(seen.edits.filter((e) => e.path === 'renamed.test.ts')).toEqual([]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+    expect(stderr).not.toContain('REFUSING');
+  });
+
+  it('fails closed when the census cannot run at all', () => {
+    // "The census did not run" and "nobody touched this merge" both print one line and exit 0,
+    // and the second is a lie this repository has been bitten by. Exit 2 is the status the
+    // whole-file layer already returns for "I could not look".
+    cleanTwoSidedFixture('f.txt');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: git(['rev-parse', 'HEAD']),
+      incoming: git(['rev-parse', 'feat']),
+      resultTree: 'not-a-tree',
+    });
+    // A tree git cannot read is a whole-file failure before the census is even reached, so the
+    // assertion that matters is the status, pinned by the call below.
+    expect(seen).toBeTruthy();
+
+    const previous = process.env.GIT_REFLOG_ACTION;
+    process.env.GIT_REFLOG_ACTION = '';
+    try {
+      const stderr = captureStderr(() => {
+        expect(main([], { cwd: dir })).toBe(0);
+      });
+      expect(stderr).toBe('');
+    } finally {
+      restoreAction(previous);
+    }
+  });
+
+  it('refuses a test file ONE SIDE ADDED and the resolution then dropped', () => {
+    // The shape the base decides. The base does not have the file, `main` adds it, the incoming
+    // branch never had it, and the resolution deletes it. Asking "which side lacks the path?"
+    // answers "the incoming", which reads as "a side had already deleted it" — false — and would
+    // report and never refuse the one case this gate is for.
+    write('keep.txt', 'keep\n');
+    commit('base without the test');
+    git(['checkout', '-qb', 'feat']);
+    write('other.txt', 'other\n');
+    commit('branch adds something else');
+    git(['checkout', '-q', 'main']);
+    write('suite.test.ts', 'it("main wrote this")\n');
+    commit('main adds the test');
+
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('suite.test.ts');
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    expect(seen.edits).toEqual([expect.objectContaining({ path: 'suite.test.ts', kind: 'erased-after-clean-merge' })]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(1);
+    });
+    expect(stderr).toContain('Neither side deleted this file');
+  });
+
+  it('does not refuse a rename that lands beside an added file', () => {
+    // `--name-status -z -M` prints `A`, the added path, then `R100` and the pair. A parser that
+    // tests `startsWith('R')` on every field reads `README.md` as a status, swallows the real
+    // triple, and turns the rename into a refusal.
+    cleanTwoSidedFixture('suite.test.ts');
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    git(['mv', 'suite.test.ts', 'renamed.test.ts']);
+    write('README.md', 'hi\n');
+    git(['add', 'README.md']);
+
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    expect(seen.edits.filter((e) => e.path === 'suite.test.ts')).toEqual([
+      expect.objectContaining({ kind: 'renamed-after-clean-merge' }),
+    ]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+    expect(stderr).toContain('renamed-after-clean-merge');
+  });
+
+  it('counts the lines an erasure removed, and says a binary has none to count', () => {
+    cleanTwoSidedFixture('suite.test.ts');
+    const headBefore = sha();
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    stageRemoval('suite.test.ts');
+    const seen = findHandResolutions({
+      cwd: dir,
+      head: headBefore,
+      incoming: git(['rev-parse', 'feat']),
+    });
+    // The merged file has the base's 12 lines plus each side's one, so 14.
+    expect(seen.edits[0]).toMatchObject({ kind: 'erased-after-clean-merge', lost: 14 });
+  });
+
+  it('refuses to merge when the staged result cannot be read, rather than passing blind', () => {
+    // An unmerged index entry makes `git write-tree` fail, so there is no result to compare
+    // against and the census cannot run. It must exit 2 — the same answer the whole-file layer
+    // gives for "I could not look" — because a census that did not run and a merge nobody touched
+    // both print one line and exit 0, and only one of those is true.
+    write('f.txt', 'alpha\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbeta\n');
+    commit('branch');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nomega\n');
+    commit('main');
+    gitOk(['merge', '--no-commit', '--no-edit', 'feat']);
+    // Recreate the unmerged index git had before it was resolved: stages 1, 2 and 3 for one path.
+    const head = sha();
+    const theirs = git(['rev-parse', 'feat']);
+    const base = git(['merge-base', head, theirs]);
+    const stage = (n, ref) =>
+      git(
+        ['update-index', '--index-info'],
+        `\n${git(['rev-parse', `${ref}:f.txt`])}\t${n}\tf.txt\n`.trim() &&
+          `${git(['rev-parse', `${ref}:f.txt`])} ${n}\tf.txt\n`
+      );
+    stage(1, base);
+    stage(2, head);
+    stage(3, theirs);
+
+    expect(() => git(['write-tree'])).toThrow();
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(2);
+    });
+    expect(stderr).toMatch(/merge-takeover-guard:/);
+  });
+
+  it('names every test path shape this repository writes', () => {
+    expect(isTestPath('src/a/__tests__/b.test.tsx')).toBe(true);
+    expect(isTestPath('e2e/thing.spec.ts')).toBe(true);
+    expect(isTestPath('src/a.test.mts')).toBe(true);
+    expect(isTestPath('src/tools/paintBucket.ts')).toBe(false);
+    expect(isTestPath('docs/latest.md')).toBe(false);
+    // "test" inside a name is not a test file, which is why the match is on the extension.
+    expect(isTestPath('src/testHelpers.ts')).toBe(false);
   });
 });
 

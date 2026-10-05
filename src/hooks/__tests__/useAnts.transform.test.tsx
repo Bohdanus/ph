@@ -1,8 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AffineTransform } from '../../contexts/affine-transform.ts';
-import { LINE_WIDTH } from '../useAnts.ts';
-import { useMarchingAnts } from '../useAnts.ts';
+import { DASH_LENGTH, LINE_WIDTH, SPEED, useMarchingAnts } from '../useAnts.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
@@ -181,6 +180,14 @@ describe('useMarchingAnts transformed layers', () => {
     expect(() => {
       act(() => result.current.clear());
     }).not.toThrow();
+
+    // ...and a no-op for the LOCK too, not just for the class. `clear()` reaches the cursor
+    // through the same optional chain that skipped the container, so a version that gave up
+    // early on the missing element instead of on the missing class would also stop the
+    // animation — and `frames.size` is what says it did not.
+    expect(rafMocks.frames.size).toBe(0);
+    // Nothing was painted, so there is nothing to erase either.
+    expect(ctx.clearRect).not.toHaveBeenCalled();
   });
 
   it('animates the transformed path and keeps marching until cleared', () => {
@@ -194,8 +201,9 @@ describe('useMarchingAnts transformed layers', () => {
     frame();
     frame();
 
-    // black, white, black, white -- advancing by SPEED each frame.
-    expect(offsets).toEqual([0, 6, -1, 5]);
+    // black, white, black, white -- advancing by SPEED each frame, written against the
+    // constant so a rate change is not a number in this file that stops being the rate.
+    expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(rafMocks.frames.size).toBe(1);
 
     act(() => result.current.clear());

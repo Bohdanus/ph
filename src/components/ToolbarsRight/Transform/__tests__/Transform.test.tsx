@@ -203,6 +203,156 @@ describe('Transform toolbar', () => {
     });
   });
 
+  describe('the six sliders', () => {
+    /**
+     * Every bound in `Transform.tsx` is a hardcoded literal (`:185-186`, `:205-206`, `:220-221`,
+     * `:238-239`, `:256-257`, `:271-272`) and none of them was asserted before this table, so a
+     * bound could be edited and nothing in this file would report it. `Rotate` is the load-bearing
+     * one: the three rotate BUTTONS — `Rotate 90° Left`, `Rotate 180°` and `Rotate 90° Right`,
+     * whose handlers are `handleRotateLeft` and `handleRotateRight` plus the inline `% 360` for
+     * the middle one — wrap through 360 while the slider is capped at ±90, so a `max` quietly
+     * widened to 180 would give the panel a second, unwrapped route to a rotate the buttons
+     * cannot produce.
+     */
+    it.each([
+      ['rotate-slider', 'Rotate', '-90', '90'],
+      ['skew-x-slider', 'Skew X', '-45', '45'],
+      ['skew-y-slider', 'Skew Y', '-45', '45'],
+      ['trapezoid-slider', 'Trapezoid', '-85', '85'],
+      ['resize-x-slider', 'Resize X', '10', '300'],
+      ['resize-y-slider', 'Resize Y', '10', '300'],
+    ])('%s spans %s..%s', (id, _label, min, max) => {
+      render(<Transform />);
+
+      const slider = document.getElementById(id) as HTMLInputElement;
+      expect(slider).toHaveAttribute('type', 'range');
+      expect(slider).toHaveAttribute('min', min);
+      expect(slider).toHaveAttribute('max', max);
+    });
+
+    /**
+     * The five handlers `trapezoid exclusivity` does not reach — `handleRotateSliderChange`,
+     * `handleSkewXChange`, `handleSkewYChange`, `handleResizeXChange` and
+     * `handleResizeYChange` — each clear `trapezoid` on the way out and preserve every other
+     * field, so the payload below is the full seeded args with `trapezoid` zeroed — which is what
+     * makes a handler that forgot the `trapezoid: 0` visible: it would publish a transform in which
+     * a trapezoid correction and a rotation compose.
+     *
+     * The payloads are exact and literal rather than read back off `mockTempUpdateLayer`, which is
+     * what makes them able to fail: a `previewArgs()`-derived oracle agrees with any wrong payload
+     * the component happened to produce.
+     */
+    it.each([
+      [
+        'rotate-slider',
+        '-90',
+        {
+          toolName: 'transform',
+          rotate: -90,
+          mirrorH: true,
+          mirrorV: true,
+          skewX: 20,
+          skewY: -20,
+          resizeX: 150,
+          resizeY: 80,
+          trapezoid: 0,
+        },
+      ],
+      [
+        'rotate-slider',
+        '90',
+        {
+          toolName: 'transform',
+          rotate: 90,
+          mirrorH: true,
+          mirrorV: true,
+          skewX: 20,
+          skewY: -20,
+          resizeX: 150,
+          resizeY: 80,
+          trapezoid: 0,
+        },
+      ],
+      [
+        'skew-x-slider',
+        '-45',
+        {
+          toolName: 'transform',
+          rotate: 45,
+          mirrorH: true,
+          mirrorV: true,
+          skewX: -45,
+          skewY: -20,
+          resizeX: 150,
+          resizeY: 80,
+          trapezoid: 0,
+        },
+      ],
+      [
+        'skew-y-slider',
+        '45',
+        {
+          toolName: 'transform',
+          rotate: 45,
+          mirrorH: true,
+          mirrorV: true,
+          skewX: 20,
+          skewY: 45,
+          resizeX: 150,
+          resizeY: 80,
+          trapezoid: 0,
+        },
+      ],
+      [
+        'resize-x-slider',
+        '10',
+        {
+          toolName: 'transform',
+          rotate: 45,
+          mirrorH: true,
+          mirrorV: true,
+          skewX: 20,
+          skewY: -20,
+          resizeX: 10,
+          resizeY: 80,
+          trapezoid: 0,
+        },
+      ],
+      [
+        'resize-y-slider',
+        '300',
+        {
+          toolName: 'transform',
+          rotate: 45,
+          mirrorH: true,
+          mirrorV: true,
+          skewX: 20,
+          skewY: -20,
+          resizeX: 150,
+          resizeY: 300,
+          trapezoid: 0,
+        },
+      ],
+    ])('%s publishes its endpoint and clears the trapezoid', (id, value, expected) => {
+      resetToolArgs({
+        rotate: 45,
+        mirrorH: true,
+        mirrorV: true,
+        skewX: 20,
+        skewY: -20,
+        resizeX: 150,
+        resizeY: 80,
+        trapezoid: 25,
+      });
+      render(<Transform />);
+
+      fireEvent.change(document.getElementById(id) as HTMLInputElement, { target: { value } });
+
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ toolArgs: expected });
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expected);
+    });
+  });
+
   describe('trapezoid exclusivity', () => {
     it('resets every other transform field when the trapezoid slider moves (Transform.tsx:128-141)', () => {
       resetToolArgs({
@@ -232,7 +382,17 @@ describe('Transform toolbar', () => {
           trapezoid: 30,
         },
       });
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(mockTempUpdateLayer.mock.lastCall![0].toolArgs);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        toolName: 'transform',
+        rotate: 0,
+        mirrorH: false,
+        mirrorV: false,
+        skewX: 0,
+        skewY: 0,
+        resizeX: 100,
+        resizeY: 100,
+        trapezoid: 30,
+      });
     });
 
     it('clears the trapezoid whenever a rotate or mirror action is taken', () => {

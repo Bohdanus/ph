@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  getCanvasSize,
   sortRect,
   sortRoundRect,
   trimRect,
@@ -14,6 +15,41 @@ import {
 import type { RectXY, RectXYSorted, Pos, Size } from '../../contexts/general-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
 import { TEXT_PADDING } from '../constants.ts';
+
+describe('getCanvasSize', () => {
+  /**
+   * The only untested export in this module before this change, and both of its arms are
+   * reachable from a React ref: `null` on the first render and before the canvas is mounted,
+   * a live element afterwards.
+   *
+   * A NON-SQUARE canvas is what pins the field order. `{ width, height }` read in the wrong
+   * order satisfies every square assertion in the suite, so the test uses 320x180.
+   */
+  it('reads the backing-store dimensions off the live element', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 180;
+
+    expect(getCanvasSize({ current: canvas })).toEqual({ width: 320, height: 180 });
+  });
+
+  it('reports a zero size for a ref that is not mounted', () => {
+    expect(getCanvasSize({ current: null })).toEqual({ width: 0, height: 0 });
+  });
+
+  it('reports the current backing store, not the layout box, after the element is resized', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 100;
+
+    const ref = { current: canvas };
+    expect(getCanvasSize(ref)).toEqual({ width: 100, height: 100 });
+
+    canvas.width = 640;
+    canvas.height = 480;
+    expect(getCanvasSize(ref)).toEqual({ width: 640, height: 480 });
+  });
+});
 
 describe('sortRect', () => {
   it('returns the rect unchanged when already sorted', () => {
@@ -93,6 +129,46 @@ describe('trimRect', () => {
     expect(result.width).toBe(9);
     expect(result.x + result.width).toBe(20);
     expect(result.y + result.height).toBe(Math.round(60.4));
+  });
+
+  /**
+   * `isTrimmed` is a declaration about the INPUT, and the comparison is strict on the far
+   * edges and strict-negative on the near ones. A rect flush with all four edges of the
+   * image was never trimmed, and this is the only case in the file where that is observable:
+   * every other `isTrimmed: true` case is also one where the OUTPUT differs from the input,
+   * so a rewrite that derived the flag from the clamped result, or that used `>=`, passes
+   * all of them.
+   */
+  it('reports isTrimmed false for a rect flush with the image on every edge', () => {
+    expect(trimRect({ x1: 0, y1: 0, x2: 100, y2: 100 }, imageSize)).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      isTrimmed: false,
+    });
+  });
+
+  it('reports isTrimmed true one pixel past any edge, and false exactly at it', () => {
+    const at = (x1: number, y1: number, x2: number, y2: number) => trimRect({ x1, y1, x2, y2 }, imageSize).isTrimmed;
+
+    expect(at(0, 0, 100, 100)).toBe(false);
+    expect(at(0, 0, 101, 100)).toBe(true);
+    expect(at(0, 0, 100, 101)).toBe(true);
+    expect(at(-1, 0, 100, 100)).toBe(true);
+    expect(at(0, -1, 100, 100)).toBe(true);
+  });
+
+  it('clamps a rect inside a zero-size image to a point without inverting it', () => {
+    // Every edge clamps to 0 and the extent is derived from the rounded edges, so the
+    // result is a point rather than the negative width a one-sided clamp would leave.
+    expect(trimRect({ x1: 10, y1: 10, x2: 20, y2: 20 }, { width: 0, height: 0 })).toEqual({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      isTrimmed: true,
+    });
   });
 });
 
@@ -178,6 +254,16 @@ describe('sortedRectToPos', () => {
     const rect: RectXYSorted = { x1: 5, y1: 5, x2: 5, y2: 5 };
     expect(sortedRectToPos(rect)).toEqual({ x: 5, y: 5, width: 0, height: 0 });
   });
+
+  /**
+   * The `RectXYSorted` name is a promise about the CALLER, not a normalisation this function
+   * makes: it subtracts and does not sort, so an inverted rect reports a negative extent.
+   * `sortRect` exists and is the thing that would have to be called here, and calling it
+   * would pass every sorted case in this file while changing what an unsorted one reports.
+   */
+  it('reports a negative extent for an unsorted rect rather than normalising it', () => {
+    expect(sortedRectToPos({ x1: 30, y1: 60, x2: 10, y2: 20 })).toEqual({ x: 30, y: 60, width: -20, height: -40 });
+  });
 });
 
 describe('reduceRect', () => {
@@ -185,6 +271,20 @@ describe('reduceRect', () => {
     const rect: RectXYSorted = { x1: 10, y1: 20, x2: 30, y2: 60 };
     const pos: Pos = { x: 5, y: 10, width: 5, height: 5 };
     expect(reduceRect(rect, pos)).toEqual({ x1: 5, y1: 10, x2: 25, y2: 50 });
+  });
+
+  /**
+   * A layer moved off the top-left of the document has a NEGATIVE pos, which is the sign
+   * this function has to get right: every existing case moves a rect up and left, so a
+   * rewrite that added the offset would pass all of them and shift a stroke on a moved
+   * layer twice as far the other way.
+   */
+  it('ADDS the offset back for a layer at a negative origin', () => {
+    const rect: RectXYSorted = { x1: 10, y1: 20, x2: 30, y2: 60 };
+    const pos: Pos = { x: -12, y: -7, width: 5, height: 5 };
+
+    expect(reduceRect(rect, pos)).toEqual({ x1: 22, y1: 27, x2: 42, y2: 67 });
+    expect(reduceRect(rect, { x: 0, y: 0, width: 1, height: 1 })).toEqual(rect);
   });
 });
 
@@ -868,5 +968,251 @@ describe('calculateNewRect', () => {
     // 'paragraph' would have left both edges at 100 and 200.
     expect(result.x1).toBe(100);
     expect(result.x2).toBe(100 + 300 + 2 * TEXT_PADDING);
+  });
+
+  it('keeps a PARAGRAPH box the dragged width when the text FITS, where point type shrinks to its ink', () => {
+    // The fitting case, which is the one the grow-only rule above could not tell from the not-fitting
+    // one. The same drag and the same 10px of ink go through both arms on purpose: 10 + 2 * 5 is 20
+    // against a box 100 wide, so point type contracts to its ink and paragraph type keeps the width
+    // the user dragged. A paragraph arm that re-derived its width would answer 20 here.
+    const args = (kind: 'point' | 'paragraph') =>
+      ({
+        ...baseArgs,
+        text: 'hi',
+        fontSize: FONT_SIZE,
+        lineHeight: LINE_HEIGHT,
+        rect: { x1: 0, y1: 0, x2: 100, y2: 0 },
+        align: 'left',
+        kind,
+      }) as TextToolArgs;
+    const canvasRef = makeCanvasRef(10);
+
+    const point = calculateNewRect(args('point'), canvasRef, imageSize)!;
+    const paragraph = calculateNewRect(args('paragraph'), canvasRef, imageSize)!;
+
+    expect(point.x1).toBe(0);
+    expect(point.x2).toBe(10 + 2 * TEXT_PADDING);
+    expect(paragraph.x1).toBe(0);
+    expect(paragraph.x2).toBe(100);
+  });
+
+  it('anchors a right-aligned box to the rect NEAR edge, because alignment is paragraph-scoped', () => {
+    // REWRITTEN against current behaviour. This case used to assert that a right-aligned box grows
+    // leftward and keeps its FAR edge at 900, on the reasoning that `align` should place the growth
+    // around the rect's centre. That arm is gone: Adobe scopes alignment to paragraph type
+    // ("Alignment options are available only for paragraph type"), and a point line has no box to
+    // align within. So every setting keeps the near edge and moves only `x2` — the assertion below
+    // is the near edge holding, plus the far-edge mutant it rules out.
+    const canvasRef = makeCanvasRef(200);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 800, y1: 0, x2: 900, y2: 0 },
+        align: 'right',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    // 200 + 2 * 5 = 210 of ink measured off the NEAR edge at 800. The rect sits at 800..900 in a
+    // 1000-wide document, so nothing is clamped and neither anchor is invisible.
+    expect(result!.x1).toBe(800);
+    expect(result!.x2).toBe(800 + (200 + 2 * TEXT_PADDING));
+    // The far-edge anchor this case originally pinned is the mutant: 900 - 210 = 690.
+    expect(result!.x1).not.toBe(900 - (200 + 2 * TEXT_PADDING));
+    // And the far edge DID move, which is what separates "alignment is ignored" from
+    // "the box is left alone": a 210px line does not fit in the 100px the user dragged.
+    expect(result!.x2).not.toBe(900);
+  });
+
+  it('re-places a right-aligned box on its ink too, where the old rule preserved the dragged width', () => {
+    // REWRITTEN against current behaviour. The salvaged case asserted that a right-aligned box
+    // whose text fits is left exactly as dragged (`x1` 50, `x2` 100). The point arm is now
+    // recomputed from the ink on every call — "each line of type is independent — the line expands
+    // or shrinks as you edit it" — so alignment buys no exemption from it and the 100px box
+    // contracts to the 20px of ink, from a fixed left edge.
+    const canvasRef = makeCanvasRef(10);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hi',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 50, y1: 0, x2: 100, y2: 0 },
+        align: 'right',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+
+    expect(result!.x1).toBe(50);
+    expect(result!.x2).toBe(50 + 10 + 2 * TEXT_PADDING);
+    expect(result!.x2).not.toBe(100);
+  });
+
+  /**
+   * `if (ctx2d)` is the guard that lets this run with no canvas mounted at all.
+   *
+   * A `canvasRef` whose `current` is null is the real first-render shape, and a null ref
+   * reaching `getTextWidth` would throw on `ctx.font`. The assertion is on the RESULT rather
+   * than on `not.toThrow`: with no context the function must still grow the HEIGHT, because
+   * line counting is arithmetic and does not need a measurement. That is the observable
+   * difference between "guard returns early" and "guard skips only the width".
+   */
+  it('grows the height without a canvas, because the guard skips only the width', () => {
+    const unmounted = { current: null } as RefObject<HTMLCanvasElement | null>;
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'line1\nline2',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 10, y1: 0, x2: 100, y2: 0 },
+        align: 'left',
+      } as TextToolArgs,
+      unmounted,
+      imageSize
+    );
+
+    // 2 * 16 * 1.2 + 2 * 5 = 48.4; the width is untouched because it was never measured.
+    expect(result!.y2).toBe(2 * 16 * 1.2 + 2 * 5);
+    expect(result!.x1).toBe(10);
+    expect(result!.x2).toBe(100);
+  });
+
+  it('survives a canvas that refuses a 2d context', () => {
+    const noContext = {
+      current: { getContext: vi.fn(() => null) },
+    } as unknown as RefObject<HTMLCanvasElement | null>;
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 100, y2: 0 },
+        align: 'left',
+      } as TextToolArgs,
+      noContext,
+      imageSize
+    );
+
+    expect(result!.x2).toBe(100);
+    expect(result!.y2).toBe(16 * 1.2 + 2 * 5);
+  });
+
+  it("trims a grown PARAGRAPH box back into the document, and leaves a POINT box's ink outside it", () => {
+    // REWRITTEN against current behaviour, which split the salvaged case in two. It used to pin one
+    // rule — a grown box is clamped back into the document, which the old implementation did by
+    // returning `trimRect2(...)` unconditionally — with a measured width of 5000 as the witness for
+    // both the far-edge and the near-edge clamp. The trim is now the PARAGRAPH exit alone, on the
+    // documented grounds that a paragraph box must stay inside the document for its overflow icon
+    // to be reachable, while a POINT box's committed layer canvas IS its box and has to carry the
+    // ink past the edge. So both halves are pinned here rather than one rule that is now two.
+    const args = (kind: 'point' | 'paragraph') =>
+      ({
+        ...baseArgs,
+        text: 'hello',
+        fontSize: 16,
+        lineHeight: 1.2,
+        kind,
+        align: 'left',
+      }) as TextToolArgs;
+
+    // The far edge, in the dimension that actually grows: a 29.2px line wanted at y1 = 990 in a
+    // 1000-tall document is 1019.2 unclamped, and the trim is the only thing that makes it 1000.
+    const tall = calculateNewRect(
+      { ...args('paragraph'), rect: { x1: 0, y1: 990, x2: 100, y2: 995 } },
+      makeCanvasRef(10),
+      imageSize
+    );
+    expect(tall!.y2).toBe(imageSize.height);
+    expect(tall!.y2).not.toBe(990 + (16 * 1.2 + 2 * 5));
+
+    // The near edge: a drag that started off the document keeps its dragged WIDTH and loses only
+    // the negative origin, which is the difference between clamping the edges and collapsing the
+    // box onto the edge. 50 - 10 of wrap width leaves the interior, so 0..50 is not a floored width.
+    const overhang = calculateNewRect(
+      { ...args('paragraph'), rect: { x1: -50, y1: 100, x2: 50, y2: 100 } },
+      makeCanvasRef(10),
+      imageSize
+    );
+    expect(overhang?.x1).toBe(0);
+    expect(overhang?.x2).toBe(50);
+
+    // And the POINT box keeps its ink: 5000 + 10 grows x2 to 5010 and the document does not get a
+    // say, because a layer's canvas is this rect and clamping it would commit a bitmap holding the
+    // first few pixels of one glyph while the overlay showed the whole string.
+    const point = calculateNewRect(
+      { ...args('point'), rect: { x1: 0, y1: 0, x2: 100, y2: 0 } },
+      makeCanvasRef(5000),
+      imageSize
+    );
+    expect(point!.x1).toBe(0);
+    expect(point!.x2).toBe(5000 + 2 * 5);
+    expect(point!.x2).not.toBe(imageSize.width);
+  });
+
+  it('clamps a rect that already exceeded the document to its ORIGIN, and sizes the extent from the ink', () => {
+    // REWRITTEN against current behaviour. The salvaged case asked for a 40-wide clamp of a rect
+    // that ran 20px off the top-left, and the answer it recorded — a full-width box with the bottom
+    // derived from the rect's own pre-clamp `y1` — was the old unconditional `trimRect2`. The
+    // point arm now clamps the ORIGIN and floors the far edge at it rather than clamping the extent,
+    // then recomputes the width from the ink, so the returned 20px is the content's and not the
+    // document's: a box whose far edge had been clamped would be 40 wide with 20px of nothing in it.
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hi',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: -20, y1: -20, x2: 100, y2: 0 },
+        align: 'left',
+      } as TextToolArgs,
+      makeCanvasRef(10),
+      { width: 40, height: 40 }
+    );
+
+    // The height is derived from the CLAMPED origin (0), not from the rect's own -20, and the width
+    // is 10 of ink plus the padding on both sides rather than the document's 40.
+    expect(result).toEqual({ x1: 0, y1: 0, x2: 10 + 2 * 5, y2: 16 * 1.2 + 2 * 5 });
+  });
+
+  it('returns the empty-text box CLAMPED into the document, which is the early return', () => {
+    // REWRITTEN against current behaviour. The salvaged case pinned the opposite and said so: the
+    // `!text` arm returned before `trimRect2`, so a press at the origin published `x1` of -1 and a
+    // box one pixel wider than the document. That was a defect — `useRect`'s `drawMask` paints
+    // `trimRect(...)` while handing `onRepaint` the UNCLAMPED rect, so the box the first keystroke
+    // grew from started a pixel left of the frame the user was looking at — and it is fixed. What
+    // survives of the case is the thing that made it observable: the early return is the ONLY path
+    // that both widens by an inset and does not measure, so it is the only place the two clamps can
+    // be told apart from the width arm.
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 100, y2: 100 },
+        align: 'left',
+      } as TextToolArgs,
+      makeCanvasRef(0),
+      { width: 100, height: 100 }
+    );
+
+    // The published rect is the document's own on every edge, so the frame cannot move on the
+    // first keystroke.
+    //
+    // Stated precisely, because this fixture CANNOT show that the ±1 widening is still applied:
+    // at document size the widening is clamped away at both edges, so the result is identical
+    // whether the inset is 1 or 0. The two `not.toBe` lines this replaces were restatements of
+    // the `toEqual` above them and could not fail independently of it. That the inset survives
+    // at all is pinned elsewhere, on an INTERIOR point box where `-1`/`+1` are inside the
+    // document and therefore observable — the case named "leaves a point box at its own
+    // one-pixel widening".
+    expect(result).toEqual({ x1: 0, y1: 0, x2: 100, y2: 16 * 1.2 + 2 * 5 });
   });
 });

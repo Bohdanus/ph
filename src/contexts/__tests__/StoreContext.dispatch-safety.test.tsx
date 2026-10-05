@@ -240,7 +240,6 @@ describe('a planned durable append that fails after publication', () => {
         }
       });
 
-      expect(String(thrown)).toContain('the asset transaction could not commit');
       const after = store();
       expect(after.history.map(({ id }) => id)).toEqual(['baseline', 'crop-1']);
       expect(after.historyIndex).toBe(1);
@@ -249,9 +248,14 @@ describe('a planned durable append that fails after publication', () => {
       expect(after.durableStatus).toBe('current');
       expect(after.durableDocument?.history.map(({ id }) => id)).toEqual(['crop-1']);
       expect(after.documentFrame).toEqual(croppedFrame);
-      // The failure is reported once, by the caller: a post-publication throw is
-      // not answered with a second publication.
-      expect(errorSpy).not.toHaveBeenCalled();
+      // The failure is contained, not rethrown: the append is published and the
+      // state above is consistent, so throwing would report a committed edit as a
+      // failed one and invite the caller to retry an operation that already
+      // landed. It is reported once, and the rebuild is never re-entered.
+      expect(thrown).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain('Unable to finalize a published durable append');
+      expect((errorSpy.mock.calls[0]?.[1] as Error).message).toContain('the asset transaction could not commit');
     } finally {
       begin.mockRestore();
       errorSpy.mockRestore();
@@ -316,7 +320,7 @@ describe('a planned durable append that fails before publication', () => {
       expect(after.durableDocument?.history.map(({ id }) => id)).toEqual(['crop-1']);
       expect(after.documentFrame).toEqual(croppedFrame);
       expect(
-        errorSpy.mock.calls.filter((call) => String(call[0]).includes('Unable to publish a planned durable append'))
+        errorSpy.mock.calls.filter((call) => String(call[0]).includes('Unable to plan a durable append publication'))
       ).toHaveLength(1);
     } finally {
       begin.mockRestore();

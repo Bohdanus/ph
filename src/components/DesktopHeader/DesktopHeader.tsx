@@ -1,182 +1,124 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import HistoryControls from '../HistoryControls/HistoryControls';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
+import { useHistoryCommands } from '../../hooks/useHistoryCommands.ts';
 import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
-import { flushSync } from 'react-dom';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
-import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { extraTools, slugifyToolLabel } from '../../../toolbar-mapping.ts';
+import { slugifyToolLabel } from '../../../toolbar-mapping.ts';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
-import type { FigureType } from '../../tools/shape.ts';
 
 /**
- * A second, non-exhaustive surface over the same tool set. `Array` rather than an
- * exhaustive type, so nothing forces it to stay in step with `toolbarMap` — which is
- * exactly why it is written out here: a tool missing from the Tools menu is a visible
- * inconsistency the user has to notice and work around.
+ * ## What this menu bar is
  *
- * The eleven entries added with the tool expansion carry the same labels
- * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
- * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
+ * A transcription of Adobe's own list, in Adobe's order, and nothing else decides the list.
+ * `File, Edit, Image, Layer, Type, Select, Filter, View, Window, Help` — ten menus, and the
+ * order they appear in `MENUS` below is the order they render in.
  *
- * **`MENUS_EXCLUDE` is the deliberate part of "non-exhaustive", and it is exactly six
- * tools, for two separate reasons.**
+ * Three members of that list are worth their reasons, because each was wrong here before.
  *
- * Add Anchor Point, Delete Anchor Point and Convert Point are absent because they are absent
- * from Photoshop's own Tools panel too — they modify a path rather than paint, and Photoshop
- * reaches them from the Pen's context menu and the path-modification commands, not from the
- * Tools panel or the Tools menu. `color`, `levels` and `transform` are absent for the other
- * reason: they are `Image ▸ Adjustments` and `Edit ▸ Free Transform` COMMANDS, which are the
- * same defect one level up from a missing tool — a command is not a tool, and a Tools-panel
- * entry for one is a falsehood in the list whose own header calls a missing tool "a visible
- * inconsistency the user has to notice and work around." They are in `ADJUSTMENTS_ITEMS` and
- * in the `Edit` menu below instead, and `toolbar-mapping.ts`'s `extraTools` names them as the
- * registered tool ids with no rail entry. All six are in `availableTools` because they are
- * selectable tools; none of them is a Tools-menu item.
+ * - **`3D` is not a menu and never was again.** Adobe removed the 3D features outright in
+ *   2020 and the menu with them ("As of July 2024, Photoshop's legacy 3D features have been
+ *   removed", <https://helpx.adobe.com/photoshop/kb/3d-faq.html>). `docs/FEATURES.md` used to
+ *   list it in the Photoshop column and so did this file's absence list; both are corrected.
+ *   `Analysis` went the same way earlier and by a different route: there has been no top-level
+ *   `Analysis` menu for many versions, because those commands sit at `Image ▸ Analysis`.
+ * - **There is no `Tools` menu, and there never was one.** Photoshop exposes the tool set
+ *   through the Tools panel — its tiles, their flyouts for grouped tools, and the single-key
+ *   shortcuts (`V`, `M`, `L`, `B`, `T`, …) — and through nothing else. The `Tools` host this
+ *   file used to carry was the one menu here that Adobe does not have, positioned between
+ *   `File` and `Edit`, and `docs/OVERRIDES.md` has no entry excusing a Tools menu, so it had to go rather than be filed
+ *   somewhere else. Nothing became unreachable: this app has both of Photoshop's surfaces
+ *   already, in `SidebarLeft` (the rail, with its `role="menu"` flyouts) and
+ *   `AppKeyboardShortcuts.tsx` (the single-key tool bindings), and
+ *   `SidebarLeft/__tests__/toolbar-mapping.test.ts` pins the invariant that every registered
+ *   tool is a rail tile or is named in `toolbar-mapping.ts`'s `extraTools`. That test is where
+ *   the "a tool nobody can reach" guarantee lives now, and it is a stronger pin than the one
+ *   it replaces: it walks the registry rather than a hand-written list of menu rows.
+ * - **`Window ▸ Workspace ▸ Reset Essentials`, not a top-level `Reset Workspace`.** Adobe
+ *   nests the workspace reset one level down ("Select `Window > Workspace > Reset Essentials`",
+ *   <https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html>),
+ *   and a `Window` menu with a command sitting on its own where Adobe puts two levels of
+ *   submenu above it is a muscle-memory error, not a cosmetic one. The command itself is
+ *   unchanged — the same `resetWorkspace`, for the same reason: a dock whose order and width
+ *   survive a reload needs the documented way back from a layout the user cannot live with.
  *
- * Every OTHER `availableTools` name must produce a row. That was not true until the test
- * below was derived from the registry: the assertion was a hand-written list of 24 names that
- * never mentioned the Dodge, the Burn, the Smudge, the Sharpen or the Magic Eraser, so the
- * Sponge shipped with no Tools-menu entry and the test stayed green.
+ * ## What each menu contains
+ *
+ * Membership inside a host is Adobe's, in Adobe's order. How much of it is here is not Adobe's
+ * business, and the rule for that is the one `ADJUSTMENTS_ITEMS` was already built on:
+ *
+ * **A command this app can run renders enabled; a command it cannot renders `disabled`; a
+ * capability with no entry anywhere is recorded in `docs/FEATURES.md` rather than invented
+ * here.** So `Select` carries Adobe's items with all of them inert, which is the honest state
+ * of this app — it has selection tools and no selection commands — and it is still strictly
+ * better than the alternative this file used to choose, which was to omit the menu and let the
+ * gap live only in a document. Photoshop greys out most of `Image ▸ Adjustments` whenever the
+ * active document cannot take the command, so an inert row is a shape Adobe itself uses.
+ *
+ * The lists below are deliberately partial in a second way: a submenu appears where this file
+ * has something to put in it or where Adobe's own structure is the subject the repository
+ * documents (`Image ▸ Adjustments`, `Select ▸ Modify`, `Edit ▸ Transform`, `Window ▸
+ * Workspace`), and a category whose every leaf is unbuildable — `Filter ▸ Blur`,
+ * `View ▸ Proof Setup`, `Type ▸ OpenType` — is not rendered at all. Adobe publishes the leaf
+ * lists for those but not a stable top-to-bottom order, so guessing an order and calling it
+ * Adobe's would be worse than naming the omission.
  */
-/**
- * The registered tools this menu deliberately does not list, and the ONLY ids allowed to be
- * missing from it — every other `availableTools` name must produce a row, which is what
- * `DesktopHeader.test.tsx` enforces by walking the registry.
- *
- * Two groups, two mechanisms, and they are not interchangeable. The three pen point-tools
- * modify a path, which Photoshop reaches from the Pen's context menu rather than from a
- * Tools panel. The three adjustment commands are not tools at all: they left the rail in
- * `4037463b`, which is also where they were added to this list — `MENUS_EXCLUDE` itself is
- * older, introduced by `dd234bad` with the pen tools alone — and they are hosted by
- * `Image ▸ Adjustments` and `Edit ▸ Free Transform`. See the note at the top of this file,
- * which is the authority for both.
- *
- * The second group is SPREAD from `toolbar-mapping.ts`'s `extraTools` rather than written
- * out, so the rail and this menu cannot disagree about which ids are commands: a fourth
- * id that leaves the rail is added to that export, and `toolbar-mapping.test.ts` fails
- * until it is.
- */
-export const MENUS_EXCLUDE: readonly ToolName[] = [
-  'add-anchor-point',
-  'delete-anchor-point',
-  'convert-point',
-  ...extraTools,
-];
+type MenuItem =
+  /**
+   * A command the app runs. `disabled` carries the availability Photoshop shows the same way
+   * — `Edit ▸ Undo` greys out with no history to undo — and it is deliberately a separate flag
+   * from `unbuilt`: "this cannot be run yet" and "this cannot be run at all" are different
+   * facts, and a user deciding whether to keep using the app needs to be able to tell them
+   * apart.
+   */
+  | {
+      kind: 'command';
+      label: string;
+      onSelect?: () => void;
+      /** Set when the row selects a tool, so the renderer dispatches rather than the builder. */
+      toolName?: ToolName;
+      testId?: string;
+      disabled?: boolean;
+    }
+  /** Adobe's entry, this app's capability not built. Renders `disabled`, and stays visible. */
+  | { kind: 'unbuilt'; label: string; testId?: string }
+  | { kind: 'separator' }
+  | { kind: 'submenu'; label: string; testId: string; items: readonly MenuItem[] };
 
-const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
-  { toolName: 'reposition', label: 'Reposition' },
-  { toolName: 'blur', label: 'Blur' },
-  { toolName: 'crop', label: 'Crop' },
-  { toolName: 'draw', label: 'Draw' },
-  { toolName: 'shape', label: 'Shape' },
-  { toolName: 'text', label: 'Text' },
-  { toolName: 'polygonal-lasso', label: 'Polygonal Lasso' },
-  { toolName: 'freehand-lasso', label: 'Freehand Lasso' },
-  { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
-  { toolName: 'magic-wand', label: 'Magic Wand' },
-  { toolName: 'quick-selection', label: 'Quick Selection Tool' },
-  { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
-  { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
-  { toolName: 'single-row-marquee', label: 'Single Row Marquee Tool' },
-  { toolName: 'single-column-marquee', label: 'Single Column Marquee Tool' },
-  { toolName: 'brush', label: 'Brush Tool' },
-  { toolName: 'pencil', label: 'Pencil Tool' },
-  { toolName: 'color-replacement', label: 'Color Replacement Tool' },
-  { toolName: 'eraser', label: 'Eraser Tool' },
-  { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
-  { toolName: 'sharpen', label: 'Sharpen Tool' },
-  { toolName: 'smudge', label: 'Smudge Tool' },
-  { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
-  { toolName: 'magic-eraser', label: 'Magic Eraser Tool' },
-  { toolName: 'gradient', label: 'Gradient Tool' },
-  { toolName: 'dodge', label: 'Dodge Tool' },
-  { toolName: 'burn', label: 'Burn Tool' },
-  { toolName: 'sponge', label: 'Sponge Tool' },
-  { toolName: 'eyedropper', label: 'Eyedropper Tool' },
-  { toolName: 'pen', label: 'Pen Tool' },
-  { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
-  { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
-  { toolName: 'rectangle', label: 'Rectangle Tool' },
-  { toolName: 'ellipse', label: 'Ellipse Tool' },
-  { toolName: 'triangle', label: 'Triangle Tool' },
-  { toolName: 'polygon', label: 'Polygon Tool' },
-  { toolName: 'line', label: 'Line Tool' },
-  { toolName: 'custom-shape', label: 'Custom Shape Tool' },
-];
-
-/**
- * The five figure entries above are the *second* selection surface for the figures
- * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
- * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
- * with a figure-specific tool name, bypassing the shared shape-family route and
- * leaving the panel's colour synchronization dependent on the wrong args shape.
- *
- * So route them through the same path the sidebar uses, which keeps every surface
- * on the shared shape-family state path rather than special-casing this menu.
- *
- * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
- * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.
- */
-const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
-  rectangle: 'rectangle',
-  ellipse: 'oval',
-  triangle: 'triangle',
-  polygon: 'polygon',
-  line: 'line',
-};
-
-/**
- * One item of a menu host.
- *
- * **`toolName` is absent on an item the app cannot do, and that renders it `disabled`.** A
- * disabled item is a capability recorded as unbuilt, not a fake one. The rule this file is
- * shaped by is `docs/TOOLS-TOO-HARD.md`'s: a capability the app cannot do is neither
- * shipped half-versioned nor quietly absent. Adobe's menu carries the entry, it is spelled
- * Adobe's way, and it cannot be activated — so the gap is visible where a user looks for
- * it instead of only in a document. Photoshop greys out most of `Image ▸ Adjustments`
- * itself whenever the active document cannot take the command.
- *
- * The distinction is structural rather than a flag, so the two cases cannot drift: an item
- * becomes enabled by having a `toolName` and nothing else. Removing a disabled item needs
- * the capability to land, not a decision.
- */
-type MenuHostItem = {
+type MenuHost = {
+  id: string;
   label: string;
-  toolName?: ToolName;
+  /** Every host but `Window` uses the light/dark pair; `Window` keeps its own dark chrome. */
+  className: string;
+  items: readonly MenuItem[];
 };
 
 /**
- * `Image ▸ Adjustments`, as close to Adobe's order as Adobe's own pages allow.
+ * The copy for both discard prompts lives in `UnsavedChangesContext`, which owns and renders
+ * it. This file used to hold two `confirm()` strings of its own, plus the
+ * `hasUnsavedChanges || hasPendingText(...)` test that decided whether to ask at all. The
+ * context's `DiscardReason` replaces the strings and its `hasDiscardableWork` replaces the
+ * test — and counts pending previews as well, which neither this file nor that test did.
+ */
+const HOST_LIST_CLASS = 'absolute left-0 top-full z-10 m-0 list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800';
+const SUBMENU_LIST_CLASS =
+  'absolute left-full top-0 z-20 m-0 min-w-[220px] list-none rounded border border-gray-300 bg-white py-2 shadow-lg dark:border-gray-600 dark:bg-gray-800';
+
+/**
+ * `Image ▸ Adjustments`, in Adobe's own order.
  *
- * Membership is Adobe-confirmed item by item. The ORDER is reconstructed, and the
- * reconstruction is not uniform across the list, so the confidence is not either:
- *
- * - **The tonal head is settled.** Adobe publishes no page that enumerates this submenu top
- *   to bottom — `helpx.adobe.com/photoshop/using/adjusting-image-color.html` is a 404 and
- *   `…/using/panels-menus.html` has an "Image adjustments" TOC entry with no body under it.
- *   Two Adobe pages do order the tonal group identically, though neither calls it a menu:
- *   `…/using/color-adjustments.html`'s command list runs `Levels · Curves · Exposure`, and
- *   `…/desktop/create-manage-layers/color-adjustment-fill-layers/adjustment-layers-options.html`
- *   (last updated 2026-02-23) runs `Brightness/Contrast · Levels · Curves · Exposure`. That is
- *   why `Levels` is second here and `Curves` precedes `Exposure`; `Levels` used to be last,
- *   which no source supports.
- * - **Everything from `Vibrance` down is a hypothesis.** Those two pages disagree with each
- *   other from `Vibrance` on — one puts `Photo Filter` immediately after `Vibrance`, the other
- *   after `Black & White` — and neither orders `Shadows/Highlights`, `HDR Toning`, `Desaturate`,
- *   `Match Color`, `Replace Color` or `Equalize` at all. No reputable third party transcribes
- *   the submenu in order either. Treat the rest as a good guess under the same provenance rule
- *   `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section applies to the rail, and
- *   re-derive it if Adobe ever documents the menu itself.
- * - Three near-misses are deliberately NOT here: `Auto Tone`, `Auto Contrast` and `Auto Color`
- *   are `Image` items rather than submenu items (Adobe, `…/using/making-quick-tonal-adjustments.html`),
- *   and `Color Blindness Simulation` is not in this menu at all.
+ * Membership is Adobe-confirmed item by item; the ORDER is not, because Adobe publishes
+ * no page that enumerates the submenu top to bottom — it is reconstructed from the order
+ * Adobe's own pages present the commands in plus the create-new-adjustment-layer list.
+ * Treat it as a good hypothesis, the same provenance rule
+ * `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section applies to the rail.
  *
  * Two items are enabled, and each is enabled because its computation is the Adobe command
  * it is named for:
@@ -196,20 +138,20 @@ type MenuHostItem = {
  *   Adobe's Desaturate is a one-shot command with no dialog at all, where this bar is three
  *   continuous sliders.
  *
- *   **This item used to be `Photo Filter`.** Adobe's Photo Filter is a lens filter applied
- *   "from a preset filter or a custom color filter", with a **Density** slider and a
- *   **Preserve Luminosity** option, and the bar reproduced **none** of those three — so an
- *   enabled item opened a bar whose controls did not contain the command its label named.
- *   `Photo Filter` is a `disabled` item now, which is this file's own rule applied: the
- *   capability is unbuilt. `Desaturate` is the Adobe name in the same submenu the bar's
- *   leading control actually computes, which is what `docs/TOOLS-TOO-HARD.md`'s enabled-items
- *   entry requires of an adjustment command — an item whose computation does not match its
- *   Adobe name is a falsehood and does not get enabled. Moving the row rather than dropping
- *   it is what keeps `color` reachable at all: it is in `extraTools`, so it has no rail tile
- *   and no `tools-menu-color-button`, and this submenu is the only path into the panel.
+ *   **This item used to be `Photo Filter`, and the row moved rather than being dropped.**
+ *   Adobe's Photo Filter is a lens filter applied "from a preset filter or a custom color
+ *   filter", with a **Density** slider and a **Preserve Luminosity** option, and the bar
+ *   reproduced **none** of those three — so an enabled item opened a bar whose controls did
+ *   not contain the command its label named. `Photo Filter` is a `disabled` item now, which
+ *   is this file's own rule applied: the capability is unbuilt. `Desaturate` is the Adobe name
+ *   in the same submenu the bar's leading control actually computes, which is what
+ *   `docs/TOOLS-TOO-HARD.md`'s enabled-items entry requires of an adjustment command — an item
+ *   whose computation does not match its Adobe name is a falsehood and does not get enabled.
+ *   Moving the row is what keeps `color` reachable at all: it is in `extraTools`, so it has no
+ *   rail tile, and this submenu is the only path into the panel.
  *
  * **`Levels`, `Curves`, `Exposure`, `Black and White`, `Hue/Saturation`, `Vibrance`,
- * `Color Balance`, `Channel Mixer`, `Selective Color`, `Photo Filter`, `Invert`,
+ * `Color Balance`, `Channel Mixer`, `Selective Color`, `Invert`,
  * `Posterize`, `Threshold`, `Gradient Map`, `Equalize`, `Shadows/Highlights`, `HDR Toning`,
  * `Match Color`, `Replace Color` and `Color Lookup` are all disabled**, which is the
  * accurate state of this app: it has no adjustment layers at all, and
@@ -217,7 +159,9 @@ type MenuHostItem = {
  * instead is a retained per-layer operation stack, which keeps an adjustment but cannot
  * re-edit it and has no properties panel.
  */
-const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
+type AdjustmentItem = { label: string; toolName?: ToolName };
+
+const ADJUSTMENTS_ITEMS: readonly AdjustmentItem[] = [
   { label: 'Brightness/Contrast', toolName: 'levels' },
   { label: 'Levels' },
   { label: 'Curves' },
@@ -242,25 +186,163 @@ const ADJUSTMENTS_ITEMS: readonly MenuHostItem[] = [
   { label: 'Threshold' },
 ];
 
+/**
+ * A submenu's `<ul>` test id is its parent button's id without the trailing `-button`, which
+ * is the rule every submenu id in this file already followed before the menu became data
+ * (`image-menu-adjustments-button` opened `image-menu-adjustments`). Derived rather than
+ * declared so the two cannot drift, and derived rather than reused because a test id that
+ * names two elements at once makes every `getByTestId` on it ambiguous.
+ */
+const submenuListId = (buttonTestId: string) => buttonTestId.replace(/-button$/, '');
+
+/**
+ * One level of a menu, host list or submenu, from the item model above.
+ *
+ * A submenu parent is a real `<button>` that owns the submenu, not a hover-only `<span>`: a
+ * hover affordance would put every item in this submenu out of reach of a keyboard, which is
+ * the one input that cannot recover from a missing `:hover`. `aria-expanded` is what tells a
+ * screen reader the same thing.
+ */
+const MenuList = ({
+  items,
+  testId,
+  className,
+  openSubmenu,
+  toggleSubmenu,
+  onSelectTool,
+  onDismiss,
+}: {
+  items: readonly MenuItem[];
+  testId: string;
+  className: string;
+  openSubmenu: string | null;
+  toggleSubmenu: (id: string) => void;
+  onSelectTool: (toolName: ToolName) => void;
+  onDismiss: () => void;
+}) => (
+  <ul className={className} data-testid={testId}>
+    {items.map((item, index) => {
+      // Index-based rather than label-based on purpose: two Adobe rows may differ only by an
+      // ellipsis, and a key that collides silently drops one of them.
+      const key = `${testId}-${index}`;
+
+      if (item.kind === 'separator') {
+        return <li key={key} className="my-1 h-px bg-gray-200 dark:bg-gray-600" role="separator" />;
+      }
+
+      if (item.kind === 'submenu') {
+        return (
+          <li key={key} className="relative">
+            <button
+              className={MENU_ITEM_BUTTON}
+              type="button"
+              aria-haspopup="true"
+              aria-expanded={openSubmenu === item.testId}
+              onClick={() => toggleSubmenu(item.testId)}
+              data-testid={item.testId}
+            >
+              {item.label}
+            </button>
+            {openSubmenu === item.testId && (
+              <MenuList
+                items={item.items}
+                onSelectTool={onSelectTool}
+                onDismiss={onDismiss}
+                testId={submenuListId(item.testId)}
+                className={SUBMENU_LIST_CLASS}
+                openSubmenu={openSubmenu}
+                toggleSubmenu={toggleSubmenu}
+              />
+            )}
+          </li>
+        );
+      }
+
+      return (
+        <li key={key}>
+          <button
+            className={MENU_ITEM_BUTTON}
+            type="button"
+            disabled={item.kind === 'unbuilt' || item.disabled === true}
+            onClick={
+              item.kind !== 'command'
+                ? undefined
+                : () => {
+                    // Dismissing the menu is what activating an item means, so it happens
+                    // FIRST and unconditionally, before the action — the decline path of New
+                    // and Open returns early, and a close after the action would leave the
+                    // dropdown hanging over the canvas on exactly that path.
+                    onDismiss();
+                    if (item.toolName !== undefined) onSelectTool(item.toolName);
+                    else item.onSelect?.();
+                  }
+            }
+            data-testid={item.testId}
+          >
+            {item.label}
+          </button>
+        </li>
+      );
+    })}
+  </ul>
+);
+
+/**
+ * One `ADJUSTMENTS_ITEMS` row as a `MenuItem`, with an id whether it is built or not.
+ *
+ * The id is not optional for the twenty disabled rows. They are the recorded gaps, and a gap
+ * nothing can be pointed at is a gap that quietly stops being one of twenty and becomes an
+ * omission — which is the outcome `docs/FEATURES.md` exists to prevent. A discriminated return
+ * rather than a computed `kind`, so TypeScript can tell the two arms apart and `onSelect` is
+ * absent from the arm that must not have one.
+ */
+const adjustmentMenuItem = ({ label, toolName }: AdjustmentItem): MenuItem =>
+  toolName === undefined
+    ? { kind: 'unbuilt', label, testId: `image-menu-adjustments-${slugifyToolLabel(label)}-button` }
+    : {
+        kind: 'command',
+        label,
+        toolName,
+        testId: `image-menu-adjustments-${slugifyToolLabel(label)}-button`,
+      };
+
 const DesktopHeader = () => {
   const [{ fileName, totalSize, documentFrame, hasImage }] = useStore();
-  const { commitDirtyTool } = useLayers();
+  const { commitDirtyTool, mergeAllLayers } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
+  const { canUndo, canRedo, undo, redo } = useHistoryCommands();
   const { confirmDiscard } = useUnsavedChanges();
-  const { patchToolArgs } = useCurrentTool();
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  // Which submenu is expanded inside the open host. Keyed by the host, so switching from
-  // `image` to `edit` cannot leave a stale submenu expanded — and it is deliberately not
-  // two booleans, because a single value cannot disagree with itself.
+  // Which submenu is expanded inside the open host. Keyed by the submenu's own test id, so
+  // switching hosts cannot leave a stale submenu expanded — and it is deliberately not one
+  // boolean per host, because a single value cannot disagree with itself.
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
-  const fileMenuRef = useRef<HTMLLIElement>(null);
-  const toolsMenuRef = useRef<HTMLLIElement>(null);
-  const imageMenuRef = useRef<HTMLLIElement>(null);
-  const editMenuRef = useRef<HTMLLIElement>(null);
-  const windowMenuRef = useRef<HTMLLIElement>(null);
+
+  // One map rather than one ref per host. Five `useRef`s plus five branches in
+  // `handleClickOutside` meant a sixth host had to be remembered in two places, and forgetting
+  // the second one produced a menu that never closes on an outside click — a defect with no
+  // other symptom, and one the previous shape invited rather than prevented.
+  const menuListRef = useRef<HTMLUListElement>(null);
+
+  // Dismissing the menu is what activating an item means, so it is a single place rather than
+  // something each handler remembers to do first.
+  const closeMenus = useCallback(() => {
+    // The item that was activated unmounts with its dropdown, and nothing else holds focus,
+    // so the browser drops it to `<body>` and the next Tab restarts at the top of the
+    // document. Focus belongs back on the host button that opened the menu, which stays
+    // mounted. Read the open id BEFORE clearing it, or there is nothing left to focus.
+    if (openMenu !== null) {
+      menuListRef.current
+        ?.querySelector<HTMLLIElement>(`[data-menu-host="${openMenu}"]`)
+        ?.querySelector('button')
+        ?.focus();
+    }
+    setOpenMenu(null);
+    setOpenSubmenu(null);
+  }, [openMenu]);
 
   // One toggle for both hosts, so the click that opens a menu is also the click that
   // collapses whatever submenu it had expanded.
@@ -271,69 +353,317 @@ const DesktopHeader = () => {
 
   const toggleSubmenu = (id: string) => setOpenSubmenu((current) => (current === id ? null : id));
 
-  // The five hosts, addressed by the same ids `openMenu` holds, so one close path can put
-  // focus back on whichever button opened what it just closed.
-  const menuHostRefs: Record<string, React.RefObject<HTMLLIElement | null>> = {
-    file: fileMenuRef,
-    tools: toolsMenuRef,
-    image: imageMenuRef,
-    edit: editMenuRef,
-    window: windowMenuRef,
-  };
+  const selectTool = (toolName: ToolName) => goToTool(toolName);
 
-  // The item that was activated unmounts with its dropdown, and nothing else holds focus,
-  // so the browser drops it to `<body>` and the next Tab restarts at the top of the
-  // document. Focus belongs back on the host that opened the menu, which stays mounted.
-  const closeMenus = () => {
-    if (openMenu !== null) menuHostRefs[openMenu]?.current?.querySelector('button')?.focus();
-    setOpenMenu(null);
-    setOpenSubmenu(null);
-  };
-
-  const handleToolSelection = (toolName: ToolName) => {
-    const figure = FIGURE_TOOLS[toolName];
-    // Select first, then patch — deliberately *not* the order
-    // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
-    // OUTGOING tool (`useApp.ts:167`), and `patchToolArgs` writes straight into the
-    // live `currentArgsRef` (`useCurrentTool.tsx:61`). Patching first would leave the
-    // text branch at `useLayer.ts:394` reading shape args — no `.text`, no `.rect` —
-    // so it early-returns and an unapplied text layer is dropped with nothing to undo.
-    // Selecting first lets that commit read the text args it is meant to read.
-    if (figure !== undefined) {
-      goToTool('shape');
-      patchToolArgs('shape', { figure });
-    } else {
-      goToTool(toolName);
+  const newDocument = async () => {
+    try {
+      // Dismissing the menu is what activating an item means, so it happens
+      // FIRST and unconditionally. It used to sit after the action, which
+      // made the decline path — the one branch that returns early — leave the
+      // dropdown hanging over the top-left of the canvas, and left it hanging
+      // on the `catch` path too. `handleClickOutside` cannot rescue either:
+      // the mousedown that opened this state already fired inside the menu's
+      // own `<li>`, so `!contains(target)` is false and it does not close.
+      if (!(await confirmDiscard('new-document'))) return;
+      const data = await openNewImageDialog();
+      if (data) setBlankImage(data);
+    } catch (error) {
+      console.error('Unable to create document', error);
     }
-    closeMenus();
   };
 
-  const handleFreeTransform = () => handleToolSelection('transform');
-
-  const handleResetWorkspace = () => {
-    resetWorkspace();
-    closeMenus();
+  const openDocument = async () => {
+    try {
+      // Same ordering rule as `newDocument` above, and for the same reason: the decline
+      // path returns before the close used to run.
+      if (!(await confirmDiscard('open-document'))) return;
+      const data = await openLoadImageDialog();
+      if (data) await setImageFromUpload(data);
+    } catch (error) {
+      console.error('Unable to open document', error);
+    }
   };
+
+  const saveDocument = async () => {
+    try {
+      if (!hasImage) return;
+      let exportLayers!: ReturnType<typeof commitDirtyTool>;
+      flushSync(() => {
+        exportLayers = commitDirtyTool();
+      });
+      const data = await openSaveImageDialog({
+        fileName,
+        layers: exportLayers,
+        size: totalSize,
+        documentFrame,
+      });
+      if (data) handleImageSave(data);
+    } catch (error) {
+      console.error('Unable to prepare document export', error);
+    }
+  };
+
+  /**
+   * Adobe's ten, in Adobe's order. `docs/FEATURES.md`'s `## Menu bar` section is the record
+   * of what is built and what is absent; this list is the structure.
+   *
+   * `Edit` carries `Free Transform` at the top level rather than inside `Transform`, which is
+   * where Adobe puts it, and `Transform` is a second command beside it rather than the same
+   * one: the same Adobe page documents both
+   * (<https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html>).
+   * `blur`, `draw` and `text` are deliberately absent from `Edit` — all three are Tools-panel
+   * tools, a menu is the wrong surface for each, and they stay in the rail.
+   *
+   * The three rows above the history group are Adobe's `Undo`, `Step Forward` and
+   * `Step Backward`, in that order, because Adobe opens `Edit` with the history group and this
+   * app's two history commands were button-only until now.
+   */
+  const menus: readonly MenuHost[] = [
+    {
+      id: 'file',
+      label: 'File',
+      className: `${HOST_LIST_CLASS} min-w-[160px]`,
+      items: [
+        { kind: 'command', label: 'New', testId: 'header-file-new-button', onSelect: () => void newDocument() },
+        { kind: 'command', label: 'Open', testId: 'header-file-open-button', onSelect: () => void openDocument() },
+        { kind: 'command', label: 'Save', testId: 'header-file-save-button', onSelect: () => void saveDocument() },
+      ],
+    },
+    {
+      id: 'edit',
+      label: 'Edit',
+      className: `${HOST_LIST_CLASS} min-w-[180px]`,
+      items: [
+        // Adobe's `Edit` group is `Undo`, `Step Forward`, `Step Backward` — forward BEFORE
+        // backward, which is the opposite of the order the words suggest and the order Adobe
+        // prints them in. Getting it backwards is exactly the kind of detail that teaches a
+        // user the menu is approximate. `Edit > Undo` / `Edit > Step Forward` are also how a
+        // Photoshop user reaches the two commands this app had left button-only;
+        // `docs/FEATURES.md` recorded them as "missing from the menu, not from the app",
+        // which is the kind of gap a menu-bar fix closes. Adobe has no `Redo` item: redo IS
+        // `Step Forward`, and this app's `redo` moves one step, so the label is the accurate
+        // one rather than a near-miss.
+        {
+          kind: 'command',
+          label: 'Undo',
+          testId: 'edit-menu-undo-button',
+          // the dismiss in `MenuList`'s click handler rather than after the action, for the same reason
+          // `File ▸ New` has it inside: activating an item is what dismisses the menu, and a
+          // guard that returned early before reaching the close would leave the dropdown
+          // hanging over the canvas.
+          onSelect: () => undo(),
+          disabled: !canUndo(),
+        },
+        {
+          kind: 'command',
+          label: 'Step Forward',
+          testId: 'edit-menu-step-forward-button',
+          onSelect: () => redo(),
+          disabled: !canRedo(),
+        },
+        // Not built. `useHistory` has no step-backward command — one step back is the History
+        // panel's rows, which is where an arbitrary target already lives — so the row records
+        // the gap where a user looks for it instead of omitting the neighbour of the two that
+        // work.
+        { kind: 'unbuilt', label: 'Step Backward' },
+        { kind: 'separator' },
+        {
+          kind: 'command',
+          label: 'Free Transform',
+          testId: 'edit-menu-free-transform-button',
+          onSelect: () => selectTool('transform'),
+        },
+        // Only `Free Transform` ships. The rest of Adobe's submenu — `Scale`, `Rotate`,
+        // `Skew`, `Distort`, `Perspective`, `Warp`, `Rotate 180°`, `Rotate 90° Clockwise`,
+        // `Rotate 90° Counter Clockwise`, `Flip Horizontal`, `Flip Vertical` — needs each
+        // item to preset that tool's args AND repaint, and `HANDOFF.md` §167 records why
+        // that is not a one-liner. Nine items that all select the same tool and repaint
+        // nothing is the falsehood this host exists to prevent.
+        {
+          kind: 'submenu',
+          label: 'Transform',
+          testId: 'edit-menu-transform-button',
+          items: [
+            { kind: 'unbuilt', label: 'Scale' },
+            { kind: 'unbuilt', label: 'Rotate' },
+            { kind: 'unbuilt', label: 'Skew' },
+            { kind: 'unbuilt', label: 'Distort' },
+            { kind: 'unbuilt', label: 'Perspective' },
+            { kind: 'unbuilt', label: 'Warp' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'image',
+      label: 'Image',
+      className: `${HOST_LIST_CLASS} min-w-[180px]`,
+      items: [
+        {
+          kind: 'submenu',
+          label: 'Adjustments',
+          testId: 'image-menu-adjustments-button',
+          items: ADJUSTMENTS_ITEMS.map((item) => adjustmentMenuItem(item)),
+        },
+      ],
+    },
+    {
+      id: 'layer',
+      label: 'Layer',
+      className: `${HOST_LIST_CLASS} min-w-[180px]`,
+      items: [
+        { kind: 'unbuilt', label: 'Duplicate Layer…' },
+        { kind: 'unbuilt', label: 'Layer Mask' },
+        { kind: 'unbuilt', label: 'Vector Mask' },
+        { kind: 'unbuilt', label: 'Create Clipping Mask' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Group Layers' },
+        { kind: 'unbuilt', label: 'Arrange' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Merge Layers' },
+        { kind: 'unbuilt', label: 'Merge Visible' },
+        {
+          // `useLayer.mergeAllLayers` collapses every layer into one layer over the whole
+          // canvas, which is what Adobe calls `Flatten Image` — as opposed to `Merge
+          // Layers`, which merges one layer DOWN and is the row above it. Both names are
+          // above because the two commands are different and only one of them exists here.
+          kind: 'command',
+          label: 'Flatten Image',
+          testId: 'layer-menu-flatten-image-button',
+          onSelect: () => void mergeAllLayers(),
+        },
+      ],
+    },
+    {
+      id: 'type',
+      label: 'Type',
+      className: `${HOST_LIST_CLASS} min-w-[200px]`,
+      items: [
+        { kind: 'unbuilt', label: 'Convert to Shape' },
+        { kind: 'unbuilt', label: 'Rasterize Type Layer' },
+        { kind: 'unbuilt', label: 'Type Warp' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Font Preview Size' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Update All Text Layers' },
+        { kind: 'unbuilt', label: 'Replace All Missing Fonts' },
+      ],
+    },
+    {
+      id: 'select',
+      label: 'Select',
+      className: `${HOST_LIST_CLASS} min-w-[180px]`,
+      items: [
+        { kind: 'unbuilt', label: 'All' },
+        { kind: 'unbuilt', label: 'Deselect' },
+        { kind: 'unbuilt', label: 'Reselect' },
+        { kind: 'unbuilt', label: 'Inverse' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Select and Mask…' },
+        {
+          // The five leaves are `docs/TOOLS-TOO-HARD.md`'s `Select ▸ Modify` entry verbatim:
+          // Feather, Expand, Contract, Border and Smooth. It is the one submenu here whose
+          // subject the repository already documents as a build, so it renders as the
+          // structure Adobe has rather than as a flat row that hides where those five live.
+          kind: 'submenu',
+          label: 'Modify',
+          testId: 'select-menu-modify-button',
+          items: [
+            { kind: 'unbuilt', label: 'Border…' },
+            { kind: 'unbuilt', label: 'Smooth…' },
+            { kind: 'unbuilt', label: 'Expand…' },
+            { kind: 'unbuilt', label: 'Contract…' },
+            { kind: 'unbuilt', label: 'Feather…' },
+          ],
+        },
+        { kind: 'unbuilt', label: 'Grow' },
+        { kind: 'unbuilt', label: 'Similar' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Load Selection…' },
+        { kind: 'unbuilt', label: 'Save Selection…' },
+      ],
+    },
+    {
+      id: 'filter',
+      label: 'Filter',
+      className: `${HOST_LIST_CLASS} min-w-[190px]`,
+      items: [
+        { kind: 'unbuilt', label: 'Last Filter' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Neural Filters' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Filter Gallery…' },
+        { kind: 'unbuilt', label: 'Adaptive Wide Angle…' },
+        { kind: 'unbuilt', label: 'Lens Correction…' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Liquify…' },
+        { kind: 'unbuilt', label: 'Vanishing Point…' },
+      ],
+    },
+    {
+      id: 'view',
+      label: 'View',
+      className: `${HOST_LIST_CLASS} min-w-[180px]`,
+      items: [
+        { kind: 'unbuilt', label: 'Zoom In' },
+        { kind: 'unbuilt', label: 'Zoom Out' },
+        { kind: 'unbuilt', label: 'Fit on Screen' },
+        { kind: 'unbuilt', label: '100%' },
+        { kind: 'unbuilt', label: 'Print Size' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Extras' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Rulers' },
+        { kind: 'separator' },
+        { kind: 'unbuilt', label: 'Snap' },
+        { kind: 'unbuilt', label: 'Lock Guides' },
+        { kind: 'unbuilt', label: 'Clear Guides' },
+      ],
+    },
+    {
+      id: 'window',
+      label: 'Window',
+      // Not the light/dark pair the other nine use. Preserved rather than fixed here: this
+      // host's chrome is a visual difference, not a structural one, and re-recording a
+      // visual-regression baseline is not a thing this change is allowed to do.
+      className:
+        'absolute left-0 top-full z-10 min-w-[180px] list-none rounded border border-gray-600 bg-[#2b2f33] p-1 shadow-lg',
+      items: [
+        {
+          kind: 'submenu',
+          label: 'Workspace',
+          testId: 'window-menu-workspace-button',
+          items: [
+            {
+              kind: 'command',
+              label: 'Reset Essentials',
+              testId: 'window-menu-workspace-reset-essentials-button',
+              onSelect: () => resetWorkspace(),
+            },
+            { kind: 'unbuilt', label: 'New Workspace…' },
+            { kind: 'unbuilt', label: 'Delete Workspace…' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'help',
+      label: 'Help',
+      className: `${HOST_LIST_CLASS} min-w-[180px]`,
+      items: [
+        { kind: 'unbuilt', label: 'Photoshop Help…' },
+        { kind: 'unbuilt', label: 'About Photoshop…' },
+      ],
+    },
+  ];
 
   const handleClickOutside = useCallback(
     (event: MouseEvent) => {
-      if (openMenu === 'file' && fileMenuRef.current && !fileMenuRef.current.contains(event.target as Node)) {
-        setOpenMenu(null);
-      }
-      if (openMenu === 'tools' && toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
-        setOpenMenu(null);
-      }
-      if (openMenu === 'image' && imageMenuRef.current && !imageMenuRef.current.contains(event.target as Node)) {
-        setOpenMenu(null);
-      }
-      if (openMenu === 'edit' && editMenuRef.current && !editMenuRef.current.contains(event.target as Node)) {
-        setOpenMenu(null);
-      }
-      if (openMenu === 'window' && windowMenuRef.current && !windowMenuRef.current.contains(event.target as Node)) {
-        setOpenMenu(null);
-      }
+      const node =
+        openMenu === null ? null : menuListRef.current?.querySelector<HTMLLIElement>(`[data-menu-host="${openMenu}"]`);
+      if (node && !node.contains(event.target as Node)) closeMenus();
     },
-    [openMenu]
+    [openMenu, closeMenus]
   );
 
   const {
@@ -351,25 +681,6 @@ const DesktopHeader = () => {
     };
   }, [handleClickOutside]);
 
-  // Escape closes whatever is open, and the listener exists only while something is. With
-  // no menu open the key belongs to whoever else handles it — the Transform panel cancels a
-  // pending transform on Escape (`Transform.tsx:41`, on `window`) — so this must not consume
-  // it. It does consume it while a menu IS open, because `stopPropagation` on `document`
-  // stops the event reaching a `window` listener: the menu is the topmost thing open, so it
-  // takes the first press and the panel takes the second. The dropdowns had no keyboard
-  // dismissal at all before this, while the rail's flyout closes the same way
-  // (`SidebarLeft.tsx:554-564`).
-  useEffect(() => {
-    if (openMenu === null) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      closeMenus();
-      event.stopPropagation();
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  });
-
   return (
     <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
       {/* The document's top-level heading, so a screen-reader user has something to
@@ -378,272 +689,32 @@ const DesktopHeader = () => {
           instead, which is the rule that caught it here. `sr-only` keeps it out of the
           visual design. `MobileHeader` carries the same heading for the mobile shell. */}
       <h1 className="sr-only">Photo App</h1>
-      <ul className="mr-auto flex list-none items-center p-0">
-        <li className="relative" ref={fileMenuRef}>
-          <button
-            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
-            type="button"
-            onClick={() => toggleMenu('file')}
-            aria-haspopup="true"
-            aria-expanded={openMenu === 'file'}
-            data-testid="header-file-menu-button"
-          >
-            File
-          </button>
-          {openMenu === 'file' && (
-            <ul
-              className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
-              data-testid="header-file-menu"
+      <ul className="mr-auto flex list-none items-center p-0" ref={menuListRef}>
+        {menus.map(({ id, label, className, items }) => (
+          <li className="relative" key={id} data-menu-host={id}>
+            <button
+              className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded={openMenu === id}
+              onClick={() => toggleMenu(id)}
+              data-testid={`header-${id}-menu-button`}
             >
-              <li>
-                <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      // Dismissing the menu is what activating an item means, so it happens
-                      // FIRST and unconditionally. It used to sit after the action, which
-                      // made the decline path — the one branch that returns early — leave the
-                      // dropdown hanging over the top-left of the canvas, and left it hanging
-                      // on the `catch` path too. `handleClickOutside` cannot rescue either:
-                      // the mousedown that opened this state already fired inside
-                      // `fileMenuRef`, so `!contains(target)` is false and it does not close.
-                      setOpenMenu(null);
-                      if (!(await confirmDiscard('new-document'))) return;
-                      const data = await openNewImageDialog();
-                      if (data) setBlankImage(data);
-                    } catch (error) {
-                      console.error('Unable to create document', error);
-                    }
-                  }}
-                  data-testid="header-file-new-button"
-                >
-                  New
-                </button>
-              </li>
-              <li>
-                <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      // Same ordering rule as New above, and for the same reason: the decline
-                      // path returns before the close used to run.
-                      setOpenMenu(null);
-                      if (!(await confirmDiscard('open-document'))) return;
-                      const data = await openLoadImageDialog();
-                      if (data) await setImageFromUpload(data);
-                    } catch (error) {
-                      console.error('Unable to open document', error);
-                    }
-                  }}
-                  data-testid="header-file-open-button"
-                >
-                  Open
-                </button>
-              </li>
-              <li>
-                <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      if (!hasImage) return;
-                      let exportLayers!: ReturnType<typeof commitDirtyTool>;
-                      flushSync(() => {
-                        exportLayers = commitDirtyTool();
-                      });
-                      const data = await openSaveImageDialog({
-                        fileName,
-                        layers: exportLayers,
-                        size: totalSize,
-                        documentFrame,
-                      });
-                      if (data) handleImageSave(data);
-                      setOpenMenu(null);
-                    } catch (error) {
-                      console.error('Unable to prepare document export', error);
-                    }
-                  }}
-                  data-testid="header-file-save-button"
-                >
-                  Save
-                </button>
-              </li>
-            </ul>
-          )}
-        </li>
-        <li className="relative" ref={toolsMenuRef}>
-          <button
-            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
-            type="button"
-            onClick={() => toggleMenu('tools')}
-            aria-haspopup="true"
-            aria-expanded={openMenu === 'tools'}
-            data-testid="header-tools-menu-button"
-          >
-            Tools
-          </button>
-          {openMenu === 'tools' && (
-            <ul
-              className="absolute left-0 top-full z-10 m-0 min-w-[200px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
-              data-testid="header-tools-menu"
-            >
-              {TOOL_MENU_ITEMS.map(({ toolName, label }) => (
-                <li key={toolName}>
-                  <button
-                    className={MENU_ITEM_BUTTON}
-                    type="button"
-                    onClick={() => handleToolSelection(toolName)}
-                    data-testid={`tools-menu-${toolName}-button`}
-                  >
-                    {label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </li>
-        <li className="relative" ref={imageMenuRef}>
-          <button
-            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
-            type="button"
-            onClick={() => toggleMenu('image')}
-            aria-haspopup="true"
-            aria-expanded={openMenu === 'image'}
-            data-testid="header-image-menu-button"
-          >
-            Image
-          </button>
-          {openMenu === 'image' && (
-            <ul
-              className="absolute left-0 top-full z-10 m-0 min-w-[180px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
-              data-testid="header-image-menu"
-            >
-              <li className="relative">
-                {/* A real `<button>` that owns the submenu, not a hover-only `<span>`: a
-                    hover affordance would put every item in this submenu out of reach of a
-                    keyboard, which is the one input that cannot recover from a missing
-                    `:hover`. `aria-expanded` is what tells a screen reader the same thing. */}
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  aria-haspopup="true"
-                  aria-expanded={openSubmenu === 'image-adjustments'}
-                  onClick={() => toggleSubmenu('image-adjustments')}
-                  data-testid="image-menu-adjustments-button"
-                >
-                  Adjustments
-                </button>
-                {openSubmenu === 'image-adjustments' && (
-                  <ul
-                    className="absolute left-full top-0 z-20 m-0 min-w-[220px] list-none rounded border border-gray-300 bg-white py-2 shadow-lg dark:border-gray-600 dark:bg-gray-800"
-                    data-testid="image-menu-adjustments"
-                  >
-                    {ADJUSTMENTS_ITEMS.map((item) => {
-                      const slug = slugifyToolLabel(item.label);
-                      // Bound to a `const` before the closure so the check is one read and
-                      // the handler carries no narrowing of its own.
-                      const toolName = item.toolName;
-                      return (
-                        <li key={slug}>
-                          <button
-                            className={MENU_ITEM_BUTTON}
-                            type="button"
-                            disabled={toolName === undefined}
-                            onClick={() => toolName !== undefined && handleToolSelection(toolName)}
-                            data-testid={`image-menu-adjustments-${slug}-button`}
-                          >
-                            {item.label}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </li>
-            </ul>
-          )}
-        </li>
-        <li className="relative" ref={editMenuRef}>
-          <button
-            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
-            type="button"
-            onClick={() => toggleMenu('edit')}
-            aria-haspopup="true"
-            aria-expanded={openMenu === 'edit'}
-            data-testid="header-edit-menu-button"
-          >
-            Edit
-          </button>
-          {/* Adobe's `Edit` menu holds `Free Transform` at the top level rather than inside the
-              `Transform` submenu, and the submenu is a separate command besides — the same Adobe
-              page documents both (https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/transformation-options-in-adobe-photoshop.html).
-              So this host is one item and not a bag of tool switches. `blur`, `draw` and
-              `text` used to live here; all three are Tools-panel tools, so a menu is the
-              wrong surface for each of them and they stay in the rail and the Tools menu
-              above.
-
-              Only `Free Transform` ships. The rest of Adobe's submenu — `Scale`, `Rotate`,
-              `Skew`, `Distort`, `Perspective`, `Warp`, `Rotate 180°`, `Rotate 90° Clockwise`,
-              `Rotate 90° Counter Clockwise`, `Flip Horizontal`, `Flip Vertical` — needs each
-              item to preset that tool's args AND repaint, and `HANDOFF.md` §167 records why
-              that is not a one-liner. Nine items that all select the same tool and repaint
-              nothing is the falsehood this host exists to prevent. */}
-          {openMenu === 'edit' && (
-            <ul
-              className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800"
-              data-testid="header-edit-menu"
-            >
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleFreeTransform}
-                  data-testid="edit-menu-free-transform-button"
-                >
-                  Free Transform
-                </button>
-              </li>
-            </ul>
-          )}
-        </li>
-        {/* `Window`, because that is where Photoshop keeps the panel commands: "Select Window
-            from the menu bar. Select the panel name to remove it from the workspace" and
-            "Window > Workspace > Reset > Essentials (Default)". Only the reset is here, and
-            only because a draggable layout that persists needs the documented way back —
-            "Select Window > Workspace > Reset to restore the last arrangement you had before
-            a panel went missing."
-            (https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html) */}
-        <li className="relative" ref={windowMenuRef}>
-          <button
-            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
-            type="button"
-            onClick={() => toggleMenu('window')}
-            aria-haspopup="true"
-            aria-expanded={openMenu === 'window'}
-            data-testid="header-window-menu-button"
-          >
-            Window
-          </button>
-          {openMenu === 'window' && (
-            <ul
-              className="absolute left-0 top-full z-10 min-w-[180px] list-none rounded border border-gray-600 bg-[#2b2f33] p-1 shadow-lg"
-              data-testid="header-window-menu"
-            >
-              <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleResetWorkspace}
-                  data-testid="window-menu-reset-workspace-button"
-                >
-                  Reset Workspace
-                </button>
-              </li>
-            </ul>
-          )}
-        </li>
+              {label}
+            </button>
+            {openMenu === id && (
+              <MenuList
+                items={items}
+                onSelectTool={selectTool}
+                onDismiss={closeMenus}
+                testId={`header-${id}-menu`}
+                className={className}
+                openSubmenu={openSubmenu}
+                toggleSubmenu={toggleSubmenu}
+              />
+            )}
+          </li>
+        ))}
       </ul>
       <div className="ml-auto flex items-center gap-4">
         <button

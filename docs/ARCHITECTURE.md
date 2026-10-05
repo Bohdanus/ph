@@ -26,7 +26,7 @@ The corollary is the one that bites: **`store.history` is the only thing that
 rendering, export and undo read, and it stores args, never pixels.** Undo re-runs
 the tool processors. It is not an inverse operation and it is not incremental.
 
-Evidence, all four current:
+Evidence, all three current:
 
 - `src/contexts/StoreContext.tsx` — the doc comment on `StoreData`'s
   `durableDocument` field — _"Diagnostic shadow only; legacy history/runtime
@@ -37,10 +37,6 @@ Evidence, all four current:
 - `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — _"Navigation
   therefore replays the legacy runtime representation and lets StoreContext
   rebuild the sidecar."_
-- `src/contexts/replay-coordinator.ts` — the `ReplayCoordinator` class JSDoc —
-  _"No production path mounts a coordinator… and this module must not be imported
-  by a navigation or rendering path while the legacy runtime stays
-  authoritative."_
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
@@ -54,7 +50,6 @@ guard refuses any logical movement. `publishDurableNavigationPresentation()` als
 returns early while any snapshot in the replay carries a `'legacy-tool'` source,
 so the durable presentation is skipped outright for a document still holding a
 legacy tool snapshot.
-`src/contexts/replay-coordinator.ts` still has no importer outside `__tests__`.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current
@@ -75,15 +70,19 @@ trusting a figure stored here.
   `StoreAction = Action | InternalAction`, with `PublicAction` an alias of
   `Action`; `StoreDispatch` dispatches `PublicAction`, so neither internal type is
   consumer-dispatchable.
-- **Every `StoreAction` kind has a reducer arm, and the switch says so at compile
-  time.** The `default` arm assigns the action to a `never`, so a kind added to
-  `Action` or `InternalAction` without an arm fails `npm run tsc` instead of
-  becoming a silent no-op. Two arms are deliberate no-ops that return `state`:
-  `ADOPT_LAYER_BITMAPS`, which the dispatcher registers with the presentation
-  scope and never forwards, and `SET_ORIGINAL_IMAGE`, which nothing dispatches.
-  So the reducer's **31** arms cover `StoreAction`'s 31 kinds, and the `Action`
-  29 is the public subset. `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
-  the arm count.
+- **The reducer has 31 arms, and every one of the `StoreAction` 31 is named.** The
+  census is exhaustive over the union rather than over `Action`, so two arms exist
+  only to be written down: `ADOPT_LAYER_BITMAPS`, which the dispatcher registers
+  and returns without forwarding in its own `dispatchAction()` branch and which the
+  reducer therefore never receives, and `SET_ORIGINAL_IMAGE`, a public action with
+  no production writer and no `StoreData` field to write. Both return the state
+  unchanged, which is what the reducer's `default: return state` gave them. The
+  `default` is now a `never` guard, so an action type added without an arm is a
+  typecheck error instead of a dispatch that quietly does nothing. So the 31 arms
+  cover `StoreAction`'s 31 kinds and the `Action` **29** is the public subset.
+  `sed -n '/^function reducer(/,/^}/p' src/contexts/StoreContext.tsx | grep -cE "^    case '"` is
+  the arm count, and `StoreContext.boundary-gates.test.ts` pins the set against the
+  union.
 - **The dispatcher is not the reducer.** `dispatchAction()` intercepts seven
   types, named in `INTERCEPTED_STORE_ACTION_TYPES`, and the rest take an explicit
   default at the top of the chain: one `reducer()` call outside React, so a
@@ -107,8 +106,7 @@ Surrounding it, `src/App.tsx`'s provider tree nests seven providers: `File`,
 `Theme`, `Store`, `KeyboardEvents`, `CurrentTool`, `PanelLayout`,
 `RightPanelVisibility`. `CurrentTool` holds live tool args outside the reducer,
 because options bars change at pointer rate and re-rendering the whole tree on
-every slider tick is not acceptable. `src/contexts/ImageContext.tsx` is 18 lines,
-entirely commented out.
+every slider tick is not acceptable.
 
 ## The pipeline, one gesture
 
@@ -282,7 +280,9 @@ Typed in `src/contexts/history-model.ts`: twelve operation kinds
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
 `apply-raster-processor`, `set-document-frame`, `replace-layer-source`,
 `merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
-every write by `freezeDurableDocument()`, one operation at a time by
+every write by `freezeDurableDocument()` — or, for a write that only moves the
+cursor or appends to the tip, by `refreezeDurableDocument()`, which reuses the
+frozen copies that write retains — one operation at a time by
 `cloneOperation()`. `replace-layer-source` is the lossless source-edit kind:
 `history-adapter.ts` emits it, `durable-replay.ts` replays it, and
 `history-append.ts`'s `replaceLayerSourceProblem()` refuses any shape that is not
@@ -293,9 +293,20 @@ The boundary is `history-adapter.ts`: `legacyHistoryToDurable()` in,
 `LAYER_PROPERTY_BY_ACTION`, `deriveSetSelectionEntry()`,
 `operationForTool()`. An unsupported tool throws
 `UnsupportedHistoryFeatureError` from `operationForTool()` rather than fabricating
-a no-op, and one
-`severity: 'error'` diagnostic voids the whole document, which
-`convertLegacyHistorySafely()` does.
+a no-op. That throw is caught per entry, so the entry is **omitted and named** by
+an `error` diagnostic, and `convertLegacyHistorySafely()` publishes the rest of
+the document rather than withholding it — including the cursor map, which is the
+part that is expensive to recompute. It withholds a document only when the result
+is structurally invalid, which `isStructurallyValidConversion()` decides from the
+cursor map rather than from any diagnostic's severity, and when the conversion
+threw before producing one. The transaction follows the document, not the entry:
+the success path commits and then reconciles the reachable set, so an asset
+registered for an omitted entry is reclaimed by
+`reconcileDocumentAssets()` rather than by a rollback. One consumer needs the
+stronger property and says so itself: `publishDurableNavigationPresentation()`
+refuses a shadow whose conversion reported a per-entry `error`, because
+`durablePresentationIsRendererIdentical()`'s acceptance assumes the shadow and the
+legacy timeline agree about which layers have been edited.
 
 Rasters are named, not embedded. A durable raster is `{ assetId, width, height }` —
 the `'raster'` arm of `DurableLayerSource` — and an `AssetId` is
@@ -307,6 +318,36 @@ ownership ledger and a memoizing LRU of derived materializations —
 are registered with `ownership: 'borrow'` — by `registerRaster()` — so the
 shadow can never close a bitmap the legacy path still owns.
 
+**The layer's box is the FOLD's, not the snapshot's, from its first pixel
+operation on.** `DurableReplayLayer.snapshot.pos` is the fold of every position
+assignment the timeline made to the layer, and it is the authoritative box only
+until the layer's first pixel operation: a stroke republishes the layer at the
+`rasterBounds` frame it padded the source into, and the snapshot never learns
+that. So `DurableReplayLayer.operations` is an ORDERED list in which a
+`reposition-layer` marker may appear, carrying two facts a snapshot cannot:
+
+- a reposition recorded AFTER a pixel operation moves a box the snapshot is not
+  holding, so the marker has to reach `materializeLayer()`'s fold in timeline
+  order. It is applied there as the legacy `resize ?? move` box patch — a resize
+  states the whole box, a move states the origin and inherits the size the fold
+  reached. A reposition recorded BEFORE the first pixel operation is in the
+  snapshot already and is not retained, so a layer with no pixel operation
+  carries no marker and its `operations` is exactly the pixel operations.
+- the head of the list, when there are pixel operations at all, is a **derived**
+  box patch — `isDurableFoldOrigin()` — stating the box the layer held when its
+  first pixel operation was recorded. No entry in the document states it and
+  none can: a reposition states the box moved TO and overwrites the one before
+  it. It is written by the reducer at the one moment it holds the answer, and it
+  is what the source is padded from, so the stroke's absolute frame is filled
+  with the layer's own pixels at the offset legacy replay puts them at.
+
+`materializeLayer()` refuses a retained list that carries a reposition after a
+pixel operation and no fold origin: the fold cannot start, and the only other
+answer is to pad from the box the layer moved to and publish a frame right and
+content wrong by the whole move. `isDurablePixelOperation()` and
+`isDurableFoldOrigin()` are shared by the two modules because the rule is a
+contract between them — the emitter and the reader of the same ordering.
+
 **Production callers, exhaustively:** `convertLegacyHistorySafely` from
 `StoreContext.tsx`'s `buildDurableDocument()`; `decideDurableAppend` from
 `dispatchAction()`'s `REORDER_LAYERS` and `COMMIT_DOCUMENT_EDIT` branches;
@@ -317,14 +358,14 @@ as a sequence against the reorder being planned. `publishDurableNavigationPresen
 adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
 production caller, `composeDurableDocument()` in `durable-compositor.ts`;
 `materializeLayer` is reached only from inside `materializeDocument()` and has no
-importer of its own; `ReplayCoordinator` has none.
+importer of its own.
 
 ## The tool registry
 
 Two registries with different key sets, which is easy to misread as one:
 
-- **`src/tools/toolsMap.ts`** — **44** entries, and **exactly one per `ToolName`**:
-  `ToolName` is `keyof ToolArgsByName`, which has **44** members, and the two key
+- **`src/tools/toolsMap.ts`** — **45** entries, and **exactly one per `ToolName`**:
+  `ToolName` is `keyof ToolArgsByName`, which has **45** members, and the two key
   sets are **identical** — only the declaration order differs. Prove the equality by
   `diff`-ing two sorted key lists:
   `awk '/^export type ToolArgsByName = \{/,/^\};/' src/contexts/tool-types.ts | grep -oE "^  '?[a-zA-Z][a-zA-Z0-9-]*'?:" | tr -d " ':" | sort`
@@ -335,8 +376,8 @@ Two registries with different key sets, which is easy to misread as one:
   `add-anchor-point`, `custom-shape` and fifteen more) — 44 − 19 = 25, which is how a
   44-entry map came to be documented as 25 members and as "not one per `ToolName`".
   Each entry spreads its processor and adds an `icon` and a `toolboxComponent`. The
-  whole-tool map therefore includes the `eyedropper` entry, which has _only_ icon and
-  component, and **seven** `placeholderTool` entries — the six-key `pen` group
+  whole-tool map therefore includes the two pixel-free entries, `eyedropper` and
+  `ruler`, which have _only_ icon and component, and **seven** `placeholderTool` entries — the six-key `pen` group
   (`pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
   `delete-anchor-point`, `convert-point`) plus `custom-shape`, which uses its own
   `custom-shape` group. Count them with
@@ -345,8 +386,8 @@ Two registries with different key sets, which is easy to misread as one:
 - **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
   `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
   is how a tool that needs
-  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper']`, the
-  one member, which is why the two registries differ by exactly one. Each entry is
+  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper',
+'ruler']`, its two members, which is why the two registries differ by exactly two. Each entry is
   curried: `(params) => (args) => pixels`, where `params` carries the layer's
   raster and size and `args` the stroke — the shape `ToolProcessorDefinition.imageProcessor` declares.
   `commit` is one of eight kinds, `ToolCommitKind`, and `replay` is a typed
@@ -410,6 +451,19 @@ entry, so bounding the search at the replay target makes undoing a tool-switch
 deselect a silent no-op. Its own JSDoc says so; the reasoning is
 in project memory under `selection_baseline_helper`.
 
+It also owns what "readable" means for a selection snapshot,
+`isValidSelectionSnapshot()`, because both consumers need that answer and a
+`previousSelectionState` is read by the baseline derivation while a
+`nextSelectionState` is read by `deriveSetSelectionEntry()`. An unreadable
+`previousSelectionState` on the **first** selection entry therefore falls back to
+the empty snapshot rather than throwing: `SelectionSnapshot` types the field, so
+the shape is outside the contract, and a `TypeError` out of it used to void the
+whole durable shadow with a diagnostic carrying no `historyId` while the identical
+value one entry later was tolerated. The fallback is parity rather than a guess —
+`replayHistory()` and `legacyHistoryToDurable()` read the state through the same
+derivation — and `legacyHistoryToDurable()` reports the fabricated baseline as a
+`warning` naming the entry, because parity is not observability.
+
 ## File I/O
 
 The async shape is **promise-resolver refs over a hidden `<input type=file>`**, not
@@ -426,6 +480,14 @@ dynamically, and its types come from that module's
 `import type … from 'ag-psd'` — dispatched behind `loadDocumentFile()`'s PSD sniff
 branch, and decoded
 `ImageData` → canvas by `psd-utils.ts`'s recursive `visit()` layer reader.
+
+The request and response shapes — `ImageUploadResponse`, `ImageSaveInput` and
+`ImageSaveResponse` — live in `file-types.ts`, a type-only leaf, rather than in
+`useFile.tsx`. That module renders the dialogs it owns, so a dialog taking its
+prop's type from it closed a cycle between the provider and the dialog the
+provider mounts. Calling `useFile()` stays the intended direction in the other
+one; `StoreContext.boundary-gates.test.ts` pins both halves, including that the
+leaf's own four imports are all `import type` and so add no runtime edge.
 
 `createImageBitmap` appears in **seven** production call sites. Four are the
 **immutability boundary** rather than the decode path — `immutableRaster()` in `useLayer.ts`,

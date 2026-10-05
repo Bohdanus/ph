@@ -449,45 +449,89 @@ describe('GIF transparent palette slot', () => {
 });
 
 describe('GIF encoding error paths', () => {
-  it('rejects canvases with a zero width', async () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    const context = { getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 0, height: 1 })) };
-    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  // Every case below states its geometry on the canvas rather than in a fake `getImageData`
+  // return value. `encodeGif` reads `canvas.width`/`canvas.height` for its guards, because
+  // `getCanvasImageData` allocates the whole raster before a guard that used its reported
+  // geometry could run — so a mock reporting an impossible canvas proved nothing about the
+  // ordering. A real canvas cannot be 70000 px wide and a mocked `getImageData` could, which is
+  // exactly the gap: these are the geometries the guard has to survive, put where the guard
+  // reads them.
 
-    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions must be greater than zero');
+  it('rejects a canvas with a zero width without reading its pixels', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 0;
+    canvas.height = 1;
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 0, height: 1 }));
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF image has invalid dimensions (0×1)');
+    expect(getImageData).not.toHaveBeenCalled();
   });
 
-  it('rejects canvases with a zero height', async () => {
+  it('rejects a canvas with a zero height without reading its pixels', async () => {
     const canvas = document.createElement('canvas');
     canvas.width = 1;
-    canvas.height = 1;
-    const context = { getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 1, height: 0 })) };
-    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+    canvas.height = 0;
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 1, height: 0 }));
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
 
-    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions must be greater than zero');
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF image has invalid dimensions (1×0)');
+    expect(getImageData).not.toHaveBeenCalled();
   });
 
-  it('rejects canvases that exceed the 65535 pixel limit', async () => {
+  it('rejects canvases that exceed the 65535 pixel limit before allocating their raster', async () => {
+    // 70000 × 100000 is the case the hoisted guard exists for: `getCanvasImageData` would
+    // allocate 28 GB of it to hand back a buffer this then refuses.
     const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    const context = { getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 70000, height: 1 })) };
-    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+    canvas.width = 70000;
+    canvas.height = 100000;
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 70000, height: 100000 }));
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
 
     await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions cannot exceed 65535 pixels');
+    expect(getImageData).not.toHaveBeenCalled();
+  });
+
+  it('refuses a geometry that is not a positive integer, rather than pricing it', async () => {
+    // `!width` and `> 65535` are both false for a fraction, so the range comparisons alone admit
+    // one and hand it to `getCanvasImageData`. `canvas.width` is an unsigned long so this cannot
+    // arrive from a real canvas; it is pinned so the guard matches `avif-utils.ts` and
+    // `ico-utils.ts` rather than being the one sibling that checks size only.
+    const canvas = document.createElement('canvas');
+    Object.defineProperty(canvas, 'width', { value: 4.5, configurable: true });
+    Object.defineProperty(canvas, 'height', { value: 4, configurable: true });
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 4.5, height: 4 }));
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF image has invalid dimensions (4.5×4)');
+    expect(getImageData).not.toHaveBeenCalled();
+  });
+
+  it('rejects an over-limit width and an over-limit height independently', async () => {
+    const tooWide = document.createElement('canvas');
+    tooWide.width = 65536;
+    tooWide.height = 1;
+    vi.spyOn(tooWide, 'getContext').mockReturnValue({ getImageData: vi.fn() } as unknown as CanvasRenderingContext2D);
+    const tooTall = document.createElement('canvas');
+    tooTall.width = 1;
+    tooTall.height = 65536;
+    vi.spyOn(tooTall, 'getContext').mockReturnValue({ getImageData: vi.fn() } as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(tooWide)).rejects.toThrow('GIF dimensions cannot exceed 65535 pixels');
+    await expect(encodeGif(tooTall)).rejects.toThrow('GIF dimensions cannot exceed 65535 pixels');
   });
 
   it('accepts exactly 65535 pixels on each axis', async () => {
     // The 16-bit logical screen descriptor cannot express more, so the boundary must be
-    // inclusive rather than an off-by-one rejection.
+    // inclusive rather than an off-by-one rejection. The guard reads the canvas, so the canvas
+    // has to carry the boundary geometry — a mocked `getImageData` reporting it would leave
+    // the real canvas at 300 × 150 and the assertion would be about nothing.
+    const canvas = document.createElement('canvas');
+    canvas.width = 65535;
+    canvas.height = 65535;
     const context = {
       getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([1, 2, 3, 255]), width: 65535, height: 65535 })),
     };
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
     vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
 
     const gif = parseGif(new Uint8Array(await (await encodeGif(canvas)).arrayBuffer()));

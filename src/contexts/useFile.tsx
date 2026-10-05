@@ -1,35 +1,20 @@
-import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
 import { renderExportCanvas } from './export-canvas.ts';
-import type { PsdDocument } from './psd-utils.ts';
-import type { LayersRecord } from './layer-types.ts';
-import type { Size } from './general-types.ts';
-import type { DocumentFrame } from './document-frame.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
+import type { ImageSaveInput, ImageSaveResponse, ImageUploadResponse } from './file-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
-
-export type ImageUploadResponse =
-  | { fileName: string; document: PsdDocument }
-  | {
-      image: HTMLImageElement;
-      fileName: string;
-    };
-
-export type ImageSaveInput = {
-  fileName: string;
-  format?: string;
-  layers: LayersRecord;
-  size: Size;
-  documentFrame?: DocumentFrame;
-};
-
-export type ImageSaveResponse = {
-  fileName: string;
-  format: string;
-  quality?: number;
-};
 
 export interface FileContextType {
   openNewImageDialog: () => Promise<NewDocumentBlankParams | null>;
@@ -91,28 +76,33 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
   };
 
-  const openNewImageDialog = () => {
+  const openNewImageDialog = useCallback(() => {
     setShowNewDialog(true);
     return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
-  };
+  }, []);
 
-  const openLoadImageDialog = () => {
+  const openLoadImageDialog = useCallback(() => {
     return new Promise<ImageUploadResponse | null>((resolve) => {
       uploadResolverRef.current = resolve;
       // trigger file picker
       fileInputRef.current?.click();
     });
-  };
+  }, []);
 
-  const openSaveImageDialog = (input: ImageSaveInput) => {
+  const openSaveImageDialog = useCallback((input: ImageSaveInput) => {
     setFileInput(input);
     setShowSaveDialog(true);
     return new Promise<ImageSaveResponse | null>((resolve) => {
       saveResolverRef.current = resolve;
     });
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }),
+    [openNewImageDialog, openLoadImageDialog, openSaveImageDialog]
+  );
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
     try {
@@ -173,7 +163,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   };
 
   return (
-    <FileContext.Provider value={{ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }}>
+    <FileContext.Provider value={value}>
       {children}
       <input
         type="file"

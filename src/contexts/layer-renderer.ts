@@ -12,11 +12,13 @@ import { resizeCanvas } from '../util/canvas.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentationForDraw,
+  getPresentationAffine,
   getPresentationFilter,
   scaleVectorArgs,
   type PresentationDrawTarget,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
+import { isIdentityAffineTransform } from './affine-transform.ts';
 
 function enabledFilterOperations(
   operations: readonly LayerOperation[]
@@ -73,16 +75,13 @@ function getLayerBitmap(layer: Layer, position: Pos) {
   return canvas;
 }
 
-export function drawLayerSource(
-  ctx: CanvasRenderingContext2D,
-  layer: Layer,
-  position: Pos = layer.pos,
-  documentFrame?: DocumentFrame
-): boolean {
-  const bitmap = getLayerBitmap(layer, position);
-  if (!bitmap || bitmap.width === 0 || bitmap.height === 0 || position.width === 0 || position.height === 0)
-    return false;
-
+/**
+ * The retained operations as the presentation reads them: enabled only, an affine kept as its
+ * matrix and every other operation as the filter its args describe. `drawLayerSource` evaluates
+ * this list, and so does `layerPresentationKeepsLayerBounds`, so the two cannot disagree about what
+ * a layer's own retained operations do to it.
+ */
+function enabledPresentationOperations(layer: Layer): PresentationOperation[] {
   const operations: PresentationOperation[] = [];
   for (const operation of layer.operations) {
     if (!operation.enabled) continue;
@@ -96,6 +95,50 @@ export function drawLayerSource(
       });
     }
   }
+  return operations;
+}
+
+/**
+ * Does this layer still draw INSIDE the box its own `pos` names?
+ *
+ * The runtime renderer composes a layer as `baked raster + retained operations`, and the box a
+ * consumer may address it by is the pre-matrix `pos` only when the composed matrix is the identity —
+ * which is precisely the branch `drawEvaluatedPresentation` takes. A non-identity matrix routes the
+ * draw through `ctx.transform`, so the ink is placed by that matrix rather than blitted into `pos`,
+ * and a consumer that laid its own chrome over `pos` would be sitting away from the pixels. So this
+ * asks the renderer's own question of the renderer's own arithmetic: compose the enabled operations
+ * into one matrix and test it for the identity.
+ *
+ * A retained FILTER is deliberately not part of the question, and the distinction is load-bearing.
+ * `ctx.filter` is assigned inside the same `drawImage`, so a filter moves nothing — a blur's halo
+ * needs a wider SURFACE to avoid a clipped edge, which is a statement about an allocation and not
+ * about where the ink is, so treating that margin as displacement would forbid editing exactly the
+ * blurred type layer Adobe still lets you retype. A filter also cannot reach this answer by
+ * construction: it contributes no matrix, so `getPresentationAffine` is unchanged by one.
+ *
+ * Non-identity therefore REFUSES, including for a matrix that happens to map this particular box
+ * onto itself. Over-refusing costs a re-entry the user can still reach another way; under-refusing
+ * places a caret and a contenteditable box away from the glyphs, which is a wrong answer with no
+ * diagnostic.
+ */
+export function layerPresentationKeepsLayerBounds(layer: Layer, position: Pos = layer.pos): boolean {
+  // The extent half of `drawLayerSource`'s own refusal, kept so the two cannot disagree: a
+  // zero-extent box is not drawn at all, so there is no box for a consumer to address.
+  if (!(position.width > 0) || !(position.height > 0)) return false;
+  return isIdentityAffineTransform(getPresentationAffine(enabledPresentationOperations(layer)));
+}
+
+export function drawLayerSource(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  position: Pos = layer.pos,
+  documentFrame?: DocumentFrame
+): boolean {
+  const bitmap = getLayerBitmap(layer, position);
+  if (!bitmap || bitmap.width === 0 || bitmap.height === 0 || position.width === 0 || position.height === 0)
+    return false;
+
+  const operations = enabledPresentationOperations(layer);
   const target: PresentationDrawTarget = { kind: 'document', frame: documentFrame };
   const evaluation = evaluatePresentationForDraw(
     {
@@ -187,7 +230,8 @@ function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: S
 export function drawLayersToCanvas(
   canvas: HTMLCanvasElement,
   layers: readonly Layer[],
-  documentFrame: DocumentFrame
+  documentFrame: DocumentFrame,
+  silentMissingLayerIds?: ReadonlySet<string>
 ): boolean {
   if (typeof document === 'undefined') return true;
   const size = documentFrameSize(documentFrame);
@@ -204,7 +248,11 @@ export function drawLayersToCanvas(
       // the other layers. The staging canvas is discarded by the return below, so the visible
       // canvas keeps the presentation it already had.
       try {
-        if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+        if (!drawLayer(stagingContext, layer, documentFrame)) {
+          if (!silentMissingLayerIds?.has(layer.id)) {
+            console.error('skipped layer without bitmap', layer.id);
+          }
+        }
       } catch (error) {
         if (error instanceof FilterArgumentUnrenderableError) {
           console.error('skipped layer whose filter arguments cannot be rendered', layer.id, error);

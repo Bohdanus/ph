@@ -19,6 +19,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import { isPointInLayer } from '../../contexts/affine-transform.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { isTextLayerSource, textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import type { Ctx2D, RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
 type TextToolAreaProps = {
@@ -29,7 +30,7 @@ type TextToolAreaProps = {
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
   const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
-  const { commitDirtyTool, setActiveLayer } = useLayers();
+  const { commitDirtyTool, setActiveLayer, beginTextLayerEdit } = useLayers();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
   const args = toolArgs as TextToolArgs;
@@ -66,6 +67,13 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
      * 255 with none. 255 × (1 − 0.7) = 76.5, which is the arithmetic of that fill and nothing else.
      */
     hideBlend: true,
+    /**
+     * The one consumer `handlesOutside` exists for: the contenteditable overlay below occupies the
+     * whole box, so a handle straddling a corner puts its inner half under the editor and a press
+     * there places a caret instead of resizing. The crop, the marquee and the Move tool have no
+     * overlay over their box and keep the straddling grip this repository documents for them.
+     */
+    handlesOutside: true,
     onRepaint: redrawDraftChrome,
     onChangeEnd: (rect: RectXYSorted) => {
       // Whether this press PLACED a box or merely acted on one that was already there. A press that
@@ -137,8 +145,9 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
       // published 'Lorem ipsum' over the text and threw away everything typed into the layer — the
       // same shape of loss this commit removes for the second-click case, reached by the opposite
       // gesture.
+      const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
       const seeded: TextToolArgs = {
-        ...args,
+        ...persistedArgs,
         text: placing ? PLACEHOLDER_TEXT : args.text,
         placeholderUntouched: placing ? true : args.placeholderUntouched,
       };
@@ -183,27 +192,18 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
             const hitLayerId = getLayerIdByPoint(layers, documentPoint);
             const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
             const activeTextLayer =
-              activeLayer?.source?.kind === 'tool' &&
-              activeLayer.source.args.toolName === 'text' &&
-              isPointInLayer(activeLayer, documentPoint)
+              activeLayer && isTextLayerSource(activeLayer.source) && isPointInLayer(activeLayer, documentPoint)
                 ? activeLayer
                 : undefined;
             const layer = activeTextLayer ?? (hitLayerId ? layers[hitLayerId] : undefined);
-            const source = layer?.source;
-            if (layer && source?.kind === 'tool' && source.args.toolName === 'text' && source.args.rect) {
-              setActiveLayer(layer.id);
-              const offsetX = layer.pos.x - documentFrame.x;
-              const offsetY = layer.pos.y - documentFrame.y;
-              setToolArgs({
-                ...source.args,
-                rect: {
-                  x1: source.args.rect.x1 + offsetX,
-                  y1: source.args.rect.y1 + offsetY,
-                  x2: source.args.rect.x2 + offsetX,
-                  y2: source.args.rect.y2 + offsetY,
-                },
-              });
-              return;
+            if (layer) {
+              const target = textLayerEditTarget(layer);
+              if (target) {
+                setActiveLayer(target.layerId);
+                beginTextLayerEdit(target.layerId);
+                setToolArgs(target.args);
+                return;
+              }
             }
           }
         }
@@ -215,7 +215,17 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
         pointerHandlers.onPointerUp(event);
       },
     }),
-    [activeLayerId, args.rect, documentFrame, getLocalCoords, layers, pointerHandlers, setActiveLayer, setToolArgs]
+    [
+      activeLayerId,
+      args.rect,
+      beginTextLayerEdit,
+      documentFrame,
+      getLocalCoords,
+      layers,
+      pointerHandlers,
+      setActiveLayer,
+      setToolArgs,
+    ]
   );
 
   /**

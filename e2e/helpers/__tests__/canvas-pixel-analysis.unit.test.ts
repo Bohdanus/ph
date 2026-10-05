@@ -399,10 +399,19 @@ describe('getColorAtPoint', () => {
 
     expect(await getColorAtPoint(image, 50, 50, 0)).toEqual({ red: 0, green: 255, blue: 0 });
 
+    // The default is the named radius, which is the first claim: a default that drifted to
+    // another value would still be self-consistent here.
     const averaged = await getColorAtPoint(image, 50, 50);
     expect(averaged).toEqual(await getColorAtPoint(image, 50, 50, STROKE_ANALYSIS.COLOR_SAMPLE_RADIUS));
-    expect(averaged!.red).toBeGreaterThan(0);
-    expect(averaged!.green).toBeGreaterThan(0);
+
+    // And the value itself, which is the second. `fillRect` is inclusive on both axes, so
+    // the 3x3 green block is 9 pixels inside an 11x11 window of 121: red 255*112/121 and
+    // green 255*9/121, each rounded. The previous assertion here was
+    // `expect(averaged.green).toBeGreaterThan(0)`, which the centre pixel also satisfies —
+    // a helper that returned `data[index]` instead of averaging anything passed it. The
+    // exact pair fails that, and it also pins the ROUNDING: `Math.floor` gives 236/18
+    // rather than 236/19.
+    expect(averaged).toEqual({ red: 236, green: 19, blue: 0 });
   });
 
   it('returns null outside the image', async () => {
@@ -553,16 +562,23 @@ describe('getColorAtPoint', () => {
       }
     }
 
+    // The 11x11 window around (25, 50) spans x 20..30: five fully red columns and six fully
+    // green ones, so 55 red pixels and 66 green ones out of 121. Both are whole-pixel
+    // counts, so the exact averages are 255*55/121 = 115.909 and 255*66/121 = 139.091.
+    //
+    // This replaced four loose bounds — `blue === 0`, `red > 0`, `red < 255` and
+    // `green/red ≈ 6/5` to one decimal place. Every one of them survives a helper that
+    // divides by the WINDOW AREA rather than the sampled-pixel count (it would answer
+    // 116/139 over 121 either way only by accident of the counts being close), and all of
+    // them survive a half-pixel shift of the window. The exact pair does not, and it also
+    // pins the rounding direction: `Math.floor` answers 115/139.
     const redColumns = 5;
     const greenColumns = 6;
-    const result = await getColorAtPoint(image, 25, 50, 5);
+    expect(await getColorAtPoint(image, 25, 50, 5)).toEqual({ red: 116, green: 139, blue: 0 });
 
-    expect(result).not.toBeNull();
-    expect(result!.blue).toBe(0);
-    expect(result!.red).toBeGreaterThan(0);
-    expect(result!.red).toBeLessThan(255);
-    expect(result!.green).toBeGreaterThan(result!.red);
-    expect(result!.green / result!.red).toBeCloseTo(greenColumns / redColumns, 1);
+    // The column counts are the fixture's, restated so the two numbers above can be read
+    // without counting pixels by hand.
+    expect(redColumns + greenColumns).toBe(11);
   });
 });
 

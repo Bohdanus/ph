@@ -41,6 +41,62 @@ describe('feathered selection masks', () => {
     expect(edgeAlpha).toBeGreaterThan(cornerAlpha);
     expect(cornerAlpha).toBeGreaterThan(0);
   });
+
+  /**
+   * The same three pixels as the case above, as exact values, because the chamfer distance
+   * and the ramp are both fully determined and "greater than 0" is satisfied by any of a
+   * dozen wrong implementations.
+   *
+   * Each number below is derivable by hand from `chamferDistanceFromSeeds` (two passes, 1 for
+   * an orthogonal step and `Math.SQRT2` for a diagonal) and `alphaFromSignedDistance`
+   * (`t = (d + r) / 2r`, `smoothStep(t) = t^2 * (3 - 2t)`, `round(... * 255)`), at r = 2:
+   *
+   * - `(2, 2)` is inside; the nearest outside pixel is `(2, 0)`, two orthogonal steps away, so
+   *   `d = 2` and `t = min(1, 4/4) = 1` -> `255`.
+   * - `(1, 1)` is inside; `(0, 1)` is one step away, so `d = 1` and `t = 3/4`. smoothStep at
+   *   3/4 is `0.5625 * 1.5 = 0.84375`, and `0.84375 * 255 = 215.15625` -> `215`.
+   * - `(0, 0)` is outside; the nearest inside pixel is `(1, 1)`, one DIAGONAL step away, so
+   *   `d = -SQRT2 = -1.4142135` and `t = (2 - 1.4142135) / 4 = 0.1464466`. smoothStep is
+   *   `0.0214466 * 2.7071068 = 0.0580577`, and `0.0580577 * 255 = 14.8047` -> `15`.
+   *
+   * The mutants, none of which the ordering assertions can see:
+   * - `Math.SQRT2` replaced by 1 (a Manhattan chamfer) sends the corner to `d = -2`, `t = 0`,
+   *   and alpha `0` — which still satisfies `toBeGreaterThan(0)`? No: it fails it, but the
+   *   exact `15` also fails an implementation that used a different radius normalisation,
+   *   which the ordering assertions accept.
+   * - `smoothStep` replaced by a linear ramp gives the edge `round(0.75 * 255) = 191`.
+   * - `round` dropped gives `215.15625`, which `Uint8Array` would truncate to 215 and
+   *   `toBeCloseTo` would wave through.
+   */
+  it('lands the centre, edge and corner on their exact chamfer-and-smoothStep values', () => {
+    const binaryMask = createCenteredSquareMask(5, 5, 1, 3);
+
+    const alphaMask = createFeatheredAlphaMask(binaryMask, 5, 5, 2, true);
+
+    expect(alphaMask[2 * 5 + 2]).toBe(255);
+    expect(alphaMask[1 * 5 + 1]).toBe(215);
+    expect(alphaMask[0]).toBe(15);
+    // A linear ramp instead of smoothStep would put the edge at 191.
+    expect(alphaMask[1 * 5 + 1]).not.toBe(Math.round((3 / 4) * 255));
+    // A Manhattan chamfer would put the corner at exactly 0.
+    expect(alphaMask[0]).not.toBe(0);
+  });
+
+  /**
+   * The diagonal term is what makes the feather round rather than diamond-shaped, and it only
+   * shows on the corner pixels — the edge and centre values above are the same under either
+   * metric. A 7x7 mask with a 3x3 block puts a pixel at signed distance exactly `-SQRT2 * 2`
+   * from the block, which is the value a four-neighbour chamfer cannot produce.
+   */
+  it('measures the diagonal with SQRT2 rather than treating it as two steps', () => {
+    // Block at (2..4, 2..4); pixel (0, 0) is two diagonals from (2, 2).
+    const binaryMask = createCenteredSquareMask(7, 7, 2, 3);
+
+    const twoSteps = createFeatheredAlphaMask(binaryMask, 7, 7, 3, true);
+    // -2 * SQRT2 = -2.8284271, t = (3 - 2.8284271) / 6 = 0.0285955, smoothStep =
+    // 0.000817705 * 2.9428090 = 0.0024064, * 255 = 0.61364 -> 1.
+    expect(twoSteps[0]).toBe(1);
+  });
 });
 
 describe('alphaFromSignedDistance', () => {

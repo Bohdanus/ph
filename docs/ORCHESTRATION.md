@@ -224,8 +224,8 @@ status` and `git diff` before staging.
   **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
   about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
   repository, driven through `findTakeovers` with the real index. All seven destroyed
-  committed work and reported success. **Replayed over the 407 merges on `main` before and
-  after the fixes, the same 36 merges are refused, with the same kinds and the same paths** —
+  committed work and reported success. **Replayed over every merge on `main` before and after
+  the fixes, the same merges are refused, with the same kinds and the same paths** —
   every change was a shape that was _invisible_, never a verdict that moved:
 
   | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
@@ -256,10 +256,32 @@ status` and `git diff` before staging.
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
   conflict runs no hook at all, so an operation left open is invisible to it — which is how
   `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting
-  merge that this guard would have refused the moment anyone ran `git commit`. Nothing else
-  detects that state either: `scripts/worktree-inventory.mjs` has no notion of an operation
-  in progress, and no hook, script or CI job regenerates its output. The guard is the floor
-  under the rule, not a substitute for noticing.
+  merge that this guard would have refused the moment anyone ran `git commit`. `npm run
+repo:state` is what reports an operation in progress, and it separates the two states that
+  share one `action`: unmerged paths mean git still holds every side and nothing has been
+  decided, while **none** mean a resolution is staged in no commit, which `git merge --abort`
+  discards. Nothing else in the tree can see that state, which is why it is a command and not
+  a field.
+
+  **A hand edit to a file git merged CLEANLY, which is a shape with no conflict marker in it
+  anywhere.** Counting `remerge CONFLICT` lines does not measure hand-written merge work, and
+  the gap is not small: on the history `findHandResolutions` in
+  `scripts/merge-takeover-guard.mjs` was measured over, more paths were hand-edited on a merge
+  git had already resolved cleanly than were resolved as conflicts. That function's JSDoc holds
+  the rules, the figures, and how to re-derive them; the figures move as `main` grows, so they
+  are not held here. What it enforces, in three lines:
+
+  - a path changed after a **clean** merge is **reported** with the count of lines git's merged
+    result had and the staged result does not. Refusing those would train every agent to reach
+    for `--no-verify`, which is how the three whole-file shapes above were nearly lost once.
+  - a **test** file that git's merge produced and the result does not contain is **refused**,
+    UNLESS a side's own commit had already deleted it, which includes every `modify/delete`
+    conflict — deleting the file there is git's own recommendation and was reviewed where it was
+    written. A path that was renamed is reported as a rename, because rename detection on hides
+    the erasure and rename detection off refuses a legitimate rename.
+  - a merge run with `-X`/`-s` **cannot be detected and cannot cause the refusal**: git records
+    a merge's result in its reflog action, not the invocation, so no hook can read the flag; a
+    strategy option resolves a hunk and never removes a path, so its cost is report lines.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the
@@ -370,6 +392,73 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
     per-run folder would leave it with nothing to open.
 
+## What git is doing right now
+
+A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
+git directory — `.git/worktrees/<name>/` for a linked worktree, `.git/` for the
+primary. **No commit records it, no branch name carries it, and `git status` in the
+main checkout cannot see it.** `MERGE-INTEGRITY-AUDIT.md` calls this the whole
+hazard class in one place, and it is right: on 2026-10-04 a worktree in this
+repository held an eight-path unresolved merge for hours, and the only reason
+anybody knew was that a person ran the audit's `find` by hand.
+
+`npm run repo:state` reports it. It is `scripts/repo-state-gate.mjs`, and it reads
+git's own markers — `MERGE_HEAD`, `SQUASH_MSG`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
+`BISECT_LOG`, `rebase-merge/`, `rebase-apply/` — plus
+`git diff --name-only --diff-filter=U`, which is what separates an unmerged index
+entry from an ordinary edit. `git ls-files -u` separates them too and returns the same
+paths; `-U` was chosen because its output is already one path per record.
+`--json` prints the same findings for a caller that wants them as data.
+
+**It exits non-zero when it could not look, not only when it found something.** A
+roster it could not read, or a worktree it could not describe, is reported as
+unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
+a report that answered them with exit 0 would be the surface a person trusts more.
+
+**Run it before you believe the repository is quiet.** It exits non-zero when
+anything is in progress, and it is the check to run before a sweep, before a landing,
+and before you conclude that a worktree is finished.
+
+**It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
+worktree, so it scales with the fleet — measured in seconds on a fleet of this
+repository's size. That is right for a command a person runs and wrong for a hook, and the
+decisive reason is behavioural: a hook would block every push in the repository
+because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
+for one session's state gets `--no-verify`'d, after which it protects nothing.
+
+**It reports WHAT is in progress and never WHOSE it is.** git does not record that
+either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
+before you intervene: the worktree measured above was live, and an abort would have
+destroyed a session's in-flight work.
+
+**`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
+shape, and the report warns about it by name.** Every conflict resolved, nothing
+committed. `git commit` lands an unattended resolution; `git merge --abort` throws the
+resolution away. Both are one command away, and neither is distinguishable from the
+index alone. Decide in that worktree, from inside it — never from the main checkout.
+
+**`npm run dispose` refuses a worktree with an operation in progress**, because
+removing the worktree deletes the state files and there is no reflog entry and
+nothing for `git fsck` to recover. It also refuses when it could not read that state,
+and when no state was supplied for it at all: an absent signal is not a clear
+worktree. The refusal names the command that would discard the work, and it carries
+the board claims, locks, agents and sessions `preflight` already holds — because the
+operator's first question about a discard command is whether anybody is standing
+there.
+
+**A worktree whose directory is gone still counts.** Its git directory usually
+survives, and that is where a mid-merge `MERGE_HEAD` lives; `git worktree prune`
+deletes it. Both `repo:state` and `dispose` find that directory by matching the
+administrative directories' own `gitdir` files rather than by deriving a name from the
+worktree path, because git sanitises the name it uses — a leading `.` becomes `-`. So
+when `dispose` refuses with `prunable`, **run `npm run repo:state` before pruning.**
+The refusal used to say there was "nothing to salvage and no state to verify" and then
+recommend the command that destroys it.
+
+**Where there is no command to run, the report says so instead of naming one.**
+`git merge --squash` writes no `MERGE_HEAD` and git cannot abandon a squash at all, so
+its remedy is nothing rather than a plausible-looking command that fatals.
+
 ## The list of worktrees: `WORKTREES.json`
 
 `WORKTREES.json` at the repository root is a generated inventory of every
@@ -400,7 +489,28 @@ shared source of truth.
 node scripts/worktree-inventory.mjs            # regenerate
 node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
+npm run inventory:verify                       # REPORT about THIS machine's worktrees
 ```
+
+The last line is a different program with a different job: it asks about the worktrees
+that exist right now rather than generating a file, it is wired into no hook and no CI
+job, and its exit code is its own verdict rather than something a push can be blocked
+on. It exits non-zero on a finding — a worktree holding the only copy of some work that
+would be reported as disposable, a stale curated flag on one, a curated `landed: true`
+claim git contradicts, or a recorded session id that is not a real top-level session
+inside the committed audit's window — and on a check that could not run: a worktree
+holding work on no ref that could not be classified, facts git could not be read for, or
+a session audit that could not run. A checkout with no resolvable base ref, including one
+too SHALLOW for ancestry to mean anything, is a third shape again: it prints one line
+beginning `UNREADABLE: ` and returns, printing no summary line at all, so there is no
+"clean" line to misread. Every other run ends on one of two summary forms — `OK - no rule
+violated. ` with the count of worktrees holding work on no ref and the sentence that every
+one is protected, or a non-zero verdict that is either `FINDINGS - see above.` or
+`INCOMPLETE - no finding, but the session audit could not run, so this is not a clean
+report.` "Git could not be asked" is not "nothing is at risk", so read the exit line before
+acting on the number. The gated suite asserts the same rules over a synthetic fleet of ten
+`git worktree list` entries it builds itself;
+[`docs/TESTING.md#gates`](docs/TESTING.md#gates) is where the report/gate split is stated.
 
 **Read `action` first.** Every record carries one value, and it is the whole
 answer — which of the six things it is:

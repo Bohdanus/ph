@@ -9,10 +9,26 @@
 #
 # `tsc` and `build` are deliberately NOT repeated here. An earlier version
 # re-ran all of `gate:commit` and bought nothing with it: a rebase or a
-# `--no-verify` commit that broke the build is caught by the `ci` job in about a
-# minute, and re-running several seconds of deterministic checks to protect a
-# shorter suite run is how a gate ends up `--no-verify`'d along with everything
-# else.
+# `--no-verify` commit that broke the build is caught by the `ci` job, and
+# re-running several seconds of deterministic checks to protect a shorter suite
+# run is how a gate ends up `--no-verify`'d along with everything else.
+#
+# WHAT THIS HOOK IS NOT ALLOWED TO ASK, which is the one rule here that has been
+# broken. It must not run a test whose answer depends on the state of the
+# operator's machine. It did: the worktree-inventory suite read git in every
+# worktree on the machine, so this gate went red because the main checkout had
+# one modified file at that instant, needed a 60s budget per test to survive its
+# own git spawns, and on a `pull_request` CI checkout — where no `main` ref
+# exists — took three tests down with an unguarded `rev-parse`. The consequence
+# was a real `--no-verify` push of 285 commits to `main` with this gate
+# unverified, which is worse than having no gate here. The suite now asserts the
+# same rules over a synthetic fleet it builds, and the question about the live
+# fleet is `npm run inventory:verify`, which is a report.
+#
+# `scripts/__tests__/gates-wiring.test.mjs` asserts that the hook runs a script
+# that exists, that it does not swallow a failure, and that the suite it runs has
+# no per-test budget and no read of the live worktree list — so the three failure
+# modes above cannot come back quietly.
 set -e
 
 npm run gate:push

@@ -675,16 +675,159 @@ default it is guarding. Two properties were checked rather than assumed and are
 worth keeping: the budget is scoped to the file that declares it (a body several
 times the default in an undeclared sibling still died at the 5s default in the same
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
-budget, which is how the two tests that read git in every worktree keep their
-declared `60_000`.
+budget. **Nothing in the tree relies on that second property any more.** The three
+cases that used to hold a declared `60_000` on top of the file budget are gone, and
+`scripts/__tests__/gates-wiring.test.mjs` now fails if the word `timeout` appears in the
+inventory suite anywhere but its one file-level `testTimeout` declaration — a count rather
+than a pattern, because a per-test budget is the shape a cost-that-grows takes, nothing
+left in that file grows, and a trailing-argument or `timeout:` pattern is defeated by a
+computed key.
+
+### The worktree-inventory suite: its failure mode is closed, and what replaced it is a guard
+
+**The failure this subsection used to describe can no longer happen.** It needed the suite
+to read git in every worktree of the OPERATOR's repository, and it no longer does:
+the set under test is a synthetic fleet the file builds in a throwaway repository, and
+`git worktree list` reports ten entries in it — the primary checkout, seven named shapes
+registered inside it, one more registered inside it under the name of the first
+`landed: true` key in the curated table, and one registered outside the checkout, which is
+the only member that is not `inRepo`. One of the nine added worktrees has its directory
+removed after it is registered, so it is filtered out before any fact is read and remains a
+registration whose path is gone. The three per-test budgets are gone, the memoised
+`liveWorktreeFacts` read is gone with the fleet it memoised, and the file carries
+one 15s budget for the whole file. So "which of them runs out first" no longer
+describes anything, and what follows is kept as the record of a failure mode that is
+closed rather than as a tripwire to watch.
+
+**What replaced it is checked, not written down.**
+`scripts/__tests__/gates-wiring.test.mjs` holds two invariants over that suite's
+comment-stripped source, and both are invariants rather than patterns because the
+pattern forms were each demonstrated defeatable in review. The first is scoped to the
+STATEMENT: the source is split on `;`, and every statement mentioning `process.cwd()` must
+also mention `dbPath` or match `resolve(process.cwd(), '<path>')` — a fixture database or
+a committed file, never the worktrees on this machine. Both admitted shapes are asserted
+to still exist, so deleting every read cannot satisfy it, and the two retired reads
+`liveWorktreeFacts` and `liveInventory` are asserted absent by name. It does not mention
+`process.env.HOME` at all. The second is a TOKEN COUNT: the word `timeout` may appear
+exactly once in the file, and that once must be the file-level `vi.setConfig({ testTimeout:`
+declaration. The earlier versions of the second invariant — a trailing-argument regex, then
+`/timeout\s*:/` — were each walked past in review, the second by
+`it(name, { ['timeout']: 60_000 }, fn)`, which is why a count replaced a pattern.
+
+**`HANDOFF.md` §142 is still open, and its reproduction route is not.** `classify()`
+still answers `keep` for the primary worktree while that checkout holds the only copy of
+uncommitted work, and no file in this change touches it. What is gone is the way the
+entry says to see it — "edit any tracked file in main and run the inventory suite" —
+because that suite no longer reads the operator's main at all, so it will now be green
+with three files modified there. `npm run inventory:verify` works around the defect
+rather than fixing it: it lists the primary under `HOLDS WORK ON NO REF` from git's
+facts and then skips classifying it, so the wrong `keep` verdict is never the reason a
+primary checkout goes unreported. The entry's own instruction not to touch the guard it
+names in `worktree-inventory.test.mjs` still stands.
+
+**The three cases, under their current titles.** `never asks the table to protect a
+worktree whose protection is derived` and `protects that shape in a worktree
+NOBODY has written anything down about` sit in `describe('the curated table')`, and
+`never offers a worktree that holds uncommitted work on no ref for disposal` sits
+in `describe('work git cannot see: derived from the worktrees, never curated')`. One
+of the three titles lost its word "live" on the way, because there is no live fleet
+in it any more. A `describe` block is the unit of sharing: `sharedFleet()` builds one
+fleet in a `beforeAll` and removes it in an `afterAll`, so a block pays for one build
+and a per-test build pays for one per test. The first version rebuilt per test and the
+full-suite run then spent its time in git spawns — thirty-odd per test, four workers at
+a time — which was enough to push the slowest of them past this file's own 15s budget
+and turn three passing tests into three timeouts. One build per block is safe because
+the fleet is immutable: no test in those blocks writes to a worktree, and
+`buildInventory` and `classify` take plain records and return new ones.
+
+**Non-vacuity is assertable now, and each of the three asserts it.** Every one of
+them states, in its own assertion, that the set it reasons about is non-empty and
+that every fact in it was read: the fleet is built to hold work on no ref reached
+through a MODIFIED file and through an UNTRACKED file, disposed by different
+clauses of `classify`, so a guard that saw only one of them would fail, and an
+`ahead` of `null` reds the block rather than emptying it. The live version could
+make neither assertion. Its set was whatever the operator happened to have, and on
+a `pull_request` CI checkout it was empty — so on the machine where a green tick is
+a claim about a merge, every assertion was satisfied by nothing at all.
+
+**The timings, for the file as it now stands.** 168 tests, and 9.62-9.72s over five
+consecutive isolated runs, all green, on this machine at load average 4.4. A spread and
+not a figure, because the fleet is real `git` worktrees and a busy host moves it. The
+whole `npm run test` is 340 files and 9100 tests in 47.94s, measured at the `pre-push`
+hook during the `git push` of `6b142f04`, with two further full-suite runs on a busier
+machine at 60.84s and 71.28s; the before figure on this machine load was 142.78s, with
+61.47s of it inside this one file.
+
+**The two drivers, kept apart, because neither is in the suite any more.** Git per
+worktree is fleet-dependent, and it is now paid against a fixed fleet of ten rather
+than against whatever the operator happens to have. Concurrent readers of one shared
+store — `chats.mjs`, `board.mjs` and `writes.mjs` each opening the operator's session
+database independently, with `chats.mjs`'s own module docstring naming two unindexed
+`LIKE` scans over `part` as the dominant cost — was the contention-dependent half.
+None of those three modules is imported by a test any more. `npm run inventory:verify`
+is the only reader of the session store that runs on demand, and it is not the same
+read: one indexed `WHERE id IN (...)` lookup against `session`, no `part` scan. It is
+a report — no hook and no CI job runs it, and its exit code is its own verdict about
+this machine rather than something that can block a push.
+
+**The historical record, kept because it is what the guard is built on.** On `main`
+at `3abe6ce0` with a 96-worktree fleet — not the 150 an earlier revision of this
+entry claimed — two of these cases timed out on different `npm run test` runs while
+the file passed alone. At 56 worktrees the same case passed alone unloaded at
+53180ms and failed inside a full suite at 76957ms with `Error: Test timed out in
+60000ms`; a third measurement showed 147s of wall clock against 24.85s of CPU,
+about 17% utilisation. That rules out a CPU- or process-bound cost, and because
+running `git` per worktree is itself I/O it does not exonerate the fleet either — an
+earlier version of this note used the 17% figure to refute the fleet explanation,
+which over-read it. Every figure in this paragraph describes a file that no longer
+exists in this shape, and they are the reason the current one cannot be: it does
+not read the machine at all.
 
 **Remaining verification:** the code review this change was merged without. Every
 review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
 was not an available substitute, and it was merged on the operator's decision with
 the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
-fixed two false claims in the new comments, but that is not the review.
+fixed two false claims in the new comments, but that is not the review. The rewrite
+that closed the failure mode above carries the same open item.
 
-## 15. Files
+## 15. The `currentDevicePixelRatio` SSR guard cannot be reached from any test in this suite
+
+**Status: OPEN. Not a flake — an unreachable assertion. No test asserts this branch.**
+
+`src/hooks/useDevicePixelRatio.ts` opens with
+`if (typeof window === 'undefined') return 1;`, and that guard is the only thing
+between a server render and a `ReferenceError`. Nothing in the suite reaches it.
+
+Under `vitest.config.ts`'s `environment: 'jsdom'` the global `window` is a
+**non-configurable accessor** on the vm context global — its own property descriptor
+reports `configurable: false` — so it can be neither redefined nor deleted. The
+obvious attempt, `vi.stubGlobal('window', undefined)`, throws
+`TypeError: Cannot redefine property: window` before the assertion under it runs. That
+failure was carried into this repository as a red test rather than diagnosed: the
+salvaged `unit-hardening` work asserted this case in
+`src/hooks/__tests__/useDevicePixelRatio.test.ts`, and it cannot pass in this
+environment at all.
+
+A Node-environment test file is also not a way out. `@vitest-environment node` loads
+`src/test/setup.ts` — the suite's global `setupFiles` — and that file spies on
+`HTMLCanvasElement.prototype` at module scope, so the run dies in setup before the test
+body is reached.
+
+**Actionable fix.** Declare a second Vitest project for DOM-free files, with
+`environment: 'node'` and its own (empty) `setupFiles`, and move the assertion there. It
+has to be a project rather than a per-file `environmentMatchGlobs`, which Vitest
+removed; and it has to carry its own `setupFiles` rather than inherit the shared one. The
+pair of files then pins the contract from both sides: the Node project shows the value is
+1 with no `window`, and the existing jsdom cases in `useDevicePixelRatio.test.ts` show
+the same function returns the live ratio when there is one. Either half alone is
+satisfiable by a function that is wrong in the other direction.
+
+## 16. Files
+
+- `src/hooks/useDevicePixelRatio.ts` — the `typeof window === 'undefined'` guard section 15 is about
+- `src/hooks/__tests__/useDevicePixelRatio.test.ts` — the file that carried the unreachable assertion
+- `src/test/setup.ts` — the module-scope `HTMLCanvasElement` spy that blocks a `@vitest-environment node` file
+- `vitest.config.ts` — the `environment` and `setupFiles` a second project would have to diverge from
 
 - `vitest.config.ts` — the `test` block whose `pool`, `maxWorkers` and `isolate` this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved

@@ -69,10 +69,11 @@ export const mobileToolGroups: MobileToolGroup[] = toolbarMap.flatMap((section, 
  * two disagreed for a revision: the sheet patched the figure and the bar did not, so the
  * "Rectangle" tile selected plain `shape`.
  *
- * The order is the one `DesktopHeader.handleToolSelection` uses, and deliberately not the
- * one `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
- * OUTGOING tool (`useApp.ts`), which reads the outgoing args, so patching the incoming
- * tool's args first would clobber the values the commit needs.
+ * The order is select-then-patch, and deliberately not the one `SidebarLeft.selectTool`
+ * uses. `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, which reads the
+ * outgoing args, so patching the incoming tool's args first would clobber the values the
+ * commit needs. The header used to carry a second copy of this ordering for its figure rows
+ * and no longer does: with the `Tools` menu gone it selects no figure tool at all.
  */
 export const makeSelectTool =
   (
@@ -87,3 +88,33 @@ export const makeSelectTool =
 /** The group the current tool belongs to, or `undefined` for an unregistered tool name. */
 export const findMobileToolGroup = (toolName: ToolName | undefined | null) =>
   toolName ? mobileToolGroups.find((group) => group.matchingTools.includes(toolName)) : undefined;
+
+/**
+ * The id of the mobile tool options panel, declared once for PRODUCTION code: the panel that
+ * renders it, the bar's toggle that names it, and the sheet's own header that names it too. The
+ * defect this prevents is a rename of one copy leaving the other two naming nothing -- exactly the
+ * class of bug the `aria-controls` gating exists to prevent, one level up.
+ *
+ * The tests, the e2e specs and `docs/FEATURES.md` still spell the literal out. That is deliberate
+ * and they must NOT be deduplicated into this constant: they are the rename net, because they
+ * assert the id from the other side, and a test that imported the constant would pass on a rename
+ * that broke the pairing.
+ */
+export const MOBILE_TOOL_OPTIONS_ID = 'mobile-tool-options';
+
+/**
+ * Whether the mobile tool options panel is actually in the DOM.
+ *
+ * `isToolSheetOpen` alone is NOT that: `MobileToolSheet` returns null before rendering anything when
+ * there is no tool name or no image, and `MobileBottomBar` is a SIBLING that stays mounted
+ * regardless. A trigger gating only on the open flag could therefore advertise an id nothing owns
+ * while claiming the panel was open. One predicate, used by the sheet's header, the bar's toggle and
+ * the sheet's own render, so the three cannot drift.
+ *
+ * The extra clauses are unreachable today — `SET_HAS_IMAGE` has no production writer and this
+ * trigger is `disabled={!hasImage}` — so this is a contract, and the case that pins it
+ * ('names the options panel only while the sheet can actually be mounted') says so rather than
+ * pretending to reproduce a user-visible bug.
+ */
+export const isMobileToolOptionsMounted = (isOpen: boolean, toolName: ToolName | undefined, hasImage: boolean) =>
+  isOpen && Boolean(toolName) && hasImage;

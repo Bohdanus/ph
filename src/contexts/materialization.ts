@@ -2,11 +2,17 @@ import type { BitmapSource, Pos, Size } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import type { DurableOperation } from './history-model.ts';
 import { AssetRegistry, type MaterializationLease } from './asset-registry.ts';
-import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
+import {
+  isDurableFoldOrigin,
+  isDurablePixelOperation,
+  type DurableReplayLayer,
+  type DurableReplayResult,
+} from './durable-replay.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
+import { MAX_AFFINE_COORDINATE, MAX_AFFINE_PIXELS } from './affine-transform.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentation,
@@ -71,11 +77,46 @@ function context2d(
   return context as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }
 
-function layerSize(layer: DurableReplayLayer): Size {
-  return {
-    width: layer.snapshot.pos.width,
-    height: layer.snapshot.pos.height,
-  };
+/**
+ * The box the ordered fold starts from, and the one precondition on a retained
+ * list that the fold cannot do without.
+ *
+ * A stroke's `rasterBounds` is ABSOLUTE — the frame the layer was padded into —
+ * while the box the source is padded FROM is not: it is the layer's own box at
+ * the moment the stroke was recorded, and a reposition recorded afterwards names
+ * only the box the layer moved TO. So the box the fold starts at is the one
+ * number a reposition cannot restate, and `replayDurableDocument` writes it at
+ * the head of the retained list as it folds, for exactly this purpose.
+ *
+ * Without it, a layer carrying a reposition after a pixel operation is padded
+ * from the snapshot's box and the stroke's frame is published with its content
+ * offset by the whole move — the frame right, the pixels in it wrong, by the size
+ * of the stroke's footprint. A list in that state cannot arrive from the reducer,
+ * so it is refused rather than published: this is the loud answer for a retained
+ * list assembled outside it, and the two halves of the rule live together here
+ * because they are the same rule.
+ */
+function foldStart(layer: DurableReplayLayer): { origin: { x: number; y: number }; size: Size } {
+  const head = layer.operations[0];
+  if (isDurableFoldOrigin(head)) {
+    const { x, y, width, height } = head.resize;
+    return { origin: { x, y }, size: { width, height } };
+  }
+  let sawPixelOperation = false;
+  for (const operation of layer.operations) {
+    if (isDurablePixelOperation(operation)) {
+      sawPixelOperation = true;
+      continue;
+    }
+    if (sawPixelOperation && operation.kind === 'reposition-layer') {
+      throw new Error(
+        `Layer ${layer.snapshot.id} retained a reposition after a pixel operation with no fold origin; ` +
+          'the box its first pixel operation ran against is unrecoverable, so it is refused rather than published at the wrong origin'
+      );
+    }
+  }
+  const { x, y, width, height } = layer.snapshot.pos;
+  return { origin: { x, y }, size: { width, height } };
 }
 
 function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
@@ -112,33 +153,38 @@ function presentationOperations(operations: readonly DurableOperation[]): Presen
  */
 async function sourceBitmap(
   layer: DurableReplayLayer,
+  size: Size,
   request: MaterializationRequest
 ): Promise<{ bitmap: BitmapSource; release: () => void; size: Size; borrowed: boolean }> {
   const { source } = layer.snapshot;
   if (source.kind === 'raster') {
     const lease = await request.assetRegistry.resolve(source.assetId, request.signal);
-    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer), borrowed: true };
+    return { bitmap: lease.bitmap, release: lease.release, size, borrowed: true };
   }
   if (source.kind === 'legacy-tool') throw new Error(`Legacy source ${source.toolName} requires an explicit adapter`);
-  const renderSize = layerSize(layer);
+  // The size the fold starts at, which is the size the source was rendered at and
+  // the size the first pixel operation was recorded against. It differs from the
+  // snapshot's once a reposition has followed a pixel operation, and padding a
+  // source of one size into a frame sized for the other is the placement this
+  // whole fold exists to keep right.
   if (source.kind === 'blank') {
-    const canvas = createCanvas(renderSize.width, renderSize.height);
+    const canvas = createCanvas(size.width, size.height);
     const ctx = context2d(canvas);
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
-    ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    return { bitmap: canvas, release: () => undefined, size: renderSize, borrowed: false };
+    ctx.fillRect(0, 0, size.width, size.height);
+    return { bitmap: canvas, release: () => undefined, size, borrowed: false };
   } else {
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
     if (!processor?.creator) throw new Error(`Source tool ${toolName} is not a deterministic creator`);
-    const sourceRenderSize = source.kind === 'vector' ? renderSize : source.size;
+    const sourceRenderSize = source.kind === 'vector' ? size : source.size;
     const args =
       source.kind === 'vector' && source.sourcePos.width > 0 && source.sourcePos.height > 0
         ? (scaleVectorArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
             x: 0,
             y: 0,
-            ...renderSize,
+            ...size,
           }) as unknown as ToolArgs)
         : (source.args as ToolArgs);
     const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
@@ -209,13 +255,14 @@ export async function materializeLayer(
     key,
     documentId: request.documentId,
     producer: async () => {
-      const source = await sourceBitmap(layer, request);
+      const start = foldStart(layer);
+      const source = await sourceBitmap(layer, start.size, request);
       let bitmap = source.bitmap;
       // Layer.pos is the current logical presentation size. The source size
       // remains intrinsic, while processors and final placement use the
       // current geometry, matching the runtime layer renderer.
-      let size = layerSize(layer);
-      let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
+      let size = start.size;
+      let origin = { x: start.origin.x, y: start.origin.y };
       let ownsBitmap = false;
 
       const replaceOwnedBitmap = (next: BitmapSource) => {
@@ -228,7 +275,45 @@ export async function materializeLayer(
         ownsBitmap = previous === next ? previousWasOwned : true;
       };
 
-      const renderRetainedSegment = async (operations: readonly DurableOperation[], force = false) => {
+      /**
+       * Bakes the retained operations collected so far into a surface, and leaves `origin`
+       * and `size` describing THAT surface.
+       *
+       * A published surface is BLITTED into the document — `composeDurableDocument()` and the
+       * frame path below both place it with `drawImage(bitmap, x, y, width, height)` — and a
+       * blit quantizes its destination. Two numbers therefore have to be the surface's own:
+       *
+       * 1. THE STAMP SIZE. `drawImage` with four numbers scales the source by
+       *    `width / source.width`, so stamping an evaluated un-rounded extent rescales a raster
+       *    that was already resampled into it. The legacy renderer draws the same retained
+       *    affine in ONE resample straight into the document; a stamped scale factor is a
+       *    second, and the two authorities then disagree on the pixels. `size` is read back off
+       *    the allocated surface, so the stamp is 1:1 by construction.
+       * 2. THE SURFACE ORIGIN. A destination pixel samples the surface at
+       *    `floor(x + k + 0.5)`, so a surface published at a fractional origin is not placed
+       *    where its ink is, and the resampled pixels it carries sit on a grid that is not the
+       *    document's — a sub-pixel phase shift on every edge, which `PixelContext` samples as a
+       *    whole source pixel. So a PUBLISHED surface starts on a whole document pixel, grows to
+       *    cover the presentation, and carries the sub-pixel remainder inside itself as
+       *    `surfaceOffset`.
+       *
+       * `placedOnDocumentGrid` is therefore set only for the segment this function PUBLISHES.
+       * The segment handed to a raster processor is not blitted; it is consumed at its own
+       * extent by `applyRasterTool`, whose legacy counterpart is `stageProcessorInput()` and
+       * which stages at the UN-snapped `evaluatePresentation` extent. Snapping that one would
+       * make the durable processor input a pixel wider than the legacy one, and a processor
+       * returns a raster the size of its input, so the two layers would land apart.
+       *
+       * The snap is a property of the layer alone, never of the frame this raster will be
+       * placed into: a document frame origin is a whole number of pixels (`documentFrameFromSize()`
+       * seeds `0, 0` and every crop edge is `Math.round`ed by `trimRect()`), so a whole-pixel
+       * surface origin lands on the document's grid for every frame a document can have.
+       */
+      const renderRetainedSegment = async (
+        operations: readonly DurableOperation[],
+        force = false,
+        placedOnDocumentGrid = false
+      ) => {
         if (!force && operations.length === 0) return;
         const evaluation = evaluatePresentation({
           position: { x: origin.x, y: origin.y, width: size.width, height: size.height },
@@ -236,19 +321,34 @@ export async function materializeLayer(
           operations: presentationOperations(operations),
           mode: 'layer-bounds',
         });
-        const output = createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
+        // The presentation's extent in document space, which is what a blit places.
+        const extentX = origin.x + evaluation.localBounds.x;
+        const extentY = origin.y + evaluation.localBounds.y;
+        // Flooring keeps the offset non-negative and the surface a superset of the ink, so a
+        // blurred edge inside `localBounds` is never clipped by the surface it is baked into.
+        const surfaceX = placedOnDocumentGrid ? Math.floor(extentX) : extentX;
+        const surfaceY = placedOnDocumentGrid ? Math.floor(extentY) : extentY;
+        const surfaceOffsetX = extentX - surfaceX;
+        const surfaceOffsetY = extentY - surfaceY;
+        const output = createCanvas(
+          evaluation.localBounds.width + surfaceOffsetX,
+          evaluation.localBounds.height + surfaceOffsetY
+        );
         const ctx = context2d(output);
         ctx.save();
         try {
           // The evaluator composes affine operations first, then applies the
           // joined filter string to that presentation.
-          drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
+          drawEvaluatedPresentation(ctx, bitmap, evaluation, {
+            kind: 'bounds',
+            surfaceOffset: { x: surfaceOffsetX, y: surfaceOffsetY },
+          });
         } finally {
           ctx.restore();
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
-        origin = { x: evaluation.bounds.x, y: evaluation.bounds.y };
-        size = { width: evaluation.bounds.width, height: evaluation.bounds.height };
+        origin = { x: surfaceX, y: surfaceY };
+        size = { width: output.width, height: output.height };
       };
 
       try {
@@ -256,6 +356,21 @@ export async function materializeLayer(
         for (const operation of layer.operations) {
           if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
 
+          if (operation.kind === 'reposition-layer') {
+            // A box patch, at the point in the timeline the timeline recorded it, with
+            // legacy replay's own precedence (`reposition` commits `resize ?? move`): a
+            // resize states the whole box, a move states the origin and leaves the size
+            // the fold has reached. It changes no pixel, so nothing is re-rendered — the
+            // operations around it read the box at the point they ran, which is the
+            // whole reason they are folded here rather than read off the snapshot.
+            if (operation.resize) {
+              origin = { x: operation.resize.x, y: operation.resize.y };
+              size = { width: operation.resize.width, height: operation.resize.height };
+            } else if (operation.move) {
+              origin = { x: operation.move.x, y: operation.move.y };
+            }
+            continue;
+          }
           if (operation.kind === 'apply-affine-transform' || operation.kind === 'apply-filter') {
             retainedOperations.push(operation);
             continue;
@@ -274,7 +389,41 @@ export async function materializeLayer(
           if (processor.replay.version !== operation.version) {
             throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
           }
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          const toolArgs = operation.args as ToolArgs;
+          // A tight legacy layer is widened only for this raster operation. The frame is part of
+          // the stroke args, so durable materialization uses the same origin and transparent
+          // padding as runtime replay instead of silently clipping an outward stroke.
+          if (isRasterStrokeArgs(toolArgs)) {
+            const requested = toolArgs.rasterBounds;
+            // The same cap the live staging path applies, for the same reason: a frame is sized
+            // from a stroke's extent, and an unallocatable one must be refused rather than
+            // allocated here as well. Both paths then decline the same edit, which is the only
+            // way their pixels stay in agreement.
+            const allocatable =
+              Number.isFinite(requested.width) &&
+              Number.isFinite(requested.height) &&
+              Math.ceil(requested.width) >= 1 &&
+              Math.ceil(requested.height) >= 1 &&
+              Math.abs(requested.x) <= MAX_AFFINE_COORDINATE &&
+              Math.abs(requested.y) <= MAX_AFFINE_COORDINATE &&
+              requested.width <= MAX_AFFINE_COORDINATE &&
+              requested.height <= MAX_AFFINE_COORDINATE &&
+              requested.width * requested.height <= MAX_AFFINE_PIXELS;
+            if (
+              allocatable &&
+              (requested.x !== origin.x ||
+                requested.y !== origin.y ||
+                requested.width !== size.width ||
+                requested.height !== size.height)
+            ) {
+              const widened = createCanvas(requested.width, requested.height);
+              context2d(widened).drawImage(bitmap, origin.x - requested.x, origin.y - requested.y);
+              replaceOwnedBitmap(await toOwnedBitmap(widened));
+              origin = { x: requested.x, y: requested.y };
+              size = { width: requested.width, height: requested.height };
+            }
+          }
+          const [processed, patch] = processor.imageProcessor({ bitmap, size })(toolArgs);
           if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
           replaceOwnedBitmap(processed);
           origin = {
@@ -291,7 +440,10 @@ export async function materializeLayer(
           size.width <= 0 ||
           size.height <= 0 ||
           area <= MAX_AFFINE_PIXELS;
-        await renderRetainedSegment(retainedOperations, requiresSurface);
+        // The segment this layer is PUBLISHED at: its raster is the one a blit places, so it is
+        // the one that has to be snapped and sized from its own surface. See
+        // `renderRetainedSegment()`.
+        await renderRetainedSegment(retainedOperations, requiresSurface, true);
         const bounds: Pos = { x: origin.x, y: origin.y, width: size.width, height: size.height };
         // The materialization cache owns every bitmap it publishes, and it
         // outlives this producer's lease on the source. Skipping the final

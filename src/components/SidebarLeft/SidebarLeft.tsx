@@ -15,12 +15,65 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import type { ToolName } from '../../contexts/tool-types.ts';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
+import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import { useDockDrag } from '../../hooks/useDockDrag.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
+
+import './SidebarLeft.scss';
+
+/**
+ * THE RULE: a tool is unimplemented exactly when its entry in `toolProcessors`
+ * (`src/tools/toolProcessors.ts`) carries `commit: 'unimplemented'`. That registry is the
+ * source of truth, so the set is DERIVED from it here rather than written out, and that is
+ * the whole point: a hand-maintained list is a second answer to a question the registry
+ * already answers, and it goes stale the moment a tool is implemented and nobody edits this
+ * file. A tile greyed out on the strength of a list, over a tool that now commits pixels, is
+ * a lie the rail cannot take back — and nothing in the app would report it, because the dim
+ * is a CSS class.
+ *
+ * There is a second, INDEPENDENT signal for the same fact: `implementation: 'placeholder'`
+ * in the description records under `src/tools/descriptions/`, which `ToolTooltip` already
+ * reads and prints as its status line. The registry is the one used here because it is the
+ * narrower claim — dimming a tile is a statement about BEHAVIOUR, where `placeholder` is a
+ * documentation status a tool could carry while committing pixels. Today both sets are the
+ * same seven names, the Pen family and Custom Shape, and they come from different files, so
+ * neither can quietly become the only one.
+ *
+ * `Object.keys` over the registry rather than a typed union, and `findToolProcessor` for the
+ * lookup, because it is the registry's own single lookup point: the pixel-free `eyedropper`
+ * is then absent from the set because no entry exists for it, rather than because an
+ * exception here has to name it.
+ */
+const UNIMPLEMENTED_TOOL_NAMES: ReadonlySet<ToolName> = new Set(
+  (Object.keys(toolProcessors) as ToolName[]).filter(
+    (toolName) => findToolProcessor(toolName)?.commit === 'unimplemented'
+  )
+);
+
+/** Whether the rail dims this tool. The rule and its source are {@link UNIMPLEMENTED_TOOL_NAMES}. */
+const isUnimplementedTool = (toolName: ToolName): boolean => UNIMPLEMENTED_TOOL_NAMES.has(toolName);
+
+/**
+ * The class a tile and a flyout item wear for a tool that does not work yet.
+ *
+ * The treatment itself — the `filter` and the two numbers in it — lives in
+ * `SidebarLeft.scss`, because a filter that long does not belong in a `className`
+ * expression, and because a theme decision belongs in the stylesheet where the theme is.
+ *
+ * VISUAL ONLY, and that is load-bearing rather than cautious. There is no `disabled`, no
+ * `aria-disabled`, no `pointer-events: none` and no early return anywhere near this class,
+ * because selecting a placeholder tool is what opens its placeholder options bar — the
+ * existing documented behaviour of the roster — and a dim that stopped responding would take
+ * that away while looking like a more polite version of the same button. The tooltip stays
+ * undimmed as well: it is portalled to `document.body` by `AnchoredOverlay`, so the reason
+ * the tile is dimmed is the one thing about it still drawn at full strength.
+ */
+const UNIMPLEMENTED_TOOL_CLASS = 'tool-unimplemented';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -28,8 +81,26 @@ const TOOL_BUTTON_BASE_CLASS =
 const TOOL_BUTTON_ACTIVE_CLASS =
   'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
 
+/**
+ * The inactive tile, and the two dark values that were measured rather than chosen.
+ *
+ * The rail is `dark:bg-gray-800` and the tile was `dark:bg-gray-900/60` over it, which composites
+ * to `#171f2d` against the rail's `#1f2937` — **1.13:1**. A tile is a target the user aims at, and a
+ * panel background is not a target, so the tile is now solid `dark:bg-gray-900` at 1.21:1 with its
+ * border lifted from `dark:border-gray-700` (1.42:1) to `dark:border-gray-600` (1.94:1).
+ *
+ * Why the border stops short of the 3:1 that WCAG 1.4.11 asks of a component boundary: that rule
+ * governs components identified ONLY by their boundary, and a tool tile is identified by its glyph,
+ * which is `dark:text-gray-200` on the new fill at **14.33:1**. A 3:1 border on all forty-odd tiles
+ * would draw a grid across the rail to satisfy a requirement this control is not subject to. The
+ * boundary still had to move, because 1.42:1 is close enough to the panel's own edge to read as an
+ * artefact rather than as a tile, which is a different defect from an inaccessible one.
+ *
+ * `TOOL_BUTTON_BASE_CLASS`'s own `text-gray-700` was 8.55:1 in light and needs nothing; only the two
+ * `dark:` values on this line moved.
+ */
 const TOOL_BUTTON_INACTIVE_CLASS =
-  'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
+  'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-600 dark:bg-gray-900 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
 /**
  * The one/two-column toggle's glyph, and WHICH WAY IT POINTS.
@@ -627,6 +698,30 @@ const SidebarLeft = () => {
     const tileLabel = identity?.label ?? primaryTool.label;
     const isOpen = openGroup === groupIndex;
 
+    /**
+     * The tool whose state decides whether this tile is dimmed, which is `group[0]` and NOT
+     * the promoted `primaryTool` above.
+     *
+     * A flyout group's tile wears the identity of its FIRST entry — that is the contract the
+     * comment above this function states, and the reason the Pen tile's icon is the Pen's — so
+     * that is the tool a user reads the tile as. Promotion changes which nested tool the tile
+     * currently selects, and the tile must not take its greyed-out state from a pick: the
+     * three-dots tile's whole `group` is an arbitrary set of whichever tools did not fit, so a
+     * dim there would flip as the window resized and would claim the More Tools button itself
+     * does not work. Which is also why `identity` is the signal to leave the tile alone
+     * entirely — that tile stands for no tool at all.
+     *
+     * The `figure` is resolved through `descriptionKeyFor` because the five shape entries all
+     * carry the name `shape` and differ only by figure, and this is the SAME resolution
+     * `ToolTooltip` applies one line below — so a tile is judged by the tool its tooltip
+     * describes, and cannot be dimmed for one tool while describing another. The Shape tile's
+     * first entry is the Rectangle, which commits pixels, so it is not dimmed even though its
+     * flyout carries the unimplemented Custom Shape.
+     */
+    const tileTool = identity === undefined ? group[0] : null;
+    const isTileUnimplemented =
+      tileTool !== null && isUnimplementedTool(descriptionKeyFor(tileTool.name, tileTool.figure));
+
     return (
       <li
         className="group relative"
@@ -656,7 +751,9 @@ const SidebarLeft = () => {
             // (both above) and must not also claim to be a pressed toggle for a tool the user
             // cannot see.
             aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
-            className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
+            className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
+              isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
+            }`}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
@@ -911,6 +1008,15 @@ const SidebarLeft = () => {
               {group.map((tool: ToolbarTool) => {
                 const FlyoutIcon = getToolIcon(tool);
                 const isSelected = isToolSelected(tool);
+                /**
+                 * The dim is per ITEM, not per group: a flyout is the one place a user
+                 * compares tools side by side, so this is where "which of these work" has to be
+                 * answerable without opening anything. The five shape figures and the Custom
+                 * Shape share one group and one tile, and they do not share an answer — the
+                 * figure is resolved exactly as a tile's is, so the Rectangle Tool row is
+                 * undimmed and the Custom Shape Tool row beside it is not.
+                 */
+                const isUnimplemented = isUnimplementedTool(descriptionKeyFor(tool.name, tool.figure));
 
                 return (
                   <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
@@ -950,7 +1056,7 @@ const SidebarLeft = () => {
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                      }`}
+                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}`}
                       onClick={() => {
                         // The three-dots tile is excluded: its identity is the tile's, so a
                         // pick must not promote anything to be its icon. Every other tile
@@ -966,6 +1072,21 @@ const SidebarLeft = () => {
                         closeFlyout();
                       }}
                       role="menuitemradio"
+                      /**
+                       * The reason, on the one control that has no tooltip to carry it. A
+                       * rail tile gets the line out of `ToolTooltip`, which reads the
+                       * description record; a flyout row is a bare `<button>` with no overlay
+                       * at all, so a native `title` is the whole of the component's existing
+                       * convention for saying something about a control — the colour swatches
+                       * and both rail-header buttons use it — and it costs one attribute.
+                       *
+                       * `aria-label` is left as the bare tool name, deliberately. The
+                       * accessible name is the tool's name in both cases, and lengthening it
+                       * would change what every `getByRole('menuitemradio', { name })` locator
+                       * in the suite and in `e2e/` matches; a `title` is an addition to the
+                       * description, not a rewrite of the name.
+                       */
+                      title={isUnimplemented ? `${tool.label} — not implemented yet` : undefined}
                       type="button"
                       data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
                     >
@@ -1114,12 +1235,26 @@ const SidebarLeft = () => {
           `availableHeight` (`toolbar-fit-store.ts`). The tools box's own chrome is the part
           the fit subtracts separately, and this change takes 14px off THAT one as well. */}
       <div className="flex h-full flex-col items-center py-2">
+        {/**
+         * The grip and the layout toggle share `text-gray-600`, and both were `text-gray-500`:
+         * **4.39:1** on the light rail's `bg-gray-100`, a 2.4% shortfall against the 4.5 that
+         * WCAG 1.4.3 asks of a glyph this size. `gray-600` is 6.86:1.
+         *
+         * The same FAILURE `HANDOFF.md` records for `SidebarRight`'s `«`/`»` — a `text-gray-500`
+         * control missing 4.5:1 — found again by measuring rather than by looking, and both controls
+         * here are fixed together because they are one row of chrome that must not disagree with
+         * itself. The four ratios are not the same, though: those are on `bg-gray-200` and
+         * `dark:bg-gray-700` and read 3.90:1 and 4.06:1, where these are on the rail's own
+         * `bg-gray-100` and `dark:bg-gray-800` and read 4.39:1 and 5.78:1. What the two records share
+         * is the utility and the shortfall, not the pair. `dark:text-gray-400`
+         * is 5.78:1 and was already past the floor, so only the light value moved.
+         */}
         <div className="mb-1 flex w-full shrink-0 items-center justify-between">
           {!isTablet && (
             <button
               {...railDrag.handleProps}
               aria-label="Move the toolbar to the other side"
-              className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              className="cursor-grab rounded p-1 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               // The keyboard path, and the reason this is a `<button>` at all rather than a
               // decorative `<div>`. Dragging needs a pointer; this control is announced, sits in
               // the tab order, and is next to a sibling that works on click — so a button with no
@@ -1149,7 +1284,7 @@ const SidebarLeft = () => {
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
               aria-pressed={isSingleColumn}
-              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              className="rounded p-1 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               onClick={() => {
                 setIsSingleColumn((current) => !current);
                 closeFlyout();

@@ -642,7 +642,7 @@ describe('drawLayersToCanvas', () => {
   });
 
   it('publishes a document whose layer is larger than the affine pixel cap', () => {
-    // 81 Mpx. `useApp.ts:159` caps nothing when a non-PSD image is opened, and this path sizes
+    // 81 Mpx. `setImageFromUpload()` caps nothing when a non-PSD image is opened, and this path sizes
     // no surface from the layer extent, so such a layer used to abort the WHOLE publish: its
     // own bounds exceeded MAX_AFFINE_PIXELS, and one refused layer took the document with it.
     const target = createTargetCanvas();

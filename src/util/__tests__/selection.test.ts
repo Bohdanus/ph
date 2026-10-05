@@ -14,9 +14,7 @@ import {
   createCommittedPolygonSelection,
   createCommittedRectangleSelection,
   distanceBetweenPoints,
-  drawClosedSelectionPath,
   drawSelectionAnchors,
-  drawSelectionOutline,
   findSelectionAnchorAtPoint,
   getActiveRectangularSelection,
   getActiveSelection,
@@ -401,13 +399,13 @@ type OverlayState = {
  *
  * `makeMockCtx`'s `save` and `restore` are bare `vi.fn()` spies that neither push nor pop
  * anything (`src/__tests__/canvas-mock.ts:22-23`), so a context built from it cannot state
- * what `CanvasRenderingContext2D` states: that the `restore()` closing
- * `drawSelectionOutline` gives the caller back the `globalAlpha` it had. Every method stays a
- * `vi.fn()`, so call counts and `invocationCallOrder` still read off it. The stack covers all
- * five members the outline writes, not just the one the assertions below read: a stack that
- * restored only the member under test would be the same mock-shaped lie, one field narrower.
- * The line dash rides along by pairing `setLineDash` with a `getLineDash` reading the same
- * list, because the shared mock's answers `[]` every time.
+ * what `CanvasRenderingContext2D` states: that the `restore()` closing `drawSelectionAnchors`
+ * gives the caller back the `globalAlpha` it had. Every method stays a `vi.fn()`, so call counts
+ * and `invocationCallOrder` still read off it. The stack covers all five members the anchors
+ * write, not just the one the assertions below read: a stack that restored only the member under
+ * test would be the same mock-shaped lie, one field narrower. The line dash rides along by pairing
+ * `setLineDash` with a `getLineDash` reading the same list, because the shared mock's answers
+ * `[]` every time.
  */
 function withStateStack(ctx: CanvasRenderingContext2D) {
   let lineDash: number[] = [];
@@ -440,166 +438,15 @@ function withStateStack(ctx: CanvasRenderingContext2D) {
   return ctx;
 }
 
-describe('drawClosedSelectionPath', () => {
-  it('strokes a closed path through every point', () => {
-    const ctx = makeMockCtx();
-    drawClosedSelectionPath(ctx, triangle());
-
-    expect(ctx.beginPath).toHaveBeenCalledTimes(1);
-    expect(ctx.moveTo).toHaveBeenCalledWith(2, 2);
-    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(1, 8, 2);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(2, 8, 8);
-    expect(ctx.closePath).toHaveBeenCalledTimes(1);
-    expect(ctx.stroke).toHaveBeenCalledTimes(1);
-  });
-
-  it('draws nothing for fewer than two points', () => {
-    const ctx = makeMockCtx();
-    drawClosedSelectionPath(ctx, []);
-    drawClosedSelectionPath(ctx, [{ x: 1, y: 1 }]);
-
-    expect(ctx.beginPath).not.toHaveBeenCalled();
-    expect(ctx.stroke).not.toHaveBeenCalled();
-  });
-});
-
-describe('drawSelectionOutline', () => {
-  it('draws the dashed path and one anchor per vertex for interactive tools', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection());
-
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(1, [6, 4]);
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(2, []);
-    expect(ctx.arc).toHaveBeenCalledTimes(3);
-    expect(ctx.arc).toHaveBeenCalledWith(5, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
-    expect(ctx.restore).toHaveBeenCalledTimes(1);
-  });
-
-  /**
-   * The outline is drawn into a DOCUMENT-sized overlay canvas that CSS displays with
-   * `object-contain`, so the context draws in document px while these constants are CSS px. Below
-   * a scale of 1 the undivided numbers are sub-pixel — the outline smears — which is what this
-   * pins: at scale 0.5 (document shown at half size) the dash must be 12 document px to stay the
-   * same 6 CSS px on screen.
-   */
-  it('divides its chrome by the contain scale so the outline is constant in CSS px', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection(), undefined, 0.5);
-
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(1, [12, 8]);
-    expect(ctx.arc).toHaveBeenCalledWith(5, 5, SELECTION_ANCHOR_RADIUS * 2, 0, Math.PI * 2);
-  });
-
-  it.each(['freehand-lasso', 'magic-wand'] as const)('omits anchors for %s', (sourceTool) => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ sourceTool }));
-
-    expect(ctx.stroke).toHaveBeenCalledTimes(1);
-    expect(ctx.arc).not.toHaveBeenCalled();
-    expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
-  });
-
-  it('resets globalAlpha to 1 before it strokes, inside a bracket that hands the caller its own back', () => {
-    // The reset is `resetOverlayAlpha` at `src/util/selection.ts:168` — `ctx.globalAlpha = 1` and
-    // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
-    // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
-    // asserting 1 on a fresh context would pass whether or not the reset existed.
-    //
-    // The context carries a real state stack, so both halves of the contract are read off the one
-    // call: the alpha DURING the draw, and the alpha the caller is left holding.
-    const ctx = withStateStack(makeMockCtx());
-    ctx.globalAlpha = 0.25;
-    let alphaAtStroke: number | undefined;
-    ctx.stroke = vi.fn(() => {
-      alphaAtStroke = ctx.globalAlpha;
-    });
-
-    drawSelectionOutline(ctx, selection());
-
-    // A reset placed after the path was stroked would leave the outline painted at 0.25 while
-    // still reading back as 1, so the value has to be sampled during the draw.
-    expect(alphaAtStroke).toBe(1);
-    // …and what the context is left holding is the CALLER's 0.25, not 1. The reset is inside
-    // the bracket, so the `restore()` at `selection.ts:175` undoes it on the way out; a 1 here
-    // would be a reset that outlived the bracket that was supposed to contain it.
-    expect(ctx.globalAlpha).toBe(0.25);
-
-    // The `save()` is the half `expect(ctx.restore).toHaveBeenCalledTimes(1)` cannot see, and the
-    // half the contamination it exists to contain is made of: the tool overlay is ONE 2D context
-    // for the whole session and every tool area is handed the same object
-    // (`selection.ts:151-155`), so without the `save()` at `:150` the `restore()` at `:175` pops
-    // an empty stack and `strokeStyle`, `fillStyle`, `lineWidth`, the dash and the alpha all
-    // stay written for the next tool to draw on.
-    expect(ctx.save).toHaveBeenCalledTimes(1);
-    // The ORDER carries the other half. A `resetOverlayAlpha(ctx)` hoisted ABOVE the `save()`
-    // makes all three calls in exactly this order and leaks the alpha just the same, so the call
-    // sequence alone cannot separate "reset inside the bracket" from "reset in front of it" —
-    // only the state read back above can.
-    expect(vi.mocked(ctx.save).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ctx.stroke).mock.invocationCallOrder[0]
-    );
-    expect(vi.mocked(ctx.stroke).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(ctx.restore).mock.invocationCallOrder[0]
-    );
-  });
-
-  it.each(['freehand-lasso', 'magic-wand'] as const)(
-    'resets globalAlpha on the anchor-less %s path too',
-    (sourceTool) => {
-      // These two skip the anchor loop, which is where an early return could have skipped the
-      // reset: the per-caller resets this retired were added one tool at a time and were
-      // missing the magic wand's, which is the whole reason the reset moved inside the function.
-      const ctx = withStateStack(makeMockCtx());
-      ctx.globalAlpha = 0.25;
-      let alphaAtStroke: number | undefined;
-      ctx.stroke = vi.fn(() => {
-        alphaAtStroke = ctx.globalAlpha;
-      });
-
-      drawSelectionOutline(ctx, selection({ sourceTool }));
-
-      expect(alphaAtStroke).toBe(1);
-      // The anchored path and this one share the bracket, so they share the post-condition: the
-      // caller gets its own 0.25 back, and the reset leaves with the bracket.
-      expect(ctx.globalAlpha).toBe(0.25);
-      expect(ctx.stroke).toHaveBeenCalledTimes(1);
-    }
-  );
-
-  it('skips inactive selections entirely', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ isActive: false }));
-
-    expect(ctx.beginPath).not.toHaveBeenCalled();
-    expect(ctx.save).not.toHaveBeenCalled();
-  });
-
-  it('skips degenerate selections with fewer than three points', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ points: [{ x: 0, y: 0 }] }));
-
-    expect(ctx.save).not.toHaveBeenCalled();
-  });
-
-  it('converts document points to canvas coordinates when a frame is supplied', () => {
-    const ctx = makeMockCtx();
-    const frame: DocumentFrame = { x: 100, y: 50, width: 500, height: 400 };
-    drawSelectionOutline(ctx, selection(), frame);
-
-    expect(ctx.moveTo).toHaveBeenCalledWith(-95, -45);
-    expect(ctx.arc).toHaveBeenCalledWith(-95, -45, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
-  });
-});
-
 describe('drawSelectionAnchors', () => {
   /**
-   * The anchors left the border when `drawSelectionOutline` gave it to the ants canvas, and they
-   * took the divisor with it. This canvas is DOCUMENT-sized and displayed with `object-contain`, so
-   * the context draws in document px while `SELECTION_ANCHOR_RADIUS` is CSS px: at scale 0.5 the
-   * undivided 5 is a 2.5 CSS px dot, and the grab target `findSelectionAnchorAtPoint` scales is a
-   * 4 CSS px circle around it. Asserting the scaled numbers is the only way this is a pin — a
-   * hardcoded 5 would read the same with no divisor in the file.
+   * The border belongs to the marching ants on their own canvas and nothing here draws it, so the
+   * divisor is these anchors' own to apply. This canvas is DOCUMENT-sized and displayed with
+   * `object-contain`, so the context draws in document px while `SELECTION_ANCHOR_RADIUS` is CSS px:
+   * at scale 0.5 the undivided 5 is a 2.5 CSS px dot, and the grab target
+   * `findSelectionAnchorAtPoint` scales is a 4 CSS px circle around it. Asserting the scaled
+   * numbers is the only way this is a pin — a hardcoded 5 would read the same with no divisor in
+   * the file.
    */
   it('divides the dot by the contain scale so it is constant in CSS px', () => {
     const ctx = makeMockCtx();
@@ -688,12 +535,6 @@ describe('drawSelectionAnchors', () => {
     // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
     // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
     // asserting 1 on a fresh context would pass whether or not the reset existed.
-    //
-    // This assertion moved here from `drawSelectionOutline` when the polygon tools gave their
-    // border to the marching-ants canvas. The anchors inherited the reset from the outline that
-    // used to draw the border and the handles in one pass, so it is the anchors that must still
-    // be legible on a shared context — a tool that left `globalAlpha` at 0.2 makes them
-    // invisible, which is the exact class the reset retired for the outline.
     const ctx = withStateStack(makeMockCtx());
     ctx.globalAlpha = 0.25;
     let alphaAtStroke: number | undefined;
@@ -1033,7 +874,8 @@ describe('canvas snapshot helpers', () => {
 
   describe('copyPolygonSelectionToCanvas', () => {
     it('clips to the polygon and reports the untrimmed polygon bounds', () => {
-      const result = copyPolygonSelectionToCanvas(makeMockCanvas(40, 40), triangle());
+      const source = makeMockCanvas(40, 40);
+      const result = copyPolygonSelectionToCanvas(source, triangle());
 
       expect(result!.pos).toEqual({ x: 2, y: 2, width: 6, height: 6 });
       expect(result!.bitmap.width).toBe(6);
@@ -1045,7 +887,12 @@ describe('canvas snapshot helpers', () => {
       expect(ctx.clip).toHaveBeenCalledTimes(1);
       expect(ctx.moveTo).toHaveBeenCalledWith(0, 0);
       expect(ctx.lineTo).toHaveBeenCalledTimes(2);
-      expect(ctx.drawImage).toHaveBeenCalledWith(expect.anything(), -2, -2);
+      // The SOURCE is named, not `expect.anything()`. `drawImage` reads from the canvas the
+      // caller handed in and writes into the one it just built; a rewrite that drew from the
+      // new canvas (drawing an empty bitmap onto itself) satisfies every other assertion here,
+      // because the mock records the call without rendering it.
+      expect(ctx.drawImage).toHaveBeenCalledWith(source, -2, -2);
+      expect(ctx.drawImage).not.toHaveBeenCalledWith(result!.bitmap, -2, -2);
     });
 
     it('clamps the bounds to the supplied image size', () => {
@@ -1230,7 +1077,11 @@ describe('canvas snapshot helpers', () => {
 
       // The padded canvas origin is (3,3), so the triangle occupies (1,1)-(11,11) in it
       // and its interior is the region above the (1,1)-(11,11) diagonal.
-      expect(alphaAt(8, 3)).toBeGreaterThan(0);
+      // (8,3) is five pixels above that diagonal and eleven inside the other two edges, so at
+      // a zero feather radius it is unambiguously INSIDE: `clamp(d + 0.5) * 255` saturates at
+      // 255. `toBeGreaterThan(0)` accepted any partial coverage, which is what a mask painted
+      // at the wrong alpha — or one feathered when the caller asked for none — would produce.
+      expect(alphaAt(8, 3)).toBe(255);
       expect(alphaAt(3, 8)).toBe(0);
       expect(alphaAt(0, 0)).toBe(0);
     });

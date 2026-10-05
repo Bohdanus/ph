@@ -202,7 +202,9 @@ describe('SidebarLeft rendering', () => {
 
     expect(hasFlyoutIndicator('reposition')).toBe(false);
     expect(hasFlyoutIndicator('crop')).toBe(false);
-    expect(hasFlyoutIndicator('eyedropper')).toBe(false);
+    // The `I` tile is a flyout since the Ruler joined it, so it carries the indicator. Its NAME is
+    // still `eyedropper`, because a tile's identity is its first entry.
+    expect(hasFlyoutIndicator('eyedropper')).toBe(true);
     // The Stamp flyout carries only the clone stamp for now: Photoshop's pattern and
     // patch stamps are not implemented, so the group has length 1 and stays plain.
     expect(hasFlyoutIndicator('clone-stamp')).toBe(false);

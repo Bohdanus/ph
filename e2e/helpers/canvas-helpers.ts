@@ -1,24 +1,3 @@
-import { type Page, type Locator, type TestInfo } from '@playwright/test';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import sharp from 'sharp';
-import {
-  type ClipOptions,
-  type CssBounds,
-  type CssBox as BoundingBox,
-  imageBoundsToCss,
-  viewportRectToPageRect,
-} from './screenshot-scale';
-
-/**
- * The coordinate shapes are declared once, in `./screenshot-scale`, and re-exported here
- * under the names the specs have always imported. This module is the suite's public
- * helper surface, so a spec still writes `import type { BoundingBox } from
- * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
- * which is what the three-way duplication this replaces was.
- */
-export type { ClipOptions, CssBounds, BoundingBox };
-
 /**
  * THE COORDINATE SPACES, and the tag every export below carries.
  *
@@ -49,6 +28,26 @@ export type { ClipOptions, CssBounds, BoundingBox };
  * feeds is `[PAGE]`. Two of the four spaces, one function, and the difference is the box
  * origin. `canvasRedrawClip`'s JSDoc is where that is stated.
  */
+import { type Page, type Locator, type TestInfo } from '@playwright/test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import sharp from 'sharp';
+import {
+  type ClipOptions,
+  type CssBounds,
+  type CssBox as BoundingBox,
+  imageBoundsToCss,
+  viewportRectToPageRect,
+} from './screenshot-scale';
+
+/**
+ * The coordinate shapes are declared once, in `./screenshot-scale`, and re-exported here
+ * under the names the specs have always imported. This module is the suite's public
+ * helper surface, so a spec still writes `import type { BoundingBox } from
+ * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
+ * which is what the three-way duplication this replaces was.
+ */
+export type { ClipOptions, CssBounds, BoundingBox };
 
 /**
  * A region found INSIDE a decoded capture. `[IMAGE]`, whole pixels, inclusive at both ends.
@@ -964,7 +963,11 @@ export type CanvasPixelPredicate = (screenshot: Buffer) => Promise<boolean>;
 export interface WaitForCanvasPixelsOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
-  /** Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within 10000ms". */
+  /**
+   * Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within
+   * 10000ms after 101 polls". The trailing poll count is appended by the loop, so this field
+   * carries only the subject.
+   */
   description?: string;
 }
 
@@ -989,6 +992,7 @@ export async function waitForCanvasPixels(
   const timeoutMs = options.timeoutMs ?? CANVAS_REDRAW_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
+  let polls = 0;
 
   for (;;) {
     // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
@@ -1005,13 +1009,23 @@ export async function waitForCanvasPixels(
     // it photographs is still a region. `onScreenClip` is a no-op when the region is already
     // in view, which is every poll in the current layout.
     const onScreen = await onScreenClip(page, clip);
+    polls++;
     try {
       if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
     } finally {
       await onScreen.restore();
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+      // The count is what makes this message diagnosable. Without it the operator sees a bare
+      // deadline and has to guess which of two very different failures produced it: a render
+      // that never arrived, or a loop that barely ran because each screenshot was slow. The
+      // two have opposite fixes, and the poll count separates them — compare it against
+      // `timeoutMs / pollIntervalMs`, which is the count a loop that always ran to the deadline
+      // produces. A count far below that means the polls themselves were expensive.
+      throw new Error(
+        `Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms ` +
+          `after ${polls} ${polls === 1 ? 'poll' : 'polls'}`
+      );
     }
     await page.waitForTimeout(pollIntervalMs);
   }
@@ -1250,6 +1264,18 @@ export interface CaptureRegion {
 }
 
 /**
+ * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
+ * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
+ */
+function isLetterboxCell(red: number, green: number, blue: number): boolean {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+  return (
+    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
+    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
+  );
+}
+
+/**
  * Device pixels per CSS pixel on each axis of a capture of `region`, from the decoded
  * image's own dimensions.
  *
@@ -1272,18 +1298,6 @@ export interface CaptureRegion {
  * `__tests__/canvas-stroke-analysis.unit.test.ts` carries the rule at a divergence no real
  * capture produces for exactly that reason.
  */
-/**
- * Whether a pixel IS one of the two letterbox cell colours, exactly. No tolerance, no band.
- * See `LETTERBOX_LIGHT_CELL` for why widening it collides with ink the suite declares.
- */
-function isLetterboxCell(red: number, green: number, blue: number): boolean {
-  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
-  return (
-    (red === LETTERBOX_LIGHT_CELL.red && green === LETTERBOX_LIGHT_CELL.green && blue === LETTERBOX_LIGHT_CELL.blue) ||
-    (red === LETTERBOX_DARK_CELL.red && green === LETTERBOX_DARK_CELL.green && blue === LETTERBOX_DARK_CELL.blue)
-  );
-}
-
 function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
     !(region.width > 0) ||

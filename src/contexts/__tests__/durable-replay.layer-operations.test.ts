@@ -17,6 +17,7 @@ import {
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   REMOVE_ACTION,
+  MERGE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SELECTION_ACTION,
 } from '../../util/constants.ts';
@@ -26,6 +27,7 @@ import type { TransformToolArgs } from '../../tools/transform.ts';
 const layerId = 'layer-1';
 const layer2Id = 'layer-2';
 const layer3Id = 'layer-3';
+const mergedLayerId = 'layer-merged';
 const initialSize = { width: 400, height: 300 };
 const baselineFrame = { x: 0, y: 0, width: 400, height: 300 };
 const layerPos = { x: 20, y: 30, width: 120, height: 80 };
@@ -110,7 +112,15 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
 
     const atTip = replayDurableDocument(document);
     expect(atTip.layers[layer2Id]).toBeDefined();
+    // The runtime rule's name and order, as one derivation: `createLayerSource`
+    // numbers a new layer at `maxLayerOrder(layers) + 1` and puts that same number
+    // in its name suffix, and the baseline's only layer sits at order 0. The
+    // converter used to bind the bare kind at `Math.max(-1, ...orders) + 1`, so
+    // this read 'Blank' at order 0 for the very first layer of a document.
     expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank 1');
+    // Non-discriminating here: over a non-empty stack the two rules both read
+    // `max + 1`. `create-layer numbers the first layer of an empty document at 1,
+    // not 0` below is what separates them.
     expect(atTip.layers[layer2Id]?.snapshot.order).toBe(1);
     expect(atTip.layers[layer2Id]?.operations).toHaveLength(0);
     expect(atTip.activeLayerId).toBe(layer2Id);
@@ -318,6 +328,127 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     const atResize = replayDurableDocument(document, 1);
     // After both move and resize, the snapshot reflects resize geometry.
     expect(atResize.layers[layerId]?.snapshot.pos).toEqual({ x: 10, y: 20, width: 300, height: 200 });
+    // And still nothing retained: a reposition that precedes the layer's first
+    // pixel operation is already in the snapshot the fold starts from, so a
+    // marker for it would ask the fold to re-assert the box it was handed. The
+    // converse — a reposition AFTER a pixel operation — is the case that needs
+    // one, and it is what the next test pins.
+    expect(atResize.layers[layerId]?.operations).toHaveLength(0);
+
+    void registry;
+  });
+
+  it('retains a reposition that follows a raster operation, in order, and materializes the layer there', async () => {
+    // The stroke republishes the layer at its own frame, so from that commit the
+    // fold — not the snapshot — holds the box, and a move after it is a move of
+    // a box the snapshot has never been told about. The retained list is
+    // therefore ordered `[fold origin, stroke, move]`, and the origin is the box
+    // the stroke was drawn over: no entry in the document states it, and it is
+    // the one number a reposition cannot restate.
+    const registry = new AssetRegistry();
+    const start = { x: 20, y: 30, width: 120, height: 80 };
+    const strokeFrame = { x: 0, y: 10, width: 160, height: 120 };
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer(layerId, start) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'stroke',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: {
+            toolName: 'blur',
+            radius: 4,
+            points: [{ x: 60, y: 60 }],
+            rasterBounds: strokeFrame,
+          },
+        },
+        { id: 'move', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 40, y: 40 } } },
+      ],
+      { documentId: 'stroke-then-move', registry }
+    ).document;
+
+    const layer = replayDurableDocument(document).layers[layerId];
+    expect(layer?.operations.map((operation) => operation.kind)).toEqual([
+      'reposition-layer',
+      'apply-raster-processor',
+      'reposition-layer',
+    ]);
+    // The head marker is the box before the stroke, verbatim, and it is derived:
+    // the document carries no such entry.
+    expect(layer?.operations[0]).toEqual({ kind: 'reposition-layer', layerId, resize: start });
+    // The snapshot is still the pre-stroke box at the moved origin — a stroke
+    // never rewrote it, and it is the fold that publishes the frame.
+    expect(layer?.snapshot.pos).toEqual({ x: 40, y: 40, width: 120, height: 80 });
+
+    const materialized = await materializeLayer(layer!, {
+      documentId: 'stroke-then-move',
+      baselineAssetGeneration: registry.getDocumentGeneration('stroke-then-move'),
+      operationSetRevision: document.durableRevision,
+      assetRegistry: registry,
+    });
+    // What legacy replay publishes for the same history: the stroke's frame
+    // `{0,10,160,120}`, moved to `{40,40}` and keeping the frame's size, because
+    // a reposition's `move` states the origin and inherits the size.
+    expect(materialized.bounds).toEqual({ x: 40, y: 40, width: 160, height: 120 });
+    materialized.lease.release();
+    registry.shutdown();
+  });
+
+  it('retains every reposition after a pixel operation, and the fold origin only once', () => {
+    const registry = new AssetRegistry();
+    const start = { x: 20, y: 30, width: 120, height: 80 };
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer(layerId, start) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'stroke',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: {
+            toolName: 'blur',
+            radius: 4,
+            points: [{ x: 60, y: 60 }],
+            rasterBounds: { x: 0, y: 10, width: 160, height: 120 },
+          },
+        },
+        { id: 'move-1', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 40, y: 40 } } },
+        { id: 'move-2', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 10, y: 10 } } },
+      ],
+      { documentId: 'two-moves', registry }
+    ).document;
+
+    const layer = replayDurableDocument(document).layers[layerId];
+    // One origin, two moves, in timeline order. A second origin would re-assert
+    // the pre-stroke box in the middle of the list and move the layer back.
+    expect(layer?.operations.map((operation) => operation.kind)).toEqual([
+      'reposition-layer',
+      'apply-raster-processor',
+      'reposition-layer',
+      'reposition-layer',
+    ]);
+    expect(layer?.operations[0]).toEqual({ kind: 'reposition-layer', layerId, resize: start });
+    expect(layer?.operations[2]).toMatchObject({ move: { x: 40, y: 40 } });
+    expect(layer?.operations[3]).toMatchObject({ move: { x: 10, y: 10 } });
+    // The LAST position assignment is the snapshot's, as it always was.
+    expect(layer?.snapshot.pos).toEqual({ x: 10, y: 10, width: 120, height: 80 });
 
     void registry;
   });
@@ -512,6 +643,99 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
 
     registry.shutdown();
   });
+
+  it('create-layer numbers the first layer of an empty document at 1, not 0', () => {
+    // The `order` half only diverges on an EMPTY fold. Over a non-empty stack
+    // both rules read `max + 1` — `Math.max(-1, ...orders) + 1` and
+    // `maxLayerOrder(layers) + 1` cannot tell each other apart when there is an
+    // order to fold — so the create-layer test above pins the number in the name
+    // while leaving `order` itself unproved. This baseline carries no layers,
+    // which is the case that separates them, and it is the first layer of every
+    // document opened empty.
+    const registry = new AssetRegistry();
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: { layers: {}, size: initialSize, frame: baselineFrame },
+        },
+        { id: 'new-layer', actionName: NEW_LAYER_ACTION, layerId: layer2Id, layerSource: blankLayerSource(layerPos) },
+      ],
+      { documentId: 'empty-baseline-test', registry }
+    ).document;
+
+    const atTip = replayDurableDocument(document, 0);
+    expect(atTip.layers[layer2Id]?.snapshot.order).toBe(1);
+    expect(atTip.layers[layer2Id]?.snapshot.name).toBe('Blank 1');
+
+    registry.shutdown();
+  });
+
+  it('merge-document names and places its result by the runtime rule, against the pre-merge stack', () => {
+    // The merge arm derives the result layer from the layer set that is about to
+    // be collapsed away, which is what `replayHistory`'s merge arm hands
+    // `createLayer` — so a result folded against an empty set would number itself
+    // off the wrong stack. Order 1 is the pre-merge maximum here, so the runtime
+    // rule yields 2: an empty fold would have yielded 1, and the bare-kind
+    // converter yielded the order but not the number in the name.
+    const registry = new AssetRegistry();
+    const top = createBaselineLayer(layer3Id);
+    top.order = 1;
+
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer(), [layer2Id]: createBaselineLayer(layer2Id), [layer3Id]: top },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        { id: 'merge', actionName: MERGE_ACTION, layerId: mergedLayerId, layerSource: blankLayerSource(layerPos) },
+      ],
+      { documentId: 'merge-name-test', registry }
+    ).document;
+
+    const atMerge = replayDurableDocument(document, 0);
+    expect(atMerge.layers[mergedLayerId]?.snapshot.name).toBe('Blank 2');
+    expect(atMerge.layers[mergedLayerId]?.snapshot.order).toBe(2);
+    // Only the result survives, and the removal set is every layer it replaced.
+    expect(Object.keys(atMerge.layers)).toEqual([mergedLayerId]);
+
+    registry.shutdown();
+  });
+
+  it('create-layer truncates a long image name through the runtime rule', () => {
+    // `getNameFromSource` ellipsifies an image name before the order suffix is
+    // appended. The converter used to bind the untruncated `source.name`, so the
+    // shadow named a layer the document could never have named.
+    const registry = new AssetRegistry();
+    const { bitmap, close } = createOwnedBitmap(12, 8);
+    const longName = 'x'.repeat(40);
+
+    const document = convert(registry, {
+      id: 'image-layer',
+      actionName: NEW_LAYER_ACTION,
+      layerId: layer2Id,
+      layerSource: {
+        kind: 'image',
+        bitmap,
+        name: longName,
+        pos: { ...layerPos },
+      },
+    });
+
+    const atTip = replayDurableDocument(document);
+    expect(atTip.layers[layer2Id]?.snapshot.name).toBe(`${'x'.repeat(17)}... 1`);
+
+    registry.shutdown();
+    close();
+  });
 });
 
 describe('materialization raster processor failure handling (P0.3 continuation)', () => {
@@ -541,6 +765,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 100, height: 100 },
+        frame: { ...baselineFrame },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId,
@@ -624,6 +849,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 0, height: 0 },
+        frame: { ...baselineFrame },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId,

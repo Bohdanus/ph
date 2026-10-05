@@ -3,7 +3,7 @@ import { useStore, type StoreMetadataUpdates } from '../contexts/StoreContext.ts
 import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
 import type { NewDocumentBlankParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
-import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
+import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/file-types.ts';
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
@@ -76,8 +76,22 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: NewDocumentBlankParams) {
-    handleImageCreate(params.size);
+    // Same ordering as `setImageFromUpload`'s raster arm, and for the same reason. A blank document's
+    // layer is built synchronously, so there is no microtask boundary here — but
+    // `createBlankLayer` throws from `createLayerSource` when either extent is ZERO, and a canvas
+    // already resized to that extent is a document-sized canvas around a document that was never
+    // adopted. Sizing the canvas after the layer exists cannot be wrong in the other direction:
+    // nothing between the two reads it.
+    //
+    // That zero is a CONTRACT guard rather than a live user path, and worth saying so plainly: no
+    // current caller PRODUCES a zero. `NewImageDialog` clamps its preset and DPI inputs with
+    // `Math.min(10000, Math.max(1, n)) || 1` and submits through a real `<form>` whose `min="1"`
+    // blocks zero — but its `onChange` is `setWidth(parseInt(value) || 0)`, so clearing the field DOES
+    // put zero into state and only native constraint validation stands between that and this throw.
+    // Change that submit to `type="button"` and the path opens. `DEFAULT_BLANK_IMAGE` is a fourth
+    // producer that does not clamp at all; it holds by VALUE rather than by mechanism.
     createBlankLayer({ ...params }, true);
+    handleImageCreate(params.size);
   }
 
   async function setImageFromUpload(data: ImageUploadResponse) {
@@ -109,11 +123,6 @@ export const useApp = (): UseAppType => {
       );
       setRefValue(currentArgsRef, {} as typeof currentArgsRef.current);
       clearPreviewLayers?.();
-      for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
-        if (ref.current) {
-          resizeCanvas(ref.current, size.width, size.height);
-        }
-      }
       dispatch({
         type: 'REPLACE_DOCUMENT',
         payload: {
@@ -153,12 +162,46 @@ export const useApp = (): UseAppType => {
           .map((layer) => (layer.source?.kind === 'image' ? layer.source.bitmap : null))
           .filter((bitmap): bitmap is BitmapSource => bitmap !== null)
       );
+      // The three surfaces take the imported size only AFTER the replacement is published, which is
+      // the same rule the raster arm below follows. Resizing before the dispatch would leave all
+      // three at the incoming file's extent with nothing published if either the dispatch or the
+      // bitmap adoption threw.
+      //
+      // Scoped deliberately: this covers those TWO throw sites and not every one. `resizeCanvas` can
+      // itself throw — assigning `canvas.width` past the browser's maximum canvas size raises
+      // `IndexSizeError`, and nothing upstream caps a PSD's extent (`useLayer`'s `MAX_DOCUMENT_FRAME_SIDE`
+      // says so outright). Under this order that throw leaves the document PUBLISHED with the three
+      // surfaces still at the outgoing extent, where the old order left them at the incoming extent
+      // with nothing published. The class is reshaped rather than removed: `Main` resizes both
+      // overlays from the published `totalSize` on its next pass, so the store and the document agree
+      // and only the workspace canvas lags. Untested, because provoking it needs a PSD past the
+      // browser's ceiling.
+      for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
+        if (ref.current) {
+          resizeCanvas(ref.current, size.width, size.height);
+        }
+      }
       return;
     }
     const { image } = data;
     const size = { width: image.width, height: image.height };
-    handleImageCreate(size);
+    // The canvas takes the image's size only AFTER the replacement has been published.
+    // `createLayerFromBitmap` awaits `immutableRaster` before it dispatches, so a decode failure
+    // rejects there with nothing published — and a canvas already resized to the incoming file's
+    // geometry is a document-sized canvas wrapped around the outgoing document, which then renders
+    // at the wrong extent until something redraws it. That FAILURE PATH is the whole reason, and
+    // it is what the tests here prove.
+    //
+    // It is deliberately NOT justified by a visible wrong-extent frame on the success path. That
+    // was measured headlessly, per frame, by comparing the canvas backing store against the
+    // published `data-fit-document-*` while opening a 4000x3000 PNG: the current order disagrees on
+    // one frame, the old order on two, and neither is sustained long enough to be worth a paint.
+    // `immutableRaster`'s `createImageBitmap` on an already-decoded `HTMLImageElement` resolves
+    // inside the same frame. The PSD arm above now orders it the same way, and for the same reason:
+    // it resolves every `immutableRaster` first and sizes all three surfaces only after
+    // `REPLACE_DOCUMENT` and `adoptLayerBitmaps` have both run.
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    handleImageCreate(size);
     _setFileName(fileName);
   }
 

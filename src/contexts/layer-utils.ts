@@ -126,6 +126,16 @@ type LayerSourceParams = {
   source: LayerSource;
 };
 
+/**
+ * The only part of a layer set that naming and placement read.
+ *
+ * One number — `maxLayerOrder(layers)` — decides both, and nothing else in
+ * `createLayerSource` looks at the layers it was given. Typing the parameter by that
+ * one field rather than by `LayersRecord` is what lets a caller holding durable
+ * snapshots instead of runtime `Layer` objects reach the rule at all, which is the
+ * whole point: the durable converter has no runtime `Layer` to hand, and a rule it
+ * could not call is a rule it re-derives.
+ */
 export type LayerOrderRecord = Record<LayerId, { order: number }>;
 
 /**
@@ -165,6 +175,22 @@ function getNameFromSource(source: LayerSource) {
   }
 }
 
+/**
+ * The one derivation of a created layer's `name` and `order`.
+ *
+ * Both come from a single number — `maxLayerOrder(layers) + 1` — so they cannot be
+ * derived separately without becoming a third rule: a caller that takes `name` from
+ * here and folds `order` itself re-introduces the disagreement this exists to end.
+ * An empty layer set yields `1`, which is what makes the first layer of a document
+ * `"<name> 1"` rather than `"<name>"` at order `0`.
+ *
+ * It is exported, and separate from `createLayerSource`, because the durable
+ * converter must derive the same pair from a set of durable snapshots and has no
+ * runtime layer to build. Reaching the rule through the factory would drag its
+ * rasterisation with it — an `OffscreenCanvas` per blank source, a creator tool's
+ * `imageProcessor` per tool source — and a conversion that wants two fields would
+ * start failing on args no conversion ever needed.
+ */
 export function deriveLayerNameAndOrder(layers: LayerOrderRecord, source: LayerSource) {
   const order = maxLayerOrder(layers) + 1;
   return { name: `${getNameFromSource(source)} ${order}`, order };

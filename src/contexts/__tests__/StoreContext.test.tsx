@@ -166,7 +166,13 @@ describe('StoreContext durable diagnostic contract', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Commit unsupported edit' }));
 
-    expect(screen.getByTestId('durable-status').textContent).toBe('unavailable');
+    // `current` alongside an `error` diagnostic, not `unavailable`: the entry that
+    // did not convert is absent from the document the store holds and the
+    // diagnostic is what says so. Before the diagnostic partition this verdict was
+    // `unavailable` with no document at all, so the shape a reader of the store has
+    // to understand was a status that meant "discard everything" rather than
+    // "present, and here is what it is missing".
+    expect(screen.getByTestId('durable-status').textContent).toBe('current');
     const diagnostics: unknown = JSON.parse(screen.getByTestId('durable-diagnostics').textContent ?? '[]');
     expect(Array.isArray(diagnostics)).toBe(true);
     expect(diagnostics).toHaveLength(1);
@@ -202,6 +208,55 @@ describe('StoreContext durable diagnostic contract', () => {
     expect('presentationMaterialization' in store).toBe(false);
     expect('getReplayRevisionToken' in store).toBe(false);
     expect(Object.keys(store)).toEqual(expect.not.arrayContaining(['replayCoordinator']));
+  });
+});
+
+describe('StoreContext action coverage', () => {
+  it('keeps the public action that writes no store field a no-op with a named arm', () => {
+    const captured: { store: ReturnType<typeof useStore>[0] | null } = { store: null };
+    const Capture = () => {
+      const [store, dispatch] = useStore();
+      useEffect(() => {
+        captured.store = store;
+      }, [store]);
+      return (
+        <div>
+          <div data-testid="coverage-state">
+            {`${store.hasImage}:${store.hasUnsavedChanges}:${Object.keys(store.layers).length}:${store.durableStatus}`}
+          </div>
+          <button onClick={() => dispatch({ type: 'SET_ORIGINAL_IMAGE', payload: true })}>Set original image</button>
+          <button onClick={() => dispatch({ type: 'SET_HAS_IMAGE', payload: true })}>Set has image</button>
+        </div>
+      );
+    };
+
+    render(
+      <StoreProvider>
+        <Capture />
+      </StoreProvider>
+    );
+
+    const before = screen.getByTestId('coverage-state').textContent;
+    const beforeStore = captured.store;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set original image' }));
+
+    // `SET_ORIGINAL_IMAGE` is in the public union with no production writer and no
+    // `StoreData` field to write, so its behaviour is the no-op the reducer's
+    // untyped `default` used to give it. It now has a named arm saying so, which
+    // is what lets the switch carry a `never` guard instead of swallowing every
+    // future action type the same way.
+    expect(screen.getByTestId('coverage-state').textContent).toBe(before);
+    // Identity, not just equality: the arm returns the SAME record rather than a
+    // copy, so the dispatch is not even a state change React has to reconcile.
+    expect(captured.store).toBe(beforeStore);
+
+    // And the reducer is still reducing. A swallowed dispatch, a case label nested
+    // inside another arm, or a `default` that fell into the next case would all
+    // leave this one landing while `SET_ORIGINAL_IMAGE` still appeared to no-op.
+    fireEvent.click(screen.getByRole('button', { name: 'Set has image' }));
+
+    expect(screen.getByTestId('coverage-state').textContent).toBe('true:false:0:unavailable');
   });
 });
 

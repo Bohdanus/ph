@@ -32,6 +32,15 @@ class ImageStub {
   onload: HTMLImageElement['onload'] = null;
   onerror: HTMLImageElement['onerror'] = null;
   src = '';
+  /**
+   * A real decode always reports a positive natural size, and no browser reports it as 0 once
+   * `onload` has fired — but a blob URL carries no geometry a stub could read it from, so a test
+   * that exercises a branch which consults it has to say what the geometry is. `loadIcoFile`'s
+   * PNG-entry branch does consult it, and refuses an unreadable one, so leaving these at 0 makes
+   * that branch's ceiling tests fail here rather than pass for the wrong reason.
+   */
+  naturalWidth = 0;
+  naturalHeight = 0;
   constructor() {
     recordImage(this as unknown as HTMLImageElement);
   }
@@ -240,6 +249,9 @@ describe('ICO encode/load round trip through the real container', () => {
 
     const pending = loadIcoFile(encoded);
     await vi.waitFor(() => expect(imageStub).not.toBeNull());
+    // The geometry the canvas was encoded at: `loadIcoFile` reads it off the element, and it is
+    // the same 48×32 the directory entry below declares.
+    Object.assign(imageStub!, { naturalWidth: 48, naturalHeight: 32 });
     imageStub!.onload!.call(imageStub!, new Event('load'));
     await expect(pending).resolves.toBe(imageStub);
 
@@ -319,11 +331,20 @@ describe('document loader dispatch to the real codecs', () => {
 
     const pending = loadDocumentFile(new File([encoded], 'favicon.ico', { type: 'application/octet-stream' }));
     await vi.waitFor(() => expect(imageStub).not.toBeNull());
+    Object.assign(imageStub!, { naturalWidth: 16, naturalHeight: 16 });
     imageStub!.onload!.call(imageStub!, new Event('load'));
     const imported = await pending;
 
     expect(imported).toMatchObject({ fileName: 'favicon.ico' });
     expect('image' in imported).toBe(true);
     expect(vi.mocked(URL.createObjectURL)).toHaveBeenCalledTimes(1);
+    // The whole chain, not just the count: the Blob the loader hands the browser has to be the
+    // exact PNG `encodeIco` embedded, so a re-wrap or a re-slice anywhere between them shows up
+    // here. `putImageData` staying empty is the other half — the entry is a PNG, so a
+    // container that fell through to `decodeBmpIcon` would have rasterised instead.
+    const [source] = vi.mocked(URL.createObjectURL).mock.calls[0] as [Blob];
+    expect(source.type).toBe('image/png');
+    expect(Array.from(new Uint8Array(await source.arrayBuffer()))).toEqual(Array.from(png));
+    expect(putImageData).not.toHaveBeenCalled();
   });
 });

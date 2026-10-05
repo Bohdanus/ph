@@ -6,20 +6,35 @@ import { PanelLayoutProvider } from '../../../contexts/PanelLayout.tsx';
 import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 
 /**
- * The `Window` menu, which exists for one command.
+ * The `Window ▸ Workspace` submenu, which exists for one command.
  *
- * "Select Window > Workspace > Reset to restore the last arrangement you had before a panel
- * went missing." (https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html)
+ * "Select Window > Workspace > Reset Essentials to return to the default layout."
+ * (https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/move-panels.html)
  *
  * A dock whose panels, order, width and side all survive a reload needs the documented way back
  * from a layout the user cannot live with — a dock dragged to 40px on a trackpad, a rail thrown
  * across the window. Without it, `localStorage` is a one-way door: the only recovery is clearing
  * site data, which also takes the theme with it.
  *
- * The menu is in `Window` rather than `Edit` or `Tools` because that is where Photoshop keeps
+ * The menu is in `Window` rather than `Edit` or a tool menu because that is where Photoshop keeps
  * every panel command, and a clone that files it elsewhere is a clone whose muscle memory is
- * wrong.
+ * wrong. It is one level deeper than it used to be here for the same reason: Adobe puts the
+ * workspace commands inside `Workspace`, and a command floating on its own where Adobe puts two
+ * levels of submenu above it teaches the wrong place to look.
+ *
+ * Every case below opens THREE things, and the middle one is the point — a two-click version of
+ * this suite would pass unchanged against a `Window` menu with no `Workspace` submenu at all.
  */
+
+/** `Window`, then `Workspace`, which is where Adobe keeps it. */
+function openWorkspace() {
+  act(() => {
+    fireEvent.click(screen.getByTestId('header-window-menu-button'));
+  });
+  act(() => {
+    fireEvent.click(screen.getByTestId('window-menu-workspace-button'));
+  });
+}
 
 const { resetWorkspace } = vi.hoisted(() => ({ resetWorkspace: vi.fn() }));
 
@@ -94,52 +109,120 @@ describe('DesktopHeader Window menu', () => {
     render(<DesktopHeader />, { wrapper });
 
     const windowMenu = screen.getByTestId('header-window-menu-button');
-    // In the same `<ul>` as File, Tools and Edit, not nested inside one of them.
+    // In the same `<ul>` as File, Edit and Image, not nested inside one of them.
     expect(windowMenu.parentElement?.tagName).toBe('LI');
     expect(windowMenu.parentElement?.parentElement).toBe(
       screen.getByTestId('header-file-menu-button').parentElement?.parentElement
     );
   });
 
-  it('keeps its command hidden until the menu is opened', () => {
+  it('keeps its command behind the Workspace submenu, and the command hidden until then', () => {
     render(<DesktopHeader />, { wrapper });
 
-    expect(screen.queryByTestId('window-menu-reset-workspace-button')).toBeNull();
+    // Before anything is clicked, and again after the FIRST click: the command is absent at
+    // both depths, and neither absence is vacuous because each is a different list — the
+    // whole host menu is unmounted before the click, and only the `Workspace` submenu is
+    // unmounted after it.
+    expect(screen.queryByTestId('window-menu-workspace-reset-essentials-button')).toBeNull();
+    // The button that opens the menu says so in its own attributes, not only by the presence
+    // of a dropdown: `aria-expanded` is what a screen reader announces, and it is the only
+    // thing that changes between the two states here.
+    expect(screen.getByTestId('header-window-menu-button')).toHaveAttribute('aria-expanded', 'false');
 
     act(() => {
       fireEvent.click(screen.getByTestId('header-window-menu-button'));
     });
-    expect(screen.getByTestId('window-menu-reset-workspace-button')).toBeInTheDocument();
+    // `Window` opens, and `Reset Essentials` is NOT on it. This is the half a two-click suite
+    // cannot see: the command being reachable is not the claim, its DEPTH is.
+    expect(screen.getByTestId('header-window-menu')).toBeInTheDocument();
+    expect(screen.getByTestId('header-window-menu-button')).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByTestId('window-menu-workspace-reset-essentials-button')).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('window-menu-workspace-button'));
+    });
+    expect(screen.getByTestId('window-menu-workspace-reset-essentials-button')).toBeInTheDocument();
+  });
+
+  it('files one entry in `Window`, and one built command under `Workspace`, under the documented names', () => {
+    render(<DesktopHeader />, { wrapper });
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('header-window-menu-button'));
+    });
+
+    // The label is the contract with the user, and a `data-testid` is not: nothing in this
+    // file would notice the command being renamed to "Clear Workspace" or "Reset Panels",
+    // which is a different promise than the documented "Workspace > Reset Essentials". And the
+    // COUNT is asserted so a second command filed under `Window` — by accident or by design —
+    // fails here rather than being noticed by somebody reading the menu in a screenshot.
+    //
+    // Two levels, so two counts: `Window` itself carries exactly one entry, and that entry is
+    // the `Workspace` submenu. The salvaged version of this test counted one button and one
+    // `li` in the host menu, which was the whole menu when the command lived there directly.
+    const menu = screen.getByTestId('header-window-menu');
+    expect(menu.querySelectorAll('li')).toHaveLength(1);
+    expect(menu.querySelectorAll('button')).toHaveLength(1);
+    expect(screen.getByTestId('window-menu-workspace-button')).toHaveTextContent('Workspace');
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('window-menu-workspace-button'));
+    });
+
+    // Inside `Workspace` there are three rows, and only one of them is BUILT: an unbuilt row
+    // renders a `disabled` button, so "one command" is the count of enabled ones, not of
+    // buttons. Counting all of them would pass just as happily if the command were deleted
+    // and the two unbuilt rows were all that remained.
+    const workspace = screen.getByTestId('window-menu-workspace');
+    expect(workspace.querySelectorAll('li').length).toBeGreaterThan(1);
+    const enabled = [...workspace.querySelectorAll('button')].filter(
+      (button) => !(button as HTMLButtonElement).disabled
+    );
+    expect(enabled).toHaveLength(1);
+    expect(screen.getByTestId('window-menu-workspace-reset-essentials-button')).toHaveTextContent('Reset Essentials');
+  });
+
+  it('reports its expanded state to a screen reader', () => {
+    render(<DesktopHeader />, { wrapper });
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('header-window-menu-button'));
+    });
+    const parent = screen.getByTestId('window-menu-workspace-button');
+    expect(parent).toHaveAttribute('aria-haspopup', 'true');
+    expect(parent).toHaveAttribute('aria-expanded', 'false');
+
+    act(() => {
+      fireEvent.click(parent);
+    });
+    expect(parent).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('resets the workspace and closes the menu', () => {
     render(<DesktopHeader />, { wrapper });
 
+    openWorkspace();
     act(() => {
-      fireEvent.click(screen.getByTestId('header-window-menu-button'));
-    });
-    act(() => {
-      fireEvent.click(screen.getByTestId('window-menu-reset-workspace-button'));
+      fireEvent.click(screen.getByTestId('window-menu-workspace-reset-essentials-button'));
     });
 
     expect(resetWorkspace).toHaveBeenCalledTimes(1);
     // Left open, the menu would sit over a layout the user can no longer undo, which is the
     // opposite of what they just asked for.
-    expect(screen.queryByTestId('window-menu-reset-workspace-button')).toBeNull();
+    expect(screen.queryByTestId('window-menu-workspace-reset-essentials-button')).toBeNull();
+    expect(screen.queryByTestId('header-window-menu')).toBeNull();
   });
 
   it('closes on a mousedown outside it, like every other menu', () => {
     render(<DesktopHeader />, { wrapper });
 
-    act(() => {
-      fireEvent.click(screen.getByTestId('header-window-menu-button'));
-    });
-    expect(screen.getByTestId('window-menu-reset-workspace-button')).toBeInTheDocument();
+    openWorkspace();
+    expect(screen.getByTestId('window-menu-workspace-reset-essentials-button')).toBeInTheDocument();
 
     act(() => {
       fireEvent.mouseDown(document.body);
     });
-    expect(screen.queryByTestId('window-menu-reset-workspace-button')).toBeNull();
+    expect(screen.queryByTestId('window-menu-workspace-reset-essentials-button')).toBeNull();
   });
 
   it('keeps one menu open at a time', () => {
@@ -153,7 +236,7 @@ describe('DesktopHeader Window menu', () => {
     });
 
     // A second menu opening beside the first is the same defect the existing menu-lifecycle
-    // tests guard for the older three, and the new menu has to not be the exception.
-    expect(screen.queryByTestId('window-menu-reset-workspace-button')).toBeNull();
+    // tests guard for the other nine, and the new submenu has to not be the exception.
+    expect(screen.queryByTestId('header-window-menu')).toBeNull();
   });
 });

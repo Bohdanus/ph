@@ -476,7 +476,7 @@ describe('waitForBands', () => {
 
     await expect(
       waitForBands(harness.page, bands(), [true, false, false], { timeoutMs: 1_000, pollIntervalMs: 250 })
-    ).rejects.toThrow('Canvas did not render band 0 inked, band 1 clean, band 2 clean within 1000ms');
+    ).rejects.toThrow('Canvas did not render band 0 inked, band 1 clean, band 2 clean within 1000ms after 5 polls');
 
     expect(harness.elapsed()).toBe(1_000);
   });
@@ -499,7 +499,7 @@ describe('waitForBandInked', () => {
     const harness = createPollingPage(await createTestImage(WHITE, BOX.width, BOX.height));
 
     await expect(waitForBandInked(harness.page, bands()[1], { timeoutMs: 300, pollIntervalMs: 100 })).rejects.toThrow(
-      'Canvas did not render band 1 inked within 300ms'
+      'Canvas did not render band 1 inked within 300ms after 4 polls'
     );
 
     // Four reads: the poll at t=0, then one per 100ms interval up to the 300ms

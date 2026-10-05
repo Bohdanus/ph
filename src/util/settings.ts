@@ -28,7 +28,9 @@ export function saveLastSettings(args: ToolArgs) {
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {
-    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect', 'kind', 'placeholderUntouched'));
+    lastSavedSettings.text = cloneDeep(
+      omit(args as TextToolArgs, 'text', 'rect', 'kind', 'placeholderUntouched', 'editingLayerId')
+    );
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
@@ -87,7 +89,8 @@ export function saveLastSettings(args: ToolArgs) {
   } else if (
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||
-    toolName === 'single-column-marquee'
+    toolName === 'single-column-marquee' ||
+    toolName === 'ruler'
   ) {
     // Typed rather than falling through to the bare group below, because a tool with NO
     // settings still has to persist its identity: an unmatched `toolName` never reaches
@@ -95,6 +98,12 @@ export function saveLastSettings(args: ToolArgs) {
     // `defaultSettings` on every switch. Harmless for these three today, and the reason
     // this arm exists rather than a note is that it stops being harmless the day one of
     // them grows a control.
+    //
+    // The Ruler joins them for the same reason and for a second one: its args are `{ toolName }` and
+    // nothing else, so this arm persists an object that is byte-identical to the default. That is
+    // still the point — the trap at the end of this chain is what makes adding a tool without
+    // adding an arm a typecheck error, and a measurement line is deliberately NOT persisted (see
+    // `PIXEL_FREE_TOOLS`), so there is nothing here that could hold one.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ toolName });
   } else if (toolName === 'triangle' || toolName === 'polygon') {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(

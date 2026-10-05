@@ -33,6 +33,7 @@ function makeFilteredLayer(toolName: (typeof FILTER_TOOL_NAMES)[number]): Durabl
     blendMode: 'source-over' as GlobalCompositeOperation,
     order: 0,
     pos: { x: 0, y: 0, width: 40, height: 40 },
+    frame: { x: 0, y: 0, width: 120, height: 90 },
     source,
   });
   const operation: DurableOperation = Object.freeze({
@@ -113,6 +114,7 @@ describe('materialization rejects the durable branch rather than replaying an un
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 10, height: 10 },
+        frame: { x: 0, y: 0, width: 120, height: 90 },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId: 'missing' as AssetId,

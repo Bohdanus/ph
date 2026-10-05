@@ -242,7 +242,11 @@ Key constraints that affect testing:
 
 Follow patterns from existing passing test files:
 
-- **`replay-checkpoints.test.ts`**: Uses `vi.fn()` for release callbacks, tests eviction ordering
+- **`history-append.test.ts`**: Mocks nothing — it drives the real timeline transition and the real
+  publication decision, and asserts on the decision shape a refusal returns. Its own comment says
+  why: the React wrapper that dispatches `COMMIT_DOCUMENT_EDIT` and reads the result back lives in
+  `useLayer.commit.test.tsx`, so the two are complementary rather than redundant — that one covers
+  the store round trip, this one the transition and the decision
 - **`ShapeToolArea.test.tsx`**: Mocks `useStore`, uses `vi.useFakeTimers()` for RAF-related async
 - **`useDrag.test.ts`**: `renderHook` pattern for hook-only testing, `pointerState` hoisted mutable object for mock state
 - **`useCurrentTool.test.tsx`**: `renderHook` with `CurrentToolProvider` wrapper, `lastSavedSettings` reset in `beforeEach`

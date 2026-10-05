@@ -1,10 +1,17 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import Main from '../Main.tsx';
+import Main, { SELECTION_INTERACTION_MODES } from '../Main.tsx';
 import { DummyToolArea } from '../DummyToolArea.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
+import {
+  resetRulerMeasurementForTest,
+  setRulerMeasurement,
+  syncRulerFrame,
+  useRulerMeasurement,
+} from '../../../tools/ruler-measurement-store.ts';
+import type { RulerMeasurement } from '../../../tools/ruler.ts';
 
 /**
  * Tool-area routing and drop handling. DummyToolArea is the real component so
@@ -58,6 +65,9 @@ const storeState = vi.hoisted(
       toolName: 'reposition' as ToolName,
       totalSize: { width: 640, height: 480 },
       documentFrame: { x: 0, y: 0, width: 640, height: 480 },
+      // `Main` reads this for the Ruler's frame key. Absent here it would read as `undefined` and
+      // key the store on the string "undefined@640x480", which every case would share.
+      documentId: 'doc-under-test',
     }) as Record<string, unknown>
 );
 
@@ -117,9 +127,14 @@ vi.mock('../QuickSelectionToolArea.tsx', () => ({ QuickSelectionToolArea: marker
 // drag, and it commits to the ACTIVE layer rather than creating one.
 vi.mock('../ColorReplacementToolArea.tsx', () => ({ ColorReplacementToolArea: marker('color-replacement') }));
 vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
+// The Ruler was missing from this list, so its area loaded for real while every sibling was a
+// marker — the file's own contract is that each one is replaced. It matters here because the real
+// area needs `CurrentToolProvider`, which this file deliberately does not mount.
+vi.mock('../RulerToolArea.tsx', () => ({ RulerToolArea: marker('ruler') }));
 vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
 vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
 vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') }));
+vi.mock('../BlurToolArea.tsx', () => ({ BlurToolArea: marker('blur') }));
 vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
 vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
 vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
@@ -149,6 +164,7 @@ const TOOL_AREA_IDS = [
   'eraser',
   'clone-stamp',
   'sharpen',
+  'blur',
   'smudge',
   'dodge',
   'burn',
@@ -162,29 +178,6 @@ const toolAreaTestId = () => {
   return TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
 
-/**
- * The index the routing table expects, so a routing row can assert WHICH area mounted.
- *
- * `toolAreaTestId()` returns the FIRST index in `TOOL_AREA_IDS` whose marker is mounted, so
- * comparing it with this one pins WHICH marker came first: a router that sent a tool to some other
- * area yields that area's index, and a tool that fell through to the hidden dummy yields `-1`,
- * which is no row's index. The presence of the expected marker rides on the same comparison — an
- * absent marker can only produce another index or `-1`, neither of which is this row's — so a row
- * needs no second query to ask it.
- *
- * What it does NOT pin is the COUNT. `findIndex` reports the first hit, so a second, DIFFERENT
- * area mounted BESIDE the expected one leaves that first hit where it is and this comparison still
- * passes — which is the half of the old claim that was false. A duplicate of the SAME marker is
- * the one doubled case that surfaces, and it surfaces as `queryByTestId` refusing to choose
- * between two elements rather than as a comparison failing; the `.toBeTruthy()` on a
- * `screen.getByTestId` result this replaced could not report even that, because the query throws
- * before its matcher runs. The count is the neighbouring
- * `it('mounts exactly one tool area for every tool that has one')` test's claim, and leaving it
- * there is what keeps this assertion about identity; `magic-eraser` is the one routed tool absent
- * from that test's list, so its count is pinned nowhere.
- */
-const expectedToolAreaIndex = (name: string) => TOOL_AREA_IDS.findIndex((id) => id === name);
-
 const canvases = (container: HTMLElement) => Array.from(container.querySelectorAll('canvas'));
 
 beforeEach(() => {
@@ -196,6 +189,7 @@ beforeEach(() => {
   storeState.toolName = 'reposition';
   storeState.totalSize = { width: 640, height: 480 };
   storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
+  storeState.documentId = 'doc-under-test';
   storeState.currentArgs = { current: { toolName: 'brush' } as ToolArgs };
   loadDocumentFile.mockResolvedValue({ fileName: 'photo.png' });
   setImageFromUpload.mockResolvedValue(undefined);
@@ -239,6 +233,7 @@ describe('Main tool-area routing', () => {
     ['eraser', 'eraser'],
     ['clone-stamp', 'clone-stamp'],
     ['sharpen', 'sharpen'],
+    ['blur', 'blur'],
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
@@ -254,11 +249,29 @@ describe('Main tool-area routing', () => {
 
     render(<GuardedMain />);
 
-    // The one claim: the FIRST marker `Main` mounted is the one this row names, so a router that
-    // pointed this tool at a neighbour fails. Presence is carried by the same comparison rather
-    // than by a query of its own — an absent marker can only produce another index or `-1`, and
-    // this row's index is neither — and the COUNT is the neighbouring test's claim.
-    expect(toolAreaTestId(), toolName).toBe(expectedToolAreaIndex(expected));
+    // THREE assertions, in order, because no one of them can do the job alone.
+    //
+    // Presence: `screen.getByTestId` on its own cannot see a second area — its argument is the name
+    // this test supplied, so it throws on a miss and says nothing about anything mounted beside the
+    // right one.
+    //
+    // Identity: the `findIndex` form this replaced cannot do presence either. `-1` is what it
+    // reports for BOTH "nothing mounted" and "the name is not in the marker list", so an `expected`
+    // typo compared `-1` with `-1` and passed, and a router that pointed the tool at a neighbour
+    // reported the neighbour's index, which is a failure only because every row's index is distinct.
+    // Reading the mounted element and comparing it to the queried one is the statement that cannot
+    // be satisfied by the wrong element.
+    //
+    // Exclusivity, and this is the half the old claim could not reach: the list is walked in full,
+    // so a second, DIFFERENT area mounted BESIDE the expected one is caught here as well as by
+    // `mounts exactly one tool area for every tool that has one` — which is a separate list and so
+    // leaves a tool added to this table and not to that one unchecked.
+    const expectedArea = screen.getByTestId(`tool-area-${expected}`);
+    expect(expectedArea).toBeInTheDocument();
+
+    const mounted = TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).filter((el) => el !== null);
+    expect(mounted).toHaveLength(1);
+    expect(mounted[0]).toBe(expectedArea);
   });
 
   it('mounts exactly one tool area for every tool that has one', () => {
@@ -290,10 +303,16 @@ describe('Main tool-area routing', () => {
       'eraser',
       'clone-stamp',
       'sharpen',
+      'blur',
       'smudge',
       'dodge',
       'burn',
       'sponge',
+      // `magic-eraser` is here because the routing table above routes it and this list did not:
+      // the two lists are maintained apart, so a tool added to one and not the other would have
+      // its "exactly one area" claim silently unchecked — and `magic-eraser` shares `fill`'s
+      // area, which is precisely the case where a second area would go unnoticed.
+      'magic-eraser',
       'paint-bucket',
       'gradient',
     ] as const;
@@ -363,67 +382,17 @@ describe('Main tool-area routing', () => {
     // that mounted SOME area rather than none would still be caught — which is the half of the
     // old assertion below that was load-bearing. The other half was not: the produced
     // `div[style*="display: none"]` is byte-identical for `SharpenToolArea` and `DummyToolArea`,
-    // so it could not tell a hidden area from the hidden one, and would have passed identically
-    // if the router had sent some other tool to `SharpenToolArea`. `SharpenToolArea`'s rendered
-    // surface is pinned directly in the describe below.
+    // so it can detect any accidental routing into a real tool area rather than only checking the
+    // hidden dummy's implementation details.
     expect(toolAreaTestId()).toBe(-1);
   });
 
-  /**
-   * The two components this file could not tell apart, compared directly.
-   *
-   * `SharpenToolArea` (`../SharpenToolArea.tsx:46`) renders
-   * `<div className={className} style={{ display: 'none' }} />` and `DummyToolArea`
-   * (`../DummyToolArea.tsx:11-18`) renders the same element, so the DOM is byte-identical and
-   * every `style`-shaped query matched both. The identity is the DESIGN — Sharpen is a one-shot
-   * filter with no gesture, and its area is "the documented ABSENCE of one" — so this asserts the
-   * identity rather than reporting it as a duplication.
-   *
-   * The inertness is the load-bearing half, and the reason is spelled out in `SharpenToolArea`'s
-   * own JSDoc: `Main` mounts the area with `className="absolute inset-0 h-full w-full"`, i.e. over
-   * the whole document. A pointer handler there would swallow every pointer event over the canvas
-   * without doing anything with any of them, and a drag would select text or scrub the layers
-   * panel instead of being inert. `toBeInTheDocument`-style assertions cannot see that, so the
-   * props React attached to the DOM node are read instead.
-   */
-  it('mounts SharpenToolArea as the same inert surface as DummyToolArea, with no pointer handler at all', async () => {
-    // This file mocks every tool area, so the real `SharpenToolArea` is unreachable through a
-    // normal import; `importActual` is the route that bypasses the mock without lifting it for
-    // the routing table, which needs the marker.
-    const { SharpenToolArea: ActualSharpenToolArea } =
-      await vi.importActual<typeof import('../SharpenToolArea.tsx')>('../SharpenToolArea.tsx');
-
-    const { container: dummyContainer } = render(<DummyToolArea className="probe" />);
-    const { container: sharpenContainer } = render(
-      <ActualSharpenToolArea className="probe" overlayCtxRef={{ current: null }} />
-    );
-
-    expect(sharpenContainer.innerHTML).toBe(dummyContainer.innerHTML);
-    expect(sharpenContainer.innerHTML).not.toBe('');
-
-    // The detector has to be shown to work, or "no handler names" is indistinguishable from
-    // "the probe found nothing". React DOM stores the props it attached to every host node under
-    // a `__reactProps$<key>` property (`updateFiberProps`), which is the only place an event
-    // handler is observable from the outside — React never reflects one onto a DOM attribute.
-    const reactProps = (element: Element): Record<string, unknown> => {
-      // React's internal prop key is an expando, so it is absent from the DOM's own typing and
-      // has to be read through an index signature.
-      const host = element as unknown as Record<string, unknown>;
-      const key = Object.keys(host).find((candidate) => candidate.startsWith('__reactProps$'));
-      if (!key) throw new Error('React attached no props to the element, so this probe proves nothing');
-
-      return host[key] as Record<string, unknown>;
-    };
-    const handlerNames = (element: Element): string[] =>
-      Object.keys(reactProps(element)).filter((name) => /^on[A-Z]/.test(name));
-
-    const control = render(<div className="probe" onPointerDown={() => undefined} />).container
-      .firstElementChild as Element;
-    expect(handlerNames(control)).toEqual(['onPointerDown']);
-
-    const sharpen = sharpenContainer.firstElementChild as Element;
-    expect(handlerNames(sharpen)).toEqual([]);
-  });
+  // NOTE: there is deliberately no focus-tool case of its own here. The `it.each` routing table
+  // above already carries a `blur` and a `sharpen` row, and each asserts strictly more than a
+  // presence check — that exactly one area from `TOOL_AREA_IDS` mounted AND that it is the expected
+  // one. What the markers cannot show is that the REAL surfaces bind pointer handlers, because the
+  // markers are inert stand-ins; that claim is pinned against the real components in
+  // `FocusToolArea.test.tsx`, which has the store and tool contexts they need.
 
   it('never mounts any tool area while no image is open', () => {
     storeState.hasImage = false;
@@ -437,7 +406,7 @@ describe('Main tool-area routing', () => {
     // `opens a file through the dialog and uploads it`, `does not upload when the file dialog is
     // dismissed` and `reports the failure through console.error when the file dialog rejects`, so
     // the claim kept here is the one none of them makes — the control is not disabled, which is
-    // what a `disabled` empty state would satisfy `.toBeTruthy()` on just as well.
+    // what a `disabled` empty state would satisfy `.toBeInTheDocument()` on just as well.
     expect(screen.getByRole('button', { name: 'Open File' })).toBeEnabled();
   });
 
@@ -530,36 +499,81 @@ describe('Main tool-area routing', () => {
     expect([ants.width, ants.height]).toEqual([800, 600]);
   });
 
-  it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
+  it('shows the selection ants overlay for every selection tool and hides it otherwise', () => {
     storeState.toolName = 'polygonal-lasso';
     const { container, rerender } = render(<GuardedMain />);
     const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
 
     expect(ants().style.display).toBe('block');
 
-    for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
-      storeState.toolName = toolName;
-      rerender(<GuardedMain />);
-
-      expect(ants().style.display).toBe('block');
-    }
-
-    // `rectangular-selection` is the one selection tool excluded: `useRect` already
-    // strokes that border, with handles, on the tool overlay. The elliptical and quick
-    // selection tools are excluded for the same reason in reverse — they are not in
-    // `POLYGON_SELECTION_MODES`, so they keep the static `drawSelectionOutline` border.
+    // Every selection tool in the rail, by its tool name. The list is exhaustive over
+    // `ToolIconName` rather than over the interaction modes, so a new selection tool that nobody
+    // added here shows up as a failure here instead of as a tool with no border.
+    //
+    // It used to name three of the eight and exclude the rest: `rectangular-selection` because
+    // `useRect` stroked that border with handles, and the elliptical and quick selection tools
+    // because they are not in `POLYGON_SELECTION_MODES` and so kept the static
+    // `drawSelectionOutline`. Both exclusions are defects rather than facts — a border is a
+    // border, whichever canvas draws it — and `useRect`'s `borderMode` is what retires the first:
+    // the marquee gets the border from the ants, one canvas up, and `useRect` stops drawing a
+    // second outline of the same rectangle.
     for (const toolName of [
-      'rectangular-selection',
-      'elliptical-selection',
+      'freehand-lasso',
+      'feather-magnetic-lasso',
+      'magic-wand',
       'quick-selection',
-      'reposition',
-      'brush',
-      'zoom',
+      'elliptical-selection',
+      'single-row-marquee',
+      'single-column-marquee',
+      'rectangular-selection',
     ] as const) {
       storeState.toolName = toolName;
       rerender(<GuardedMain />);
 
+      expect(ants().style.display, `${toolName} is a selection tool and must own the ants canvas`).toBe('block');
+    }
+
+    // A non-selection tool must not run a 60fps loop into a canvas nobody can see. The canvas and
+    // the loop are gated on one boolean (`selectionToolActive`), so they cannot disagree; this
+    // loop is the half of that claim which is not about the list above.
+    //
+    // `GuardedMain`, not a bare `Main`: this branch's base predates the unsaved-changes provider,
+    // and main added `useUnsavedChanges` under `Main`, so rendering the raw component here throws
+    // "must be used within an UnsavedChangesProvider" before the assertion runs at all. Every other
+    // rerender in this file already goes through the guard for the same reason.
+    for (const toolName of ['reposition', 'brush', 'crop', 'text', 'zoom', 'paint-bucket', 'eyedropper'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
       expect(ants().style.display).toBe('none');
+    }
+  });
+
+  it('names every selection interaction mode in the exported gate, and nothing else', () => {
+    // The list in `Main.tsx` and the assertion above are the same rule stated twice, so the test
+    // asserts the export rather than a copy of it. A tool name that routes to a mode the gate
+    // does not list is a selection tool with no border, and this is where it is caught.
+    const modesOfSelectionTools: Record<string, string> = {
+      'polygonal-lasso': 'lasso',
+      'freehand-lasso': 'lasso',
+      'feather-magnetic-lasso': 'feather-magnetic-lasso',
+      'magic-wand': 'magic-wand',
+      'quick-selection': 'quick-selection',
+      'elliptical-selection': 'elliptical-selection',
+      'single-row-marquee': 'single-row-column-marquee',
+      'single-column-marquee': 'single-row-column-marquee',
+      'rectangular-selection': 'rectangular-selection',
+    };
+
+    for (const mode of Object.values(modesOfSelectionTools)) {
+      expect(SELECTION_INTERACTION_MODES.has(mode), `${mode} must own the ants canvas`).toBe(true);
+    }
+
+    // Two interaction modes, both `useRect`, and neither a selection: the Move tool repositions
+    // a LAYER and Crop frames the document. Marching either would animate a layer outline and a
+    // crop frame as if they were selections.
+    for (const mode of ['reposition', 'crop']) {
+      expect(SELECTION_INTERACTION_MODES.has(mode), `${mode} is not a selection`).toBe(false);
     }
   });
 
@@ -568,13 +582,24 @@ describe('Main tool-area routing', () => {
     drawAllLayers.mockClear();
     const previousFrame = storeState.documentFrame;
 
+    // The negative half, and it is the half that was missing: the effect's deps are
+    // `[documentFrame, drawAllLayers, layers]`, all three unchanged by identity here, so a
+    // re-render must repaint NOTHING. Asserting only the positive case below passes against
+    // an effect whose deps were emptied — which would re-rasterize the whole document on
+    // every render, including every pointer move that
+    // re-renders `Main`. `GuardedMain`, not a bare `Main`: `Main` reads `useUnsavedChanges`, which
+    // throws outside its provider, and the render under test is the same one the positive half uses.
+    rerender(<GuardedMain />);
+    expect(drawAllLayers).not.toHaveBeenCalled();
+
     storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
     rerender(<GuardedMain />);
 
     // `Main` calls `drawAllLayers()` from a `[documentFrame, drawAllLayers, layers]` effect, so
     // the repaint is triggered BY THE FRAME and carries no argument of its own. The bare
-    // `toHaveBeenCalled()` accepted any argument list and any number of repaints; this names the
-    // zero-argument call and the single repaint a frame change owes the document.
+    // `toHaveBeenCalled()` accepted any argument list and any number of repaints, and
+    // `toHaveBeenCalledTimes(1)` still accepted any argument list; this names the zero-argument
+    // call and the single repaint a frame change owes the document in one assertion.
     expect(drawAllLayers).toHaveBeenCalledExactlyOnceWith();
     storeState.documentFrame = previousFrame;
   });
@@ -890,5 +915,110 @@ describe('DummyToolArea', () => {
     const { container } = render(<DummyToolArea />);
 
     expect((container.firstElementChild as HTMLElement).className).toBe('');
+  });
+});
+
+/**
+ * The Ruler's measuring line is document-scoped, and `Main` is what enforces that.
+ *
+ * The line lives in a module store so it can outlive the tool area's mount, which is what makes
+ * Adobe's "selecting the Ruler tool causes it to be displayed" true. Module state outliving a
+ * mount needs an owner mounted when the value's WORLD changes, and `RulerToolArea` is not: it is
+ * one of the registry's tools, absent whenever another is selected. So the key is advanced here,
+ * where `documentId` changes whatever the active tool is.
+ *
+ * These cases are about the OWNER, and they are unit tests rather than end-to-end ones on purpose.
+ * The end-to-end consequence is a single painted frame — the stale line, and the bar reading the
+ * previous document's geometry — before the passive effect that discards it runs. An e2e assertion
+ * auto-retries, so it waits the frame out and passes with or without this ownership; a unit test
+ * observes the store immediately after the layout phase, where the difference is.
+ */
+describe("Main's ownership of the Ruler's document-scoped line", () => {
+  beforeEach(() => {
+    resetRulerMeasurementForTest();
+  });
+
+  /** Establishes a line against `documentId`, the way a measurement on that document would. */
+  const measureOn = (
+    documentId: string,
+    size: { width: number; height: number },
+    origin: { x: number; y: number } = { x: 0, y: 0 }
+  ) => {
+    act(() => {
+      syncRulerFrame(documentId, size, origin);
+      setRulerMeasurement({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
+    });
+  };
+
+  const currentLine = () => {
+    const readings: (RulerMeasurement | null)[] = [];
+    const Probe = () => {
+      readings.push(useRulerMeasurement());
+      return null;
+    };
+    act(() => {
+      render(
+        <>
+          <GuardedMain />
+          <Probe />
+        </>
+      );
+    });
+    return readings[readings.length - 1];
+  };
+
+  it('discards a line measured on another document, with the Ruler NOT the active tool', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-B';
+    // The SAME SIZE as the line's own document, which is the half of the key that cannot tell two
+    // equal-sized documents apart — and the app's blank seed is a fixed size, so it is not exotic.
+    measureOn('doc-A', { width: 640, height: 480 });
+
+    expect(currentLine(), 'a line from another document must not survive into this one').toBeNull();
+  });
+
+  it('keeps the line when the document is the one it was measured on', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-A';
+    measureOn('doc-A', { width: 640, height: 480 });
+
+    expect(currentLine()).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
+  });
+
+  it('discards a line measured on another document when the Ruler IS the active tool', () => {
+    storeState.toolName = 'ruler';
+    storeState.currentArgs = { current: { toolName: 'ruler' } as ToolArgs };
+    storeState.documentId = 'doc-B';
+    measureOn('doc-A', { width: 640, height: 480 });
+
+    expect(currentLine()).toBeNull();
+  });
+
+  it('discards a line when a CROP moves the frame origin and leaves the frame SIZE alone', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-under-test';
+    measureOn('doc-under-test', { width: 640, height: 480 });
+
+    // `totalSize` is `documentFrameSize(frame)`, so this is the crop the size half of the key
+    // cannot see: the store mock keeps its 640×480 while the frame's origin moves, exactly as
+    // `applyDocumentCrop` leaves it after the same-size band off the top and the same-size band
+    // off the left. Keyed on `totalSize` alone, this line survived and the bar reported X/Y
+    // against frame pixels the crop had just removed.
+    storeState.documentFrame = { x: 90, y: 45, width: 640, height: 480 };
+
+    expect(currentLine()).toBeNull();
+  });
+
+  it('keeps a line whose frame is re-reported with a new object identity and the same values', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-under-test';
+    measureOn('doc-under-test', { width: 640, height: 480 });
+
+    // `Main` depends on the frame OBJECT, and `StoreContext` clones it on every document write, so
+    // identity churns on commits that change nothing. A key built from identity would drop the
+    // line on the first of those; a key built from the values does not.
+    storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
+
+    expect(currentLine()).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
   });
 });

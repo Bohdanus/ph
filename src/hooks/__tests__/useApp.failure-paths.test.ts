@@ -7,7 +7,7 @@ import type { Selection } from '../../contexts/general-types.ts';
 import type { ImageLayerSource, Layer } from '../../contexts/layer-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
-import type { ImageUploadResponse } from '../../contexts/useFile.tsx';
+import type { ImageUploadResponse } from '../../contexts/file-types.ts';
 
 /**
  * Failure paths and rejection surface of `useApp`: the paths where an async
@@ -117,7 +117,7 @@ describe('useApp failure paths', () => {
     expect(harness.layerMocks.createBlankLayer).toHaveBeenCalledExactlyOnceWith({ ...params }, true);
   });
 
-  it('resizes every owned canvas and clears the tool state before replacing the document', async () => {
+  it('clears the tool state and resizes every owned canvas around replacing the document', async () => {
     const canvas = document.createElement('canvas');
     const toolOverlay = document.createElement('canvas');
     const rectOverlay = document.createElement('canvas');

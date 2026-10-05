@@ -79,10 +79,10 @@ const LASSO_SELECTION: Selection = {
 };
 
 /**
- * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
  * edit that appends to history, so a deselect can be undone. The store mock has
  * to carry a live selection for the writer to read — an already-empty document
- * makes Clear a deliberate no-op, which is a different test.
+ * makes Deselect a deliberate no-op, which is a different test.
  *
  * The component's contract is to PLAN the append and DISPATCH the plan. Whether
  * the planned `durableEntry` is published is the STORE's decision, made in
@@ -121,7 +121,7 @@ const setStoreSelections = (selections: Selection[], activeSelectionId: string |
 const getModeButton = () => screen.getByRole('button', { name: /^(Fill|Outline)$/ });
 const getCopyButton = () => screen.getByRole('button', { name: 'Copy' });
 const getPasteButton = () => screen.getByRole('button', { name: 'Paste' });
-const getClearButton = () => screen.getByRole('button', { name: 'Clear' });
+const getClearButton = () => screen.getByRole('button', { name: 'Deselect' });
 
 describe('FreehandLasso toolbar', () => {
   beforeEach(() => {
@@ -180,7 +180,7 @@ describe('FreehandLasso toolbar', () => {
     expect(mockPatchToolArgs).toHaveBeenCalledWith('freehand-lasso', { fill: false });
   });
 
-  it('disables copy and clear for a rectangle selection and enables paste only with a clipboard', () => {
+  it('disables copy and Deselect for a rectangle selection and enables paste only with a clipboard', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'rectangle' }, hasClipboard: true });
     render(<FreehandLasso />);
 
@@ -197,7 +197,7 @@ describe('FreehandLasso toolbar', () => {
     expect(getClearButton()).toBeDisabled();
   });
 
-  it('enables copy and clear for a polygon selection', () => {
+  it('enables copy and Deselect for a polygon selection', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
     render(<FreehandLasso />);
 
@@ -206,7 +206,7 @@ describe('FreehandLasso toolbar', () => {
     expect(getPasteButton()).toBeDisabled();
   });
 
-  it('enables copy and clear for a freehand selection', () => {
+  it('enables copy and Deselect for a freehand selection', () => {
     setSelectionState({ activeSelection: { id: 'sel-2', geometry: 'freehand' } });
     render(<FreehandLasso />);
 
@@ -299,7 +299,7 @@ describe('FreehandLasso toolbar', () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it('appends a selection history entry from the clear button', () => {
+  it('appends a selection history entry from the Deselect button', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
     setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
     render(<FreehandLasso />);
@@ -316,7 +316,7 @@ describe('FreehandLasso toolbar', () => {
     // plan being DISPATCHED is the writer's, and only the success branch carries
     // one. The two dispatches are byte-identical apart from this field, so
     // without this assertion a regression that made `planHistoryAppend` throw
-    // would leave every Clear pin in this file green while the durable shadow
+    // would leave every Deselect pin in this file green while the durable shadow
     // silently stopped being patched.
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
     setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);

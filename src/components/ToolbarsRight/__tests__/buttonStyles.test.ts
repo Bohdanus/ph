@@ -158,4 +158,36 @@ describe('buttonStyles disabled affordance', () => {
       ).toEqual([]);
     }
   });
+
+  /**
+   * `MENU_ITEM_BUTTON` is the third style that ships disabled styling, and it is deliberately not
+   * in `DISABLED_CAPABLE`: that pair is opacity-based, and this one dims with colour instead.
+   *
+   * The `MENU_ITEM_BUTTON` doc comment states why these tokens are load-bearing rather than
+   * decoration — a disabled `<button>` still matches `:hover` in every engine, and Tailwind's
+   * preflight adds no `button:disabled` rule, so without the hover RESETS the twenty-one unbuilt
+   * `Image ▸ Adjustments` commands paint exactly the hover affordance of the two that work. A
+   * disabled styling that only dimmed the text would not have caught that, which is why the
+   * hover resets are pinned by name.
+   */
+  it('resets the hover background of a disabled menu item, in both themes', () => {
+    const tokens = classesOf('MENU_ITEM_BUTTON');
+
+    expect(tokens.filter((token) => token.includes('disabled'))).toEqual([
+      'disabled:cursor-default',
+      'disabled:text-gray-400',
+      'disabled:hover:bg-transparent',
+      'dark:disabled:text-gray-600',
+      'dark:disabled:hover:bg-transparent',
+    ]);
+
+    // Order is the whole mechanism, per the doc comment: the `disabled:hover` resets have to be
+    // declared after the `hover:` rules they are cancelling, so the generated CSS resolves in their
+    // favour. `dark:hover:bg-gray-700` is the rule that would otherwise win on a dark-theme
+    // disabled item; if this ever goes first in the constant, this assertion goes red.
+    expect(tokens.indexOf('disabled:hover:bg-transparent')).toBeGreaterThan(tokens.indexOf('hover:bg-gray-100'));
+    expect(tokens.indexOf('dark:disabled:hover:bg-transparent')).toBeGreaterThan(
+      tokens.indexOf('dark:hover:bg-gray-700')
+    );
+  });
 });

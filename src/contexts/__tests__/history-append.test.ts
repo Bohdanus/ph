@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   createMockHistory,
@@ -22,6 +22,7 @@ import {
 } from '../history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
+  freezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerPropertyPatch,
@@ -517,6 +518,29 @@ describe('planHistoryAppend: append-point validation', () => {
     expect(control.diagnostics).toEqual([]);
     expect(control.durableEntry).not.toBeNull();
   });
+  // The plan-level withhold, on the duplicate-id branch: `planHistoryAppend` reports
+  // the collision AND hands back `durableEntry: null`, so an `error` diagnostic and a
+  // publishable plan can no longer coexist for one append. The legacy `entry` is still
+  // returned unchanged, because reporting never blocks the legacy append.
+  it('withholds the durable entry for a duplicate entry id', () => {
+    const existing = createMockHistoryItem({ id: 'duplicate-id' });
+
+    const result = planHistoryAppend({
+      item: cropItem(),
+      timeline: timeline([existing]),
+      currentFrame: baselineFrame,
+      id: 'duplicate-id',
+    });
+
+    // The report half is what must stay exactly as it is: one diagnostic, named, at
+    // `error`. The withhold is the other half, and both are asserted together so
+    // neither can be dropped without the other being noticed.
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'invalid-history-entry', severity: 'error', historyId: 'duplicate-id' }),
+    ]);
+    expect(result.entry.id).toBe('duplicate-id');
+    expect(result.durableEntry).toBeNull();
+  });
 
   it.each([
     ['before the first entry', -1],
@@ -531,6 +555,45 @@ describe('planHistoryAppend: append-point validation', () => {
 
     expect(result.diagnostics.some((diagnostic) => diagnostic.code === 'invalid-history-entry')).toBe(true);
     expect(result.entry.actionName).toBe(SET_DOCUMENT_FRAME_ACTION);
+  });
+  // The same withhold on the other `validateTimeline` branch: a bad append point is an
+  // `error` diagnostic too, so the translation succeeds and the plan is withheld
+  // anyway. Written as three cases rather than one table so a red case names the cursor
+  // that regressed instead of reporting a single `toBeNull` failure for whichever ran
+  // first.
+  it('withholds the durable entry for an append point before the first entry', () => {
+    const result = planHistoryAppend({
+      item: cropItem(),
+      timeline: timeline(createMockHistory(4), -1),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.diagnostics[0]).toMatchObject({ code: 'invalid-history-entry', severity: 'error' });
+    // The translation itself is fine, but the append point is not, so nothing is
+    // published: the store reconverts instead of mapping an undefined cursor.
+    expect(result.durableEntry).toBeNull();
+  });
+
+  it('withholds the durable entry for an append point past the last entry', () => {
+    const result = planHistoryAppend({
+      item: cropItem(),
+      timeline: timeline(createMockHistory(4), 4),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.diagnostics[0]).toMatchObject({ code: 'invalid-history-entry', severity: 'error' });
+    expect(result.durableEntry).toBeNull();
+  });
+
+  it('withholds the durable entry for an append point on a fractional index', () => {
+    const result = planHistoryAppend({
+      item: cropItem(),
+      timeline: timeline(createMockHistory(4), 1.5),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.diagnostics[0]).toMatchObject({ code: 'invalid-history-entry', severity: 'error' });
+    expect(result.durableEntry).toBeNull();
   });
 
   it('accumulates a translation diagnostic and a timeline diagnostic', () => {
@@ -564,6 +627,44 @@ describe('planHistoryAppend: append-point validation', () => {
     expect(result.durableEntry).toBeNull();
   });
 
+  // The sibling of the case above: the two diagnostics are still reported
+  // INDEPENDENTLY, which is the property the count of 2 alone cannot show — a
+  // boundary that reported the timeline problem twice, or dropped the
+  // translation one, would satisfy that count.
+  it('names the translation diagnostic before the timeline diagnostic, by code and by severity', () => {
+    const item: NewHistoryItem = { layerId: 'layer-1', actionName: TOOL_ACTION, args: { toolName: 'blur', radius: 4 } };
+    const result = planHistoryAppend({
+      item,
+      timeline: timeline(createMockHistory(1), 9),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.severity)).toEqual(['warning', 'error']);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'unsupported-history-feature',
+      'invalid-history-entry',
+    ]);
+    // Both name the same entry, so a caller reading the diagnostics cannot tell
+    // they describe one append rather than two.
+    expect(result.diagnostics.map((diagnostic) => diagnostic.historyId)).toEqual([result.entry.id, result.entry.id]);
+
+    // CONTROL — the same item against a valid append point. The delta between
+    // the two runs is exactly the timeline diagnostic, which is what makes the
+    // null above attributable: `TOOL_ACTION` has no canonical operation, so
+    // `translate` withholds a plan by itself and this case can otherwise never
+    // show the timeline check withholding one. The cases where the timeline
+    // check alone withholds one are the append-point cases above.
+    const control = planHistoryAppend({
+      item,
+      timeline: timeline(createMockHistory(1)),
+      currentFrame: baselineFrame,
+    });
+
+    expect(control.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(['unsupported-history-feature']);
+    expect(control.durableEntry).toBeNull();
+    expect(result.diagnostics).toHaveLength(control.diagnostics.length + 1);
+  });
+
   it('still returns a usable legacy entry when the timeline check fires', () => {
     const existing = createMockHistoryItem({ id: 'duplicate-id' });
     const prior = timeline([existing]);
@@ -593,10 +694,12 @@ describe('planHistoryAppend: append-point validation', () => {
     // lands rather than asserting a hand-built object contains itself.
     //
     // Not driven here: the React wrapper that dispatches `COMMIT_DOCUMENT_EDIT` and
-    // reads the result back out of the store. That lives in
-    // `useLayer.commit.test.tsx`, which mocks this module, so reproducing the
-    // dispatch here would exercise the mock rather than this boundary. What is
-    // covered is the real transition plus the real publication decision.
+    // reads the result back out of the store. That subject lives in
+    // `useLayer.commit.test.tsx`, which mocks `../layer-renderer.ts` and not this
+    // module, so the two files are complementary rather than redundant: that one
+    // covers the store round trip, this one covers the real transition plus the real
+    // publication decision. Reproducing the dispatch here would duplicate that
+    // file's subject, not exercise a mock.
     const next = updateHistoryTimeline(prior, { type: 'append', entry: result.entry });
 
     // A correct superset of the prior timeline: nothing already committed changed,
@@ -663,7 +766,10 @@ describe('decideDurableAppend', () => {
     expect(decision.outcome).toBe('published');
     if (decision.outcome !== 'published') return;
     expect(decision.document.history).toHaveLength(2);
-    // The model clones and freezes every entry, so identity is not preserved.
+    // The base above is hand-built rather than frozen, so this decision takes
+    // the full deep clone and identity is not preserved. `adopts the frozen
+    // baseline on the publication path` below drives the same decision over a
+    // document the store really holds, which is the shape that adopts.
     expect(decision.document.history[1]).toEqual(planned);
     expect(decision.document.history[0]).toEqual(base.history[0]);
     expect(decision.document.cursor).toBe(1);
@@ -671,6 +777,34 @@ describe('decideDurableAppend', () => {
     expect(decision.document.documentRevision).toBe(4);
     expect(decision.document.branchRevision).toBe(0);
     expect(decision.document.baseline.frame).toEqual(baselineFrame);
+  });
+
+  it('adopts the frozen baseline on the publication path', () => {
+    // The base the store really holds is the converter's own output, deep-frozen
+    // end to end, and the append changes one position and adds one entry. So the
+    // publication moves the positions and keeps the content: the inherited entry
+    // and the baseline are adopted rather than re-copied, and only the planned
+    // entry — which arrives at the boundary shallow-frozen — is copied. Every
+    // assertion here fails if the publication goes back to copying the document.
+    const frozenBase = freezeDurableDocument(base);
+    const decision = decide({ base: frozenBase });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.baseline).toBe(frozenBase.baseline);
+    expect(decision.document.history[0]).toBe(frozenBase.history[0]);
+    expect(decision.document.history[1]).not.toBe(planned);
+    expect(decision.document.history[1]).toEqual(planned);
+    // The one thing that had to be copied: `deriveSetDocumentFrameEntry` freezes
+    // the operation and leaves `previous` and `next` as plain copies.
+    const published = decision.document.history[1].operation;
+    if (published.kind !== 'set-document-frame') throw new Error(`unexpected operation ${published.kind}`);
+    expect(Object.isFrozen(published.next)).toBe(true);
+    expect(Object.isFrozen(published.previous)).toBe(true);
+    expect(published.next).not.toBe(croppedFrame);
+    expect(published.next).toEqual(croppedFrame);
+    expect(decision.document.cursor).toBe(1);
+    expect(decision.document.durableRevision).toBe(8);
   });
 
   it.each([
@@ -947,6 +1081,111 @@ describe('decideDurableAppend', () => {
         ['set-layer-properties', false],
       ]);
     });
+  });
+});
+
+/**
+ * The duplicate-id append, driven end to end: the plan, the real conversion of
+ * the real legacy timeline into the base the store would be holding, and the
+ * publication decision taken on the two together.
+ *
+ * The two cases below are the halves of one argument, and neither is a tripwire
+ * on its own. The first states what the append path must do; the second states
+ * what it does with the withhold removed, which is what makes the first worth
+ * enforcing rather than describing.
+ */
+describe('decideDurableAppend: a duplicate-id append, end to end', () => {
+  const registry = new AssetRegistry();
+  const existing = createMockHistoryItem({
+    id: 'duplicate-id',
+    actionName: RENAME_LAYER_ACTION,
+    args: { name: 'Renamed' },
+  });
+  const duplicatePrior = timeline([existing]);
+  const plan = planHistoryAppend({
+    item: cropItem(),
+    timeline: duplicatePrior,
+    currentFrame: baselineFrame,
+    id: 'duplicate-id',
+  });
+  const duplicateNext = updateHistoryTimeline(duplicatePrior, { type: 'append', entry: plan.entry });
+  // The durable document the store would actually be holding for that legacy
+  // timeline — one entry, the one the single pre-existing legacy entry converts
+  // to — rather than an unrelated `base` whose id is 'baseline' and which
+  // therefore cannot demonstrate a collision at all.
+  const mirror = legacyHistoryToDurable(duplicatePrior.entries, {
+    documentId: 'doc-1',
+    documentRevision: 4,
+    registry,
+  }).document;
+
+  const decideTheAppend = (planned: DurableHistoryEntry | null) =>
+    decideDurableAppend({
+      documentId: 'doc-1',
+      base: mirror,
+      prior: duplicatePrior,
+      next: duplicateNext,
+      entry: plan.entry,
+      planned,
+      documentRevision: 4,
+    });
+
+  afterAll(() => {
+    registry.shutdown();
+  });
+
+  // The publication half. `decideDurableAppend` never calls `validateTimeline`, so the
+  // only thing that keeps this duplicate out of the durable document is the plan being
+  // withheld. This case asserts the withhold is the ONLY reason the append falls back,
+  // by proving every precondition the decision checks first — otherwise a red
+  // `outcome` could be any of them rather than the one under test.
+  it('withholds the plan, so the append path never publishes the duplicate itself', () => {
+    expect(mirror.documentId).toBe('doc-1');
+    expect(mirror.documentRevision).toBe(4);
+    expect(mirror.branchRevision).toBe(duplicatePrior.branchRevision);
+    expect(mirror.history.map((entry) => entry.id)).toEqual(['duplicate-id']);
+    expect(duplicatePrior.cursor).toBe(duplicatePrior.entries.length - 1);
+    expect(duplicateNext.entries).toHaveLength(duplicatePrior.entries.length + 1);
+    expect(duplicateNext.entries[duplicateNext.entries.length - 1]).toBe(plan.entry);
+    expect(plan.diagnostics).toEqual([
+      expect.objectContaining({ code: 'invalid-history-entry', severity: 'error', historyId: 'duplicate-id' }),
+    ]);
+
+    const decision = decideTheAppend(plan.durableEntry);
+
+    expect(decision.outcome).toBe('preconditions');
+    if (decision.outcome !== 'preconditions') return;
+    expect(decision.reason).toContain('no durable entry was planned');
+  });
+
+  // The residual half, which the plan-level withhold does NOT close: the boundary's
+  // only uniqueness check reads the LEGACY timeline, which the durable base is
+  // invisible to, and `decideDurableAppend` has no check of its own. This case is an
+  // ALARM, not a pin: it goes red the moment a uniqueness check is added to
+  // `decideDurableAppend`. It stays green because it supplies the plan by hand,
+  // exactly as a foreign publisher would.
+  it('would publish two same-id entries if the plan were not withheld, and a later toggle would hit the wrong one', () => {
+    // The counterfactual, driven through the real decision function: the withheld plan
+    // is exactly what `deriveSetDocumentFrameEntry` produces, and every precondition
+    // still holds, so this is what the append path would have written.
+    const withheld = deriveSetDocumentFrameEntry(plan.entry, baselineFrame) as DurableHistoryEntry;
+    expect(withheld.id).toBe(existing.id);
+    const decision = decideTheAppend(withheld);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    const published = decision.document;
+    expect(published.history.map((entry) => entry.id)).toEqual(['duplicate-id', 'duplicate-id']);
+
+    // And the id is a lookup key: the toggle resolves it to the first entry, so the edit
+    // it disables is the pre-existing rename and not the frame change the user just
+    // made. The two entries are told apart here only by their operations, which is
+    // exactly what a caller cannot do.
+    const toggled = toggleDurableEntry(published, 'duplicate-id');
+    expect(toggled.history.map((entry) => [entry.operation.kind, entry.enabled])).toEqual([
+      ['set-layer-properties', false],
+      ['set-document-frame', true],
+    ]);
   });
 });
 

@@ -160,6 +160,61 @@ describe('toolDescriptions', () => {
     ).toEqual([]);
   });
 
+  it("keeps the crop record's Adobe-scoped fields Adobe's and its app-scoped fields app's", () => {
+    // This record has been edited wrong in both directions, and each mistake was invisible to a
+    // green suite, so the two directions are pinned together here.
+    //
+    // WRONG TOWARD THE APP: the `Enter / Return` shortcut row read "the same as the Done button".
+    // `shortcuts[]` is an app record — its sibling rows say "Unbound in the app" — and the crop
+    // panel renders `Apply` and `Clear`, so that sentence told the reader to press a button this
+    // app has no name for.
+    //
+    // WRONG TOWARD ADOBE: the `options[]` row's `control` was rewritten to 'Apply / Clear'. The
+    // field is defined as "The control's name in Photoshop's options bar, verbatim … Not the app's
+    // name for it", `detail` is "What the control does in Photoshop", and
+    // `scripts/generate-tool-docs.mjs` renders the pair under the header `| Control | Photoshop |
+    // In this app |`. So the rewrite put an app name in the Photoshop column, pushed app prose
+    // under "Photoshop", and deleted a sentence that was entirely Adobe-scoped and entirely TRUE.
+    // It also orphaned the pair: `purpose` still commits with "the Done button or a double-click
+    // inside the box", correctly scoped to Photoshop, so the page described the same control twice
+    // in two different scopes with no way to tell them apart.
+    //
+    // Where the app's naming belongs is `appNotes`, which is this record's home for divergence, and
+    // it is where it now reads. `purpose` keeps Adobe's names because Adobe really does bind them.
+    //
+    // Not vacuous, and not equally so. The `Done / Cancel` assertion fails on the state this
+    // record carried between `1016d9ac` and this fix. The banned-phrase assertion below bites in
+    // 10 of the 16 revisions this file has had, so the claim has a history of reaching those
+    // surfaces. The double-click ban does not: across those same 16 revisions not one carries a
+    // double-click in `summary`, `modifiers` or `shortcuts`. It is a guard for the surface the
+    // other two cannot police, not a reproduction of a shipped state, and it is kept for that
+    // reason rather than as a tripwire. Every assertion prints the offending value, not a boolean.
+    expect(
+      toolDescriptions.crop.options.map((option) => option.control),
+      'the crop record no longer names the commit pair the way Adobe names it'
+    ).toContain('Done / Cancel');
+
+    // ONLY the surfaces a reader takes as a claim about this app: `summary` reaches the user
+    // through `tooltips.ts` and `ToolTooltip.tsx`, and `modifiers`/`shortcuts` rows describe what
+    // pressing does while this tool is active. `options[].detail` and `purpose` are Adobe's, and
+    // `appNotes` is the divergence record — a mention in any of those three is correct, and
+    // banning them would be banning the fix.
+    const claimsAboutThisApp = [
+      toolDescriptions.crop.summary,
+      ...toolDescriptions.crop.modifiers.map((modifier) => modifier.action),
+      ...toolDescriptions.crop.shortcuts.map((shortcut) => shortcut.action),
+    ];
+
+    expect(
+      claimsAboutThisApp.filter((text) => /\bDone \/ Cancel\b|\bDone button\b/.test(text)),
+      'a surface read as a claim about this app names a commit control the crop panel does not render'
+    ).toEqual([]);
+    expect(
+      claimsAboutThisApp.filter((text) => /double-?click/i.test(text)),
+      'a surface read as a claim about this app promises a double-click commit the crop path has no handler for'
+    ).toEqual([]);
+  });
+
   it('resolves a shape figure to its own description rather than the generic one', () => {
     // The five shape tiles all carry the name `shape` in `toolbarMap`, so a lookup on the
     // name alone would put the generic Shape Tool's summary under the Rectangle Tool.

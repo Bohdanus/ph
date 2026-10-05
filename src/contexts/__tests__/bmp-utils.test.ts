@@ -452,6 +452,81 @@ describe('BMP decoding of stored pixel formats', () => {
     expect(Array.from(decodeBmp(buffer).data)).toEqual([44, 55, 66, 255]);
   });
 
+  it.each([
+    {
+      label: 'an 8-bit',
+      spec: {
+        width: 5,
+        height: 2,
+        bitsPerPixel: 8,
+        colorsUsed: 2,
+        palette: [
+          [255, 0, 0],
+          [0, 0, 255],
+        ],
+        indices: [
+          [1, 0, 1, 0, 1],
+          [0, 1, 0, 1, 0],
+        ],
+      },
+      // palette[1] = blue, palette[0] = red; the two rows alternate, and the bottom-up file
+      // order is undone by the decoder so row 0 comes back as the first one written here.
+      expected: [
+        0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255,
+        255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255,
+      ],
+    },
+    {
+      label: 'a 16-bit',
+      spec: {
+        width: 3,
+        height: 2,
+        bitsPerPixel: 16,
+        rows: [
+          [0x7c00, 0x03e0, 0x001f],
+          [0x0000, 0x7c00, 0x03e0],
+        ],
+      },
+      expected: [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255],
+    },
+  ] satisfies { label: string; spec: BmpSpec; expected: number[] }[])(
+    'steps $label scanline through the 4-byte-aligned row pitch rather than the packed pixel length',
+    ({ spec, expected }) => {
+      // Neither geometry has a row pitch equal to `width * bitsPerPixel / 8`: 8-bit width 5 is
+      // 8 bytes a row against 5 bytes of indices, and 16-bit width 3 is 8 against 6. Every
+      // other multi-row case in this file is 32-bit, where the two agree, so a `rowStride`
+      // that lost its `Math.ceil(bits / 32) * 4` alignment would pass all of them and shift a
+      // real 8- or 16-bit BMP's second row onto the padding of its first.
+      const decoded = decodeBmp(buildBmp(spec));
+
+      expect([decoded.width, decoded.height]).toEqual([spec.width, spec.height]);
+      expect(Array.from(decoded.data)).toEqual(expected);
+    }
+  );
+
+  it('reads a BITMAPV3HEADER mask block that the 52-byte DIB size places after the header', () => {
+    const buffer = buildBmp({
+      width: 2,
+      height: 1,
+      bitsPerPixel: 32,
+      compression: 3,
+      dibSize: 52,
+      rows: [
+        [
+          [1, 2, 3, 255],
+          [4, 5, 6, 128],
+        ],
+      ],
+    });
+
+    // A 52-byte DIB ends at 66, and the twelve mask DWORDs an uncompressed-spec BITMAPV3HEADER
+    // carries are written at 54..65 — inside the block `dibSize` counts. Reading them from
+    // `dibOffset + dibSize` instead, the way a `dibSize > 52` test would, puts the mask block
+    // on top of the pixel rows. `dibSize` is 52 rather than 56, so there is no alpha mask and
+    // the fourth byte of each pixel is not a channel: both pixels come back opaque.
+    expect(Array.from(decodeBmp(buffer).data)).toEqual([1, 2, 3, 255, 4, 5, 6, 255]);
+  });
+
   it('rejects an index that falls outside the declared palette', () => {
     const buffer = buildBmp({
       width: 2,

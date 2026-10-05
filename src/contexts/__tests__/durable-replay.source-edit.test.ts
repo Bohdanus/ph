@@ -38,6 +38,7 @@ function layer(overrides: Partial<DurableLayerSnapshot> = {}): DurableLayerSnaps
     blendMode: 'source-over',
     order: 0,
     pos: { ...firstBox },
+    frame: { ...frame },
     source: textSource({ toolName: 'text', text: 'First draft', fontSize: 24 }),
     ...overrides,
   };

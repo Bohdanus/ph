@@ -42,13 +42,20 @@ forgotten it. Two rows have weaker coverage than the table implies:
 ## Commands
 
 ```bash
-npm run test            # vitest, jsdom - app unit tests
+npm run test            # vitest, jsdom - the app tests under src/ AND scripts/__tests/
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
 npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
 ```
+
+`npm run test` collects two trees: the app tests under `src/`, and the Node-script tests
+under `scripts/__tests/` and `scripts/lib/citations/__tests__` — the latter run under the
+root jsdom project on purpose, for the reason under **Test traps**. `e2e/**` is excluded
+from it. The `--coverage` variant CI runs keeps that exclusion and drops `src/**`'s own
+test and fixture files as well, and the e2e helpers get their own report from
+`vitest.e2e.config.ts`.
 
 `e2e/README.md` is the depth behind `test:e2e`, `test:e2e:unit`, and visual
 baselines. This file is the gate contract; that one is the e2e suite's own
@@ -181,6 +188,34 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
   `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
   first two steps are guards.
 
+- **`scripts/__tests__/gates-wiring.test.mjs` asserts the wiring this section
+  describes.** Every hook tracked in `.husky/` is in the `HOOKS` array of
+  `scripts/install-git-hooks.js` and installed into `<common-git-dir>/hooks-gate/`, so a
+  hook that reads as protection is one git will actually run; the `pre-push` hook runs a
+  script `package.json` defines, carries `set -e`, and neither `|| true` nor `exit 0`;
+  and the inventory suite it runs reaches nothing on this machine. **That last rule is an
+  invariant over STATEMENTS, not a list of call spellings:** comments come out, whitespace
+  is normalised, the source is split on `;`, and every statement mentioning `process.cwd()`
+  must also mention `dbPath` or match `resolve(process.cwd(), '<path>')`. Both admitted
+  shapes are asserted to still exist, so the rule cannot be satisfied by deleting every
+  read, and the two retired reads `liveWorktreeFacts` and `liveInventory` are asserted
+  absent. It says nothing about `process.env.HOME`, and a read off that would pass it. The
+  second invariant, over the same comment-stripped source, is a TOKEN COUNT: the word
+  `timeout` may appear exactly once in the inventory suite, and that once must be the
+  file-level `vi.setConfig({ testTimeout:` — so no per-test budget returns in any syntax,
+  whether a trailing argument, an options object or a computed key.
+  **`.github/workflows/` is read as a DIRECTORY, not by the path `ci.yml`**, and the
+  job, `continue-on-error` and script-existence checks run over every file in it: a second
+  workflow carrying `continue-on-error: true` is a gate that opted out of gating, in a
+  directory whose whole job is to notice that. `ci.yml` declares `ci`, `e2e-unit` and
+  `e2e`, triggers on push and pull request to `main` plus `workflow_dispatch`, and keeps
+  `permissions: contents: read` with `persist-credentials: false`. Script existence alone
+  is not enough for the `ci` job, because `npm run test -- some-one-file` names a script
+  that exists and runs something much smaller, so the steps named `Test`, `Build`,
+  `Type-check` and `Lint` are each asserted to run `npm run test -- --coverage`,
+  `npm run build`, `npm run tsc` and `npm run lint:check`. A change to any of that is a
+  test failure rather than something only a reviewer would notice.
+
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
   commit-gate step. It is the blocking `e2e-unit` CI job; run it when touching
   `e2e/`.
@@ -214,6 +249,75 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
   rule-changing branch switch, or a bad rebase surface in `ci` rather than at
   commit time.
 - No coverage and no Playwright, at any local gate.
+- **No local gate reads this machine's worktrees, and `inventory:verify` is the report
+  that asks about them.** It is `scripts/worktree-inventory-live.mjs`, it is wired into no
+  hook and into no CI job, and it is a REPORT: which worktrees exist right now is a fact
+  about the machine, and a gate that answered it was once red because the main checkout
+  held one modified file. `scripts/__tests__/worktree-inventory.test.mjs` builds a
+  synthetic fleet and asserts the rules over it, **once per `describe` block**, in a
+  `beforeAll`/`afterAll` pair through its `sharedFleet()` helper. The fleet is
+  **TEN `git worktree list` entries**: the primary checkout the fixture's own `git init`
+  creates, plus nine `git worktree add` calls — seven named shapes, one worktree named
+  after the first `landed: true` key in the curated table so the "agrees with git about
+  every `landed: true` claim" test has a member to check, and one registered outside the
+  checkout, which is the only member that is not `inRepo`. One of the nine is registered
+  and then has its directory removed, so it is filtered out before any fact is read and
+  `git worktree list` is left reporting a registration whose path is gone. Not once per
+  test: the first version rebuilt it per test, and the full-suite run then spent its time
+  in git spawns, thirty-odd per test with four workers at a time, which was enough to push
+  the slowest of them past the file's own 15s budget and turn three passing tests into
+  three timeouts. One build per block is safe because the fleet is immutable — no test in
+  those blocks writes to a worktree, and `buildInventory` and `classify` take plain records
+  and return new ones — and the getter throws rather than handing back whatever the
+  previous block left behind. So the rules are still asserted, non-vacuously, and the
+  answer no longer depends on you. Run `npm run inventory:verify` before a sweep or a
+  landing.
+
+- **`inventory:verify` exits non-zero on a finding AND on a check that could not run.**
+  The findings are four: a worktree that holds the only copy of some work and would be
+  reported as disposable; a curated `mustNotPrune` flag on such a worktree, which is a
+  claim the generator now derives for itself; a curated `landed: true` claim git
+  contradicts; and a recorded session id that is not a real top-level session inside the
+  committed audit's own window. The checks that could not run are three: a worktree
+  holding work on no ref that could not be classified at all, because git named no tip or
+  the head is detached and nothing below ever examined it; facts git could not be read for
+  at all, which print as `UNREADABLE`; and the session audit itself, which on a machine
+  with no session store is a fact about the machine and is reported as such rather than as
+  a pass. A checkout with no resolvable base ref — or one too SHALLOW for ancestry to mean
+  anything — stops the report before any of that: it prints one line beginning
+  `UNREADABLE: ` and RETURNS, with no summary line at all, because every ahead/behind
+  answer beneath it would be null. So the clean report means **every check ran and found
+  nothing**, never "no check found anything": the output prints a
+  `could not be classified:` count and a `NOT CLASSIFIED` section, and otherwise its last
+  line is one of two forms. Zero prints
+  `OK - no rule violated. 3 worktree(s) hold work on no ref and every one is protected; that is the tool working, not a clean bill of health for the machine.`
+  — the sentence verbatim, with the run's own count where the `3` stands. Non-zero prints
+  `FINDINGS - see above.`, or
+  `INCOMPLETE - no finding, but the session audit could not run, so this is not a clean report.`
+  when the audit is the check that could not run. Read the exit line; nothing runs it for
+  you.
+
+- **The generator resolves its base ref and refuses rather than guessing.**
+  `scripts/worktree-inventory.mjs` no longer defaults `base` to the literal `'main'`. It
+  calls `resolveBaseRef(root)` **before** `collectWorktrees(root, { base })` and refuses
+  when the answer is `null`, so an unresolvable base can never reach the collector:
+  `collectWorktrees` rejects `null` as well as `undefined`, which is the check that had
+  been `=== undefined` and let a `null` through to write a null `ahead`/`behind` and an
+  empty name-collision list for every worktree. `resolveBaseRef(root)` tries
+  `refs/heads/main`, `origin/main` and `refs/remotes/origin/main` in that order and
+  returns the first that resolves to a commit, and a checkout with none of them is
+  refused by a thrown error naming all three rather than compared against a name that
+  resolves to nothing — which is what an `actions/checkout` on a `pull_request` produces,
+  and what a clone of any repository whose default branch has another name produces.
+  `--base <ref>` still wins, and the refusal names the flag. **Two details the candidates
+  list alone does not carry.** A SHALLOW repository answers `null` for every candidate,
+  because `rev-parse --verify` passes on a `--depth 1` clone's `origin/main` and every
+  answer built on it would be confidently wrong. And `rev-parse --verify` does **not**
+  reject an ambiguous name: with a branch `main` and a lightweight tag `main` it exits 0,
+  resolves the tag, and warns on stderr where nothing reads it — what keeps the answer
+  right is the fully qualified first candidate, not the probe, and `^{commit}` is there
+  only to reject a tree and a blob. Any note saying the probe is false for a missing ref
+  **and** an ambiguous one is wrong about the second half.
 
 ### `test:staged` is a command, not a gate
 
@@ -241,10 +345,19 @@ unquoted `$(...)` word-splits and globs into a silent pass.
 
 ### CI
 
-- `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion,
-  coverage tests, build.
-- `e2e-unit`: e2e helper tests and coverage.
-- `e2e`: headless Playwright.
+- `ci`: `npm run lint:check`, `npm run tsc`, the assertion that every tracked
+  TypeScript file is in a project, `npm run test -- --coverage`, `npm run build`, then
+  `npm audit --audit-level=high` as the **last GATE** — not the last STEP: the app
+  coverage upload after it is `always()`, so it runs whatever the audit does, and burying
+  a registry-dependent gate behind an `if-no-files-found: error` upload would add a second
+  way for it not to run. The audit is still a gate and still high severity; it is ordered
+  after the code gates because `npm audit` asks a registry about advisories published
+  since the lockfile was written, so ordered second a new transitive advisory anywhere in
+  the tree could turn `main` red with no code change **and** abort every gate behind it.
+- `e2e-unit`: e2e helper tests, then the coverage run.
+- `e2e`: headless Playwright, and a blocking gate. No job or step in
+  `.github/workflows/ci.yml` carries `continue-on-error`, which is what
+  `scripts/__tests__/gates-wiring.test.mjs` asserts.
 - **Dependency licences are not a gate.** The allow/deny list and the high-severity
   threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit
 --audit-level=high` in `ci` is the vulnerability half and it does run.

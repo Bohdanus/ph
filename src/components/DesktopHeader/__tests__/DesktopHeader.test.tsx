@@ -1,21 +1,63 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+/**
+ * The figure routing this file used to cover is gone with the `Tools` menu, and it is
+ * worth saying where it went rather than leaving a hole.
+ *
+ * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
+ * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
+ * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
+ * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where a bare
+ * `args.toolName !== 'shape'` guard returned early and suppressed the store-colour publish —
+ * a red colour well committing black.
+ *
+ * **That trap is closed, and it was the colour publish that closed it.** The guard is now
+ * `isShapeFamilyToolName()` in `src/components/ToolbarsRight/Figures/Shape.tsx`, and
+ * `SHAPE_FAMILY_TOOL_NAMES` admits all six names including `ellipse`, so the early return no
+ * longer fires for a figure and the publish proceeds. `aef65eff` replaced the literal because of
+ * that. `Main.tsx`'s interaction-mode arm lists the same six, so all of them mount
+ * `ShapeToolArea`. So the colour argument above no longer forces the routing, and the `HANDOFF.md`
+ * entry that recorded it is deleted rather than marked fixed.
+ *
+ * What still forces it is not one literal, and the honest count is three sites. `ShapeToolArea`'s
+ * `editsActiveLayer` tests `activeLayer.source.args.toolName === 'shape'` — the committed source's
+ * tool name, not the live args — and, with `source.kind === 'tool'` and an exact `pos` match, it
+ * decides whether a commit REPLACES the active layer's source instead of creating a new one, so a
+ * figure arriving as `ellipse` would mount the same panel and still commit a second layer rather
+ * than edit the first. `saveLastSettings` in `src/util/settings.ts` splits the family across three
+ * buckets — `shape` alone, `triangle`/`polygon`, and `rectangle`/`ellipse`/`line` — so a figure
+ * arriving under its own key also persists somewhere else. Both are why the routing stands, and
+ * neither is the colour publish. `toolbar-mapping.test.ts` pins the shape flyout slice of
+ * `toolbarMap`, its order and members.
+ *
+ * The other thing this file proved was that the header's tool rows committed a pending
+ * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
+ * OUTGOING tool and patching first would leave that commit reading shape args. With no
+ * figure rows left that leaves exactly three tool-selecting commands, all a plain `goToTool`
+ * with nothing patched — `Edit ▸ Free Transform`, and the two `Image ▸ Adjustments` rows that
+ * carry a `toolName` at all, `Brightness/Contrast` and `Desaturate`. The other twenty rows of
+ * `ADJUSTMENTS_ITEMS` are `unbuilt` and select nothing. So there is no ordering left to get
+ * wrong here, and nothing left to assert about it.
+ *
+ * WHERE THE ORDER STILL MATTERS, so this is not read as "the rule moved to the rail":
+ * `mobile-tools.ts`'s `makeSelectTool` selects first and patches second, which is the safe
+ * order. Three call sites patch FIRST and then select, and all three carry the same hazard
+ * `HANDOFF.md` §237 describes — the outgoing tool commits against already-replaced args:
+ * `SidebarLeft`'s own `selectTool`, and `AppKeyboardShortcuts`'s `selectShapeTool` at both of
+ * its patch sites, reachable from plain `U` and from `Shift+U`. Nothing here pins any of them,
+ * and this file cannot: it no longer has a surface that patches. `HANDOFF.md` §237 covers all three
+ * sites, and its own earlier claim that the rail was the only one has been corrected there. The
+ * defect is recorded in `HANDOFF.md`, not enshrined by a test written to match the code.
+ */
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import DesktopHeader, { MENUS_EXCLUDE } from '../DesktopHeader.tsx';
-import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
-import { availableTools } from '../../../../toolbar-mapping.ts';
+import DesktopHeader from '../DesktopHeader.tsx';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
-import type { TextToolArgs } from '../../../tools/text.ts';
 
 const committedLayers = createMockLayers(1);
 
 const storeState = vi.hoisted(() => ({
   canvasRef: { current: null as HTMLCanvasElement | null },
   currentArgs: { current: { toolName: 'draw' } as ToolArgs },
-  // A REF, like `currentArgs`, because `UnsavedChangesProvider` reads
-  // `previewLayers.current` for an in-flight tool transaction. Without it the provider
-  // throws `Cannot convert undefined or null to object` on `Object.keys`.
-  previewLayers: { current: {} as Record<string, unknown> },
   fileName: 'test.png',
   hasUnsavedChanges: false,
   totalSize: { width: 800, height: 600 },
@@ -48,31 +90,32 @@ const file = vi.hoisted(() => ({
 
 const layers = vi.hoisted(() => ({
   commitDirtyTool: vi.fn(),
-}));
-
-const currentTool = vi.hoisted(() => ({
-  patchToolArgs: vi.fn(),
+  mergeAllLayers: vi.fn(),
 }));
 
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));
+
+/**
+ * The discard question belongs to `UnsavedChangesContext`, which owns the copy and decides
+ * what counts as discardable work. These tests drive `confirmDiscard` and assert the REASON
+ * it was asked for; whether an empty draft or a pristine document counts is
+ * `hasDiscardableWork`'s claim, asserted where it is implemented.
+ */
+const unsaved = vi.hoisted(() => ({ confirmDiscard: vi.fn<(reason: string) => Promise<boolean>>() }));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({ useStore: () => [storeState, dispatch] }));
 vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => app }));
 vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => file }));
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => layers }));
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
+vi.mock('../../../contexts/UnsavedChangesContext.tsx', () => ({ useUnsavedChanges: () => unsaved }));
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => themeState,
 }));
 
-const NEW_CONFIRM_MESSAGE = 'Discard unsaved changes and start a new image?';
-const OPEN_CONFIRM_MESSAGE = 'Discard unsaved changes and open another file?';
-
 const defaultStore = {
   canvasRef: { current: null as HTMLCanvasElement | null },
   currentArgs: { current: { toolName: 'draw' } as ToolArgs },
-  previewLayers: { current: {} as Record<string, unknown> },
   fileName: 'test.png',
   hasUnsavedChanges: false,
   totalSize: { width: 800, height: 600 },
@@ -81,21 +124,16 @@ const defaultStore = {
   toolName: 'draw' as ToolName,
 };
 
-/**
- * The real `UnsavedChangesProvider`, not a mock of it: the guard under test is the one the
- * provider owns, and it reads the same mocked `useStore` this file already installs.
- */
-function renderHeader() {
-  return render(
-    <UnsavedChangesProvider>
-      <DesktopHeader />
-    </UnsavedChangesProvider>
-  );
-}
-
-function openMenu(name: 'File' | 'Tools' | 'Image' | 'Edit') {
+function openMenu(name: string) {
   fireEvent.click(screen.getByRole('button', { name }));
 }
+
+/**
+ * Adobe's ten, in Adobe's order. This is the whole point of the menu bar, so it is written
+ * out once here and asserted against rather than imported from the component: a constant the
+ * test and the component share proves only that they agree, and agreeing is not the claim.
+ */
+const ADOBE_MENUS = ['File', 'Edit', 'Image', 'Layer', 'Type', 'Select', 'Filter', 'View', 'Window', 'Help'] as const;
 
 /**
  * `Image ▸ Adjustments` is a two-level menu, so reaching an item needs the host opened and
@@ -120,49 +158,10 @@ async function clickFileMenuItem(testId: string) {
   });
 }
 
-/**
- * Click a File menu item and read the prompt the guard raises, if it raises one.
- *
- * The handler is async: `confirmDiscard` resolves straight through when there is nothing to
- * discard, and renders the dialog on a `setState` when there is. `findBy*` rather than
- * `getByTestId` because a prompt on a clean document would not be there yet.
- *
- * The copy is then asserted with `toHaveAccessibleDescription`, not a testid: the prompt
- * `<p>` carries `id="confirm-dialog-message"` and no `data-testid`, and the dialog's
- * `aria-describedby` already points at it. That reads the accessibility wiring as well as
- * the string, and keeps working if the testid is added later.
- */
-async function openDiscardPrompt(testId: string) {
-  await clickFileMenuItem(testId);
-  return screen.findByTestId('confirm-dialog');
-}
-
-/** Answer "Discard". The picker that follows is the thing under test, not the dialog. */
-async function acceptDiscard() {
-  fireEvent.click(screen.getByTestId('confirm-dialog-confirm-button'));
-  await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
-}
-
-/**
- * Answer "Cancel", then drain the microtasks the awaiting handler still owes.
- *
- * The second half is the load-bearing one: `answer(false)` resolves the guard's promise on
- * its way out of the click, and the `await` in the handler resumes a microtask later. A
- * test that asserted `expect(openNewImageDialog).not.toHaveBeenCalled()` without it would
- * be asserting before the code under test had finished deciding, and a regression that
- * opened the picker anyway could pass.
- */
-async function declineDiscard() {
-  fireEvent.click(screen.getByTestId('confirm-dialog-cancel-button'));
-  await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
-  await act(async () => {});
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   storeState.canvasRef = { current: null };
   storeState.currentArgs = { current: { toolName: 'draw' } as ToolArgs };
-  storeState.previewLayers = { current: {} };
   storeState.fileName = 'test.png';
   storeState.hasUnsavedChanges = false;
   storeState.hasImage = true;
@@ -177,83 +176,67 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   Object.assign(storeState, { ...defaultStore });
   themeState.theme = 'light';
 });
 
 describe('DesktopHeader', () => {
-  it('renders the File, Tools, Image, Edit and Window menu buttons', () => {
-    renderHeader();
-
-    expect(screen.getByRole('button', { name: 'File' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tools' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Image' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Window' })).toBeInTheDocument();
-  });
-
-  it('shows all available tools in the Tools menu', () => {
-    renderHeader();
-
-    openMenu('Tools');
-
-    // Derived from the registry rather than written out by hand. This was a literal list of
-    // 24 names that never included the Dodge, the Burn, the Smudge, the Sharpen or the eraser
-    // family, so it could not have caught a tool missing from `TOOL_MENU_ITEMS` — which is
-    // exactly how the Sponge shipped without a menu entry. Every `availableTools` name now has
-    // to produce a row, so the next omission fails here instead of in the app.
-    const missing = availableTools
-      .filter((tool) => !MENUS_EXCLUDE.includes(tool))
-      .filter((tool) => screen.queryByTestId(`tools-menu-${tool}-button`) === null);
-    expect(missing, `tools absent from the Tools menu: ${missing.join(', ')}`).toEqual([]);
-  });
-
   /**
-   * The registry-derived test above proves every non-excluded tool HAS a row. It cannot see
-   * the other half: a tool that is absent for no stated reason is skipped by `MENUS_EXCLUDE`
-   * just as silently as one that is absent on purpose. This is the half that names them.
+   * The one assertion the menu bar exists to satisfy: Adobe's list, left to right.
    *
-   * The Tools menu lists TOOLS. `color`, `levels` and `transform` are `Image ▸ Adjustments`
-   * and `Edit ▸ Free Transform` commands, so a Tools-menu entry for any of them would be the
-   * same falsehood the rail carried — in the other direction, and in the surface whose own
-   * header comment calls a missing tool "a visible inconsistency". `toolbar-mapping.ts`'s
-   * `extraTools` names them as the ids with no rail entry; `MENUS_EXCLUDE` names them as the
-   * ids with no menu row. This is the pin that keeps the two in step, and it is the only
-   * thing standing between "excluded on purpose" and "excluded by accident".
+   * This replaces two weaker pins. One asked whether five named buttons existed, which a menu
+   * bar can do while being in the wrong order and carrying two menus Photoshop does not have.
+   * The other derived the `Tools` menu's rows from the tool registry — real coverage of a real
+   * defect, and it is not deleted so much as relocated: `Tools` is not a Photoshop menu, so
+   * there is nothing there to be complete about, and the guarantee it carried ("no registered
+   * tool is unreachable") now lives where the tools are, in
+   * `SidebarLeft/__tests__/toolbar-mapping.test.ts`, which walks the same registry against the
+   * rail and cannot be satisfied by a hand-written list of menu rows.
+   *
+   * ORDER is asserted, not membership: `ADOBE_MENUS` is compared to the rendered sequence, so
+   * a menu moved back next to `File` fails here.
    */
-  it('keeps the three non-tool commands out of the Tools menu, and says why', () => {
-    renderHeader();
+  it("renders Adobe's ten menus, in Adobe's order", () => {
+    render(<DesktopHeader />);
 
-    openMenu('Tools');
-
-    expect(screen.queryByTestId('tools-menu-color-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-levels-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-transform-button')).toBeNull();
-    expect(MENUS_EXCLUDE).toEqual(expect.arrayContaining(['color', 'levels', 'transform']));
+    const bar = screen.getByRole('heading', { level: 1 }).parentElement!.querySelector('ul')!;
+    const labels = [...bar.children].map((item) => item.querySelector('button')?.textContent);
+    expect(labels).toEqual(ADOBE_MENUS);
   });
 
   /**
-   * `MENUS_EXCLUDE` is the ONLY sanctioned way for a registered tool to have no Tools-menu
-   * row, so it is the list that decides which omissions are deliberate. Left open, it grows
-   * without anyone reading it and the registry-derived test above keeps passing — which is
-   * precisely the failure mode it was written to end. Pinned at six, for the six stated
-   * reasons in `DesktopHeader.tsx`: three pen point-tools that modify a path, and three
-   * adjustment commands that are not tools at all.
+   * The two menus that were in this bar and are not in Adobe's. `Tools` is the load-bearing
+   * one — Photoshop reaches the tool set through the Tools panel and the single-key tool
+   * bindings, never a menu — and `3D` is the one this repository believed in until the menu
+   * bar was checked against Adobe, which removed the 3D features outright in 2020.
    */
-  it('holds MENUS_EXCLUDE to exactly the six tools with a stated reason', () => {
-    expect([...MENUS_EXCLUDE].sort()).toEqual([
-      'add-anchor-point',
-      'color',
-      'convert-point',
-      'delete-anchor-point',
-      'levels',
-      'transform',
-    ]);
+  it('carries no menu Photoshop does not have', () => {
+    render(<DesktopHeader />);
+
+    expect(screen.queryByRole('button', { name: 'Tools' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '3D' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Analysis' })).toBeNull();
+  });
+
+  /**
+   * Adobe nests the workspace reset one level down, so this follows it there rather than
+   * asserting the old flat shape. `DesktopHeader.window-menu.test.tsx` covers the command
+   * itself; what is pinned here is that `Window` has a `Workspace` parent to hang it from.
+   */
+  it('nests the workspace reset under Window > Workspace, as Adobe does', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Window');
+    expect(screen.queryByTestId('window-menu-workspace-reset-essentials-button')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('window-menu-workspace-button'));
+    expect(screen.getByTestId('window-menu-workspace-reset-essentials-button')).toBeInTheDocument();
   });
 
   it('toggles the file menu open and closed', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     const fileButton = screen.getByRole('button', { name: 'File' });
 
@@ -265,7 +248,7 @@ describe('DesktopHeader', () => {
   });
 
   it('toggles the edit menu open and closed', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     const editButton = screen.getByRole('button', { name: 'Edit' });
 
@@ -277,7 +260,7 @@ describe('DesktopHeader', () => {
   });
 
   it('goes to the correct tool when the Image menu adjustment is clicked', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     openAdjustments();
     fireEvent.click(screen.getByTestId('image-menu-adjustments-desaturate-button'));
@@ -291,7 +274,7 @@ describe('DesktopHeader', () => {
   });
 
   it('toggles the Adjustments submenu open and closed on its own button', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     openMenu('Image');
     expect(screen.queryByTestId('image-menu-adjustments')).toBeNull();
@@ -314,7 +297,7 @@ describe('DesktopHeader', () => {
    * cannot do.
    */
   it("carries Adobe's Adjustments list with only the two implemented commands enabled", () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     openAdjustments();
 
@@ -344,33 +327,23 @@ describe('DesktopHeader', () => {
     }
   });
 
-  /**
-   * `photo-filter` is the second case and it is the load-bearing one. The Colors bar's
-   * leading control is what Adobe's `Desaturate` computes; it is not what `Photo Filter`
-   * computes, so an enabled `Photo Filter` opened a bar its own label did not describe, and
-   * Adobe's real command is unbuilt — which is what a `disabled` item records. Two
-   * assertions above are what hold that, and this one only holds that the row does not act:
-   * `expect(enabled).toEqual(['Brightness/Contrast', 'Desaturate'])`, which fails if
-   * `Photo Filter` is enabled again, and the disabled-label loop, which asserts
-   * `Photo Filter` carries `disabled`.
-   */
-  it.each(['levels', 'photo-filter'])('does not select a tool when the disabled %s adjustment is clicked', (slug) => {
-    renderHeader();
+  it('does not select a tool when a disabled adjustment is clicked', () => {
+    render(<DesktopHeader />);
 
     openAdjustments();
-    fireEvent.click(screen.getByTestId(`image-menu-adjustments-${slug}-button`));
+    fireEvent.click(screen.getByTestId('image-menu-adjustments-levels-button'));
 
     expect(app.goToTool).not.toHaveBeenCalled();
   });
 
   it('renders theme toggle button', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     expect(screen.getByRole('button', { name: 'Toggle theme' })).toBeInTheDocument();
   });
 
   it('calls toggleTheme when the theme toggle button is clicked', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Toggle theme' }));
 
@@ -378,33 +351,38 @@ describe('DesktopHeader', () => {
   });
 
   it('opens the new file dialog when File > New is clicked', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openNewImageDialog.mockResolvedValue(undefined);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    await waitFor(() => expect(file.openNewImageDialog).toHaveBeenCalledTimes(1));
+    expect(file.openNewImageDialog).toHaveBeenCalledTimes(1);
   });
 
   it('opens the load file dialog when File > Open is clicked', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openLoadImageDialog.mockResolvedValue(undefined);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    await waitFor(() => expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1));
+    expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1);
   });
 
   it('shows Confirm dialog when opening file with unsaved changes', async () => {
     storeState.hasUnsavedChanges = true;
+    unsaved.confirmDiscard.mockResolvedValue(false);
     file.openLoadImageDialog.mockResolvedValue(undefined);
 
-    renderHeader();
+    render(<DesktopHeader />);
 
-    const dialog = await openDiscardPrompt('header-file-open-button');
+    openMenu('File');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('header-file-open-button'));
+    });
 
-    expect(dialog).toHaveAccessibleDescription(OPEN_CONFIRM_MESSAGE);
-    await declineDiscard();
+    expect(unsaved.confirmDiscard).toHaveBeenCalledWith('open-document');
     expect(file.openLoadImageDialog).not.toHaveBeenCalled();
     expect(app.setImageFromUpload).not.toHaveBeenCalled();
   });
@@ -413,7 +391,7 @@ describe('DesktopHeader', () => {
 describe('DesktopHeader theme icon', () => {
   it('renders the moon glyph while the light theme is active', () => {
     themeState.theme = 'light';
-    renderHeader();
+    render(<DesktopHeader />);
 
     expect(pathDataOf('Toggle theme')).toBe(
       'M6 .278a.77.77 0 0 1 .08.858 7.2 7.2 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277q.792-.001 1.533-.16a.79.79 0 0 1 .81.316.73.73 0 0 1-.031.893A8.35 8.35 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.75.75 0 0 1 6 .278'
@@ -422,7 +400,7 @@ describe('DesktopHeader theme icon', () => {
 
   it('renders the sun glyph while the dark theme is active', () => {
     themeState.theme = 'dark';
-    renderHeader();
+    render(<DesktopHeader />);
 
     expect(pathDataOf('Toggle theme')).toBe(
       'M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6m0 1a4 4 0 1 0 0-8 4 4 0 0 0 0 8M8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0m0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13m8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5M3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8m10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0m-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0m9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707M4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708'
@@ -431,53 +409,55 @@ describe('DesktopHeader theme icon', () => {
 });
 
 describe('DesktopHeader menu lifecycle', () => {
+  /**
+   * Walks the whole bar rather than four of its ten, and asserts the list rather than the
+   * absence of one row. The old version named which menu replaced which, which is a shape that
+   * stays true as the bar grows — a second dropdown left hanging over the canvas is exactly
+   * the defect, and it does not care which two hosts cause it.
+   */
   it('keeps only one menu open at a time', () => {
-    renderHeader();
+    const { container } = render(<DesktopHeader />);
+    const openHostLists = () => container.querySelectorAll('[data-testid^="header-"][data-testid$="-menu"]');
 
-    openMenu('File');
-    expect(screen.getByTestId('header-file-new-button')).toBeInTheDocument();
-
-    openMenu('Tools');
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
-
-    openMenu('Image');
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-    expect(screen.getByTestId('image-menu-adjustments-button')).toBeInTheDocument();
-
-    openMenu('Edit');
-    expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
-    expect(screen.getByTestId('edit-menu-free-transform-button')).toBeInTheDocument();
+    for (const menu of ADOBE_MENUS) {
+      openMenu(menu);
+      expect(openHostLists()).toHaveLength(1);
+      expect(screen.getByTestId(`header-${menu.toLowerCase()}-menu`)).toBeInTheDocument();
+    }
   });
 
-  it('closes the tools menu on a second click of the Tools button', () => {
-    renderHeader();
+  it('closes a menu on a second click of its own button', () => {
+    render(<DesktopHeader />);
 
-    openMenu('Tools');
-    expect(screen.getByTestId('tools-menu-draw-button')).toBeInTheDocument();
+    openMenu('Layer');
+    expect(screen.getByTestId('layer-menu-flatten-image-button')).toBeInTheDocument();
 
-    openMenu('Tools');
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
+    openMenu('Layer');
+    expect(screen.queryByTestId('layer-menu-flatten-image-button')).toBeNull();
   });
 
-  it.each([
-    ['File', 'header-file-new-button'],
-    ['Tools', 'tools-menu-draw-button'],
-    ['Image', 'image-menu-adjustments-button'],
-    ['Edit', 'edit-menu-free-transform-button'],
-  ] as const)('closes the open %s menu when a mousedown lands outside of it', (menu, itemTestId) => {
-    renderHeader();
+  /**
+   * Every host, not the four this file happened to cover. The outside-click handler used to
+   * be five hand-written branches over five named refs, so a sixth host was one forgotten
+   * branch away from a menu that never closed — a defect with no other symptom. The `Map` it
+   * runs on and this `it.each` both exist because of that, and the second assertion is the
+   * load-bearing one: it proves the host's own `<li>` registered, which is the half a
+   * hard-coded branch list got right for the five that existed and would have silently missed
+   * for the next one.
+   */
+  it.each(ADOBE_MENUS)('closes the open %s menu when a mousedown lands outside of it', (menu) => {
+    render(<DesktopHeader />);
 
     openMenu(menu);
-    expect(screen.getByTestId(itemTestId)).toBeInTheDocument();
+    expect(screen.getByTestId(`header-${menu.toLowerCase()}-menu`)).toBeInTheDocument();
 
     fireEvent.mouseDown(document.body);
 
-    expect(screen.queryByTestId(itemTestId)).toBeNull();
+    expect(screen.queryByTestId(`header-${menu.toLowerCase()}-menu`)).toBeNull();
   });
 
   it('keeps the menu open when a mousedown lands inside it', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     openMenu('File');
     fireEvent.mouseDown(screen.getByTestId('header-file-new-button'));
@@ -486,18 +466,17 @@ describe('DesktopHeader menu lifecycle', () => {
   });
 
   it('ignores a mousedown outside while no menu is open', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     fireEvent.mouseDown(document.body);
 
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
-    expect(screen.queryByTestId('tools-menu-draw-button')).toBeNull();
-    expect(screen.queryByTestId('image-menu-adjustments-button')).toBeNull();
-    expect(screen.queryByTestId('edit-menu-free-transform-button')).toBeNull();
+    for (const id of ADOBE_MENUS.map((menu) => `header-${menu.toLowerCase()}-menu`)) {
+      expect(screen.queryByTestId(id)).toBeNull();
+    }
   });
 
   it('stops reacting to outside mousedowns after unmount', () => {
-    const { unmount } = renderHeader();
+    const { unmount } = render(<DesktopHeader />);
 
     openMenu('File');
     unmount();
@@ -510,7 +489,7 @@ describe('DesktopHeader menu commands', () => {
   it.each([['edit-menu-free-transform-button', 'transform']])(
     'routes %s to exactly one goToTool call and closes the menu',
     (testId, toolName) => {
-      renderHeader();
+      render(<DesktopHeader />);
 
       openMenu('Edit');
       fireEvent.click(screen.getByTestId(testId));
@@ -524,7 +503,7 @@ describe('DesktopHeader menu commands', () => {
     ['image-menu-adjustments-brightness-contrast-button', 'levels'],
     ['image-menu-adjustments-desaturate-button', 'color'],
   ] as const)('routes %s to exactly one goToTool call and closes the whole menu', (testId, toolName) => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     openAdjustments();
     fireEvent.click(screen.getByTestId(testId));
@@ -538,153 +517,106 @@ describe('DesktopHeader menu commands', () => {
    * Adobe's `Edit` menu holds `Free Transform` at the top level, not inside a `Transform`
    * submenu, and a menu whose items are all tool switches is not Adobe's `Edit` at all.
    * `blur`, `draw` and `text` are all Tools-panel tools, so none of them may appear here.
+   *
+   * Asserted as "no tool switch is present" rather than as an exact list, because the menu is
+   * meant to grow: `Undo` and `Step Forward` were added in the same change that made this
+   * menu Adobe-ordered, and pinning the whole list would turn the next Adobe command into a
+   * test edit instead of a decision. The list that must not grow is the tool switches.
    */
   it('holds no tool switches in the Edit menu', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     openMenu('Edit');
 
-    expect(
-      within(screen.getByTestId('header-edit-menu'))
-        .getAllByRole('button')
-        .map((button) => button.textContent)
-    ).toEqual(['Free Transform']);
-    for (const toolName of ['blur', 'draw', 'text']) {
+    for (const toolName of ['blur', 'draw', 'text', 'crop', 'brush', 'eyedropper']) {
       expect(screen.queryByTestId(`edit-menu-${toolName}-button`)).toBeNull();
     }
+    const rows = within(screen.getByTestId('header-edit-menu'))
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(rows).toContain('Free Transform');
+    expect(rows.filter((row) => /Tool$/.test(row ?? ''))).toEqual([]);
   });
 
-  it('opens one Tools menu entry and closes the menu', () => {
-    renderHeader();
+  it('offers the two history commands Adobe puts at the top of Edit', () => {
+    history.canUndo.mockReturnValue(true);
+    history.canRedo.mockReturnValue(true);
+    render(<DesktopHeader />);
 
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-polygonal-lasso-button'));
+    openMenu('Edit');
 
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('polygonal-lasso');
-    expect(screen.queryByTestId('tools-menu-polygonal-lasso-button')).toBeNull();
+    const undo = screen.getByTestId('edit-menu-undo-button');
+    const stepForward = screen.getByTestId('edit-menu-step-forward-button');
+    expect(undo).toBeEnabled();
+    expect(stepForward).toBeEnabled();
+
+    fireEvent.click(undo);
+    expect(history.undo).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('header-edit-menu')).toBeNull();
+
+    openMenu('Edit');
+    fireEvent.click(screen.getByTestId('edit-menu-step-forward-button'));
+    expect(history.redo).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['tools-menu-crop-button', 'crop'],
-    ['tools-menu-magic-wand-button', 'magic-wand'],
-    ['tools-menu-custom-shape-button', 'custom-shape'],
-  ] as const)('selects %s from the Tools menu', (testId, toolName) => {
-    renderHeader();
+  it('greys the two history commands out when history cannot move, as Adobe does', () => {
+    render(<DesktopHeader />);
 
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId(testId));
+    openMenu('Edit');
 
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith(toolName);
-  });
-});
-
-describe('DesktopHeader Tools menu figure entries', () => {
-  // These five entries are the second selection surface for the figures. The sidebar
-  // already reaches them as `goToTool('shape')` plus a `figure` patch; dispatching the
-  // registered figure `ToolName`s mounted the Shape panel with a figure-specific tool name,
-  // bypassing the shared shape-family state path used by the sidebar.
-  //
-  // `ellipse` is the trap: the registered `ToolName` is `ellipse`, the stored figure is `oval`.
-  it.each([
-    ['tools-menu-rectangle-button', 'rectangle'],
-    ['tools-menu-ellipse-button', 'oval'],
-    ['tools-menu-triangle-button', 'triangle'],
-    ['tools-menu-polygon-button', 'polygon'],
-    ['tools-menu-line-button', 'line'],
-  ] as const)('selects %s as the shape tool with its figure, and closes the menu', (testId, figure) => {
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId(testId));
-
-    expect(currentTool.patchToolArgs).toHaveBeenCalledExactlyOnceWith('shape', { figure });
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('shape');
-    expect(screen.queryByTestId(testId)).toBeNull();
+    expect(screen.getByTestId('edit-menu-undo-button')).toBeDisabled();
+    expect(screen.getByTestId('edit-menu-step-forward-button')).toBeDisabled();
+    // Step Backward is a different kind of unavailable: the command does not exist at all, so
+    // it is inert whatever the history says. It is the row beside the two that work, and it is
+    // what makes the pair legible as "the history group".
+    expect(screen.getByRole('button', { name: 'Step Backward' })).toBeDisabled();
   });
 
-  // The order of those two calls is load-bearing, but not for the reason a
-  // call-order assertion suggests. `goToTool` runs `commitDirtyTool()` against the
-  // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the live
-  // `currentArgsRef` (`useCurrentTool.tsx:61`). Patch first and the text branch at
-  // `useLayer.ts:329` reads shape args — no `.text`, no `.rect` — and early-returns, so
-  // an unapplied text layer is dropped with no layer and nothing to undo.
-  //
-  // So this models the real side effects instead of only the call shape:
-  // `patchToolArgs` overwrites the live args ref exactly as `_setToolArgs` does, and
-  // `goToTool` reads it exactly as `commitDirtyTool` does. The assertion is therefore
-  // about what the outgoing commit SEES, not about which mock ran first. Both calls are
-  // batched in one click handler, so no stale-figure render can exist between them.
-  it('commits the pending text draft before the tool changes', () => {
-    const pendingText: TextToolArgs = {
-      toolName: 'text',
-      text: 'draft',
-      rect: { x1: 0, y1: 0, x2: 40, y2: 12 },
-      align: 'left',
-      bold: false,
-      italic: false,
-      color: '#000000',
-      fontFamily: 'Roboto',
-      fontSize: 12,
-      lineHeight: 1.2,
-    };
-    const shapeArgs: ToolArgs = { toolName: 'shape', figure: 'oval' } as ToolArgs;
-    storeState.toolName = 'text';
-    storeState.currentArgs = { current: pendingText };
+  it("nests Adobe's six single modes under Edit > Transform", () => {
+    render(<DesktopHeader />);
 
-    // What `commitDirtyTool` does on the way through `goToTool`.
-    const seenByCommit: Array<{ args: ToolArgs; outcome: 'committed' | 'dropped' }> = [];
-    currentTool.patchToolArgs.mockImplementationOnce(() => {
-      storeState.currentArgs.current = shapeArgs;
-    });
-    app.goToTool.mockImplementationOnce(() => {
-      const args = storeState.currentArgs.current;
-      // `useLayer.ts:328-330`: the same cast, then the guard that drops the draft.
-      const { text, rect } = args as TextToolArgs;
-      seenByCommit.push({ args, outcome: !text || !rect ? 'dropped' : 'committed' });
-    });
+    openMenu('Edit');
+    expect(screen.queryByTestId('edit-menu-transform-button')).toBeInTheDocument();
 
-    renderHeader();
-
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-ellipse-button'));
-
-    expect(seenByCommit).toHaveLength(1);
-    // The commit must read the outgoing tool's args...
-    expect(seenByCommit[0].args).toBe(pendingText);
-    // ...so it takes the commit branch rather than the drop branch.
-    expect(seenByCommit[0].outcome).toBe('committed');
-    // And the reorder must not cost the figure the entry exists to select.
-    expect(storeState.currentArgs.current).toBe(shapeArgs);
+    fireEvent.click(screen.getByTestId('edit-menu-transform-button'));
+    const submenu = screen.getByTestId('edit-menu-transform-button').nextElementSibling as HTMLElement;
+    const leaves = within(submenu)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(leaves).toEqual(['Scale', 'Rotate', 'Skew', 'Distort', 'Perspective', 'Warp']);
+    for (const leaf of leaves) expect(screen.getByRole('button', { name: leaf })).toBeDisabled();
   });
 
-  it('leaves a non-figure tool on its own selection path', () => {
-    renderHeader();
+  it('flattens the document through Layer > Flatten Image', () => {
+    render(<DesktopHeader />);
 
-    openMenu('Tools');
-    fireEvent.click(screen.getByTestId('tools-menu-crop-button'));
+    openMenu('Layer');
+    fireEvent.click(screen.getByTestId('layer-menu-flatten-image-button'));
 
-    expect(currentTool.patchToolArgs).not.toHaveBeenCalled();
-    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('crop');
+    expect(layers.mergeAllLayers).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('header-layer-menu')).toBeNull();
   });
 });
 
 describe('DesktopHeader File > New', () => {
-  it('creates a blank image without a discard prompt on a pristine document and closes the menu', async () => {
+  it('creates a blank image once the discard question is answered yes, and closes the menu', async () => {
     const params = { color: '#ff0000', opacity: 0.5, size: { width: 640, height: 480 }, isBedrock: true };
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openNewImageDialog.mockResolvedValue(params);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    // A pristine document has nothing to discard, so it must never be asked about one —
-    // and because the guard resolves `true` on its own, that is now the only thing standing
-    // between the click and the picker, so the absence of the dialog IS the assertion.
-    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
-    await waitFor(() => expect(app.setBlankImage).toHaveBeenCalledExactlyOnceWith(params));
+    // Whether a pristine document is worth asking about is `hasDiscardableWork`'s call, so
+    // what is asserted here is that an accepted answer opens the dialog.
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('new-document');
+    expect(file.openNewImageDialog).toHaveBeenCalledTimes(1);
+    expect(app.setBlankImage).toHaveBeenCalledExactlyOnceWith(params);
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
   it('skips the new document dialog when the user dismisses the confirmation', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(false);
     storeState.hasUnsavedChanges = true;
     file.openNewImageDialog.mockResolvedValue({
       color: '#ffffff',
@@ -692,12 +624,11 @@ describe('DesktopHeader File > New', () => {
       size: { width: 8, height: 8 },
       isBedrock: true,
     });
-    renderHeader();
+    render(<DesktopHeader />);
 
-    const dialog = await openDiscardPrompt('header-file-new-button');
+    await clickFileMenuItem('header-file-new-button');
 
-    expect(dialog).toHaveAccessibleDescription(NEW_CONFIRM_MESSAGE);
-    await declineDiscard();
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('new-document');
     expect(file.openNewImageDialog).not.toHaveBeenCalled();
     expect(app.setBlankImage).not.toHaveBeenCalled();
     // A declined discard leaves the document exactly as it was, and it also leaves no
@@ -708,6 +639,7 @@ describe('DesktopHeader File > New', () => {
   });
 
   it('asks before discarding a document that really has unsaved changes', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(false);
     storeState.hasUnsavedChanges = true;
     file.openNewImageDialog.mockResolvedValue({
       color: '#ffffff',
@@ -715,17 +647,17 @@ describe('DesktopHeader File > New', () => {
       size: { width: 8, height: 8 },
       isBedrock: true,
     });
-    renderHeader();
+    render(<DesktopHeader />);
 
-    const dialog = await openDiscardPrompt('header-file-new-button');
+    await clickFileMenuItem('header-file-new-button');
 
-    expect(dialog).toHaveAccessibleDescription(NEW_CONFIRM_MESSAGE);
-    await declineDiscard();
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('new-document');
     expect(file.openNewImageDialog).not.toHaveBeenCalled();
     expect(app.setBlankImage).not.toHaveBeenCalled();
   });
 
   it('asks before discarding a text draft the document is not yet tracking as an unsaved change', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(false);
     storeState.currentArgs = {
       current: {
         toolName: 'text',
@@ -734,38 +666,34 @@ describe('DesktopHeader File > New', () => {
       },
     } as unknown as { current: ToolArgs };
     file.openNewImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
-    const dialog = await openDiscardPrompt('header-file-new-button');
+    await clickFileMenuItem('header-file-new-button');
 
-    expect(dialog).toHaveAccessibleDescription(NEW_CONFIRM_MESSAGE);
-    await declineDiscard();
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('new-document');
     expect(file.openNewImageDialog).not.toHaveBeenCalled();
   });
 
   it('leaves the document untouched when the dialog is cancelled and still closes the menu', async () => {
-    storeState.hasUnsavedChanges = true;
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openNewImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
-    await openDiscardPrompt('header-file-new-button');
-    // The discard is accepted and the New Image dialog that follows is cancelled: the
-    // document is still untouched, which is the claim this test has always made.
-    await acceptDiscard();
+    await clickFileMenuItem('header-file-new-button');
 
-    expect(file.openNewImageDialog).toHaveBeenCalledTimes(1);
     expect(app.setBlankImage).not.toHaveBeenCalled();
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
   it('logs the Error when the new document dialog rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openNewImageDialog.mockRejectedValue(new Error('dialog exploded'));
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    await waitFor(() => expect(consoleError).toHaveBeenCalledWith('Unable to create document', expect.any(Error)));
+    expect(consoleError).toHaveBeenCalledWith('Unable to create document', expect.any(Error));
     expect(app.setBlankImage).not.toHaveBeenCalled();
     // The throw must not strand the dropdown either. It used to skip `setOpenMenu(null)`
     // and leave the menu over the canvas; activating the item dismisses it on every path.
@@ -774,14 +702,13 @@ describe('DesktopHeader File > New', () => {
 
   it('passes a non-Error rejection through to the console unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openNewImageDialog.mockRejectedValue('plain failure');
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    await waitFor(() =>
-      expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to create document', 'plain failure')
-    );
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to create document', 'plain failure');
   });
 });
 
@@ -789,31 +716,28 @@ describe('DesktopHeader File > Open', () => {
   it('opens the picked document and closes the menu', async () => {
     const upload = { fileName: 'picked.png', image: {} as HTMLImageElement };
     file.openLoadImageDialog.mockResolvedValue(upload);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    await waitFor(() => expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(app.setImageFromUpload).toHaveBeenCalledExactlyOnceWith(upload));
+    expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1);
+    expect(app.setImageFromUpload).toHaveBeenCalledExactlyOnceWith(upload);
     expect(screen.queryByTestId('header-file-open-button')).toBeNull();
   });
 
-  it('does not ask for confirmation when neither unsaved changes nor pending text exist', async () => {
+  it('opens the picker once the discard question is answered yes', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(true);
     file.openLoadImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    // There is no clean-document branch to test at the call site any more: `confirmDiscard`
-    // answers `true` itself when nothing can be lost, so the claim becomes "no prompt
-    // appeared and the action went through anyway". Both halves are load-bearing — a prompt
-    // would be waiting for an answer the test never gives, which is also why the picker
-    // being reached at all proves nothing was blocking it.
-    await waitFor(() => expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1));
-    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('open-document');
+    expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1);
   });
 
   it('asks for confirmation when the text tool holds an uncommitted draft', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(false);
     storeState.currentArgs = {
       current: {
         toolName: 'text',
@@ -822,44 +746,43 @@ describe('DesktopHeader File > Open', () => {
       },
     } as unknown as { current: ToolArgs };
     file.openLoadImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
-    const dialog = await openDiscardPrompt('header-file-open-button');
+    await clickFileMenuItem('header-file-open-button');
 
-    expect(dialog).toHaveAccessibleDescription(OPEN_CONFIRM_MESSAGE);
-    await declineDiscard();
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('open-document');
     expect(file.openLoadImageDialog).not.toHaveBeenCalled();
     // Declining the discard dismisses the menu, same as New: the close is no longer after
     // the branch that returns early.
     expect(screen.queryByTestId('header-file-open-button')).toBeNull();
   });
 
-  it('does not ask for confirmation when the text tool holds an empty draft', async () => {
+  it('keeps the document when an empty draft is on the tool and the answer is no', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(false);
     storeState.currentArgs = {
       current: { toolName: 'text', text: '', rect: { x: 0, y: 0, width: 10, height: 10 } },
     } as unknown as { current: ToolArgs };
     file.openLoadImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    // Same shape as the test above: no prompt, and the action proceeded. A text box the
-    // user typed nothing into is not work, so it must not be worth a prompt.
-    await waitFor(() => expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1));
-    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+    // Whether an empty draft counts as discardable is `hasDiscardableWork`'s claim, asserted
+    // where it is implemented. What this file owes is that a declined answer keeps the
+    // document whatever the tool is holding.
+    expect(unsaved.confirmDiscard).toHaveBeenCalledExactlyOnceWith('open-document');
+    expect(file.openLoadImageDialog).not.toHaveBeenCalled();
+    expect(app.setImageFromUpload).not.toHaveBeenCalled();
   });
 
   it('keeps the current document when the file picker is cancelled', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(true);
     storeState.hasUnsavedChanges = true;
     file.openLoadImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
-    await openDiscardPrompt('header-file-open-button');
-    // The discard is accepted and the picker that follows is cancelled, so the document is
-    // still the one it was.
-    await acceptDiscard();
+    await clickFileMenuItem('header-file-open-button');
 
-    await waitFor(() => expect(file.openLoadImageDialog).toHaveBeenCalledTimes(1));
     expect(app.setImageFromUpload).not.toHaveBeenCalled();
     expect(screen.queryByTestId('header-file-open-button')).toBeNull();
   });
@@ -867,22 +790,22 @@ describe('DesktopHeader File > Open', () => {
   it('logs the Error when loading rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     file.openLoadImageDialog.mockRejectedValue(new Error('read failed'));
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    await waitFor(() => expect(consoleError).toHaveBeenCalledWith('Unable to open document', expect.any(Error)));
+    expect(consoleError).toHaveBeenCalledWith('Unable to open document', expect.any(Error));
     expect(app.setImageFromUpload).not.toHaveBeenCalled();
   });
 
   it('passes a non-Error rejection through to the console unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     file.openLoadImageDialog.mockRejectedValue({ code: 42 });
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-open-button');
 
-    await waitFor(() => expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to open document', { code: 42 }));
+    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to open document', { code: 42 });
   });
 });
 
@@ -895,7 +818,7 @@ describe('DesktopHeader File > Save', () => {
   it('commits the dirty tool and forwards the full export payload to the save dialog', async () => {
     const response = { fileName: 'test (copy)', format: 'image/png' };
     file.openSaveImageDialog.mockResolvedValue(response);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -914,24 +837,22 @@ describe('DesktopHeader File > Save', () => {
     expect(screen.queryByTestId('header-file-save-button')).toBeNull();
   });
 
-  it('never asks for confirmation before saving', async () => {
+  it('never asks the context to confirm before saving', async () => {
+    unsaved.confirmDiscard.mockResolvedValue(false);
     storeState.hasUnsavedChanges = true;
     file.openSaveImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
-    // A document with unsaved changes is exactly the case where New and Open do prompt, so
-    // the dirtiness here is what makes the absence meaningful: the discard guard is in the
-    // provider above this button and Save never consults it. Reaching the save dialog with
-    // no `confirm-dialog` in the tree is the whole claim.
-    await waitFor(() => expect(file.openSaveImageDialog).toHaveBeenCalledTimes(1));
-    expect(screen.queryByTestId('confirm-dialog')).toBeNull();
+    // Saving is not a replacement, so it must not put the discard question to anyone.
+    expect(unsaved.confirmDiscard).not.toHaveBeenCalled();
+    expect(file.openSaveImageDialog).toHaveBeenCalledTimes(1);
   });
 
   it('does not save when the save dialog is dismissed', async () => {
     file.openSaveImageDialog.mockResolvedValue(null);
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -942,7 +863,7 @@ describe('DesktopHeader File > Save', () => {
   it('does nothing when there is no image', async () => {
     storeState.hasImage = false;
     file.openSaveImageDialog.mockResolvedValue({ fileName: 'test (copy)', format: 'image/png' });
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -959,7 +880,7 @@ describe('DesktopHeader File > Save', () => {
     // for "there is no document to export" and is pinned by the test above.
     storeState.canvasRef = { current: null };
     file.openSaveImageDialog.mockResolvedValue({ fileName: 'test (copy)', format: 'image/png' });
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -972,7 +893,7 @@ describe('DesktopHeader File > Save', () => {
   it('logs when the save dialog rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     file.openSaveImageDialog.mockRejectedValue(new Error('encoder died'));
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -985,7 +906,7 @@ describe('DesktopHeader File > Save', () => {
     layers.commitDirtyTool.mockImplementation(() => {
       throw new Error('commit failed');
     });
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -996,7 +917,7 @@ describe('DesktopHeader File > Save', () => {
   it('passes a non-Error rejection through to the console unchanged', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     file.openSaveImageDialog.mockRejectedValue('disk offline');
-    renderHeader();
+    render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-save-button');
 
@@ -1006,7 +927,7 @@ describe('DesktopHeader File > Save', () => {
 
 describe('DesktopHeader history controls', () => {
   it('disables both history buttons when nothing can be undone or redone', () => {
-    renderHeader();
+    render(<DesktopHeader />);
 
     expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(true);
@@ -1014,7 +935,7 @@ describe('DesktopHeader history controls', () => {
 
   it('enables undo and redo independently as history allows', () => {
     history.canUndo.mockReturnValue(true);
-    renderHeader();
+    render(<DesktopHeader />);
 
     expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(true);
@@ -1022,7 +943,7 @@ describe('DesktopHeader history controls', () => {
 
   it('undoes through the header undo button when the tool is clean', () => {
     history.canUndo.mockReturnValue(true);
-    renderHeader();
+    render(<DesktopHeader />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
 
@@ -1031,7 +952,7 @@ describe('DesktopHeader history controls', () => {
 
   it('redoes through the header redo button when history allows it', () => {
     history.canRedo.mockReturnValue(true);
-    renderHeader();
+    render(<DesktopHeader />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
 

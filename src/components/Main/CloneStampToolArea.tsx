@@ -14,19 +14,20 @@ import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
 type cloneStampToolAreaProps = {
   className?: string;
   /**
-   * Accepted for the mount contract and deliberately not read. The Clone Stamp edits the
-   * active layer's own raster through `tempUpdateLayer` / `updateLayerByTool`, which
-   * republish the layer and redraw the document canvas themselves; painting into the
-   * document canvas by hand is the un-undoable defect `usePaintStroke`'s JSDoc warns
-   * about. `overlayCtxRef` IS read, but only for the Alt-key marker below, which is chrome
-   * and not a layer edit.
-   */
-  /**
-   * Optional: accepted so every tool area in the union can be rendered with one prop set, and
-   * read from the store rather than the prop when it is needed. `Main` passes only
+   * Optional, and accepted for the mount contract and deliberately not read. Two separate
+   * reasons, one for each half of that sentence.
+   *
+   * It is OPTIONAL so every tool area in the union can be rendered with one prop set, and read
+   * from the store rather than the prop when it is needed. `Main` passes only
    * `overlayCtxRef`, so a required declaration here is a type error at the call site and a
    * `undefined` at runtime. `EllipticalSelectionToolArea` and `QuickSelectionToolArea` already
    * declare it this way.
+   *
+   * It is UNREAD because the Clone Stamp edits the active layer's own raster through
+   * `tempUpdateLayer` / `updateLayerByTool`, which republish the layer and redraw the document
+   * canvas themselves; painting into the document canvas by hand is the un-undoable defect
+   * `usePaintStroke`'s JSDoc warns about. `overlayCtxRef` IS read, but only for the Alt-key
+   * marker below, which is chrome and not a layer edit.
    */
   canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
   /** The sibling of `canvasCtxRef`, used only for the Alt-key marker. */
@@ -58,7 +59,7 @@ type SourceMarker = {
  * a crosshair under the cursor and a ring at the source.
  *
  * Module-level rather than inline in the component for the same reason
- * `src/util/selection.ts`'s `drawSelectionOutline` is: it is pure overlay painting, it needs
+ * `src/util/selection.ts`'s `drawSelectionAnchors` is: it is pure overlay painting, it needs
  * no state, and the react-compiler lint rule reads a property assignment on a prop-supplied
  * context as a mutation of the component's inputs. `MagicWandToolArea.tsx:35` and
  * `ShapeToolArea.tsx:62` sidestep it the same way — by calling a drawer.

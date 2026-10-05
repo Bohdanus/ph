@@ -208,18 +208,34 @@ describe('option-bar thumbnail resolution', () => {
     });
   });
 
-  it('scales the stroke width with the store, so the preview is the same apparent weight', async () => {
-    // Only `Paint` and `Draw` read a width off the tool args, and only `Paint`'s is the one the
-    // brush settings reach. `Shape` sizes its stroke from the figure's own settings, so there is
-    // no `args.lineWidth` for it to multiply.
-    await withDpr(2, async () => {
-      const { createPaintToolbar } = await import('../Paint/Paint.tsx');
-      const Bar = createPaintToolbar('brush');
+  it.each(BARS)('$name hands the renderer the DOCUMENT stroke width at dpr 1', async ({ load }) => {
+    await withDpr(1, async () => {
+      const Bar = await load();
       render(<Bar />);
       await vi.waitFor(() => expect(drawMock.args).not.toBeNull());
 
-      // 10 document px at dpr 1, 20 device px at dpr 2 — the same weight on screen.
-      expect(drawMock.args.lineWidth).toBe(20);
+      expect(drawMock.args.lineWidth).toBe(TOOL_ARGS.lineWidth);
+    });
+  });
+
+  it.each(BARS)('$name multiplies the stroke width by the ratio at dpr 2', async ({ load }) => {
+    // The store grew to 2x and the raster is rendered into that store, so the stroke has to grow
+    // with it: 10 document px at dpr 1, 20 device px at dpr 2 — the same weight on screen. Growth
+    // of the STORE alone (pinned above) is not enough; a stroke left at 10 in a 192x96 raster
+    // renders at half the apparent weight of the committed stroke.
+    //
+    // All THREE bars, not `Paint` alone. An earlier version of this file covered `Paint` only,
+    // justified by a comment claiming `Shape` "sizes its stroke from the figure's own settings, so
+    // there is no `args.lineWidth` for it to multiply". That was wrong: `Shape` destructures
+    // `lineWidth` straight out of `args`, and multiplies it by `dpr` in its `previewArgs`
+    // exactly as `Draw` and `Paint` do. The claim is what let two of the three
+    // `* dpr` expressions go unpinned.
+    await withDpr(2, async () => {
+      const Bar = await load();
+      render(<Bar />);
+      await vi.waitFor(() => expect(drawMock.args).not.toBeNull());
+
+      expect(drawMock.args.lineWidth).toBe(TOOL_ARGS.lineWidth * 2);
     });
   });
 });

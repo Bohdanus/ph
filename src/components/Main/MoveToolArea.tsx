@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useApp } from '../../hooks/useApp.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import type { Pos, RectXYSorted } from '../../contexts/general-types.ts';
 import { useMarchingAnts } from '../../hooks/useAnts.ts';
@@ -16,7 +18,8 @@ import {
   documentFrameFromSize,
   documentToCanvasPos,
 } from '../../contexts/document-frame.ts';
-import { getLayerPresentationBounds } from '../../contexts/affine-transform.ts';
+import { layerPresentationBounds } from '../../contexts/presentation-evaluator.ts';
+import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 
 type moveToolAreaProps = {
   className?: string;
@@ -27,7 +30,9 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     { containerRef, toolOverlayRef, rectOverlayRef, activeLayerId, layers, totalSize, documentFrame: currentFrame },
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { tempUpdateLayer, setActiveLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, setActiveLayer, updateLayerByTool, beginTextLayerEdit } = useLayers();
+  const { setToolArgs } = useCurrentTool();
+  const { goToTool } = useApp();
   const containScale = useContainScale(containerRef, totalSize);
   const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef, scaleRef: containScale });
 
@@ -35,7 +40,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const activeLayerRect = useMemo(
     () =>
       activeLayer && !activeLayer.isBedrock
-        ? posToSortedRect(documentToCanvasPos(getLayerPresentationBounds(activeLayer), documentFrame))
+        ? posToSortedRect(documentToCanvasPos(layerPresentationBounds(activeLayer), documentFrame))
         : null,
     [activeLayer, documentFrame]
   );
@@ -88,7 +93,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     const newPos = canvasToDocumentPos(sortedRectToPos(sortedRect), documentFrame);
     const layer = layers[layerId];
     if (!layer) return { move: { x: newPos.x, y: newPos.y }, toolName: 'reposition' };
-    const presentation = getLayerPresentationBounds(layer);
+    const presentation = layerPresentationBounds(layer);
     if (!wasLayerResized(layerId, newPos)) {
       return {
         move: { x: layer.pos.x + newPos.x - presentation.x, y: layer.pos.y + newPos.y - presentation.y },
@@ -156,8 +161,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   }, [activeLayer]);
 
   function wasLayerResized(layerId: LayerId, newPos: Pos) {
-    const oldPos =
-      interactionStartBoundsRef.current ?? (layers[layerId] && getLayerPresentationBounds(layers[layerId]));
+    const oldPos = interactionStartBoundsRef.current ?? (layers[layerId] && layerPresentationBounds(layers[layerId]));
     if (!oldPos) return false;
 
     return oldPos.width !== newPos.width || oldPos.height !== newPos.height;
@@ -181,13 +185,13 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
 
     const dragHandleClicked = handlePointerDown_useRect(
       event,
-      layer ? { ...layer, pos: documentToCanvasPos(getLayerPresentationBounds(layer), documentFrame) } : layer
+      layer ? { ...layer, pos: documentToCanvasPos(layerPresentationBounds(layer), documentFrame) } : layer
     );
     if (dragHandleClicked) {
       const layerId = selectedLayerIdRef.current;
       interactionLayerIdRef.current = layerId;
       interactionStartPosRef.current = layerId ? { ...layers[layerId].pos } : null;
-      interactionStartBoundsRef.current = layerId ? getLayerPresentationBounds(layers[layerId]) : null;
+      interactionStartBoundsRef.current = layerId ? layerPresentationBounds(layers[layerId]) : null;
       isInteractionActiveRef.current = !!layerId;
       // The resize half of the gesture, and the reason this claim is taken on
       // both exits of the press rather than at the end of this function: the
@@ -209,7 +213,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       interactionLayerIdRef.current = layerUnderPointerId;
       interactionStartPosRef.current = layerUnderPointerId ? { ...layers[layerUnderPointerId].pos } : null;
       interactionStartBoundsRef.current = layerUnderPointerId
-        ? getLayerPresentationBounds(layers[layerUnderPointerId])
+        ? layerPresentationBounds(layers[layerUnderPointerId])
         : null;
       isInteractionActiveRef.current = !!layerUnderPointerId;
       containerRef.current!.classList.add('cursor-grabbing');
@@ -333,6 +337,21 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     containerRef.current?.classList.remove('cursor-grabbing');
   }
 
+  function handleDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    const point = canvasToDocumentPoint(
+      getLocalCoords(event as unknown as React.PointerEvent<HTMLDivElement>),
+      documentFrame
+    );
+    const layerId = getLayerIdByPoint(layers, point);
+    const layer = layerId ? layers[layerId] : undefined;
+    const target = layer ? textLayerEditTarget(layer) : null;
+    if (!target) return;
+    goToTool('text');
+    setActiveLayer(target.layerId);
+    beginTextLayerEdit(target.layerId);
+    setToolArgs(target.args);
+  }
+
   useEffect(() => {
     // An unmount between claim and commit is an abort like any other. Paired
     // with the provider-level `resetDocumentGestures`, this is what bounds a
@@ -350,6 +369,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onPointerCancel={handlePointerCancel}
+      onDoubleClick={handleDoubleClick}
     />
   );
 };

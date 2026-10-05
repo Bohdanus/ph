@@ -431,9 +431,12 @@ describe('SidebarRight', () => {
     expect(tab).not.toHaveAttribute('id');
 
     fireEvent.doubleClick(tab);
-    // Rolled up, the reference DANGLE rather than pointing at nothing that exists: the honest
-    // pair is `aria-expanded="false"` and no `aria-controls`, not a name with no target.
+    // Rolled up, the reference must NOT dangle: the honest pair is `aria-expanded="false"` and
+    // no `aria-controls`, not a name with no target. Asserting only the body's absence passed
+    // against a component that kept naming it, which is the defect this case is named for.
     expect(container.querySelector(`#${bodyId}`)).toBeNull();
+    expect(tab).not.toHaveAttribute('aria-controls');
+    expect(tab).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('reverses the drag direction once the dock is on the left edge', () => {
@@ -565,9 +568,20 @@ describe('SidebarRight', () => {
     // The tab is the only thing left of it. Its HEADING is meant to still be there — a
     // roll-up leaves the tab bar, not an empty box — so the assertion is about the body.
     expect(group.querySelector('.overflow-y-auto')).toBeNull();
+    // Collapsed, the reference must not dangle beside `aria-expanded="false"`. `names the body the
+    // tab controls, and the id goes when it rolls up` pins this too; it is asserted here as well
+    // because this is the case that does the full round trip, and a one-way pin on a two-state
+    // contract is what let an earlier version through.
+    expect(historyTab).not.toHaveAttribute('aria-controls');
 
     fireEvent.doubleClick(historyTab);
     expect((container.querySelector('[data-testid="panel-group-history"]') as HTMLElement).style.flex).toBe('0.2 1 0%');
+    // The name comes BACK with the body. Asserting only `flex` is a one-way pin, and every other
+    // assertion requiring the attribute's presence runs on a mount that was never rolled up — so an
+    // `aria-controls` that vanished and stayed gone would pass the whole file.
+    expect(historyTab).toHaveAttribute('aria-expanded', 'true');
+    expect(historyTab.getAttribute('aria-controls')).toBe('panel-body-history');
+    expect(document.getElementById('panel-body-history')).not.toBeNull();
   });
 
   it('shows the panel once both an image and a tool become available again', () => {

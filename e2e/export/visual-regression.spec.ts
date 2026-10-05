@@ -177,11 +177,22 @@ test.describe('Export visual regression', () => {
         threshold: 0.01,
         maxDiffPixels: 100,
       });
+      // A size mismatch gets its own clause rather than riding the diff-pixel sentence, because
+      // the budget numbers are meaningless in that verdict: `diffPixels` is MAX_SAFE_INTEGER and
+      // `diffRatio` is 1 whatever the two pictures contain. Reporting the two sizes instead is
+      // what turns "visual mismatch, 9007199254740991 diff pixels" into the one actionable fact,
+      // which is that a dimension moved. The usual triage for this red is an encoder or a
+      // document-size change, and neither is visible in a diff-pixel count.
+      const mismatch = result.sizeMismatch;
       expect(
         result.matches,
-        `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels ` +
-          `(ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
-          'Do not widen the budget - see the argument above this call.'
+        mismatch
+          ? `Size mismatch for ${format.label}: exported ${mismatch.actual.width}x${mismatch.actual.height} ` +
+              `against a baseline of ${mismatch.expected.width}x${mismatch.expected.height}. ` +
+              'A dimension moved, so the pixel budget does not apply - see the argument above this call.'
+          : `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels ` +
+              `(ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
+              'Do not widen the budget - see the argument above this call.'
       ).toBe(true);
 
       // The pixel diff above is the oracle that has always been there, and it is
@@ -271,10 +282,31 @@ test.describe('Export visual regression', () => {
       // assert on the export rather than on the drawing.
       await openSaveDialog(page);
       await fillSaveDialog(page, 'layout-invariance', 'PNG');
+
+      /**
+       * The locator the absence below is stated with, resolved POSITIVELY first, while the
+       * dialog is still on screen. `SaveDialog` renders its title as an `<h2
+       * id="save-dialog-title">`, which is also the dialog's `aria-labelledby` target, so in the
+       * open state this locator names exactly one visible element.
+       *
+       * That is what makes the absence discriminating rather than vacuous: it is the same
+       * locator, in the same configuration iteration, in the state where the element exists. A
+       * bare `toHaveCount(0)` cannot tell "the dialog closed" from "this app never mints that
+       * name", so rewording the title or demoting the `<h2>` would leave the absence green with
+       * the dialog still on screen. This loop runs eight configurations, so the positive is
+       * established eight times rather than once.
+       */
+      const saveDialogTitle = page.getByRole('heading', { name: 'Save File As...' });
+      await expect(
+        saveDialogTitle,
+        `${label}: the open Save dialog is titled by a heading carrying this accessible name`
+      ).toHaveCount(1);
+      await expect(saveDialogTitle, `${label}: and that heading is on screen`).toBeVisible();
+
       const download = await submitSaveDialogForDownload(page, layoutInvarianceFormat);
       const target = path.join(downloadDirectory, path.basename(download.suggestedFilename()));
       await download.saveAs(target);
-      await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+      await expect(saveDialogTitle, `${label}: the Save dialog unmounted once the download completed`).toHaveCount(0);
 
       const bytes = await readFile(target);
       expect(bytes.byteLength, `${label}: the exported file should not be empty`).toBeGreaterThan(100);

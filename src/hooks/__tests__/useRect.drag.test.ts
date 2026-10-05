@@ -137,6 +137,24 @@ describe('useRect mask drawing', () => {
     expect(ctx.lineWidth).toBe(2);
 
     const handle = HANDLE_SIZE;
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - half, 100 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 100 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - half, 250 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
+  });
+
+  /**
+   * `handlesOutside` is the Type tool's alone, and the default above is Adobe's: a grip straddling
+   * the corner is grabbable across its whole width, because `edgeAtPoint` takes
+   * `HANDLE_SIZE / scale / 2` either side of the corner either way. Painting the grip wholly outside
+   * left the outer half of every visible handle unclickable on the marquee, the crop and the Move
+   * tool, and `e2e/select-move.spec.ts` — `stretches selected line` — caught exactly that.
+   */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
     expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
     expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
     expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
@@ -251,7 +269,7 @@ describe('useRect mask drawing', () => {
     expect(ctx.setLineDash).toHaveBeenCalledWith([2.5, 2.5]);
     expect(ctx.lineWidth).toBe(1);
     const handle = HANDLE_SIZE / 2;
-    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle / 2, 100 - handle / 2, handle, handle);
   });
 });
 
@@ -260,8 +278,8 @@ describe('useRect mask drawing', () => {
  * unconditionally and only toggles `display`, which never touches a backing store. So an area that
  * goes away has to clear the canvas itself.
  *
- * It cannot lean on the effect at `useRect.ts:58-70` seeing `initialRect` turn null. `goToTool`
- * (`src/hooks/useApp.ts:167-196`) appends the selection clear and dispatches `SET_TOOL_NAME` from
+ * It cannot lean on the `[aspectRatio, initialRect]` effect in `useRect.ts` seeing `initialRect`
+ * turn null. `goToTool` appends the selection clear and dispatches `SET_TOOL_NAME` from
  * one function body, React batches them, and the marquee's component unmounts in the same commit
  * that nulls the selection — and an unmounted component's effects do not run. That is what left the
  * `#007bff` outline, the four handles and the `rgba(0, 0, 0, 0.7)` blend on the next tool's
@@ -785,10 +803,11 @@ describe('useRect painting outside the canvas', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
 
     const handle = HANDLE_SIZE;
-    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - handle, -50 - handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, -50 - handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - handle, 60, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, 60, handle, handle);
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
   });
 
   it('leaves the clamped painting and handles in place for a consumer that does not opt in', () => {
@@ -800,10 +819,11 @@ describe('useRect painting outside the canvas', () => {
     // The handles are derived from the painted rect, so the clamp moves them too — which is the
     // snap-back this prop exists to switch off, pinned for everyone who does not set it.
     const handle = HANDLE_SIZE;
-    expect(ctx.fillRect).toHaveBeenCalledWith(-handle, -handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, -handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(-handle, 60, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, 60, handle, handle);
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
   });
 
   it('paints a rect that stays inside the document identically with and without the prop', () => {

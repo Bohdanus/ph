@@ -19,6 +19,7 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+import { renderExportCanvas } from './export-canvas.ts';
 
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
@@ -64,6 +65,7 @@ import {
   normalizeTransformHistoryArgs,
   transformToolArgsToAffine,
 } from './affine-transform.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
@@ -125,6 +127,47 @@ function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
  * rather than a layer that silently locks itself.
  */
 const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
+
+/**
+ * THE PREVIEW-PROMOTION RULE. A preview owns the layer's RASTER and GEOMETRY, and nothing else.
+ *
+ * `tempUpdateLayer` stages one as a full spread of the store layer it read (`{...layer, pos,
+ * operations, source, tmpCanvas}`), so every logical field on it is a copy of one instant. The
+ * Layers panel edits `name`, `order`, `visible`, `opacity`, `blendMode`, `locked` and `isBedrock`
+ * without going near the tool, and `updateLayer`, `moveLayerAfter` and `toggleVisibility` do not
+ * commit the pending preview on the way — so a rename, a hide or a drag-reorder that lands while a
+ * live preview exists is silently reverted by the promote that follows, while the timeline keeps it
+ * and `replayHistory` applies both entries in order. Runtime, Layers panel and History panel then
+ * disagree, and export reads whichever one it happened to read.
+ *
+ * So the LIVE record is authoritative for every field the preview does not own, and the preview is
+ * authoritative for exactly the five named here. `applyRasterTool` — the replay mirror of this
+ * promotion, in `useHistory.ts` — already writes only those five onto the layer it replays, so this
+ * is what makes the two authorities agree.
+ *
+ * The complement is computed with a rest spread rather than listed, so a field added to `Layer`
+ * later is live-authoritative by default and this function needs no edit to stay correct. That is
+ * the opposite default from an allowlist, and deliberately: the direction of the mistake a promote
+ * can make here is publishing a value the user already changed.
+ */
+const promotePreviewedLayer = (preview: Layer, live: Layer | undefined): Layer => {
+  // Detached copies of the two mutable containers, because the published record must not alias the
+  // draft's arrays — the same detachment the promote this replaces performed.
+  const promoted: Layer = { ...preview, pos: { ...preview.pos }, operations: [...preview.operations] };
+  // A preview whose layer the live record no longer carries has no logical record to merge. That is
+  // only reachable when a removal and a commit land in one tick, and publishing the draft unchanged
+  // is the established behaviour for it, so the rule is not extended to invent one.
+  if (!live) return promoted;
+  const {
+    pos: _pos,
+    operations: _operations,
+    source: _source,
+    bitmap: _bitmap,
+    tmpCanvas: _tmpCanvas,
+    ...logical
+  } = live;
+  return { ...promoted, ...logical };
+};
 
 // A frame allocates SIX surfaces at its own size — the staging canvas `drawLayersToCanvas`
 // composites into (`layer-renderer.ts:195`), the visible canvas it resizes to (`:238`), the
@@ -356,7 +399,26 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    delete previewLayersRef.current[id];
     const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
+    const currentArgs = layer.source?.kind === 'tool' ? layer.source.args : null;
+    const nextArgs = nextSource.args as ToolArgs & { editingLayerId?: unknown };
+    if (
+      currentArgs &&
+      JSON.stringify({ ...currentArgs, editingLayerId: undefined }) ===
+        JSON.stringify({ ...nextArgs, editingLayerId: undefined }) &&
+      layer.pos.x === nextSource.pos.x &&
+      layer.pos.y === nextSource.pos.y
+    ) {
+      // The preview for this layer was already deleted above, so the composited canvas is showing a
+      // document WITHOUT its raster — and `beginTextLayerEdit` nulled that raster precisely because the
+      // contenteditable overlay stood in for it. Returning here dispatched nothing, and `Main`'s redraw
+      // effect is keyed on `layers`, which no dispatch changed, so nothing repainted: the type simply
+      // vanished. MEASURED on the default Esc-to-commit path — re-enter a text layer, press Esc with no
+      // edit, and the ink is gone. Redraw before returning; the store is already correct.
+      drawAllLayers();
+      return layer;
+    }
     // The replacement is RENDERED, not merely recorded. `getLayerBitmap` re-runs a creator only for
     // the vector tools — a `text` source is excluded — so a tool layer with neither `tmpCanvas` nor
     // `bitmap` draws nothing at all: `drawLayerSource` declines it, `drawLayersToCanvas` reports
@@ -442,6 +504,13 @@ export const useLayers = () => {
     // should pick that dirty later and do all hardening. `id` is the ownership scope: this
     // function records ONE `TOOL_ACTION` entry, for ONE layer, so no other layer's pixels may
     // ride out in the record it is about to publish.
+    //
+    // That scope is safe for the whole window because NOTHING between `tempUpdateLayer` and the
+    // dispatch below awaits. This function is `async`, but the window is straight-line — no
+    // `await`, no promise — so it runs to completion inside the tick the pixel write happened in.
+    // No removal, no second document and no other commit can be dispatched into the store in
+    // between, so the `layers` this scope was chosen from is the same record `commitDirtyTool`
+    // reads, and the layer it publishes is the layer whose pixels were written.
     const committedLayers = commitDirtyTool(true, id);
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
     if (!committedArgs) return;
@@ -460,6 +529,13 @@ export const useLayers = () => {
     } catch (error) {
       console.error('Unable to plan durable history for a tool commit', error);
     }
+    // The scope re-validated here, so it is never published out of a record this function can see
+    // has lost the layer. A TRIPWIRE rather than the protection the window above claims: `layers` is
+    // the snapshot this invocation destructured at its last render, and a resumed continuation keeps
+    // that snapshot, so an `await` in the window would hide a removal from this check as surely as
+    // from the guards above. `useLayers` reading live store state instead is what would make it
+    // load-bearing; until then it costs one lookup and breaks nothing.
+    if (!layers[id]) return;
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
@@ -474,6 +550,11 @@ export const useLayers = () => {
   // honestly, the only dirty tool that needs saving is text and maybe crop
   /**
    * `ownedLayerId` is the ownership scope, and `undefined` is "every preview the map holds".
+   * It is `LayerId | undefined` and not `LayerId | null | undefined` so an absent scope has ONE
+   * spelling: the type can no longer be read as "null means unscoped", which would be a second
+   * way to say the same thing that a call site could use by accident. The one scoped caller
+   * narrows its id to `LayerId` before it gets here (`updateLayerByTool` returns above unless
+   * `id` is truthy), so nothing has to pass `null`.
    *
    * The tool switch, the merge, the new-document and the export paths own no single layer and
    * must land all of them, which is what an unscoped call means. A caller committing ONE layer's
@@ -485,7 +566,7 @@ export const useLayers = () => {
    * change to the layer whose pixels were published. So a scoped call leaves every preview and
    * every dirty cache it does not own exactly where it found them.
    */
-  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId | null): LayersRecord => {
+  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId): LayersRecord => {
     // can be run safely if no dirty layer
 
     // special case
@@ -496,7 +577,9 @@ export const useLayers = () => {
       // returning early, which used to leave a box on the canvas that a tool switch reopened and that
       // no key could end: Escape, Ctrl+Enter and Commit were all no-ops and only Cancel escaped.
       if (!args.text && args.rect) {
-        const closed = { ...args, text: '', rect: null };
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const closed = { ...persistedArgs, text: '', rect: null };
+        if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(closed);
         else currentArgsRef.current = closed;
         clearOverlay();
@@ -511,20 +594,28 @@ export const useLayers = () => {
       // The flag is the whole of the test: a string comparison would discard real content that
       // happens to be those words, which is the defect the flag replaced.
       if (args.placeholderUntouched === true) {
-        const discarded = { ...args, text: '', rect: null };
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const discarded = { ...persistedArgs, text: '', rect: null };
+        if (args.editingLayerId) cancelLayerPreview(args.editingLayerId);
         if (setToolArgs) setToolArgs(discarded);
         else currentArgsRef.current = discarded;
         clearOverlay();
         return layers;
       }
 
-      const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+      const requestedLayerId = (args as TextToolArgs).editingLayerId;
+      const activeLayer = requestedLayerId
+        ? layers[requestedLayerId]
+        : activeLayerId
+          ? layers[activeLayerId]
+          : undefined;
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
         const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
         const pos = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
         // A new drag on a different origin creates a new text layer. Selection hydration
         // preserves the active layer's origin, which is the explicit in-place-edit signal.
-        if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y) {
+        if (requestedLayerId || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y)) {
+          const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
           const source: ToolLayerSource = {
             kind: 'tool',
             // Layer-LOCAL, because that is what the create arm stores and what `createLayerSource`
@@ -533,12 +624,17 @@ export const useLayers = () => {
             // the document frame is not the origin — MEASURED on a crop with `documentFrame.x` at
             // -100, a replace armed rendered an EMPTY layer at the right position. The origin
             // comparison above still uses the un-reduced rect, so the guard is unaffected.
-            args: { ...args, rect: reduceRect(sortRect(measuredRect), pos), placeholderUntouched: false },
+            args: {
+              ...persistedArgs,
+              rect: reduceRect(sortRect(measuredRect), pos),
+              placeholderUntouched: false,
+            },
             pos,
           };
           const replaced = replaceLayerSource(activeLayer.id, source);
           if (replaced) {
-            const cleared = { ...args, text: '', rect: null };
+            const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+            const cleared = { ...persistedArgs, text: '', rect: null };
             if (setToolArgs) setToolArgs(cleared);
             else currentArgsRef.current = cleared;
             clearOverlay();
@@ -547,8 +643,9 @@ export const useLayers = () => {
         }
       }
 
-      const layer = createLayerFromTool({ args: { ...args, placeholderUntouched: false } });
-      const cleared = { ...args, text: '', rect: null };
+      const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+      const layer = createLayerFromTool({ args: { ...persistedArgs, placeholderUntouched: false } });
+      const cleared = { ...persistedArgs, text: '', rect: null };
       if (setToolArgs) {
         setToolArgs(cleared);
       } else {
@@ -579,7 +676,9 @@ export const useLayers = () => {
         console.error(previewRefusal);
         continue;
       }
-      const layer = { ...preview.layer, pos: { ...preview.layer.pos }, operations: [...preview.layer.operations] };
+      // The mirror of the ownership scope above, on the other axis: this promotes the draft's pixels
+      // and geometry, and takes every logical field from the live record. See `promotePreviewedLayer`.
+      const layer = promotePreviewedLayer(preview.layer, layers[id]);
       committedLayers[id] = layer;
       hasPreviewLayers = true;
       if (preview.toolArgs) {
@@ -690,6 +789,10 @@ export const useLayers = () => {
     }
 
     clearOverlay();
+    // The record this publishes, named explicitly: this callback closes over the pre-removal
+    // `layers`, so an unnamed repaint would draw the layer that was just deleted and leave its
+    // pixels on the glass until `Main`'s effect ran a frame later.
+    drawAllLayers(remainingLayers);
   };
 
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
@@ -799,7 +902,7 @@ export const useLayers = () => {
       }
     }
 
-    if (processor.commit === 'layer-operation') {
+    if (processor.commit === 'layer-operation' && !isRasterStrokeArgs(toolArgs)) {
       const previewLayer = {
         ...layer,
         operations: [...layer.operations, createLayerOperation(toolArgs as LayerOperationArgs)],
@@ -833,9 +936,11 @@ export const useLayers = () => {
     // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
     // guard the throw escapes `tempUpdateLayer` into a React event handler.
     let result: ToolResult;
-    let input: ReturnType<typeof stageProcessorInput> | null = null;
+    let input: ReturnType<typeof stageProcessorInput> | null;
     try {
-      input = bitmap ? stageProcessorInput(layer, bitmap) : null;
+      input = bitmap
+        ? stageProcessorInput(layer, bitmap, isRasterStrokeArgs(toolArgs) ? toolArgs.rasterBounds : undefined)
+        : null;
       result = processor.imageProcessor(
         input
           ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
@@ -852,16 +957,17 @@ export const useLayers = () => {
     // shared processor registry labels them `affine-operation` for ordinary transforms. Replay
     // already routes this branch through `applyRasterTool`; the live preview must publish the
     // same baked bounds and drop the retained operations or undo/redo will diverge.
-    const rasterBoundary = processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
+    const rasterBoundary =
+      processor.commit === 'raster' ||
+      isRasterStrokeArgs(toolArgs) ||
+      (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
     const bakedPresentation = rasterBoundary && input !== null && input.operations.length > 0;
-    const publishedPosition = bakedPresentation && input ? input.bounds : layer.pos;
+    const publishedPosition = rasterBoundary && input ? input.bounds : layer.pos;
     const previewLayer = {
       ...layer,
       pos: positionPatch ? { ...publishedPosition, ...positionPatch } : { ...publishedPosition },
       ...(bakedPresentation ? { operations: operationsRetainedAfterBake(layer) } : {}),
-      ...(processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0)
-        ? { source: undefined }
-        : {}),
+      ...(rasterBoundary ? { source: undefined } : {}),
       tmpCanvas: canvas,
     };
     previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
@@ -875,26 +981,68 @@ export const useLayers = () => {
     drawAllLayers();
   }
 
-  const drawAllLayers = useCallback(() => {
-    if (!canvasRef.current) return;
-
-    const renderLayers = Object.keys(previewLayersRef.current).length
-      ? ({
-          ...layers,
-          ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
-        } as LayersRecord)
-      : layers;
-    const sorted = getSortedLayersArray(renderLayers);
-    try {
-      if (!drawLayersToCanvas(canvasRef.current, sorted, documentFrame)) {
-        console.error('Unable to publish runtime layer presentation');
-      }
-    } catch (error) {
-      // Pointer-move callers must not receive renderer failures through React's
-      // event boundary. The renderer already preserves the last good canvas.
-      console.error('Unable to publish runtime layer presentation', error);
+  const beginTextLayerEdit = (id: LayerId) => {
+    const layer = layers[id];
+    if (!layer) return;
+    // ONE edit at a time, and this map was never emptied by the text arm of `commitDirtyTool`, which
+    // returns in all four of its branches before the clear further down. So entering a second layer
+    // left the first one's preview behind: its raster is nulled, `text` is excluded from
+    // `vectorToolNames` so nothing re-renders it, and `drawAllLayers`' silent-missing set suppresses the
+    // usual "skipped layer without bitmap" report — the earlier layer's type disappeared from the
+    // canvas and stayed gone across any number of tool switches, while the export still contained it.
+    for (const previewId of Object.keys(previewLayersRef.current)) {
+      if (previewId !== id) delete previewLayersRef.current[previewId];
     }
-  }, [canvasRef, documentFrame, layers, previewLayersRef]);
+    previewLayersRef.current[id] = {
+      // Remove only the runtime raster from this preview. The contenteditable overlay is the sole
+      // visible representation while the source is being edited; the marker is never persisted.
+      layer: {
+        ...layer,
+        bitmap: null,
+        tmpCanvas: null,
+      },
+      toolArgs: undefined,
+    };
+    drawAllLayers();
+  };
+
+  /**
+   * `published` is the record the caller has already dispatched but whose dispatch the current
+   * render has not observed yet.
+   *
+   * This callback closes over `layers`, so a caller that has just REPLACED the record and then
+   * repaints without naming the replacement repaints the record it is replacing: `removeLayer`
+   * would draw the layer it deleted, and `mergeLayers` the stack it flattened, and only
+   * `Main`'s post-paint effect would undo it a frame later — which is the whole reason a deleted
+   * layer's pixels survive a frame today. Naming the record removes that lag, and the preview
+   * overlay rule is unchanged either way: a live draft is drawn over whatever record is named.
+   */
+  const drawAllLayers = useCallback(
+    (published?: LayersRecord) => {
+      if (!canvasRef.current) return;
+
+      const current = published ?? layers;
+      const renderLayers = Object.keys(previewLayersRef.current).length
+        ? ({
+            ...current,
+            ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
+          } as LayersRecord)
+        : current;
+      const sorted = getSortedLayersArray(renderLayers);
+      try {
+        if (
+          !drawLayersToCanvas(canvasRef.current, sorted, documentFrame, new Set(Object.keys(previewLayersRef.current)))
+        ) {
+          console.error('Unable to publish runtime layer presentation');
+        }
+      } catch (error) {
+        // Pointer-move callers must not receive renderer failures through React's
+        // event boundary. The renderer already preserves the last good canvas.
+        console.error('Unable to publish runtime layer presentation', error);
+      }
+    },
+    [canvasRef, documentFrame, layers, previewLayersRef]
+  );
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
     // Unclamped on purpose, and that is the whole feature: Photoshop's crop box may be dragged
@@ -946,19 +1094,68 @@ export const useLayers = () => {
     return true;
   };
 
+  /**
+   * `Flatten Image`: the whole stack becomes one image layer covering the document frame, and
+   * every other layer leaves the record.
+   *
+   * THE PIXELS COME FROM THE RECORD, NOT FROM THE DISPLAY SURFACE. This used to be
+   * `createImageBitmap(canvasRef.current)`, which snapshotted the visible canvas — a surface that
+   * repaints BEHIND the record: a layer hidden or removed since the last paint, or a publish
+   * whose `drawLayersToCanvas` refused and only logged (`drawAllLayers` swallows a `false`
+   * return), was baked into the merged layer as though it were in the document. The composite
+   * below is rendered through `renderExportCanvas`, the same private path every raster export
+   * uses, from the very record this call is about to publish, so the merged raster and the
+   * merged record cannot disagree.
+   *
+   * TRANSPARENT HOLES, AND THAT IS MERGE VISIBLE'S RULE, NOT FLATTEN'S. `drawLayersToCanvas`
+   * clears its staging surface and draws only visible layers, so a document with a hole flattens
+   * to a hole. Adobe's `Flatten Image` instead fills those holes with the current background
+   * colour, and `Merge Visible` — the row above this one in `DesktopHeader` — is still `unbuilt`.
+   * The pixels are left as they are, for two reasons. Nothing in the source says a fill was
+   * wanted: the only claim is the menu label, and the previous implementation produced holes too.
+   * And the fill cannot live in the path this now shares with export, because an export must
+   * keep a hole a hole: `renderExportCanvas` composites onto a cleared surface on purpose, and
+   * only a merge-specific fill could fill it. So Flatten's fill stays an operator decision rather
+   * than a side effect of decoupling the pixels.
+   */
   async function mergeLayers(name: string): Promise<Layer | null> {
     const currentLayers = commitDirtyTool();
 
-    // getBitmap of the canvas
+    // A MOUNT guard, not a pixel read. This used to guard the `createImageBitmap` snapshot of the
+    // display canvas; the composite below is rendered from the record into its own surface, so
+    // nothing here reads the display. What it still refuses is the command on a document with no
+    // mounted surface to publish into, which is the contract the `null` return has always carried
+    // to `mergeAllLayers`' callers.
     if (!canvasRef.current) return null;
-    const canvasBitmap = await createImageBitmap(canvasRef.current);
-    const source = {
-      kind: 'image',
-      bitmap: canvasBitmap,
-      name,
-      pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
-      isBedrock: false,
-    } satisfies ImageLayerSource;
+
+    let source: ImageLayerSource;
+    try {
+      const composite = renderExportCanvas(currentLayers, totalSize, documentFrame);
+      // The merged layer's extent is the FRAME's, not `totalSize`'s: those are the dimensions
+      // `renderExportCanvas` just rendered, and they are what the record has to describe for the
+      // raster to sit on the frame. The two agree on every reachable input because every frame
+      // writer re-derives `totalSize` from the frame, so this changes no output today and names
+      // one extent source where a third reader had its own.
+      source = {
+        kind: 'image',
+        bitmap: await createImageBitmap(composite),
+        name,
+        pos: { x: documentFrame.x, y: documentFrame.y, ...documentFrameSize(documentFrame) },
+        isBedrock: false,
+      } satisfies ImageLayerSource;
+    } catch (error) {
+      // Refused BEFORE the layer or the merge entry is dispatched, so a document whose composite
+      // cannot be rendered keeps its stack instead of being flattened from pixels this call could
+      // not read — and `renderExportCanvas` throws rather than hand back a blank or half-drawn
+      // surface, which is the failure that made the old snapshot unrecoverable.
+      //
+      // The repaint is the other half of the refusal: `commitDirtyTool` above may already have
+      // published a live preview, so the document is repainted from the record it just published
+      // rather than left holding the composite this call refused to use.
+      console.error('Unable to render the document for a layer merge', error);
+      drawAllLayers(currentLayers);
+      return null;
+    }
 
     const layer = createLayerSource({
       layers: currentLayers,
@@ -981,6 +1178,10 @@ export const useLayers = () => {
     // registration it will ever get. It is aliased by `layer.bitmap`,
     // `layer.source.bitmap` and the merge entry's `args` at once.
     adoptLayerBitmaps([source.bitmap]);
+    // The record this publishes, named explicitly: this callback closes over the pre-merge
+    // `layers`, so an unnamed repaint would draw the stack this call just collapsed and leave the
+    // glass showing it until `Main`'s effect ran a frame later.
+    drawAllLayers(newLayers);
     return layer;
   }
 
@@ -1074,6 +1275,7 @@ export const useLayers = () => {
     updateLayerByTool,
     commitDirtyTool,
     cancelLayerPreview,
+    beginTextLayerEdit,
 
     removeLayer,
 

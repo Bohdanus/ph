@@ -20,6 +20,7 @@ import MagicEraser from '../components/ToolbarsRight/MagicEraser/MagicEraser.tsx
 import PaintBucket from '../components/ToolbarsRight/MagicEraser/PaintBucket.tsx';
 import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import Ruler from '../components/ToolbarsRight/Ruler/Ruler.tsx';
 import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
 import QuickSelection from '../components/ToolbarsRight/QuickSelection/QuickSelection.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
@@ -146,6 +147,10 @@ export const toolsMap: ToolsMap = {
   // No processor: the eyedropper rasterizes nothing (see `PIXEL_FREE_TOOLS` in toolProcessors.ts),
   // so this entry carries only the icon and the options bar.
   eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper },
+  // No processor, for the same reason as the eyedropper above and not by affinity with it: a
+  // measuring line is a nonprinting overlay, so it commits no pixels and has no durable operation
+  // to replay. The bar is readouts rather than controls, which is what Adobe's Ruler page describes.
+  ruler: { icon: 'ruler', toolboxComponent: Ruler },
   pen: { ...toolProcessors.pen, icon: 'pen', toolboxComponent: placeholderTool('Pen Tool', 'pen') },
   'freeform-pen': {
     ...toolProcessors['freeform-pen'],

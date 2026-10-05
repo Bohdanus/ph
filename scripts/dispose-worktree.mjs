@@ -89,6 +89,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { ACTION, LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
+import {
+  abortCommand,
+  readOperations,
+  resolveAdminDirFor,
+  resolveCommonDir,
+  resolveGitDir,
+  unmergedPaths,
+} from './lib/git-operation-state.mjs';
 import { listWorktrees } from './lib/worktree-inventory/git.mjs';
 
 /**
@@ -115,7 +123,14 @@ export const KEEP_REF_PREFIX = 'refs/keep/disposed/';
  * board holds two locks" and "the board was unavailable" is the difference
  * between waiting and proceeding.
  */
-const REFUSALS = {
+/**
+ * The refusal messages, as data. Exported so a test can assert on the WORDS of a
+ * refusal it cannot otherwise reach — `prunable` needs a registration shape no
+ * `preflight` case builds, and a message that recommends an irreversible command is
+ * exactly the kind of thing a reader should be able to check without constructing the
+ * whole state around it.
+ */
+export const REFUSALS = {
   'unknown-worktree': (t) =>
     `No worktree named "${t}" in \`git worktree list\`. Name it exactly as \`git worktree list\` does.`,
   'main-worktree': () =>
@@ -125,7 +140,7 @@ const REFUSALS = {
   locked: (reason) =>
     `This worktree is \`git worktree lock\`ed${reason ? ` (${reason})` : ''}, so somebody marked it as not-to-be-touched by hand. Unlock it yourself if that is stale; do not force past it.`,
   prunable: (reason) =>
-    `\`git worktree list\` still reports this worktree but ${reason}. Its directory is gone or its administrative entry is stale, so there is nothing to salvage and no state to verify. Run \`git worktree prune\`, then re-generate the inventory.`,
+    `\`git worktree list\` still reports this worktree but ${reason}. Its directory is gone or its administrative entry is stale. \`npm run repo:state\` first: if it reports an operation in progress for it, the administrative directory still holds resolution state and \`git worktree prune\` DELETES it with no reflog entry and nothing for \`git fsck\` to recover — carry that state out by hand before pruning. If it reports nothing, run \`git worktree prune\`, then re-generate the inventory.`,
   'no-tip': () =>
     'Git cannot read a tip commit for this worktree, so there is nothing to anchor and no proof of what would be removed.',
   'board-unavailable': (detail) =>
@@ -158,6 +173,18 @@ const REFUSALS = {
     `\`${command ?? 'git status'}\` failed on this worktree (${detail}), so what it would have reported is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
+  'operation-in-progress': (detail, remedy, ownership, remedyless) =>
+    `A git operation is in progress in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about it is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
+    (remedy
+      ? `Finish or abandon it deliberately — ${remedy} — and re-run this. If every conflict is already resolved, COMMIT it instead: the abort throws the resolution away, which is the one outcome this refusal exists to prevent. `
+      : remedyless
+        ? `Git has no command that abandons ${remedyless}, so there is nothing to run: finish or commit the resolution there, or reset the worktree by hand. `
+        : `No operation marker is set, so no abort will clean this up — inspect \`git diff --name-only --diff-filter=U\` there and resolve or stage it by hand. `) +
+    (ownership ?? ''),
+  'operation-state-unreadable': (detail, command) =>
+    `\`${command}\` failed while reading this worktree's git state (${detail}), so whether an operation is in progress is UNKNOWN rather than no. This program will not read an unreadable state as a clear one; restore the worktree's git state, or ask the operator.`,
+  'operation-state-absent': () =>
+    'No git operation state was supplied for this worktree, so the check that protects unrecoverable merge and rebase state never ran. An absent check is not a clear worktree. This is a bug in the caller, not a verdict about the tree.',
 };
 
 /**
@@ -388,6 +415,7 @@ export function preflight({
   target,
   nowMs = Date.now(),
   gitState,
+  operationState,
   inventory,
   board,
   sessions,
@@ -403,7 +431,7 @@ export function preflight({
   if (gitState.isPrimary) refuse('main-worktree');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
-  // `git worktree list --porcelain` gave no `branch` line. They are matched by
+  // `git worktree list --porcelain -z` gave no `branch` line. They are matched by
   // identity rather than by shape: `(` is a LEGAL character in a branch name
   // (`git check-ref-format 'refs/heads/(weird)'` exits 0), so a shape test like
   // `/^[(]/` refuses a real branch and reports a state that does not exist. A
@@ -466,6 +494,59 @@ export function preflight({
     refuse('ignored-content', gitState.ignoredWork.length, gitState.ignoredWork);
   }
 
+  // An operation in progress is the content NO probe in this file can see, and
+  // `readGitState` cannot see it either: it reads porcelain status, which
+  // reports a `UU` path as an ordinary modification and reports a bisect as
+  // nothing at all. So this state reaches the dirty-tree check above as either a
+  // count that happens to be zero or a count that means something else.
+  //
+  // It is checked HERE, after the tree has been found and its branch and tip
+  // confirmed, because it is the only check that can be the last one before
+  // `git worktree remove` deletes `.git/worktrees/<name>/` — and that directory
+  // is the ONLY place a merge's conflict list and `MERGE_HEAD` exist. Removing a
+  // worktree mid-merge destroys resolution work with no reflog entry and nothing
+  // for `git fsck` to recover, which makes this a precondition and not a warning.
+  //
+  // The unreadable case refuses for the same reason `dirty-tree-unreadable` does,
+  // and it is checked in the same order: a state this program could not read is
+  // not a state it may report as clear.
+  const state = operationState;
+  if (state === undefined || state === null) {
+    // FAIL CLOSED on an absent SIGNAL, which is the rule the board and session
+    // checks above already follow for the same reason: a missing input is not an
+    // empty answer. Skipping this check when the caller forgot it would leave the
+    // one piece of state that is unrecoverable if destroyed as the one piece of
+    // state that can be missed by omission.
+    refuse('operation-state-absent');
+  } else if (state.readError) {
+    refuse('operation-state-unreadable', state.readError, 'git diff --name-only --diff-filter=U');
+  } else if (state.operations.length > 0 || state.unmerged.length > 0) {
+    const named = state.operations.map((o) => `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`);
+    const unmerged = state.unmerged.length > 0 ? [`${state.unmerged.length} unmerged path(s) in the index`] : [];
+    // No remedy name when there is no command to name. `git merge --abort` does nothing
+    // for an unresolvable index with no operation behind it, and a squash has no abandon
+    // command at all; a refusal that names a command which cannot work is the same defect
+    // as a report that calls such a state clean. Those two are different sentences, so
+    // they are told apart here: `remedyless` names the operation git cannot abandon, and
+    // is null when there is no marker at all. `repo-state-gate.mjs` must advise the same
+    // way about the same state.
+    const remedy = state.operations.map(abortCommand).filter(Boolean).join(' / ');
+    const remedyless =
+      remedy === '' && state.operations.length > 0
+        ? state.operations
+            .filter((o) => abortCommand(o) === null)
+            .map((o) => `a ${o.operation}`)
+            .join(' or ')
+        : null;
+    refuse(
+      'operation-in-progress',
+      [...named, ...unmerged].join(', '),
+      remedy,
+      liveSignal(board, sessions),
+      remedyless
+    );
+  }
+
   // Ownership, from three independent sources. ANY of them means somebody is
   // there. This is the check the sweep's `git status --porcelain` probe could
   // not make, and it is the one that would have saved the worktree.
@@ -499,7 +580,7 @@ export const PLACEHOLDER_BRANCHES = new Set(['(detached)', '(unknown)']);
 /**
  * Everything about the target that git can answer, and nothing it cannot.
  *
- * `git worktree list --porcelain` is the only enumeration; a target is matched
+ * `git worktree list --porcelain -z` is the only enumeration; a target is matched
  * on its resolved realpath, because macOS reports `/private/var/...` for a path
  * reached through `/var` and a string comparison would miss it.
  *
@@ -674,6 +755,105 @@ export function locateInventory(cwd, { run = defaultRun, exists = existsSync } =
     /* not a repository, or git could not answer; `cwd` below is the fallback */
   }
   return join(cwd, 'WORKTREES.json');
+}
+
+/**
+ * The operations in progress in one worktree, and whether that could be read.
+ *
+ * A separate reader from `readGitState` because it answers a different question
+ * about a different directory. `readGitState` reads the worktree's porcelain
+ * status, which answers "what is in the files". This reads the worktree's GIT
+ * DIRECTORY, which answers "what is git doing" — and the two disagree in the
+ * direction that matters: a merge whose conflicts are all resolved has a clean
+ * index and an empty porcelain, and a bisect has both, while its `BISECT_LOG`
+ * and its detached `HEAD` are the only evidence it is running.
+ *
+ * `readError` is kept as a FIELD rather than thrown, because the caller's
+ * decision differs from a thrown error's: an unreadable state is a refusal with
+ * its own message naming the command, exactly as `dirty-tree-unreadable` is. A
+ * reader that cannot answer must not be indistinguishable from one that answered
+ * "nothing in progress".
+ *
+ * BOTH injected readers are guarded, not one. `preflight` is a pure decision
+ * function with no try/catch of its own, so an unguarded throw here escapes it as
+ * a stack trace — which is the outcome this refusal exists to replace. An earlier
+ * version guarded `unmergedPaths` and left `readOperations` bare, which is
+ * untestable as well as unreachable: `readOperations` cannot throw, so nothing
+ * could have shown the asymmetry to be a hole.
+ */
+export function readOperationState(
+  absolutePath,
+  { gitDirOf = resolveGitDir, readOps = readOperations, unmergedOf = unmergedPaths, fallbackGitDir = null } = {}
+) {
+  // `fallbackGitDir` exists for the shape that matters most. A worktree whose DIRECTORY
+  // is gone cannot be asked anything, so `gitDirOf` — which runs git inside it — answers
+  // null, and an earlier version returned `operations: []` with a `readError` while the
+  // administrative directory beside it still held the merge. That is the exact state
+  // `git worktree prune` destroys, and the `prunable` refusal was meanwhile telling the
+  // operator there was "nothing to salvage and no state to verify". So the git directory
+  // is matched by content when the directory is unavailable; see `resolveAdminDirFor`.
+  const gitDir = gitDirOf(absolutePath) ?? fallbackGitDir;
+  if (gitDir === null) {
+    return {
+      gitDir: null,
+      operations: [],
+      unmerged: [],
+      readError: 'git rev-parse --absolute-git-dir failed and no administrative directory claims this worktree',
+    };
+  }
+  let operations;
+  try {
+    operations = readOps(gitDir);
+  } catch (error) {
+    return { gitDir, operations: [], unmerged: [], readError: error?.message ?? String(error) };
+  }
+  let unmerged = [];
+  let unmergedError = null;
+  try {
+    unmerged = unmergedOf(absolutePath);
+  } catch (error) {
+    // Not a `readError` when the OPERATIONS were read: a merge whose index cannot be
+    // diffed because its directory is gone is still a merge in progress, and reporting
+    // only the read failure would hide the finding this whole check exists to produce.
+    unmergedError = error?.message ?? String(error);
+    if (operations.length === 0) return { gitDir, operations, unmerged: [], readError: unmergedError };
+  }
+  return { gitDir, operations, unmerged, readError: null, unmergedError };
+}
+
+/**
+ * Who else is in this worktree, in one sentence, from the sources already in hand.
+ *
+ * The `operation-in-progress` refusal names a command that DISCARDS work, and the
+ * operator's first question about that command is whether anybody is standing there.
+ * `board` and `sessions` are already arguments to `preflight`, so the facts are already
+ * computed — an earlier version of this refusal ran ahead of every ownership check and
+ * dropped them, so the advice to consider `git merge --abort` arrived with no hint that
+ * a live session was mid-merge in it. On the repository this was written for, that gap
+ * is the difference between a safe abort and destroying a session's in-flight work.
+ *
+ * STATES THE WINDOW, because "recorded in this worktree RIGHT NOW" was a review finding
+ * against this sentence: every one of these sources is a recency window —
+ * `LIVE_WINDOW_MS` for agents, the same window for sessions — so "right now" asserted a
+ * strength the data does not have, and the refusal printed beside it states the same
+ * fact correctly. The refusal now carries the number instead.
+ *
+ * Returns null when nothing is live, so the refusal does not gain a sentence claiming
+ * nobody is there: that is an ABSENCE of evidence, and stating it as evidence is how a
+ * reader concludes a worktree is safe when it is only unobserved.
+ */
+function liveSignal(board, sessions) {
+  const parts = [];
+  const claims = board?.claims?.length ?? 0;
+  const locks = board?.fileLocks?.length ?? 0;
+  const agents = board?.liveAgents?.length ?? 0;
+  const live = sessions?.live?.length ?? 0;
+  if (claims > 0) parts.push(`${claims} board claim(s)`);
+  if (locks > 0) parts.push(`${locks} board file lock(s)`);
+  if (agents > 0) parts.push(`${agents} live board agent(s)`);
+  if (live > 0) parts.push(`${live} live session(s)`);
+  if (parts.length === 0) return null;
+  return `Others are recorded in this worktree inside the last ${LIVE_WINDOW_MS / 60000} min: ${parts.join(', ')}. Establish who they are before you abort anything.`;
 }
 
 /**
@@ -1166,6 +1346,12 @@ function main(argv) {
     target,
     nowMs,
     gitState,
+    // The fallback is what lets this read the state of a worktree whose own
+    // directory is gone: matched against the administrative directories by content,
+    // because there is no directory left to run git in. See `readOperationState`.
+    operationState: readOperationState(gitState.absolutePath, {
+      fallbackGitDir: resolveAdminDirFor(resolveCommonDir(cwd), gitState.absolutePath),
+    }),
     inventory,
     board: ownership.board,
     sessions: ownership.sessions,

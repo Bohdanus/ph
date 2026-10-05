@@ -42,7 +42,14 @@ const setup = (overrides: Partial<Props> = {}) => {
     group: at(`panel-group-${props.id}`),
     row: at(`panel-header-row-${props.id}`),
     control: at(`panel-header-${props.id}`),
-    /** The element `aria-controls` names, resolved the way an assistive technology would. */
+    /**
+     * The element the body would occupy, looked up by the id the component builds. This does NOT
+     * resolve through `control.getAttribute('aria-controls')` — it reconstructs the string from the
+     * test's own prop, so on its own it proves only that the body mounts. The pairing is pinned
+     * twice, and it is worth naming both halves: `derives the group, the row and the control from one
+     * id` holds the two strings equal on a mount that was never rolled up, and the round-trip case
+     * holds them equal again AFTER a collapse, which is what a one-way attribute would break.
+     */
     body: () => utils.container.querySelector<HTMLElement>(`#panel-body-${props.id}`),
     /** Applies a prop change from the parent, which is what a toggle callback does upstream. */
     rerenderGroup: (next: Partial<Props>) => utils.rerender(<PanelGroup {...props} {...next} />),
@@ -115,7 +122,7 @@ describe('PanelGroup', () => {
     });
 
     it('derives the group, the row and the control from one id, and is focusable', () => {
-      const { group, row, control } = setup({ id: 'history' });
+      const { group, row, control, body } = setup({ id: 'history' });
 
       expect(group).toHaveAttribute('data-testid', 'panel-group-history');
       expect(row).toHaveAttribute('data-testid', 'panel-header-row-history');
@@ -123,6 +130,11 @@ describe('PanelGroup', () => {
       // One id, three places it must not drift: what the control controls, and what the testids
       // name. The row exists so a real button can sit beside the control without invalid ARIA.
       expect(control.getAttribute('aria-controls')).toBe('panel-body-history');
+      // Expanded, the name must RESOLVE: `aria-controls` naming an id that is not in the tree is
+      // the same dangling reference the rolled-up case must not have, and asserting the string
+      // alone would pass either way. `body()` resolves it the way an assistive technology would —
+      // through the container — rather than off `document`.
+      expect(body()).not.toBeNull();
       expect(row.parentElement).toBe(group);
       expect(control.parentElement).toBe(row);
       // Keyboard reachability is the whole point of `role="button"`: this is a roll-up control
@@ -152,7 +164,7 @@ describe('PanelGroup', () => {
       expect(control.textContent).toBe('Layers');
     });
 
-    it('hides the body and its children when rolled up, leaving the tab bar', () => {
+    it('removes the body and its children when rolled up, leaving the tab bar', () => {
       const { control, body, rerenderGroup } = setup();
       expect(body()).not.toBeNull();
 
@@ -163,10 +175,10 @@ describe('PanelGroup', () => {
       expect(screen.queryByText(BODY_MARKER)).toBeNull();
       // A roll-up leaves the tab bar, not an empty box: the title is meant to still be there.
       expect(screen.getByText('Layers')).toBeInTheDocument();
-      // The target `aria-controls` names is gone while the attribute still names it — asserted
-      // because that is what the component does, and a fix has to change this line, not this test.
-      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
-      expect(document.getElementById('panel-body-layers')).toBeNull();
+      // Rolled up, the reference must NOT dangle: the honest pair is `aria-expanded="false"` and
+      // no `aria-controls` at all, not a name with no target. The attribute is gated on the same
+      // expression that renders the body, so the two cannot drift.
+      expect(control).not.toHaveAttribute('aria-controls');
     });
 
     it('rolls up on a double-click, reports a zero-argument callback, and comes back', () => {
@@ -186,6 +198,13 @@ describe('PanelGroup', () => {
 
       rerenderGroup({ isRolledUp: false });
       expect(body()!.textContent).toBe(BODY_MARKER);
+      // The name comes BACK too, not just the body. Asserting only the body is a one-way pin: an
+      // `aria-controls` that appeared while collapsed and never returned would satisfy every other
+      // assertion in this file, because the ones that require the attribute's PRESENCE all run on a
+      // mount that was never rolled up. This is the other half of `derives the group, the row and
+      // the control from one id`, and it is what makes the attribute a relationship rather than a
+      // one-shot announcement.
+      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
     });
 
     it('does not roll up when the double-click ended a drag', () => {

@@ -325,10 +325,35 @@ describe('MigrationDiagnostic code mapping', () => {
       'unsupported-history-feature',
       'invalid-history-entry',
     ]);
-    expect(result.diagnostics.every((diagnostic) => diagnostic.severity === 'error')).toBe(true);
-    expect(result.diagnostics.every((diagnostic) => typeof diagnostic.message === 'string')).toBe(true);
-    expect(result.diagnostics.every((diagnostic) => typeof diagnostic.historyId === 'string')).toBe(true);
-    expect(result.diagnostics.every((diagnostic) => typeof diagnostic.actionName === 'string')).toBe(true);
+    // The whole array, not `every(diagnostic => typeof … === 'string')`: that
+    // predicate is satisfied by ANY string, so it could not tell a diagnostic
+    // that names the offending entry and the rule that fired from one carrying
+    // the wrong entry's id or another rule's message. Severity is pinned per
+    // diagnostic here for the same reason the `every` check cannot be trusted —
+    // it passes over an empty array.
+    expect(result.diagnostics).toEqual([
+      {
+        historyId: 'replacement',
+        actionName: OPEN_DOCUMENT_ACTION,
+        severity: 'error',
+        code: 'document-replacement',
+        message: 'Document replacement must create a new durable document and cannot appear inside a document history.',
+      },
+      {
+        historyId: 'unknown-tool',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+        message: 'Unknown processor nonexistent-tool',
+      },
+      {
+        historyId: 'malformed',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'invalid-history-entry',
+        message: 'Non-plain value at history:malformed.args.radius',
+      },
+    ]);
   });
 });
 
@@ -356,7 +381,7 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
     ).toBe(true);
   });
 
-  it('does not reconcile assets for a conversion rejected by an error diagnostic', () => {
+  it('reconciles a conversion that published a document omitting an error entry', () => {
     const registry = new AssetRegistry();
     const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
 
@@ -368,12 +393,16 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
-    expect(reconcile).not.toHaveBeenCalled();
+    // The image layer converted, so the document is published and reconciliation
+    // runs. This assertion used to be the opposite — a per-entry `error` skipped
+    // reconciliation entirely, which meant the one case where the registry HAD to
+    // be told what the document names was the case that never told it.
+    expect(result.status).toBe('current');
+    expect(result.document?.history.map((entry) => entry.id)).toEqual(['image-layer']);
+    expect(reconcile).toHaveBeenCalledOnce();
   });
 
-  it('rolls back assets registered by a failed conversion without losing pre-existing baselines', async () => {
+  it('reclaims every asset the published document does not name, not only the ones this conversion added', async () => {
     const registry = new AssetRegistry();
     const existing = createOwnedBitmap(4, 4);
     const existingId = registry.registerBaseline(documentId, existing.bitmap, { ownership: 'adopt' });
@@ -389,17 +418,32 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    const registeredIds = register.mock.results.map((call) => call.value as AssetId).filter((id) => id !== existingId);
+    // This used to assert a rollback, and the rollback released the asset the
+    // PUBLISHED image layer names — so the old contract was the one that dropped a
+    // live asset. Now the document is published, the image layer is in it, and
+    // reconciliation runs over exactly what the document names.
+    expect(result.status).toBe('current');
+    expect(result.document?.history.map((entry) => entry.id)).toEqual(['image-layer']);
+    expect(reconcile).toHaveBeenCalledOnce();
+    const registeredIds = register.mock.results.map((call) => call.value as AssetId);
     expect(registeredIds).toHaveLength(1);
-    // The transaction rolled the asset registered by the failed conversion back...
-    expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
-    // ...while leaving the baseline the caller owned before the conversion intact.
-    expect(registry.getRecord(existingId)).toBeDefined();
-    const lease = await registry.resolve(existingId);
-    expect(lease.bitmap).toBe(existing.bitmap);
+    expect(registry.getRecord(registeredIds[0]!)).toBeDefined();
+
+    // And the PRICE of reconciling on the success path, stated rather than left to
+    // be discovered: a baseline registered against this document BEFORE the
+    // conversion, and named by no entry of the document that conversion published,
+    // is released. The old rollback scope was "what this transaction added", so it
+    // kept such a baseline; the reconcile scope is "what the document names", so it
+    // does not. That is the intended answer — an asset nothing reaches is a leak,
+    // and `registerBaseline` re-mints from the same external object on demand — but
+    // it is a real behaviour change and this is where it is pinned.
+    expect(registry.getRecord(existingId)).toBeUndefined();
+    // A published entry's own asset is still resolvable through the registry, so
+    // the reclaim above is not indiscriminate.
+    const [reachable] = [...collectDurableAssetIds(result.document!)];
+    const lease = await registry.resolve(reachable!);
+    expect(lease.bitmap).toBe(stray.bitmap);
     lease.release();
-    expect(reconcile).not.toHaveBeenCalled();
   });
 });
 
@@ -573,14 +617,16 @@ describe('durable entry id uniqueness', () => {
     expect(result.diagnostics[0]?.message).not.toContain('undefined');
   });
 
-  it('keeps the conversion status current for a timeline that repeats an id, so the whole shadow is not withheld', () => {
+  it('keeps the conversion status current for a timeline that repeats an id, so the shadow can still be navigated', () => {
     const registry = new AssetRegistry();
     const result = convertSafely([blurItem('shared-id'), colorItem('shared-id'), colorItem('after')], registry);
 
-    // A warning, never an error. `convertLegacyHistorySafely` rolls the asset
-    // transaction back and returns no document on the first `error`, so an error
-    // here would withhold the shadow for EVERY entry in the timeline — including
-    // the ones the legacy timeline handles without complaint.
+    // A warning, never an error. The document is published either way now, but an
+    // error would tell every consumer it is missing an edit, and
+    // `publishDurableNavigationPresentation` reads that to decline navigation
+    // altogether — a cost this divergence does not earn, because the withheld
+    // entry is a DUPLICATE of an id the document already carries rather than an
+    // edit nothing else describes.
     expect(result.status).toBe('current');
     expect(result.document).not.toBeNull();
     // Spelled out, not `every(...)`: a predicate over an empty array is true, so
@@ -635,6 +681,9 @@ describe('durable entry id uniqueness', () => {
             blendMode: 'source-over',
             order: 0,
             pos: { x: 0, y: 0, width: 100, height: 80 },
+            // Provenance: the document source opened the document at `baselineFrame`,
+            // and a baseline layer records the frame it was authored against.
+            frame: baselineFrame,
             source: {
               kind: 'blank',
               color: '#ffffff',

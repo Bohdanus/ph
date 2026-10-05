@@ -32,7 +32,12 @@ describe('useKeyboardEvents', () => {
 
     document.dispatchEvent(keyDownEvent);
 
-    expect(onKeyDown).toHaveBeenCalledTimes(1);
+    // The handler receives THE event, by identity. Nothing in either keyboard file
+    // asserted the argument, so a `onKeyDown(event)` that became `onKeyDown(shortcut)`
+    // — or `onKeyDown()` — left every case here and in `*.shortcuts.test.tsx` green,
+    // while every real registration that reads `event.preventDefault()` or
+    // `event.altKey` would have started throwing on the first keystroke.
+    expect(onKeyDown).toHaveBeenCalledExactlyOnceWith(keyDownEvent);
     expect(keyDownEvent.defaultPrevented).toBe(true);
   });
 

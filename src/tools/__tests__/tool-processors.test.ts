@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   findToolProcessor,
   PIXEL_FREE_TOOLS,
+  toolIsStrokeShaped,
   toolProcessors,
   type PixelToolName,
   type ToolCommitKind,
@@ -37,7 +38,7 @@ import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
-import type { ToolName } from '../../contexts/tool-types.ts';
+import type { ToolArgsByName, ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 
@@ -377,6 +378,48 @@ describe('toolProcessors registry', () => {
     }
   });
 
+  /**
+   * The type-derived half of the stroke-capability rule: a tool can only be stroke-shaped if its
+   * arguments can carry `rasterBounds`, the frame `rasterBoundsForStroke` computes and
+   * `stageProcessorInput` stages the raster at. `StrokeCapableByArgsType` derives that from the
+   * argument types themselves, so a tool that grows the field is a COMPILE error here until the
+   * registry is told about it — and the runtime comparison below is what makes the registry's own
+   * half of the pair checkable rather than assumed.
+   */
+  type StrokeCapableByArgsType = {
+    [K in ToolName]: 'rasterBounds' extends keyof ToolArgsByName[K] ? K : never;
+  }[ToolName];
+
+  const STROKE_CAPABLE_BY_ARGS_TYPE = {
+    blur: true,
+    sharpen: true,
+    smudge: true,
+  } as const satisfies Record<StrokeCapableByArgsType, true>;
+
+  it('declares strokeShaped exactly for the tools whose arguments can carry a stroke frame', () => {
+    const declared = processorNames.filter((toolName) => toolIsStrokeShaped(toolName));
+
+    expect(declared.sort()).toEqual(Object.keys(STROKE_CAPABLE_BY_ARGS_TYPE).sort());
+    // The reader, not the field: an unregistered name must answer false rather than throw, because
+    // `isRasterStrokeArgs` is handed a `toolName` off a history entry that any layer can name.
+    expect(toolIsStrokeShaped('eyedropper')).toBe(false);
+    expect(toolIsStrokeShaped('not-a-tool' as ToolName)).toBe(false);
+  });
+
+  it('gives every stroke-shaped tool a commit kind that a stroke can actually change', () => {
+    // `layer-operation` and `raster` are the two kinds whose handling consults
+    // `isRasterStrokeArgs`: the first retains the whole-layer form and bakes the stroke, the second
+    // bakes both. Every other kind returns before the raster arm in `useLayer.ts` and
+    // `history-replay.ts`, so a stroke on such a tool would be classified and then dropped.
+    const strokeShaped = processorNames.filter((toolName) => toolIsStrokeShaped(toolName));
+
+    expect(strokeShaped.sort()).toEqual(['blur', 'sharpen', 'smudge']);
+    for (const toolName of strokeShaped) {
+      const { commit } = findToolProcessor(toolName)!;
+      expect(['layer-operation', 'raster'], toolName).toContain(commit);
+    }
+  });
+
   it('only labels source-creating tools as creators, and each creator commits as a source', () => {
     const creators = processorNames.filter((toolName) => findToolProcessor(toolName)!.creator);
 
@@ -630,6 +673,7 @@ describe('paint tool raster processors', () => {
  */
 const realBarNames = [
   'eyedropper',
+  'ruler',
   'elliptical-selection',
   'quick-selection',
   'eraser',
@@ -696,6 +740,10 @@ const PLACEHOLDER_DESCRIPTION = 'TODO: tool behavior not implemented yet.';
  */
 const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
   ['eyedropper', ['eyedropper-sample-size']],
+  // The Ruler's bar is readouts, not controls, so its id set is the seven readout outputs plus the
+  // one button. Pinned exactly for the reason above: a readout that stopped rendering would
+  // otherwise be invisible to this suite.
+  ['ruler', ['ruler-x', 'ruler-y', 'ruler-w', 'ruler-h', 'ruler-a', 'ruler-d1', 'ruler-d2', 'ruler-clear']],
   // The seeded `style` is `'normal'`, and `EllipticalSelection.tsx` renders Ratio only for
   // `fixed-ratio` and Width/Height only for `fixed-size`, so the Style select is the whole bar at
   // the defaults. Pinning the gated controls as ABSENT is the other half: a Style select rendered
@@ -1119,6 +1167,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
+    ['ruler', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1444,6 +1493,7 @@ describe('toolsMap exhaustiveness', () => {
     ['burn', 'burn'],
     ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
+    ['ruler', 'ruler'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
     ['curvature-pen', 'curvature-pen'],

@@ -32,12 +32,6 @@ import type { PanelId } from '../../contexts/PanelLayout.tsx';
  * click, not a drag.
  */
 
-/**
- * Renders the body inside its own `overflow-y: auto` box and gives it the id the tab's
- * `aria-controls` points at. The caller passes the panel's CONTENT, not a wrapper: a wrapper
- * here would be a second scroll container, and the tab would name an element that is not the one
- * holding anything.
- */
 const HEADER_CLASS =
   'px-3 py-1 bg-gray-200 dark:bg-gray-700 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-300';
 
@@ -131,7 +125,14 @@ const PanelGroup = ({
       >
         <div
           {...handleProps}
-          aria-controls={`panel-body-${id}`}
+          // Only while the body exists. Rolled up, the id below names nothing, and
+          // `aria-expanded="false"` beside a reference to a missing element is a dishonest
+          // disclosure: an assistive technology is told the control governs a region it cannot
+          // find, and ARIA 1.2 §8.6.1 only tells user agents to ignore the dangling ID ref, not
+          // that the announcement was honest. The rolled-up pair is `aria-expanded="false"` and no
+          // `aria-controls` at all, so the attribute is gated on the SAME expression that renders the
+          // body further down and the two cannot drift.
+          aria-controls={isRolledUp ? undefined : `panel-body-${id}`}
           aria-expanded={!isRolledUp}
           className="flex min-w-0 flex-1 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
           onDoubleClick={() => {
@@ -171,10 +172,13 @@ const PanelGroup = ({
         </div>
         {headerAction}
       </div>
-      {/* The id `aria-controls` names goes on the element that actually holds the body, not on an
-          empty `display: contents` placeholder beside it — a control that announces what it
-          controls has to control something, and a placeholder is nothing. The body is rendered
-          here rather than passed in so the id and the element cannot drift apart. */}
+      {/* The body, inside its own `overflow-y: auto` box, carrying the id the tab's `aria-controls`
+          names — and the tab names it only while this element is mounted, which is what keeps the
+          reference from dangling on a rolled-up panel. The caller passes the panel's CONTENT, not a
+          wrapper: a wrapper here would be a second scroll container, and the tab would name an
+          element that is not the one holding anything. It is rendered here rather than passed in so
+          the id and the element cannot drift apart, and it is not an empty `display: contents`
+          placeholder — a control that announces what it controls has to control something. */}
       {!isRolledUp && (
         <div className="min-h-0 flex-1 overflow-y-auto" id={`panel-body-${id}`}>
           {children}

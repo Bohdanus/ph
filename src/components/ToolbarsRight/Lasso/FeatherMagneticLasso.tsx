@@ -83,6 +83,21 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
 
   const args = getToolArgs('feather-magnetic-lasso');
   const isInfoOpen = isInfoHovered || isInfoPinned;
+  // Measured and open are two different things, and the tooltip is in the DOM only when both hold.
+  // Gating `aria-describedby` on `isInfoOpen` alone left it naming an id nothing owned in between.
+  //
+  // Unlike `FontSelect`'s equivalent, this window is a PAINTED one: `updateInfoTooltipPosition`
+  // runs from a passive `useEffect`, so on the HOVER and focus paths it lands after the browser has
+  // already shown the button with a `describedby` pointing nowhere. The pin path cannot: its click
+  // handler measures BEFORE it sets the flags, and React batches the three calls, so a pinned
+  // tooltip is never measured-less. It stayed invisible to the repo's axe run because an
+  // unresolvable `aria-describedby` is reported as `incomplete`, which `e2e/accessibility.spec.ts`
+  // deliberately does not assert.
+  //
+  // No test pins this, and that is a real gap rather than an oversight of the test: the window is
+  // between paint and effect, so a test that awaits settling never observes it. `HANDOFF.md` records
+  // the structural gate that would close it.
+  const infoTooltipMounted = isInfoOpen && infoTooltipPos !== null;
 
   const clearInfoCloseTimer = useCallback(() => {
     if (closeInfoTooltipTimerRef.current === null) return;
@@ -199,7 +214,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleClear = () => {
+  const handleDeselect = () => {
     clearSelections();
   };
 
@@ -210,34 +225,33 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
     setIsInfoPinned((isPinned) => !isPinned);
   };
 
-  const infoTooltip =
-    isInfoOpen && infoTooltipPos
-      ? createPortal(
-          <div
-            id={INFO_TOOLTIP_ID}
-            role="tooltip"
-            className="fixed z-[9999] max-h-[calc(100vh-16px)] w-96 overflow-y-auto rounded-lg border border-gray-300 bg-white p-3 text-left text-[11px] leading-snug text-gray-700 shadow-xl dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
-            style={{ left: infoTooltipPos.left, top: infoTooltipPos.top }}
-            onMouseEnter={showInfoTooltip}
-            onMouseLeave={hideInfoTooltipSoon}
-          >
-            <div className="mb-2 font-bold text-gray-900 dark:text-white">Feather Magnetic Lasso settings</div>
-            <div className="mb-2 text-[10px] text-gray-500 dark:text-gray-400">
-              The magnetic path samples the final merged canvas and snaps to gradient edges; copy output uses a
-              feathered alpha mask.
-            </div>
-            <dl className="grid gap-1.5">
-              {SETTING_HELP.map((item) => (
-                <div key={item.label} className="grid grid-cols-[72px_1fr] gap-2">
-                  <dt className="font-semibold text-gray-900 dark:text-white">{item.label}</dt>
-                  <dd>{item.description}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>,
-          document.body
-        )
-      : null;
+  const infoTooltip = infoTooltipMounted
+    ? createPortal(
+        <div
+          id={INFO_TOOLTIP_ID}
+          role="tooltip"
+          className="fixed z-[9999] max-h-[calc(100vh-16px)] w-96 overflow-y-auto rounded-lg border border-gray-300 bg-white p-3 text-left text-[11px] leading-snug text-gray-700 shadow-xl dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+          style={{ left: infoTooltipPos.left, top: infoTooltipPos.top }}
+          onMouseEnter={showInfoTooltip}
+          onMouseLeave={hideInfoTooltipSoon}
+        >
+          <div className="mb-2 font-bold text-gray-900 dark:text-white">Feather Magnetic Lasso settings</div>
+          <div className="mb-2 text-[10px] text-gray-500 dark:text-gray-400">
+            The magnetic path samples the final merged canvas and snaps to gradient edges; copy output uses a feathered
+            alpha mask.
+          </div>
+          <dl className="grid gap-1.5">
+            {SETTING_HELP.map((item) => (
+              <div key={item.label} className="grid grid-cols-[72px_1fr] gap-2">
+                <dt className="font-semibold text-gray-900 dark:text-white">{item.label}</dt>
+                <dd>{item.description}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>,
+        document.body
+      )
+    : null;
 
   return (
     <>
@@ -254,7 +268,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
               ref={infoButtonRef}
               type="button"
               aria-label="Feather Magnetic Lasso settings information"
-              aria-describedby={isInfoOpen ? INFO_TOOLTIP_ID : undefined}
+              aria-describedby={infoTooltipMounted ? INFO_TOOLTIP_ID : undefined}
               aria-expanded={isInfoOpen}
               className="grid h-5 w-5 place-items-center rounded-full border border-blue-300 bg-white text-[11px] font-bold text-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-blue-700 dark:bg-gray-900 dark:text-blue-300"
               onClick={handleInfoButtonClick}
@@ -364,8 +378,8 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
           <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
             Paste
           </button>
-          <button className={SECONDARY_BUTTON} disabled={!hasActiveSelection} onClick={handleClear}>
-            Clear
+          <button className={SECONDARY_BUTTON} disabled={!hasActiveSelection} onClick={handleDeselect}>
+            Deselect
           </button>
         </div>
       </div>

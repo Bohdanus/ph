@@ -22,12 +22,18 @@ import type {
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
-import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import {
+  cloneDocumentFrame,
+  documentFrameEquals,
+  documentFrameFromSize,
+  documentFrameSize,
+  type DocumentFrame,
+} from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
   collectDurableAssetIds,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
@@ -118,6 +124,30 @@ export function durablePresentationIsRendererIdentical(
     isEqual(bounds, existing.pos) &&
     (replayLayer.snapshot.source.kind === 'raster' || replayLayer.snapshot.source.kind === 'blank')
   );
+}
+
+/**
+ * Whether a converted shadow describes EVERY entry of the timeline it shadows.
+ *
+ * `durablePresentationIsRendererIdentical` accepts a layer only when the durable
+ * replay asserts its pixels ARE the source: no operations, the same bounds, a
+ * raster or blank source. That acceptance is sound only while the shadow and the
+ * legacy timeline agree about WHICH layers have been edited, so it is not sound
+ * for a shadow missing an edit — and a conversion that omitted an entry produces
+ * exactly that: the durable replay layer carries no operations, the check passes,
+ * and the un-edited materialization is written over the `tmpCanvas` the renderer
+ * draws (`layer-renderer.ts`). So navigation publication is the one consumer of
+ * the shadow that must refuse a conversion reporting a per-entry `error`, even
+ * though the document itself is published and every other consumer can use it.
+ *
+ * Stated as a predicate over diagnostics rather than a flag on the document: an
+ * `error` diagnostic IS the conversion saying "an entry the legacy timeline has
+ * is absent from this document", which is the premise. `history-adapter.ts` owns
+ * the other half — it publishes the partial document rather than withholding
+ * one — and this is the consumer that pays for that by not presenting it.
+ */
+function durableShadowDescribesEveryEntry(diagnostics: readonly MigrationDiagnostic[]): boolean {
+  return !diagnostics.some((diagnostic) => diagnostic.severity === 'error');
 }
 
 export type StoreData = {
@@ -446,6 +476,16 @@ function appendBoundaryDiagnostics(
  * first one produced. When that copy was hand-written it silently dropped
  * `hasUnsavedChanges`, so after an undo the ref disagreed with the published
  * state. One function removes the class of bug rather than the instance.
+ *
+ * A FRAME CHANGE bumps `documentRevision` here, which is the half of HANDOFF §10
+ * that no data type can carry. `DurableLayerSnapshot.frame` records which frame a
+ * layer was authored against; this is what makes a crop refuse an in-flight durable
+ * append, because `decideDurableAppend` already compares `documentRevision` against
+ * the live state and would otherwise see an unchanged revision across a moved
+ * frame. Bumping it on the frame alone would make every later append fall back to
+ * reconversion forever, so the durable document is restamped with the SAME revision
+ * in the same transition — which is what keeps the append gate's comparison
+ * meaningful rather than permanently failing.
  */
 function projectPublishedTimeline(
   state: StoreData,
@@ -459,19 +499,32 @@ function projectPublishedTimeline(
 ): StoreData {
   const updates = payload.updates ?? {};
   const nextFrame = updates.documentFrame;
+  // Structural comparison, not identity: a writer that recomputed the same frame
+  // must not spend a revision, or an ordinary re-commit of an unchanged crop would
+  // invalidate a durable document it left perfectly faithful.
+  const frameChanged = !!nextFrame && !documentFrameEquals(state.documentFrame, nextFrame);
+  const documentRevision = frameChanged ? state.documentRevision + 1 : state.documentRevision;
   const durable = normalizeDurableProjection({
     document: payload.durableDocument,
     status: payload.durableStatus,
     diagnostics: payload.durableDiagnostics,
   });
+  const document =
+    frameChanged && durable.document
+      ? // The cursor is restated because `refreezeDurableDocument` requires it, and
+        // this document's own cursor is exactly what it already holds: the revision
+        // stamp is the only field this transition moves.
+        refreezeDurableDocument(durable.document, { cursor: durable.document.cursor, documentRevision })
+      : durable.document;
   return {
     ...state,
     ...updates,
     ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
+    documentRevision,
     history: [...payload.timeline.entries],
     historyIndex: payload.timeline.cursor,
     branchRevision: payload.timeline.branchRevision,
-    durableDocument: durable.document,
+    durableDocument: document,
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
     hasUnsavedChanges: true,
@@ -575,6 +628,10 @@ function sourceBackedEntryContext(
     documentId: state.documentId,
     registry,
     preLayers: durableLayersAtCursor(state.durableStatus === 'current' ? state.durableDocument : null),
+    // The live frame, cloned rather than shared: the snapshot records it as
+    // provenance and freezes its own copy, so no writer can reach through the
+    // planned entry and restate the frame the plan was made against.
+    documentFrame: cloneDocumentFrame(state.documentFrame),
     liveLayers: state.layers,
   };
 }
@@ -858,11 +915,14 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
       };
     default: {
-      // Every action kind has an arm above, so a new one is a typecheck error
-      // instead of a silent no-op — `SET_ORIGINAL_IMAGE` and `ADOPT_LAYER_BITMAPS`
-      // were both reached through `default: return state` for that reason. The
-      // guard is compile-time only: the runtime answer for an unknown kind stays
-      // "state unchanged", because `useReducer` must not throw inside a render.
+      // Load-bearing, and the `never` is the point: `StoreAction` is a closed
+      // union, so a kind added to `Action` or `InternalAction` without an arm
+      // above fails `tsc` here rather than reaching the caller as a dispatch that
+      // quietly does nothing. `return state` is kept so a runtime untyped caller
+      // still gets the no-op the old `default` gave it, because `useReducer` must
+      // not throw inside a render. The two arms that exist only to be written down
+      // — `SET_ORIGINAL_IMAGE` and `ADOPT_LAYER_BITMAPS` — are named above in
+      // their alphabetical positions rather than here.
       const _exhaustive: never = action;
       void _exhaustive;
       return state;
@@ -891,7 +951,11 @@ function buildDurableDocument(
         : -1;
     return {
       status: converted.status,
-      document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+      // `converted.document` is already a deep-frozen copy this module froze, and the
+      // cursor is the only field that moves here, so the navigation write reuses the
+      // baseline and the whole timeline instead of deep-copying both to change a
+      // number. Any other base falls back to the full freeze.
+      document: converted.document ? refreezeDurableDocument(converted.document, { cursor }) : null,
       diagnostics: converted.diagnostics,
       legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };
@@ -1204,6 +1268,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         entry: historyItem,
         planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
         documentRevision: currentState.documentRevision,
+        documentFrame: currentState.documentFrame,
         preLayerOrder,
         durableLayerOrder,
       });
@@ -1284,11 +1349,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         entry: action.payload.historyItem,
         planned: plannedEntry,
         documentRevision: currentState.documentRevision,
+        // The PRE-append frame, which is the one `sourceBackedEntryContext` stamped
+        // on a planned snapshot and the one a crop entry's `previous` names. This
+        // append may itself move the frame; the revision bump in
+        // `projectPublishedTimeline` is what records that, after the decision.
+        documentFrame: currentState.documentFrame,
         preLayers: sourceContext?.preLayers,
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
       const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
-      let publicationFailed = false;
 
       if (!publishPlanned) {
         plannerTransaction?.rollback();
@@ -1307,79 +1376,110 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A planned durable append can carry a newly registered asset-bearing
       // operation. Open the document transaction only after the pure decision
       // succeeds, publish the state, then commit and reconcile the exact set the
-      // published document names. If any step fails, rollback before rebuilding.
+      // published document names.
       //
-      // The `catch` covers the pre-publication work ONLY, and the commit,
-      // reconcile and retirement statements sit after it for that reason. Once
-      // `rawDispatch` has run the entry is in React's queue, so falling out of a
-      // catch that wraps it lands on the rebuild path below — which appends the
-      // SAME history entry a second time and advances `branchRevision` by two, so
-      // one undo appears to do nothing. A failure after publication is reported
-      // to the caller instead of being answered with a second dispatch.
+      // The `try` covers the FALLIBLE work and nothing else, and its catch is
+      // therefore the one place the rebuild below may be reached from: the whole
+      // conversion rebuild and its dispatch run only when no state has moved
+      // yet, so the append is still un-published and rolling the transaction
+      // back is exactly right.
+      //
+      // Publication itself is deliberately OUTSIDE it. `latestStateRef.current`
+      // and `rawDispatch` are the point of no return — an exception from
+      // `transaction.commit`, `reconcileDocumentAssets` or the retirement walk
+      // used to land in the same catch, fall out of this `if`, and dispatch a
+      // SECOND `COMMIT_DOCUMENT_EDIT` for one append. The rebuild derives its
+      // projection from `currentState`, the pre-publication record, so the second
+      // dispatch both re-published a transition that had already happened and
+      // computed it from a state the store no longer held.
       if (publishPlanned) {
         let transaction: DocumentAssetTransaction | undefined = plannerTransaction;
-        let published: { converted: DurableProjection; nextState: StoreData } | undefined;
+        let published:
+          | {
+              transaction: DocumentAssetTransaction;
+              converted: DurableProjection;
+              action: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload };
+              state: StoreData;
+            }
+          | undefined;
         try {
           transaction ??= registry.beginDocumentAssetTransaction(currentState.documentId);
           const converted = appendBoundaryDiagnostics(
             { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
             boundaryDiagnostics
           );
-          const committedAction: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
+          const committed: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
             type: 'COMMIT_DOCUMENT_EDIT',
             payload: commitPayload(converted),
           };
-          const nextState = projectPublishedTimeline(currentState, {
-            updates: committedAction.payload.updates,
-            timeline,
-            durableDocument: converted.document,
-            durableStatus: converted.status,
-            durableDiagnostics: converted.diagnostics,
-          });
-          latestStateRef.current = nextState;
-          rawDispatch(committedAction);
-          published = { converted, nextState };
+          published = {
+            transaction,
+            converted,
+            action: committed,
+            state: projectPublishedTimeline(currentState, {
+              updates: committed.payload.updates,
+              timeline,
+              durableDocument: converted.document,
+              durableStatus: converted.status,
+              durableDiagnostics: converted.diagnostics,
+            }),
+          };
         } catch (error) {
-          publicationFailed = true;
+          // The transaction is the local one, and nothing below reads
+          // `plannerTransaction`: a rollback here releases exactly what the plan
+          // registered and nothing has named it yet.
           transaction?.rollback();
-          console.error('Unable to publish a planned durable append; rebuilding the durable document', error);
+          console.error('Unable to plan a durable append publication; rebuilding the durable document', error);
         }
         if (published) {
-          transaction?.commit();
-          if (published.converted.document) {
-            registry.reconcileDocumentAssets(
-              currentState.documentId,
-              collectDurableAssetIds(published.converted.document)
-            );
+          latestStateRef.current = published.state;
+          rawDispatch(published.action);
+          // Past `rawDispatch` the append is published, so a failure here is
+          // contained: reported, and never re-entered through the rebuild. The
+          // rollback is dropped with the fall-through — `rollback()` on a settled
+          // transaction is a no-op anyway, and the publication has named the very
+          // assets it would have released. Retirement that does not run is
+          // deferred to the next transition that consults the scope, which is
+          // safe because the same walk would have closed nothing the store still
+          // reaches.
+          try {
+            published.transaction.commit();
+            if (published.converted.document) {
+              registry.reconcileDocumentAssets(
+                currentState.documentId,
+                collectDurableAssetIds(published.converted.document)
+              );
+            }
+            // Retirement runs after the transition is published, and only against
+            // the record that transition actually produced.
+            retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.state);
+          } catch (error) {
+            console.error('Unable to finalize a published durable append; the append itself is committed', error);
           }
-          // Retirement runs after the transition is published, and only against
-          // the record that transition actually produced.
-          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.nextState);
           return;
         }
       }
 
-      let converted: DurableProjection =
-        planned.outcome === 'published' && !boundaryHasError && !publicationFailed
-          ? appendBoundaryDiagnostics(
-              { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
-              boundaryDiagnostics
-            )
-          : appendBoundaryDiagnostics(
-              buildDurableDocument(
-                nextFrame
-                  ? {
-                      ...currentState,
-                      documentFrame: cloneDocumentFrame(nextFrame),
-                      totalSize: documentFrameSize(nextFrame),
-                    }
-                  : currentState,
-                [...timeline.entries],
-                timeline.cursor,
-                timeline.branchRevision
-              ),
-              boundaryDiagnostics
-            );
+      // Reached only when the fast path above did NOT publish: the plan was not
+      // publishable, or its publication could not be prepared. Nothing has moved
+      // in either case, so the whole-timeline conversion is both the correct and
+      // the only remaining route to an append — which is what makes this the sole
+      // fallback, rather than one of several.
+      let converted: DurableProjection = appendBoundaryDiagnostics(
+        buildDurableDocument(
+          nextFrame
+            ? {
+                ...currentState,
+                documentFrame: cloneDocumentFrame(nextFrame),
+                totalSize: documentFrameSize(nextFrame),
+              }
+            : currentState,
+          [...timeline.entries],
+          timeline.cursor,
+          timeline.branchRevision
+        ),
+        boundaryDiagnostics
+      );
       if (planned.outcome === 'mismatch') {
         converted = {
           ...converted,
@@ -1444,7 +1544,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
-      if (converted.status === 'current' && converted.document) {
+      if (
+        converted.status === 'current' &&
+        converted.document &&
+        durableShadowDescribesEveryEntry(converted.diagnostics)
+      ) {
         const durableCursor = converted.legacyCursorToDurableCursor?.[action.payload.timeline.cursor] ?? -1;
         void publishDurableNavigationPresentation(nextState, converted.document, durableCursor);
       }

@@ -6,18 +6,43 @@ import { useMarchingPath } from '../usePolylineAnts';
 
 function createRafMocks() {
   const frames: Map<number, FrameRequestCallback> = new Map();
-  let nextId = 0;
+  /** The pending `setTimeout` behind each frame, so a cancel can stop its delivery. */
+  const timers: Map<number, ReturnType<typeof setTimeout>> = new Map();
+  // Starts at 1, not 0. HTML Standard §8.12 makes the handle a pre-increment of a counter
+  // that "must initially be zero", so the identifiers a user agent hands back are 1, 2, 3,
+  // … and 0 is unreachable. Counting from 0 here manufactured the one input that trips
+  // `usePolylineAnts`'s truthiness guards (`if (animationIdRef.current)`), which is why the
+  // tests below pass against `useMarchingPath` and could not be trusted: they were pinned to
+  // an artefact of the mock. `usePolylineAnts.animation.test.tsx` states the same rule.
+  let nextId = 1;
 
   const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
     const id = nextId++;
+    // The handle is removed when the callback RUNS, not only when it is cancelled, so
+    // `frames` means "requests a browser would still deliver". Without this the map
+    // accumulated every frame ever asked for and `frames.size` after a cancel counted
+    // the frame that had already fired — which is how a loop that correctly cancelled
+    // itself still read as one pending frame.
+    //
+    // The matching half is on the timer: a cancelled frame must not be delivered either.
+    // `setTimeout` was left running on cancel, so `clear()` removed the handle from
+    // `frames` while the callback was still queued to fire on the next advance.
+    const timer = setTimeout(() => {
+      frames.delete(id);
+      callback(performance.now());
+    }, 16);
+    timers.set(id, timer);
     frames.set(id, callback);
-    // Use setTimeout to work with fake timers
-    setTimeout(callback, 16);
     return id;
   });
 
   const cancelAnimationFrame = vi.fn((id: number) => {
     frames.delete(id);
+    const timer = timers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timers.delete(id);
+    }
   });
 
   return { requestAnimationFrame, cancelAnimationFrame, frames, getNextId: () => nextId };
@@ -104,7 +129,10 @@ describe('useMarchingPath basic behavior', () => {
       apiRef.current!.draw();
     });
 
-    expect(rafMocks.requestAnimationFrame.mock.calls.length).toBeGreaterThan(0);
+    // Exactly one frame, under the exact identifier the first handle is: a `draw()` that
+    // scheduled two loops would still satisfy "greater than 0".
+    expect(rafMocks.requestAnimationFrame).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+    expect([...rafMocks.frames.keys()]).toEqual([1]);
   });
 
   it('draw() actually draws on the canvas each frame', () => {
@@ -145,9 +173,11 @@ describe('useMarchingPath basic behavior', () => {
       vi.advanceTimersByTime(16);
     });
 
-    // After one frame the path is stroked and the canvas is cleared first.
-    expect((mockCtx.stroke as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
-    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
+    // After one frame the path is stroked once per ant pass and the canvas is cleared first.
+    // EXACT counts, because "more than zero" is satisfied by a loop that painted the same
+    // contour four times, which is what a stray extra stroke would look like.
+    expect((mockCtx.stroke as unknown as Mock).mock.calls.length).toBe(2);
+    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBe(1);
     expect((mockCtx.clearRect as unknown as Mock).mock.calls[0]).toEqual([0, 0, 100, 100]);
   });
 
@@ -187,14 +217,18 @@ describe('useMarchingPath basic behavior', () => {
       vi.advanceTimersByTime(16);
     });
 
+    // `clear()` cancels the handle the LOOP scheduled (the second one), not merely any
+    // handle. It also issues a second clear, and the COUNT is what proves that: this
+    // canvas is 42x42, so the per-frame clear and the full-canvas clear are byte-identical
+    // `clearRect(0, 0, 42, 42)` calls and the arguments cannot tell them apart.
+    const loopHandle = [...rafMocks.frames.keys()].at(-1)!;
     act(() => {
       apiRef.current!.clear();
     });
 
-    // cancelAnimationFrame should have been called when clear() was invoked.
-    expect(rafMocks.cancelAnimationFrame.mock.calls.length).toBeGreaterThanOrEqual(1);
-    // The canvas should have been cleared (both by animate and by clear()).
-    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(rafMocks.cancelAnimationFrame).toHaveBeenCalledExactlyOnceWith(loopHandle);
+    expect(rafMocks.frames.size).toBe(0);
+    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBe(2);
     const lastClearRect = (mockCtx.clearRect as unknown as Mock).mock.calls.slice(-1)[0];
     expect(lastClearRect).toEqual([0, 0, 42, 42]);
   });

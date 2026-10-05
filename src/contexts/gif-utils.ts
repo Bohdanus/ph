@@ -6,14 +6,38 @@ import { getCanvasImageData } from './raster-utils.ts';
 // instead of inventing a second cut-off.
 const TRANSPARENT_ALPHA_THRESHOLD = 127;
 
+/**
+ * The GIF logical screen descriptor carries each axis as an unsigned 16-bit field, so 65535 is
+ * the largest geometry the format can express and the boundary is inclusive.
+ */
+const MAX_AXIS = 65535;
+
 export async function encodeGif(canvas: HTMLCanvasElement): Promise<Blob> {
-  const { data, width, height } = getCanvasImageData(canvas);
-  if (!width || !height) {
-    throw new Error('GIF dimensions must be greater than zero');
+  // The geometry is read off the canvas itself, not out of `getCanvasImageData`, because that
+  // call allocates `width * height * 4` before it returns: a 70000×100000 canvas would cost
+  // 28 GB of `getImageData` to produce a buffer this function then refuses, which is the
+  // ordering every other budget in this directory gets right. `canvas.width`/`canvas.height`
+  // are the same numbers `getImageData` reports — the spec makes `getImageData` fill in its own
+  // `width`/`height` from the arguments it is given, which are these — so hoisting the guards
+  // above the read loses no case, and the dimensions written into the logical screen descriptor
+  // below now come from the one authority instead of from two that could drift.
+  const { width, height } = canvas;
+  // The shape of the geometry is checked before its size, separately, and as in `avif-utils.ts`
+  // and `ico-utils.ts`. The two holes are a negative and a fractional axis: `!-5` is false and
+  // `-5 > 65535` is false, so the range-only guard below waves both through to `getCanvasImageData`
+  // and on to `createImageData(-5, 4)`, where the DOM throws an `IndexSizeError` naming neither GIF
+  // nor the file. `NaN` and `Infinity` were never holes — `!NaN` is true and `Infinity > 65535` is
+  // true — so this adds exactly the two, and `canvas.width`/`canvas.height` are unsigned longs, so
+  // no real canvas arrives with either. It is the same rule as its two siblings, not a fix for a
+  // reachable case.
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`GIF image has invalid dimensions (${width}×${height}).`);
   }
-  if (width > 65535 || height > 65535) {
-    throw new Error('GIF dimensions cannot exceed 65535 pixels');
+  if (width > MAX_AXIS || height > MAX_AXIS) {
+    throw new Error(`GIF dimensions cannot exceed ${MAX_AXIS} pixels`);
   }
+
+  const { data } = getCanvasImageData(canvas);
 
   // One strided pass over the alpha bytes only. Scanning all four channels through a
   // modulo predicate was the dominant cost of this path, and the early exit keeps a fully

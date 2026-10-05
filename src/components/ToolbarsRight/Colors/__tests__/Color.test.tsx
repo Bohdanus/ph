@@ -112,6 +112,13 @@ describe('Color toolbar', () => {
     expect(sepia).toHaveValue('0');
     expect(saturation).toHaveValue('100');
 
+    // Sepia is a percentage like Grayscale, and it was the one control of the three whose range
+    // was never pinned: an edit to its `min`/`max` would have left every assertion here green
+    // while making the sepia filter unreachable at one end.
+    expect(sepia).toHaveAttribute('type', 'range');
+    expect(sepia).toHaveAttribute('min', '0');
+    expect(sepia).toHaveAttribute('max', '100');
+
     // Saturation is bipolar because the filter contract maps a signed percentage onto a
     // CSS amount: -100% has to be reachable, or the slider could never desaturate.
     expect(saturation).toHaveAttribute('type', 'range');
@@ -227,18 +234,69 @@ describe('Color toolbar', () => {
   it('accepts the range boundaries for every slider', () => {
     render(<Color />);
 
+    // Every payload spreads the args THIS RENDER captured, not the last one published: the mocked
+    // store hands no new args object back, which is the lost update the coalescing tests above
+    // document. So each expectation carries the values from the DEFAULT render.
     changeSlider(/Grayscale/, '100');
     flushRaf();
-    expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ grayscale: 100, toolName: 'color' }));
+    expect(mockSetToolArgs).toHaveBeenLastCalledWith({
+      grayscale: 100,
+      sepia: 0,
+      saturation: 100,
+      toolName: 'color',
+    });
 
-    changeSlider(/Sepia/, '0');
+    // Sepia's MINIMUM is 0, which is also its default, so driving the slider there emits a
+    // payload no different from the one the store already held: `handleSepiaChange` could write
+    // `sepia: 0` unconditionally and this stayed green. Its MAXIMUM is the endpoint that actually
+    // moves the stored value, so that is the one the boundary claim rests on.
+    changeSlider(/Sepia/, '100');
     flushRaf();
-    expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ sepia: 0, toolName: 'color' }));
+    expect(mockSetToolArgs).toHaveBeenLastCalledWith({
+      grayscale: 0,
+      sepia: 100,
+      saturation: 100,
+      toolName: 'color',
+    });
 
-    changeSlider(/Saturation/, '100');
+    // Saturation's MAXIMUM is 100, which is its default too — the same trap as Sepia. `-100` is
+    // the end that moves the stored value, and the only one reachable because the range is
+    // bipolar, so it is pinned here too.
+    changeSlider(/Saturation/, '-100');
     flushRaf();
-    expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ saturation: 100, toolName: 'color' }));
+    expect(mockSetToolArgs).toHaveBeenLastCalledWith({
+      grayscale: 0,
+      sepia: 0,
+      saturation: -100,
+      toolName: 'color',
+    });
+
+    expect(mockSetToolArgs).toHaveBeenCalledTimes(3);
   });
+
+  it.each([
+    ['Grayscale', '0', { grayscale: 0, sepia: 40, saturation: -40 }],
+    ['Sepia', '0', { grayscale: 40, sepia: 0, saturation: -40 }],
+    ['Saturation', '100', { grayscale: 40, sepia: 40, saturation: 100 }],
+  ])(
+    'reaches the %s minimum from a non-default value, so a handler stuck at its default cannot pass',
+    (name, value, expected) => {
+      // The mirror of the test above, and one render per case because the lost update means a
+      // second change in the same mount would still spread the FIRST render's args. All three
+      // endpoints here equal the tool's own DEFAULT (`defaultSettings.color`: grayscale 0,
+      // sepia 0, saturation 100), so from a default render none of them is observable in the
+      // payload. Seeding a non-default first is what makes the minimum a real assertion:
+      // `handleGrayscaleChange` hard-coded to `0`, or `handleSaturationChange` hard-coded to
+      // `100`, passes the test above and fails this one.
+      Object.assign(toolArgs, { grayscale: 40, sepia: 40, saturation: -40, toolName: 'color' as const });
+      render(<Color />);
+
+      changeSlider(new RegExp(name), value);
+      flushRaf();
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ ...expected, toolName: 'color' });
+    }
+  );
 
   it('merges every layer from the merge button', () => {
     render(<Color />);

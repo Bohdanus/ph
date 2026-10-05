@@ -212,8 +212,9 @@ this wave implemented.
   (§19.4).
 - `HAVE` — **placeholder text for a new draft.** A placement seeds `Lorem ipsum`, the browser
   overlay selects it, and the first keystroke replaces it. The preference gate remains out of scope.
-- `GAP` — **second click creates a second layer**, and a click inside an existing text flow
-  enters it instead.
+- `HAVE` — a click inside an existing text flow re-enters the committed layer without creating a
+  second layer; transformed text layers remain intentionally excluded until their edit geometry is
+  supported.
 - `HAVE` — **overflow indicator** on the box, drawn only on the draft overlay. The size, the
   corner and the colour are a **RECONSTRUCTION** — §21.11.
 - `PARTIAL` — the box. It is a **layout** box for paragraph type (its width constrains the text)
@@ -221,11 +222,11 @@ this wave implemented.
   (`rect.ts` — `calculateNewRect`'s point arm). It is not a **transform** box and does not reflow on
   a later resize in the sense §8 requires.
 
-**The largest fidelity gap in the tool is now CLOSED for placement and panel re-entry.** "Click to
+**The largest fidelity gap in the tool is now CLOSED for placement and committed-layer re-entry.** "Click to
 place type, type to replace it" works: clicking places a box holding Adobe's placeholder, pre-selected,
-with a live caret over it (§3). A committed text layer can also be re-entered from its Layers row while
-the Type tool is active; the existing layer-source replacement is recorded as a durable operation
-(§7.3). Canvas-click re-entry remains tracked in `HANDOFF.md`.
+with a live caret over it (§3). A committed text layer can also be re-entered from its Layers row, by
+clicking its canvas bounds with the Type tool, or by double-clicking it with the Move tool; the existing
+layer-source replacement is recorded as a durable operation (§7.3).
 
 ---
 
@@ -250,12 +251,10 @@ commits the open draft before placing the next box. The second one was a silent 
 is not yet a layer, so nothing had recorded the typed text and overwriting the arguments discarded it
 with no history entry.
 
-**Reaching a COMMITTED layer is still partial.** Selecting an existing text row with the Type tool
-active hydrates its source arguments (`LayersTab.tsx` — `selectLayer()`), and `applyText()` replaces
-that layer through `replaceLayerSource()` when the new gesture starts at the layer's original
-position; a gesture elsewhere creates a new layer. That is a position-sensitive redraw standing in for
-an entry route, and Adobe's routes — click the text flow, double-click the layer, double-click the `T`
-thumbnail — are still `GAP` (§3.1).
+**Reaching a COMMITTED layer is now explicit.** The Layers row, Type-tool canvas click, and Move-tool
+double-click all hydrate a shared text edit target carrying the layer id. `applyText()` and
+`commitDirtyTool()` replace that exact layer through `replaceLayerSource()`, without relying on a
+recomputed origin; transformed text layers remain excluded until their geometry can be preserved.
 
 One Adobe commit path _is_ already present: switching tools commits the draft implicitly, because
 `goToTool` calls `commitDirtyTool()` first (`src/hooks/useApp.ts` — `goToTool`).
@@ -299,17 +298,11 @@ route, which has no helpx citation, and what is Elements-only is the
 **Requirements**
 
 - `HAVE` — edit mode as a derived state, with the Commit/Cancel pair appearing only inside it.
-- `PARTIAL` — reaching an existing type layer to change characters. Selecting the row hydrates its
-  args and a gesture at the layer's original position replaces it through `replaceLayerSource()`, but
-  Adobe's routes — click the text flow, double-click the layer, double-click the `T` thumbnail — are
-  still `GAP`, and a position-sensitive redraw is not one of them. **This is the blocking requirement
-  for everything in §4 and §6.**
+- `HAVE` — reaching an existing type layer through the Layers row, Type-tool canvas click, or
+  Move-tool double-click, with source replacement keyed to the layer id.
 - `HAVE` — cancel of an in-progress edit through the Cancel button.
 - `HAVE` — `Ctrl/Cmd+Return`, keypad Enter, and Esc commit through the contenteditable overlay;
   ordinary Enter inserts a line break and IME composition is left to the browser.
-- `GAP` — the `T` thumbnail and double-click-to-edit in the Layers panel.
-  `src/components/SidebarRight/LayersTab.tsx` has **no `onDoubleClick`** at all; the only editable
-  field there is the layer _name_.
 - `OUT` — the `Use Esc key to commit text` preference as a user setting. It exists to serve a
   modal transform state; this app has no need for it. Bind Esc to commit, matching the default.
 
@@ -350,12 +343,14 @@ Adobe).
 - `GAP` — the click-count ladder, in the part that needs a committed layer: `HANDOFF.md` carries it.
 - `GAP` — the caret-dependent Kerning/Tracking field swap.
 
-### 3.1 Getting back into a committed layer is still open
+### 3.1 Re-entry reaches every route Adobe documents except the type thumbnail
 
-Adobe offers three routes. This app supports double-clicking a text row and selecting the row while the
-Type tool is active; both re-enter the app's §3.2 overlay with the source arguments hydrated into
-canvas space. Choosing the Type tool and clicking inside a committed text layer is still open and is
-tracked in `HANDOFF.md`; the options-bar `T`/`Type` icon has no separate implementation.
+Adobe offers three routes. This app supports all of the gestures behind them: double-clicking a text
+row, selecting the row while the Type tool is active, clicking inside a committed text layer with the
+Type tool, and double-clicking the layer with the Move tool. All four funnel through one conversion —
+`textLayerEditTarget` — so the hydrated rect is the same whatever the gesture was. What does not exist
+is the options-bar `T`/`Type` THUMBNAIL as a separate control, and the click-count ladder that Adobe's
+double-click inside the text flow selects a word with.
 
 **The source-editing path is implemented, but the layer remains raster at runtime.** A layer keeps
 its `TextToolArgs` in `source.args`, and `replaceLayerSource` records changes through the durable
@@ -622,14 +617,10 @@ vertical — and it is **paragraph type only**; point type must be converted fir
   ternary), because `'left'` is the fallthrough for an unrecognised value — a hand-edited or
   forward-version settings record should land where the tool starts rather than silently flip the
   alignment.
-- `PARTIAL` — alignment is **paragraph-only in Photoshop and layer-wide here**. Two separate
-  shortfalls, and Adobe states the first in both words: "**Alignment options are available only for
-  paragraph type.**" ([formatting-paragraphs](https://helpx.adobe.com/photoshop/using/formatting-paragraphs.html),
-  Adobe; the same page says the same of justification — "Justification options are available only
-  for paragraph type"). **This app applies `align` to point type too**, which was invisible while
-  the two kinds were indistinguishable and is now a real divergence: with `kind` present the bar
-  offers alignment for a layer Adobe would refuse to align. Separately, one `align` field still
-  drives every line, so there is no per-paragraph scope.
+- `PARTIAL` — alignment is **paragraph-only in Photoshop and now disabled for point type here**.
+  Adobe states: "**Alignment options are available only for paragraph type.**" ([formatting-paragraphs](https://helpx.adobe.com/photoshop/using/formatting-paragraphs.html),
+  Adobe). The bar greys the control for point type; one `align` field still drives every paragraph,
+  so there is no per-paragraph scope.
 - `PARTIAL` — **wrapping.** What ships, all of it in `layoutText` (`text.ts`) as **the single
   layout authority** the renderer draws from and `calculateNewRect` sizes the box with:
   - A paragraph box's **width is the width the user dragged**, clamped to the document _before_
@@ -1049,12 +1040,12 @@ places paragraph type: the type wraps to the dragged width and the box keeps tha
 and the box grows to fit it')` title), and the overflow indicator (the `test('the overflow icon
 is on the draft overlay only while the type outgrows the box')` title) — and the last two
   are what §21.12 argues below. The contenteditable overlay now supplies the caret and IME path;
-  the click-count ladder remains `GAP` because committed-layer re-entry does.
+  the click-count ladder remains `GAP` because the type thumbnail does.
 - **Rendered output** — a text layer's pixels are the only place wrapping, tracking and
   justification are observable. These need a **pixel** assertion. jsdom `toBeVisible()` is not
   evidence about glyphs. The e2e's ink-bounds assertions (the `test('committed text reaches the
 canvas as foreground pixels inside the dragged rectangle')` title in `e2e/text-tool.spec.ts`)
-  check _position_, not _shaping_. **Twelve of the sixteen e2e tests are pixel assertions** —
+  check _position_, not _shaping_. **Twelve of the text-tool e2e tests are pixel assertions** —
   tracking, both rules, both caps, both B/I, and the two kinds all read back the inked pixels and
   compare them — so **the claim in the previous revision of this paragraph, that no e2e asserted
   that tracking, caps or a rule reaches the canvas at all, is false**, and was false before this
@@ -1712,10 +1703,10 @@ is rediscovered. The current text says so at each site; this table is the index.
 | The overflow indicator is a `GAP`                                                                       | **superseded** — shipped, draft-overlay only; size, corner and colour are reconstructions                                                                                                                                  | §2, §19.3, §21.11 |
 | Adobe documents a click/drag threshold                                                                  | **false** — Adobe states the two gestures by intent and gives no distance, time or tie-break                                                                                                                               | §2, §17, §19.3    |
 | The `TextType` enum is Adobe's current API                                                              | **false** — the current UXP reference has **no** enum; two read-only booleans and two methods. The enum is CS-era ExtendScript, cited to a mirror                                                                          | §2, §19.3, §22    |
-| Alignment applies to the whole layer, and nothing says otherwise                                        | **half false** — "Alignment options are available only for paragraph type"; this app aligns point type too                                                                                                                 | §6                |
-| "no e2e currently asserts that tracking, caps or a rule reaches the canvas at all"                      | **false** — twelve of sixteen text e2e are pixel assertions                                                                                                                                                                | §15               |
+| Alignment applies to the whole layer, and nothing says otherwise                                        | **half false** — the control is paragraph-only, but one field still scopes the whole layer                                                                                                                                 | §6                |
+| "no e2e currently asserts that tracking, caps or a rule reaches the canvas at all"                      | **false** — twelve of the text-tool e2e are pixel assertions                                                                                                                                                               | §15               |
 | §21 said "Four decisions"; there were six                                                               | **false** — now twelve, and the count is enumerated                                                                                                                                                                        | §21               |
-| `Text.tsx` is 336 lines / §0 item 4                                                                     | **false** — 414, and every §0 line reference moved a second time                                                                                                                                                           | §0, §22.1         |
+| `Text.tsx` is 336 lines / §0 item 4                                                                     | **false** — the bar has changed shape three times since, and a restated line count drifts again the moment it is written                                                                                                   | §0, §22.1         |
 | The type tile lives in `toolbar-mapping.ts`'s `toolbarMap`                                              | **false** — the file and the export both exist. `toolbarMap` is the `toolbar-mapping.ts` array whose `Horizontal Type Tool` entry carries this tile; `toolsMap.ts` is the registry of tool definitions and carries no tile | §9                |
 | The §0/§1/§7 citations in `layer-renderer.ts`, `useLayer.ts`, `toolProcessors.ts`, `materialization.ts` | **correct** — re-verified, unchanged; the `vectorToolNames`, `createLayerFromTool`, `text`-entry and `sourceBitmap` citations all still resolve                                                                            | §0, §1, §7        |
 | Size range is 8–500                                                                                     | **false** — Adobe's `0.01..1296`                                                                                                                                                                                           | §5, §19           |

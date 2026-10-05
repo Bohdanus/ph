@@ -35,7 +35,7 @@ import {
  * pixels below are produced and how to re-derive them.
  */
 const FIXTURE_PATH_FROM_ROOT = 'fixtures/split-half-red-blue.png';
-/** 64x64: the image's pixel size becomes the opened document's size (src/hooks/useApp.ts:143-147). */
+/** 64x64: the image's pixel size becomes the opened document's size (`setImageFromUpload()`). */
 const FIXTURE_DOCUMENT_SIZE = 64;
 /** Columns [0, 31] of the fixture: rgb(255, 0, 0), alpha 255. */
 const FIXTURE_LEFT_RGB = { red: 255, green: 0, blue: 0 };
@@ -93,7 +93,7 @@ function isExactly(actual: Rgb | null, expected: Rgb): boolean {
  *
  * The canvas element is `h-full w-full object-contain` (src/components/Main/Main.tsx:177)
  * over a backing store resized to the document's own pixel size
- * (src/hooks/useApp.ts:62-64, reached from `setImageFromUpload`). A replaced element
+ * (`handleImageCreate()`, reached from `setImageFromUpload()`). A replaced element
  * with `object-contain` scales its content to fit and centres it, so the document is
  * scaled by `min(box.w / doc.w, box.h / doc.h)` and letterboxed on the slack axis.
  *
@@ -319,17 +319,41 @@ test.describe('File round trip', () => {
 
     await openSaveDialog(page);
     await fillSaveDialog(page, 'roundtrip', PNG_FORMAT.label);
+
+    /**
+     * The locator the absence below is stated with, resolved POSITIVELY first, while the dialog
+     * is still on screen.
+     *
+     * `SaveDialog` renders its title as an `<h2 id="save-dialog-title">`, and that `<h2>` is the
+     * dialog's `aria-labelledby` target, so while the dialog is open this locator names exactly
+     * one visible element. That is the whole reason the absence below is worth reading: it is
+     * the SAME locator in the SAME test, one step earlier, in the state where the element
+     * exists. A bare `toHaveCount(0)` on an unproven locator cannot tell "the dialog closed"
+     * from "this app never mints that name" — reword the title, demote the `<h2>` to a `<div>`,
+     * or drop the heading, and the absence keeps passing forever while the dialog stays on
+     * screen. These two lines go red instead.
+     *
+     * Count before visibility, the way `e2e/accessibility.spec.ts` resolves every scan scope:
+     * one element, and that element visible.
+     */
+    const saveDialogTitle = page.getByRole('heading', { name: 'Save File As...' });
+    await expect(
+      saveDialogTitle,
+      'the open Save dialog is titled by a heading carrying this accessible name'
+    ).toHaveCount(1);
+    await expect(saveDialogTitle, 'and that heading is on screen, not merely in the DOM').toBeVisible();
+
     const download = await submitSaveDialogForDownload(page, PNG_FORMAT);
     const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
     await download.saveAs(savedPath);
-    await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+    await expect(saveDialogTitle, 'the Save dialog unmounted once the download completed').toHaveCount(0);
     const savedBytes = await readFile(savedPath);
     expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
     // The control: reloading really does discard the document, so the pixels that
     // appear below came from the file and not from a canvas that was never cleared.
     // Nothing has to answer an unload prompt here, because this document is CLEAN: the
-    // save above dispatched `hasUnsavedChanges: false` (`src/hooks/useApp.ts:70`), which is
+    // save above dispatched `hasUnsavedChanges: false` (`handleImageSave()`), which is
     // the one path that makes the `beforeunload` guard silent, and the same reason `File >
     // New` would not prompt here. Were it dirty, this reload would still need no handler —
     // an unregistered `beforeunload` is accepted, so the navigation proceeds. The in-app

@@ -56,8 +56,15 @@ interface PollingPage {
  * poll loop runs at full speed and every deadline decision is deterministic. Only `Date` is
  * faked (see `beforeEach`): the real `setTimeout` stays installed so the sharp decode behind
  * `hasDarkPixels` still settles, and the elapsed time is tracked here rather than measured.
+ *
+ * `screenshotMs` — the second, optional argument — is the cost of ONE `page.screenshot` against
+ * that same clock, and it is the
+ * only way to exercise a poll loop whose polls are individually slow. It lives here rather
+ * than in `createScrollablePage` because no other file needs it: the fixture is shared by four
+ * suites, and a knob one caller uses belongs to the caller. Default 0, so every existing
+ * deadline arithmetic in this file is unchanged by its presence.
  */
-function createPollingPage(result: Buffer = SCREENSHOT): PollingPage {
+function createPollingPage(result: Buffer = SCREENSHOT, screenshotMs = 0): PollingPage {
   let elapsed = 0;
   const waitForTimeout: WaitForTimeoutSpy = vi.fn(async (ms: number) => {
     elapsed += ms;
@@ -67,6 +74,14 @@ function createPollingPage(result: Buffer = SCREENSHOT): PollingPage {
   // already on screen and the reads are the clips the tests pass in. What the scroll model
   // buys is `evaluate` at all: the wait reads the window to decide that.
   const scrollable = createScrollablePage({ result, waitForTimeout });
+  if (screenshotMs > 0) {
+    const inner = scrollable.screenshot.getMockImplementation();
+    scrollable.screenshot.mockImplementation(async (screenshotOptions) => {
+      elapsed += screenshotMs;
+      vi.advanceTimersByTime(screenshotMs);
+      return inner ? inner(screenshotOptions) : (result as Buffer);
+    });
+  }
   return {
     page: scrollable.page,
     screenshot: scrollable.screenshot,
@@ -141,16 +156,66 @@ describe('waitForCanvasPixels', () => {
     const harness = createPollingPage();
     const predicate = always(false);
 
+    // The full message, not a prefix of it. `toThrow(string)` is a substring match, so the
+    // original assertion here passed while the poll count was absent, and would have kept
+    // passing if the count were appended wrongly — which is the whole content of this row.
     await expect(
       waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, {
         timeoutMs: 1_000,
         pollIntervalMs: 100,
         description: 'red pixels',
       })
-    ).rejects.toThrow('Canvas did not render red pixels within 1000ms');
+    ).rejects.toThrow('Canvas did not render red pixels within 1000ms after 11 polls');
 
     expect(predicate).toHaveBeenCalledTimes(11);
     expect(harness.waitForTimeout).toHaveBeenCalledTimes(10);
+  });
+
+  /**
+   * The count is the diagnostic. A bare deadline cannot distinguish a render that never
+   * arrived from a loop whose polls were individually slow, and those have opposite fixes —
+   * a longer timeout versus a smaller clip. The count separates them because a loop that
+   * always runs to the deadline performs exactly `timeoutMs / pollIntervalMs` polls.
+   */
+  it('reports a poll count that identifies a loop whose polls were individually slow', async () => {
+    const harness = createPollingPage();
+    const predicate = always(false);
+
+    // Four polls against a 1000ms budget with a 100ms interval, where a loop that always
+    // reached the deadline would have polled eleven times. Each slow poll costs 250ms of
+    // screenshot plus 100ms of wait, so the budget is gone after three full cycles and the
+    // fourth read trips the deadline: 4 polls, not 11. The shortfall IS the finding — the
+    // polls themselves consumed the budget, so the timeout is not the thing to widen.
+    const slow = createPollingPage(SCREENSHOT, 250);
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate, { timeoutMs: 1_000, pollIntervalMs: 100 })
+    ).rejects.toThrow('after 11 polls');
+    await expect(
+      waitForCanvasPixels(slow.page, STANDALONE_CLIP, predicate, { timeoutMs: 1_000, pollIntervalMs: 100 })
+    ).rejects.toThrow('after 4 polls');
+
+    expect(predicate).toHaveBeenCalledTimes(15);
+  });
+
+  it('reports one poll in the singular when the predicate fails on the first attempt', async () => {
+    const harness = createPollingPage(SCREENSHOT, 1_000);
+
+    await expect(
+      waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), {
+        timeoutMs: 1_000,
+        pollIntervalMs: 100,
+      })
+    ).rejects.toThrow('after 1 poll');
+
+    // Not 'after 1 polls': the message is read by a person, and the trailing 's' on a lone
+    // poll is the kind of detail that makes a failure message stop being trusted.
+    await expect(
+      waitForCanvasPixels(createPollingPage(SCREENSHOT, 1_000).page, STANDALONE_CLIP, always(false), {
+        timeoutMs: 1_000,
+        pollIntervalMs: 100,
+      })
+    ).rejects.toThrow('within 1000ms after 1 poll');
   });
 
   it('names the generic description when the caller supplies none', async () => {
@@ -158,7 +223,7 @@ describe('waitForCanvasPixels', () => {
 
     await expect(
       waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), { timeoutMs: 300, pollIntervalMs: 100 })
-    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms');
+    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms after 4 polls');
   });
 
   it('defaults to the shared 10000ms timeout and 100ms poll interval', async () => {
@@ -166,7 +231,7 @@ describe('waitForCanvasPixels', () => {
     const predicate = always(false);
 
     await expect(waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate)).rejects.toThrow(
-      `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms`
+      `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
     expect(CANVAS_REDRAW_TIMEOUT_MS).toBe(10_000);
@@ -772,7 +837,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
 
     await expect(waitForCanvasRedraw(harness.page, BOX)).rejects.toThrow(
-      `Canvas did not render dark pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms`
+      `Canvas did not render dark pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
     expect(harness.waitForTimeout).toHaveBeenCalledTimes(CANVAS_REDRAW_TIMEOUT_MS / CANVAS_REDRAW_POLL_INTERVAL_MS);
@@ -783,7 +848,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 200, pollIntervalMs: 50 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 200ms'
+      'Canvas did not render dark pixels within 200ms after 5 polls'
     );
 
     expect(harness.screenshot).toHaveBeenCalledTimes(5);
@@ -796,7 +861,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(spray);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 0ms'
+      'Canvas did not render dark pixels within 0ms after 1 poll'
     );
 
     expect(harness.screenshot).toHaveBeenCalledTimes(1);
@@ -809,7 +874,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(transparent);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 0ms'
+      'Canvas did not render dark pixels within 0ms after 1 poll'
     );
   });
 
