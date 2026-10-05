@@ -502,6 +502,17 @@ function makeFleet() {
   // No branch identity at all: `detached` is a shape, not a state to be tidy about.
   add('wt-detached', '--detach', 'main');
 
+  // A worktree named after a REAL curated `landed: true` key, on a branch created
+  // from the base and left clean, so git really does report it as landed. The
+  // agreement rule above filters the claimed-landed names down to the ones this
+  // fleet contains, and this is what gives that filter something to keep. The name
+  // comes from the table, so the member survives the table changing.
+  const claimed = claimedLanded();
+  if (claimed.length > 0) {
+    g(dir, 'branch', claimed[0]);
+    add(claimed[0], claimed[0]);
+  }
+
   // Registered, then gone. git can still be asked whether the branch is landed;
   // it cannot be asked what the directory held, so `worktreeFactsFor` filters this
   // one OUT and it is the shape that must be absent rather than present.
@@ -2700,10 +2711,28 @@ describe('the curated table', () => {
     expect(claimedLanded().length, 'no curated entry claims landed, so this rule guards nothing').toBeGreaterThan(0);
     // Every curated name that this fleet happens to contain, checked.
     const here = claimedLanded().filter((name) => worktrees.some((x) => x.name === name));
+    // NOT provably empty. `makeFleet` registers one worktree under a real
+    // `landed: true` curated key precisely so this set has a member: with every
+    // fleet worktree named `wt-*`, the intersection was empty by construction and
+    // the assertion below was satisfied by an empty array for the same reason a
+    // green run over a clean checkout was - the set it filtered had nothing in it.
+    expect(
+      here.length,
+      'no claimed-landed curated key is in the synthetic fleet, so the agreement rule below is asserting ' +
+        'nothing. makeFleet registers a worktree under a real claimed-landed key for exactly this reason.'
+    ).toBeGreaterThan(0);
     expect(
       contradictionsAmong(here, worktrees, base),
       'a curated entry claims landed and this fleet says otherwise'
     ).toEqual([]);
+    // And the claim is load-bearing for that worktree: git agrees it is on the
+    // base, so an empty result is the rule AGREEING rather than declining to look.
+    for (const name of here) {
+      expect(
+        __testables.isMergedInto(worktrees.find((x) => x.name === name).path, base),
+        `${name} is claimed landed and the fleet put it on the base, so git must agree`
+      ).toBe(true);
+    }
   });
 
   it('catches a `landed: true` claim the fleet contradicts, which is the whole point of the rule', () => {
@@ -2831,12 +2860,24 @@ describe('the curated table', () => {
       // was `[]` before this suite read a fleet too. Presenting the same filter
       // over a table that DOES carry the flag is what makes the rule above a
       // statement about the table rather than about today's contents of it.
-      const wouldFlag = derived.filter((name) => ({ [name]: { mustNotPrune: true } })[name]?.mustNotPrune);
+      // The table is built as a WHOLE and read the way production reads it,
+      // `table[name]?.mustNotPrune`, rather than constructing a one-key object per
+      // name. The first version built `({ [name]: … })[name]`, which is true by
+      // definition for every element of `derived`, so it pinned the language rather
+      // than the detector: it could not have failed whatever the rule did.
+      const withFlags = Object.fromEntries(derived.map((name) => [name, { mustNotPrune: true }]));
+      const wouldFlag = derived.filter((name) => withFlags[name]?.mustNotPrune);
       expect(
         wouldFlag,
         'the filter this rule is built on finds nothing even when a derived worktree carries the flag, so ' +
           'the rule above would pass on a table that has reintroduced exactly what it forbids'
       ).toEqual(derived);
+      // And the SAME read over the real table finds nothing, which is the assertion
+      // above. Both directions, so neither is the vacuous half of the other.
+      expect(
+        derived.filter((name) => CURATED[name]?.mustNotPrune),
+        'the real table carries the flag'
+      ).toEqual([]);
     }
   });
 

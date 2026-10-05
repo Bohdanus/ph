@@ -340,15 +340,15 @@ function main() {
   const nowMs = Number.isFinite(opts.now) ? opts.now : Date.now();
   const windowMs = opts.windowHours * 60 * 60 * 1000;
 
-  const worktrees = collectWorktrees(root, { base: opts.base });
-  const missing = findMissingWorktrees(root);
-  // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
-  // each build their own objects, so `missing.includes(w)` is reference
-  // equality across disjoint sets and matches nothing — deleted worktrees
-  // stayed in `existingPaths` and their sessions could never be `orphaned`.
-  const missingPaths = new Set(missing.map((w) => w.path));
-  const existingPaths = new Set(worktrees.map((w) => w.path).filter((p) => !missingPaths.has(p)));
-
+  // The base is resolved BEFORE anything reads it, and that ordering is the whole
+  // fix. Resolved after `collectWorktrees`, the default path passed `null` — and
+  // `null` is not `undefined`, so the guard below did not fire: the generator
+  // wrote an inventory with `ahead: null` and `behind: null` on every worktree,
+  // `mergedIntoBase: false` on every one of them, and an EMPTY name-collision
+  // list, which on this repository is 307 collisions silently missing. The
+  // document it wrote said nothing was at risk because it had asked git nothing,
+  // which is the exact failure the resolution exists to prevent.
+  //
   // `--base` wins; otherwise the ref is RESOLVED, and an unresolvable one is a
   // refusal rather than a null. This is the only place the two answers can be
   // confused, so the refusal names the candidates and the flag.
@@ -362,6 +362,15 @@ function main() {
     );
   }
   opts.base = base;
+
+  const worktrees = collectWorktrees(root, { base });
+  const missing = findMissingWorktrees(root);
+  // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
+  // each build their own objects, so `missing.includes(w)` is reference
+  // equality across disjoint sets and matches nothing — deleted worktrees
+  // stayed in `existingPaths` and their sessions could never be `orphaned`.
+  const missingPaths = new Set(missing.map((w) => w.path));
+  const existingPaths = new Set(worktrees.map((w) => w.path).filter((p) => !missingPaths.has(p)));
 
   const mainHead = execFileSync('git', ['rev-parse', base], {
     cwd: root,

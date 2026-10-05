@@ -68,6 +68,21 @@ function hooksGateDir() {
  * to `.husky/` and not wired would be invisible to a test that only checked the
  * names it already knew.
  */
+/**
+ * JS comments removed, so a rule about CODE cannot be satisfied or defeated by a
+ * sentence about it — several of the rules in this file are discussed in the very
+ * source they read.
+ *
+ * `https://` inside a comment is handled by stripping block comments and line
+ * comments in one pass, before any string is considered: a `//` that follows a
+ * `:` is a URL and is kept, because the alternative is to parse JavaScript.
+ * Strings containing `/*` are the known limitation and there are none in the
+ * files this reads.
+ */
+function stripJsComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+
 function shippedHooks() {
   return (
     readdirSync(HUSKY_DIR)
@@ -280,45 +295,69 @@ describe('the pre-push hook runs the full suite, and says what it costs', () => 
 
   it('does not read the operator machine, which is what made this gate a machine probe', () => {
     // THE REGRESSION GUARD for the change this suite came out of, and it is
-    // written as an INVARIANT rather than as a pattern because the pattern version
-    // was demonstrated defeatable: asserting the suite does not contain
-    // `listWorktrees(process.cwd())` is satisfied by
+    // written as an INVARIANT over STATEMENTS rather than as a pattern over
+    // lines, because both narrower forms were demonstrated defeatable in review:
     //
-    //     const cwd = process.cwd();  void listWorktrees(cwd);
+    //   const cwd = process.cwd();  void listWorktrees(cwd);       // pattern version: caught
+    //   const root = () => process.cwd(); void listWorktrees(root());   // line version: PASSED IT
+    //   const root =\n  process.cwd();\nlistWorktrees(root);            // line version: PASSED IT
     //
-    // which reads the operator's worktrees exactly as before. A guard written
-    // against one spelling is satisfied by renaming the call, which is the whole
-    // class of defect this file exists to catch, reproduced inside the file meant
-    // to catch it.
+    // A line-oriented rule cannot see a binding that is spread over two lines, and
+    // it cannot see a function that returns the directory. So comments come out,
+    // whitespace is normalised, and the unit of judgement is the STATEMENT.
     //
-    // TWO RULES, and together they close the laundering path: nothing may hand
-    // `process.cwd()` to a reader of worktree facts, and nothing may BIND it to a
-    // name that could be handed to one later.
-    const suite = readFileSync(join(REPO_ROOT, 'scripts', '__tests__', 'worktree-inventory.test.mjs'), 'utf8');
-    const WORKTREE_READERS =
-      'listWorktrees|collectWorktrees|findMissingWorktrees|worktreeFactsFor|fleetWorktreeFacts|sharedFleet|resolveBaseRef';
-    const lines = suite.split('\n');
-    const offenders = [];
-    lines.forEach((line, i) => {
-      const text = line.trim();
-      if (text.startsWith('//') || text.startsWith('*')) return; // a comment discussing it
-      if (line.includes('process.cwd()')) {
-        // A bind, or an argument to something that reads worktrees.
-        if (
-          /=\s*process\.cwd\(\)/.test(line) ||
-          new RegExp(`(?:${WORKTREE_READERS})\\([^)]*process\\.cwd\\(`).test(line)
-        ) {
-          offenders.push(`line ${i + 1}: ${text}`);
-        }
-      }
-    });
+    // The rule: every statement that mentions `process.cwd()` must also mention
+    // `dbPath`. That admits exactly the legitimate use — `readBoard(process.cwd(),
+    // { …, dbPath })`, where the first argument is the repository root board
+    // claims are keyed by and the DATA comes from a synthetic fixture or a path
+    // that does not exist — and it rejects every way of laundering the directory
+    // into a worktree read, because the laundering does not involve a database.
+    const suite = stripJsComments(
+      readFileSync(join(REPO_ROOT, 'scripts', '__tests__', 'worktree-inventory.test.mjs'), 'utf8')
+    );
+    // Split on `;` and NOT on braces: `readBoard(process.cwd(), { …, dbPath })`
+    // carries its `dbPath` inside an object literal, and splitting on `{` tore that
+    // literal in half and left `process.cwd()` alone in a statement with no
+    // `dbPath` in it — nine false positives on the legitimate use. A `;` inside a
+    // string literal is the known limitation, and its failure mode is a named false
+    // positive rather than a silent pass.
+    const statements = suite
+      .replace(/\s+/g, ' ')
+      .split(';')
+      .map((x) => x.trim())
+      .filter((x) => x.includes('process.cwd()'));
+    // Two admitted shapes, and both are "a path in this repository or a fixture",
+    // never "the worktrees on this machine":
+    //   readBoard(process.cwd(), { …, dbPath })   dbPath names a synthetic fixture
+    //   resolve(process.cwd(), 'scripts/…')        a COMMITTED file, for a test
+    const admitted = (x) => /\bdbPath\b/.test(x) || /resolve\(\s*process\.cwd\(\)\s*,\s*'[^']+'/.test(x);
+    const offenders = statements.filter((x) => !admitted(x));
     expect(
       offenders,
-      'the inventory suite binds or passes process.cwd() where worktree facts come from. The worktrees it ' +
-        'reads must be the ones it built: a machine read here is a push gate whose answer is a property of the ' +
-        'operator rather than of the code, which is what made it red for a dirty main checkout and ' +
-        'unreachable on a pull_request checkout'
+      'the inventory suite consults process.cwd() in a statement with no dbPath, so the directory it reads ' +
+        'is the operator own and not a fixture. The worktrees this suite reads must be the ones it built: a ' +
+        'machine read here is a push gate whose answer is a property of the operator rather than of the code, ' +
+        'which is what made it red for a dirty main checkout and unreachable on a pull_request checkout'
     ).toEqual([]);
+    // And the legitimate use is asserted to EXIST, so the rule above cannot be
+    // satisfied by deleting every read: this is what stops it from becoming a
+    // guard that passes because the thing it guards is gone.
+    // Both admitted shapes are asserted to EXIST, so the rule cannot be satisfied
+    // by deleting every read: that would turn a guard into one that passes because
+    // the thing it guards is gone, which is the outcome this file exists to stop.
+    expect(
+      statements.length,
+      'the inventory suite should still read a committed file and a synthetic database relative to the repo ' +
+        'root, or the rule above is vacuous rather than satisfied'
+    ).toBeGreaterThan(0);
+    expect(
+      statements.filter((x) => /\bdbPath\b/.test(x)).length,
+      'no readBoard call with a synthetic dbPath remains, so the dbPath allowance is guarding nothing'
+    ).toBeGreaterThan(0);
+    expect(
+      statements.filter((x) => /resolve\(\s*process\.cwd\(\)\s*,\s*'[^']+'/.test(x)).length,
+      'no committed-file resolve remains, so the resolve allowance is guarding nothing'
+    ).toBeGreaterThan(0);
 
     // The two helpers the old file read the live fleet through, by name, because
     // a reintroduction under the old name is the cheapest way back. NOT
@@ -328,45 +367,37 @@ describe('the pre-push hook runs the full suite, and says what it costs', () => 
     for (const retired of ['liveWorktreeFacts', 'liveInventory']) {
       expect(suite, `${retired} is back in the inventory suite`).not.toContain(retired);
     }
-
-    // WHY `readBoard(process.cwd(), …)` IS NOT A VIOLATION, since it appears nine
-    // times and a reader of this file will wonder. The first argument is the
-    // repository root that board claims are keyed by; the DATA comes from the
-    // explicit `dbPath`, which is a synthetic fixture or a path that does not
-    // exist. No assertion in this suite reads the operator's board, and the
-    // machines that read it read it through `agent-board.mjs` under a hook.
-    expect(
-      lines.filter((l) => l.includes('readBoard(process.cwd()')).length,
-      'readBoard(process.cwd(), …) should only ever carry an explicit synthetic dbPath; a call that omits ' +
-        'dbPath would read the operator real board'
-    ).toBeGreaterThan(0);
-    for (const line of lines.filter((l) => l.includes('readBoard(process.cwd()'))) {
-      expect(line, 'a readBoard call on the process cwd with no explicit dbPath reads the operator board').toMatch(
-        /dbPath/
-      );
-    }
   });
 
   it('has no per-test timeout anywhere in the inventory suite, in any spelling', () => {
-    // Also an invariant, for the same reason. The first version matched
-    // `}, 60_000);` — the TRAILING-ARGUMENT form only — so the modern object
-    // argument `it(name, { timeout: 60_000 }, fn)` and a `vi.setConfig` inside a
-    // test both passed. A per-test budget is the shape a cost-that-grows takes,
-    // and nothing left in that file grows.
-    const suite = readFileSync(join(REPO_ROOT, 'scripts', '__tests__', 'worktree-inventory.test.mjs'), 'utf8');
+    // Also an invariant, and also demonstrated defeatable. The first version
+    // matched `}, 60_000);` — the trailing-argument form only — and the second
+    // matched `/\btimeout\s*:/`, which a computed key walks straight past:
+    //
+    //   it('x', { timeout: 60_000 }, fn)        // both versions: caught
+    //   it('x', () => {}, 60_000)               // both versions: caught
+    //   it('x', { ['timeout']: 60_000 }, fn)    // the regex version: PASSED IT
+    //
+    // So the rule is a TOKEN COUNT over comment-stripped, whitespace-normalised
+    // source: the word `timeout` may appear exactly once in that file, and that
+    // once is the single file-level `testTimeout` declaration. A per-test budget
+    // is the shape a cost-that-grows takes, and nothing left in that file grows,
+    // so any second occurrence is a regression whatever syntax carries it.
+    const suite = stripJsComments(
+      readFileSync(join(REPO_ROOT, 'scripts', '__tests__', 'worktree-inventory.test.mjs'), 'utf8')
+    );
+    const flat = suite.replace(/\s+/g, ' ');
+    const tokens = [...flat.matchAll(/timeout/gi)].map((m) => m[0]);
     expect(
-      [...suite.matchAll(/\btimeout\s*:/g)].map((m) => m[0]),
-      'a per-test timeout declaration is back in the inventory suite'
-    ).toEqual([]);
-    expect(
-      [...suite.matchAll(/\}\s*,\s*[0-9_]+\s*\)/g)],
-      'a trailing numeric per-test argument is back in the inventory suite'
-    ).toEqual([]);
-    // And the ONE permitted declaration of a budget, at file scope.
-    expect(
-      [...suite.matchAll(/testTimeout\s*:/g)].length,
-      'the inventory suite must declare exactly one file-level budget, and one only'
+      tokens.length,
+      `the inventory suite mentions \`timeout\` ${tokens.length} times; exactly one is allowed, the ` +
+        'file-level testTimeout declaration. A per-test budget is sized against a cost that grows with ' +
+        'something outside the repository, and that is how this suite was red on a machine and unreachable ' +
+        'on a pull_request checkout.'
     ).toBe(1);
+    expect(flat, 'the one permitted mention must be the file-level testTimeout declaration').toMatch(
+      /vi\.setConfig\(\{\s*testTimeout:/
+    );
   });
 });
 

@@ -677,30 +677,42 @@ times the default in an undeclared sibling still died at the 5s default in the s
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
 budget. **Nothing in the tree relies on that second property any more.** The three
 cases that used to hold a declared `60_000` on top of the file budget are gone, and
-`scripts/__tests__/gates-wiring.test.mjs` now fails if any per-test timeout
-argument reappears in the inventory suite: a per-test budget is the shape a
-cost-that-grows takes, and there is nothing left in that file that grows.
+`scripts/__tests__/gates-wiring.test.mjs` now fails if the word `timeout` appears in the
+inventory suite anywhere but its one file-level `testTimeout` declaration — a count rather
+than a pattern, because a per-test budget is the shape a cost-that-grows takes, nothing
+left in that file grows, and a trailing-argument or `timeout:` pattern is defeated by a
+computed key.
 
 ### The worktree-inventory suite: its failure mode is closed, and what replaced it is a guard
 
 **The failure this subsection used to describe can no longer happen.** It needed the suite
 to read git in every worktree of the OPERATOR's repository, and it no longer does:
-the set under test is a synthetic fleet the file builds in a throwaway repository,
-eight worktrees — the primary checkout, seven registered inside it, and one
-registered outside it. The three per-test budgets are gone, the memoised
+the set under test is a synthetic fleet the file builds in a throwaway repository, and
+`git worktree list` reports ten entries in it — the primary checkout, seven named shapes
+registered inside it, one more registered inside it under the name of the first
+`landed: true` key in the curated table, and one registered outside the checkout, which is
+the only member that is not `inRepo`. One of the nine added worktrees has its directory
+removed after it is registered, so it is filtered out before any fact is read and remains a
+registration whose path is gone. The three per-test budgets are gone, the memoised
 `liveWorktreeFacts` read is gone with the fleet it memoised, and the file carries
 one 15s budget for the whole file. So "which of them runs out first" no longer
 describes anything, and what follows is kept as the record of a failure mode that is
 closed rather than as a tripwire to watch.
 
 **What replaced it is checked, not written down.**
-`scripts/__tests__/gates-wiring.test.mjs` — `does not read the operator machine,
-which is what made this gate a machine probe` — reads that suite's source and
-fails if a per-test timeout argument is back or if any of five spellings of the
-live read returns: `listWorktrees(process.cwd())`, `collectWorktrees(process.cwd())`,
-a memoised `liveWorktreeFacts`, a memoised `liveInventory`, or a session store
-opened off `process.env.HOME`. Five shapes rather than one, because a guard written
-against a single literal is satisfied by renaming the call.
+`scripts/__tests__/gates-wiring.test.mjs` holds two invariants over that suite's
+comment-stripped source, and both are invariants rather than patterns because the
+pattern forms were each demonstrated defeatable in review. The first is scoped to the
+STATEMENT: the source is split on `;`, and every statement mentioning `process.cwd()` must
+also mention `dbPath` or match `resolve(process.cwd(), '<path>')` — a fixture database or
+a committed file, never the worktrees on this machine. Both admitted shapes are asserted
+to still exist, so deleting every read cannot satisfy it, and the two retired reads
+`liveWorktreeFacts` and `liveInventory` are asserted absent by name. It does not mention
+`process.env.HOME` at all. The second is a TOKEN COUNT: the word `timeout` may appear
+exactly once in the file, and that once must be the file-level `vi.setConfig({ testTimeout:`
+declaration. The earlier versions of the second invariant — a trailing-argument regex, then
+`/timeout\s*:/` — were each walked past in review, the second by
+`it(name, { ['timeout']: 60_000 }, fn)`, which is why a count replaced a pattern.
 
 **`HANDOFF.md` §142 is still open, and its reproduction route is not.** `classify()`
 still answers `keep` for the primary worktree while that checkout holds the only copy of
@@ -738,14 +750,16 @@ make neither assertion. Its set was whatever the operator happened to have, and 
 a `pull_request` CI checkout it was empty — so on the machine where a green tick is
 a claim about a merge, every assertion was satisfied by nothing at all.
 
-**The timings, for the file as it now stands.** 166 tests, and 10.4-24.7s across
-ten consecutive isolated runs, all green, on one loaded machine. A range and not a
-figure, because the fleet is real `git` worktrees and a busy host moves it. On the
-same machine load the whole `npm run test` went from 142.78s to 102.46s, with
-61.47s of the before figure inside this one file.
+**The timings, for the file as it now stands.** 168 tests, and 9.62-9.72s over five
+consecutive isolated runs, all green, on this machine at load average 4.4. A spread and
+not a figure, because the fleet is real `git` worktrees and a busy host moves it. The
+whole `npm run test` is 340 files and 9100 tests in 47.94s, measured at the `pre-push`
+hook during the `git push` of `6b142f04`, with two further full-suite runs on a busier
+machine at 60.84s and 71.28s; the before figure on this machine load was 142.78s, with
+61.47s of it inside this one file.
 
 **The two drivers, kept apart, because neither is in the suite any more.** Git per
-worktree is fleet-dependent, and it is now paid against a fixed fleet of eight rather
+worktree is fleet-dependent, and it is now paid against a fixed fleet of ten rather
 than against whatever the operator happens to have. Concurrent readers of one shared
 store — `chats.mjs`, `board.mjs` and `writes.mjs` each opening the operator's session
 database independently, with `chats.mjs`'s own module docstring naming two unindexed

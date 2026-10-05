@@ -117,9 +117,16 @@ export function listWorktrees(cwd) {
  *
  * So the base is ASKED FOR rather than assumed, in the order that prefers the
  * most local answer and falls back to the one a shallow clone still has. The
- * candidates are probed with `rev-parse --verify`, which is the question "does
- * this name resolve to exactly one commit" and is false for both a missing ref
- * and an ambiguous one.
+ * candidates are probed with `rev-parse --verify --quiet <name>^{commit}`, which
+ * asks "does this name resolve to exactly one COMMIT" and is false for a missing
+ * ref, for a name that is ambiguous only in the sense of not existing, for a
+ * tree, and for a blob.
+ *
+ * IT IS NOT false for an ambiguous NAME, and this sentence is here because an
+ * earlier draft of this comment said it was and was wrong. A name that resolves
+ * to more than one thing resolves, and git says which on stderr where nothing
+ * reads it. The two paragraphs below measure that and the shallow case; this one
+ * is only the probe.
  *
  * `null` is a real answer and not an error to be papered over: it means this
  * checkout has no base that can be trusted, which is a fact about the checkout
@@ -144,13 +151,16 @@ export function listWorktrees(cwd) {
  * answer is that ancestry is not available in such a checkout at any depth, so
  * there is no ref worth certifying.
  *
- * A TAG NAMED `main`. `rev-parse --verify main^{commit}` resolves the TAG, and so
- * does every consumer afterwards, so the module stays self-consistent while
- * comparing against a tag that may point anywhere. With a branch `main` and a
- * lightweight tag `main` both present, git prints `warning: refname 'main' is
- * ambiguous`, the tag wins, and `is-ancestor` against the tag exits 1 where it
- * exits 0 against the branch. The first candidate is therefore FULLY QUALIFIED.
- * It was `main`, which is the bug this function's own existence is about.
+ * A TAG NAMED `main`. `rev-parse --verify` does NOT reject an ambiguous name. With
+ * a branch `main` and a lightweight tag `main` both present it exits 0, resolves
+ * the TAG, and prints `warning: refname 'main' is ambiguous` to stderr where
+ * nothing reads it. An earlier draft of this comment claimed the probe "is false
+ * for both a missing ref and an ambiguous one"; measured, it is false only for the
+ * missing one. What actually saves the answer is the first candidate being FULLY
+ * QUALIFIED, and `^{commit}` is here to reject a tree and a blob, which it does.
+ * `is-ancestor` against that tag exits 1 where it exits 0 against the branch. The
+ * first candidate is therefore FULLY QUALIFIED. It was `main`, which is the bug
+ * this function's own existence is about.
  *
  * ON THE ORDER OF THE REST, which is a deliberate choice and not an oversight: a
  * stale local base is preferred over a fresh remote one. Comparing against a
@@ -414,8 +424,15 @@ export function collectWorktrees(cwd, { base } = {}) {
   // NO DEFAULT, and the absence is the point: a defaulted `base` is a literal
   // `main` waiting for a checkout that has none, and the caller above is the only
   // thing that can notice. `resolveBaseRef` is where the question belongs.
-  if (base === undefined) {
-    throw new Error('collectWorktrees needs a base that resolveBaseRef has already resolved');
+  // `== null` and NOT `=== undefined`, which is the check that was there and the
+  // reason this bug survived: the generator's own default for `base` is `null`,
+  // so an `undefined` check let the one caller that matters through with no base
+  // at all, and every ahead/behind it reported was null.
+  if (base === undefined || base === null) {
+    throw new Error(
+      'collectWorktrees needs a base that resolveBaseRef has already resolved, and null is not one: ' +
+        'every ahead/behind and merged-into-base answer would be null'
+    );
   }
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);

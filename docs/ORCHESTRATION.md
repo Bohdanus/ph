@@ -500,9 +500,16 @@ would be reported as disposable, a stale curated flag on one, a curated `landed:
 claim git contradicts, or a recorded session id that is not a real top-level session
 inside the committed audit's window — and on a check that could not run: a worktree
 holding work on no ref that could not be classified, facts git could not be read for, or
-a session audit that could not run. It refuses outright when no base ref resolves. "Git
-could not be asked" is not "nothing is at risk", so read the exit line before acting on
-the number. The gated suite asserts the same rules over a fleet it builds;
+a session audit that could not run. A checkout with no resolvable base ref, including one
+too SHALLOW for ancestry to mean anything, is a third shape again: it prints one line
+beginning `UNREADABLE: ` and returns, printing no summary line at all, so there is no
+"clean" line to misread. Every other run ends on one of two summary forms — `OK - no rule
+violated. ` with the count of worktrees holding work on no ref and the sentence that every
+one is protected, or a non-zero verdict that is either `FINDINGS - see above.` or
+`INCOMPLETE - no finding, but the session audit could not run, so this is not a clean
+report.` "Git could not be asked" is not "nothing is at risk", so read the exit line before
+acting on the number. The gated suite asserts the same rules over a synthetic fleet of ten
+`git worktree list` entries it builds itself;
 [`docs/TESTING.md#gates`](docs/TESTING.md#gates) is where the report/gate split is stated.
 
 **Read `action` first.** Every record carries one value, and it is the whole
