@@ -127,6 +127,47 @@ function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
  */
 const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
 
+/**
+ * THE PREVIEW-PROMOTION RULE. A preview owns the layer's RASTER and GEOMETRY, and nothing else.
+ *
+ * `tempUpdateLayer` stages one as a full spread of the store layer it read (`{...layer, pos,
+ * operations, source, tmpCanvas}`), so every logical field on it is a copy of one instant. The
+ * Layers panel edits `name`, `order`, `visible`, `opacity`, `blendMode`, `locked` and `isBedrock`
+ * without going near the tool, and `updateLayer`, `moveLayerAfter` and `toggleVisibility` do not
+ * commit the pending preview on the way — so a rename, a hide or a drag-reorder that lands while a
+ * live preview exists is silently reverted by the promote that follows, while the timeline keeps it
+ * and `replayHistory` applies both entries in order. Runtime, Layers panel and History panel then
+ * disagree, and export reads whichever one it happened to read.
+ *
+ * So the LIVE record is authoritative for every field the preview does not own, and the preview is
+ * authoritative for exactly the five named here. `applyRasterTool` — the replay mirror of this
+ * promotion, in `useHistory.ts` — already writes only those five onto the layer it replays, so this
+ * is what makes the two authorities agree.
+ *
+ * The complement is computed with a rest spread rather than listed, so a field added to `Layer`
+ * later is live-authoritative by default and this function needs no edit to stay correct. That is
+ * the opposite default from an allowlist, and deliberately: the direction of the mistake a promote
+ * can make here is publishing a value the user already changed.
+ */
+const promotePreviewedLayer = (preview: Layer, live: Layer | undefined): Layer => {
+  // Detached copies of the two mutable containers, because the published record must not alias the
+  // draft's arrays — the same detachment the promote this replaces performed.
+  const promoted: Layer = { ...preview, pos: { ...preview.pos }, operations: [...preview.operations] };
+  // A preview whose layer the live record no longer carries has no logical record to merge. That is
+  // only reachable when a removal and a commit land in one tick, and publishing the draft unchanged
+  // is the established behaviour for it, so the rule is not extended to invent one.
+  if (!live) return promoted;
+  const {
+    pos: _pos,
+    operations: _operations,
+    source: _source,
+    bitmap: _bitmap,
+    tmpCanvas: _tmpCanvas,
+    ...logical
+  } = live;
+  return { ...promoted, ...logical };
+};
+
 // A frame allocates SIX surfaces at its own size — the staging canvas `drawLayersToCanvas`
 // composites into (`layer-renderer.ts:195`), the visible canvas it resizes to (`:238`), the
 // snapshot it restores from (`:136`, `:236`), and the tool, rect and selection-ant overlays
@@ -634,7 +675,9 @@ export const useLayers = () => {
         console.error(previewRefusal);
         continue;
       }
-      const layer = { ...preview.layer, pos: { ...preview.layer.pos }, operations: [...preview.layer.operations] };
+      // The mirror of the ownership scope above, on the other axis: this promotes the draft's pixels
+      // and geometry, and takes every logical field from the live record. See `promotePreviewedLayer`.
+      const layer = promotePreviewedLayer(preview.layer, layers[id]);
       committedLayers[id] = layer;
       hasPreviewLayers = true;
       if (preview.toolArgs) {
