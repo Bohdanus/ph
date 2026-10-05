@@ -158,13 +158,12 @@ export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
 
-## Free subagent models (tested 2026-10-05)
+## Free subagent models
 
-| Model | Provider | Variants | Notes |
+| Model | Provider | Variant | Notes |
 |-------|----------|----------|-------|
-| Nemotron 3 Ultra | kilo | high / medium / none | Best quality; thorough, accurate line refs; use **high** for complex tasks |
-| Dots3-Note Preview | kilo | thinking / instant | Consistent, fast; both variants work well |
-| Step 3.7 Flash | kilo | low / medium / high | Fast, accurate across variants |
-| Auto Free | kilo | — | Router; good for consensus checks |
+| Nemotron 3 Ultra | kilo | high | Best quality; thorough |
+| Dots3-Note Preview | kilo | thinking | Consistent, fast |
+| Step 3.7 Flash | kilo | high | Fast, accurate |
 
 Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.
