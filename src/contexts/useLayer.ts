@@ -64,6 +64,7 @@ import {
   normalizeTransformHistoryArgs,
   transformToolArgsToAffine,
 } from './affine-transform.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
@@ -853,7 +854,7 @@ export const useLayers = () => {
       }
     }
 
-    if (processor.commit === 'layer-operation') {
+    if (processor.commit === 'layer-operation' && !isRasterStrokeArgs(toolArgs)) {
       const previewLayer = {
         ...layer,
         operations: [...layer.operations, createLayerOperation(toolArgs as LayerOperationArgs)],
@@ -887,9 +888,11 @@ export const useLayers = () => {
     // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
     // guard the throw escapes `tempUpdateLayer` into a React event handler.
     let result: ToolResult;
-    let input: ReturnType<typeof stageProcessorInput> | null = null;
+    let input: ReturnType<typeof stageProcessorInput> | null;
     try {
-      input = bitmap ? stageProcessorInput(layer, bitmap) : null;
+      input = bitmap
+        ? stageProcessorInput(layer, bitmap, isRasterStrokeArgs(toolArgs) ? toolArgs.rasterBounds : undefined)
+        : null;
       result = processor.imageProcessor(
         input
           ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
@@ -906,16 +909,17 @@ export const useLayers = () => {
     // shared processor registry labels them `affine-operation` for ordinary transforms. Replay
     // already routes this branch through `applyRasterTool`; the live preview must publish the
     // same baked bounds and drop the retained operations or undo/redo will diverge.
-    const rasterBoundary = processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
+    const rasterBoundary =
+      processor.commit === 'raster' ||
+      isRasterStrokeArgs(toolArgs) ||
+      (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0);
     const bakedPresentation = rasterBoundary && input !== null && input.operations.length > 0;
-    const publishedPosition = bakedPresentation && input ? input.bounds : layer.pos;
+    const publishedPosition = rasterBoundary && input ? input.bounds : layer.pos;
     const previewLayer = {
       ...layer,
       pos: positionPatch ? { ...publishedPosition, ...positionPatch } : { ...publishedPosition },
       ...(bakedPresentation ? { operations: operationsRetainedAfterBake(layer) } : {}),
-      ...(processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0)
-        ? { source: undefined }
-        : {}),
+      ...(rasterBoundary ? { source: undefined } : {}),
       tmpCanvas: canvas,
     };
     previewLayersRef.current[id] = { layer: previewLayer, toolArgs };

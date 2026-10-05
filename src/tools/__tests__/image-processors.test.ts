@@ -98,6 +98,27 @@ describe('tool image processors', () => {
   });
 
   describe('blur', () => {
+    it('masks a stroked blur to the brush footprint while preserving the staged frame', () => {
+      const [result] = blur(params)({
+        radius: 5,
+        points: [
+          { x: 8, y: 8 },
+          { x: 16, y: 8 },
+        ],
+        rasterBounds: { x: -12, y: -12, width: 64, height: 48 },
+        toolName: 'blur',
+      });
+
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(2);
+      expect(RecordingOffscreenCanvas.instances[0]!.ctx.filter).toBe('blur(5px)');
+      expect(RecordingOffscreenCanvas.instances[1]!.ctx.drawImage).toHaveBeenCalledWith(
+        RecordingOffscreenCanvas.instances[0],
+        0,
+        0
+      );
+      expect(result).toBe(RecordingOffscreenCanvas.instances[1] as unknown as OffscreenCanvas);
+    });
+
     it('wraps the source in a size-matched canvas with a blur() filter', () => {
       const [result] = blur(params)({ radius: 5, toolName: 'blur' });
 

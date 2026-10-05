@@ -1,11 +1,40 @@
 import { clampChannel, pixelIndex } from '../util/pixels.ts';
 import type { RasterRowTarget } from '../util/homography-resample.ts';
+import type { Point, Pos } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type SharpenToolArgs = {
   amount: number;
   radius: number;
+  points?: Point[];
+  rasterBounds?: Pos;
   toolName: 'sharpen';
+};
+
+const STROKE_BRUSH_SIZE = 40;
+
+const maskFilteredRaster = (
+  source: ImageBitmap | HTMLCanvasElement | HTMLImageElement | OffscreenCanvas,
+  filtered: OffscreenCanvas,
+  size: { width: number; height: number },
+  points: readonly Point[]
+): OffscreenCanvas => {
+  const canvas = new OffscreenCanvas(size.width, size.height);
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(source, 0, 0);
+  if (points.length === 0) return canvas;
+
+  ctx.save();
+  ctx.beginPath();
+  if (points.length === 1) {
+    ctx.arc(points[0]!.x, points[0]!.y, STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2);
+  } else {
+    for (const point of points) ctx.arc(point.x, point.y, STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2);
+  }
+  ctx.clip();
+  ctx.drawImage(filtered, 0, 0);
+  ctx.restore();
+  return canvas;
 };
 
 /**
@@ -226,7 +255,7 @@ const sharpenRow = (
  */
 export const sharpen =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ amount, radius }: SharpenToolArgs): ToolResult => {
+  ({ amount, radius, points }: SharpenToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
@@ -246,7 +275,9 @@ export const sharpen =
     // one texel narrower than the slider reads. It also means a `radius` below 0.5 rounds
     // to 0, which is the identity filter, and that is the same contract `brushDabCenters`
     // has for a non-positive size.
-    const span = Math.round(clampSetting(radius, SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX));
+    const span = Math.round(
+      clampSetting(points?.length ? Math.max(1, radius) : radius, SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX)
+    );
     if (factor === 0 || span === 0) return [canvas];
 
     const source = ctx.getImageData(0, 0, width, height);
@@ -279,5 +310,5 @@ export const sharpen =
       accumulateRow(horizontal, sums, Math.min(height - 1, row + span + 1), width, 1);
     }
 
-    return [canvas];
+    return [points?.length ? maskFilteredRaster(bitmap, canvas, size, points) : canvas];
   };
