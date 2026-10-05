@@ -4,6 +4,7 @@ import { toolsMap } from '../../tools/toolsMap.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
+import { isMobileToolOptionsMounted, MOBILE_TOOL_OPTIONS_ID } from './mobile-tools.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
 import { findMobileToolGroup, makeSelectTool } from './mobile-tools.ts';
 
@@ -18,6 +19,9 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
   const { goToTool } = useApp();
 
   if (!toolName || !hasImage) return null;
+
+  // The single source of "the panel exists", shared with `MobileBottomBar`'s toggle.
+  const panelIsMounted = isMobileToolOptionsMounted(isOpen, toolName, hasImage);
 
   const toolMeta = toolsMap[toolName];
   const ToolComponent = toolMeta?.toolboxComponent;
@@ -45,11 +49,13 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          // Only while the panel it names exists. The panel is rendered under `isOpen` below, so a
-          // closed sheet's header advertised a region that was not in the tree beside
-          // `aria-expanded="false"` — the same dangling IDREF `PanelGroup`'s tab control was fixed
-          // for, and the same omit-and-unmount convention.
-          aria-controls={isOpen ? 'mobile-tool-options' : undefined}
+          // Only while the panel it names exists. There are TWO ways this sheet's panel is not in
+          // the tree — this header does not render at all without a tool name or an image (the
+          // early return above), and the panel body is gated on `isOpen` below — so the gate is the
+          // shared predicate rather than `isOpen`, which names only one of the two. A closed sheet's
+          // header used to advertise a region that was not in the tree beside `aria-expanded="false"`:
+          // the dangling IDREF `PanelGroup`'s tab control had too.
+          aria-controls={panelIsMounted ? MOBILE_TOOL_OPTIONS_ID : undefined}
           className="flex min-h-11 w-full items-center justify-between gap-2 px-4 py-2 text-left bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 cursor-pointer"
         >
           <span className="flex min-w-0 items-center gap-2">
@@ -63,12 +69,12 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           </span>
         </button>
 
-        {isOpen && (
+        {panelIsMounted && (
           // `touch-pan-x touch-pan-y` is not redundant with the overflow classes:
           // a scroller only pans by touch when its own `touch-action` allows it,
           // and a `touch-action` set by an ancestor silently wins.
           <div
-            id="mobile-tool-options"
+            id={MOBILE_TOOL_OPTIONS_ID}
             className="scrollbar-none px-4 py-3 max-h-[300px] overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y"
           >
             {group && group.tools.length > 1 && (

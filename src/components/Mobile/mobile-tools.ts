@@ -88,3 +88,23 @@ export const makeSelectTool =
 /** The group the current tool belongs to, or `undefined` for an unregistered tool name. */
 export const findMobileToolGroup = (toolName: ToolName | undefined | null) =>
   toolName ? mobileToolGroups.find((group) => group.matchingTools.includes(toolName)) : undefined;
+
+/**
+ * The id of the mobile tool options panel. Declared once because three files have to agree on it:
+ * the panel that renders it, the bar's toggle that names it, and the sheet's own header that names
+ * it too. The defect this prevents is a rename of one copy leaving the other two naming nothing --
+ * which is exactly the class of bug the `aria-controls` gating exists to prevent, one level up.
+ */
+export const MOBILE_TOOL_OPTIONS_ID = 'mobile-tool-options';
+
+/**
+ * Whether the mobile tool options panel is actually in the DOM.
+ *
+ * `isToolSheetOpen` alone is NOT that: `MobileToolSheet` returns null before rendering anything when
+ * there is no tool name or no image, and `MobileBottomBar` is a SIBLING that stays mounted
+ * regardless. A trigger gating only on the open flag could therefore advertise an id nothing owns
+ * while claiming the panel was open. One predicate, used by the sheet's header, the bar's toggle and
+ * the sheet's own render, so the three cannot drift.
+ */
+export const isMobileToolOptionsMounted = (isOpen: boolean, toolName: ToolName | undefined, hasImage: boolean) =>
+  isOpen && Boolean(toolName) && hasImage;
