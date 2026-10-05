@@ -1042,12 +1042,15 @@ describe('AppKeyboardShortcuts tool cycling', () => {
   });
 
   it.each([
-    ['eyedropper', 'ruler'],
+    ['eyedropper', 'color-sampler'],
+    ['color-sampler', 'ruler'],
     ['ruler', 'eyedropper'],
   ] as const)('cycles Shift+I from %s to %s', (from, to) => {
     // Adobe's `I` family: "Eyedropper, Color Sampler, Ruler, Note, and Count Tool I". The app has
-    // two of the five, and the cycle covers exactly those two — a name the app cannot select would
-    // make Shift+I land on the inert tool area.
+    // three of the five, and the cycle covers exactly those three — a name the app cannot select
+    // would make Shift+I land on the inert tool area. Three rows rather than a hand-written wrap,
+    // because a three-member cycle has two in-group edges and one wrap and all three are the
+    // property; a two-row table could not tell a correct wrap from an off-by-one.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
@@ -1056,13 +1059,17 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
   });
 
-  it('cycles Shift+I from another tool to the tile anchor, the eyedropper', () => {
+  it('cycles Shift+I from another tool past the tile anchor to the member after it', () => {
+    // From outside the group the cycle enters AT the anchor and then advances one step, so it lands
+    // on the SECOND member rather than on the first. That is the existing mechanism's behaviour and
+    // this title now says it, because the old title claimed the anchor while asserting the member
+    // after it — which is only visible once a group has a third entry.
     storeState.toolName = 'text';
     renderShortcuts();
 
     press('i', { shiftKey: true });
 
-    expect(goToTool).toHaveBeenCalledExactlyOnceWith('ruler');
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('color-sampler');
   });
 
   it('keeps the current member of the I tile on a bare I', () => {

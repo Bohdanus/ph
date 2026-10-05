@@ -2627,6 +2627,63 @@ Sources:
 
 ---
 
+### Color Sampler Tool
+
+`color-sampler`
+
+Drops numbered markers on the image and reports each one’s color, up to four at a time. Sample Size sets the footprint each marker reads.
+
+The Color Sampler watches colours while you work, so a value you are trying to match can be read off the image and compared before and after an adjustment instead of guessed at. Click to place a marker, and the color under it is reported in the Info panel; up to four can be placed at once. Sample Size sets the footprint each marker reads: Point Sample reads the exact value of the one pixel, and the average settings read the mean of a square around it. Once placed, a marker can be dragged to a new location, deleted by dragging it out of the document window or by Alt-clicking it with the scissors pointer, and every marker at once can be cleared from the options bar. Because the readouts are per-location rather than per-pointer, they keep reporting while you adjust, which is how before-and-after colour values are compared: "As you make adjustments, view the before and after color values in the Info panel." The samplers belong to the image rather than to the session — "These samplers are saved in the image, so you can refer to them repeatedly as you work, even if you close and reopen the image." It shares the I key with the Eyedropper, the Ruler, the Note tool and the Count tool, and Shift+I cycles between them.
+
+**Options bar**
+
+| Control                                 | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | In this app                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Sample Size                             | Sets the footprint each marker reads, and it is the same control the Eyedropper’s bar carries — Adobe names one Sample Size for both tools on one page: "choose (then Shift-click) the Eyedropper tool or Color Sampler tool, and if necessary, choose a sample size in the options bar." Point Sample "reads the value of a single pixel, other options read the average of a pixel area." The app renders all seven of Adobe’s entries with Adobe’s own labels and seeds Point Sample. It clips the block at the image edge rather than shifting it inward, so a wide footprint on a corner averages the pixels that exist. | `present` — `src/components/ToolbarsRight/ColorSampler/ColorSampler.tsx:64`  |
+| Clear                                   | Removes every sampler at once — "To delete all color samplers, click Clear in the options bar." The app implements it, and the button is greyed while there is no sampler because there is nothing for it to remove.                                                                                                                                                                                                                                                                                                                                                                                                          | `present` — `src/components/ToolbarsRight/ColorSampler/ColorSampler.tsx:108` |
+| Sample                                  | Photoshop’s layer-source dropdown — All Layers, Current Layer, Current & Below and the No Adjustments variants — named on the Eyedropper’s own page and not on any page for this tool. The app renders no control for it here, and reads the composited canvas for every marker, which is the Eyedropper’s `All Layers` end. Recorded rather than omitted so the gap is visible.                                                                                                                                                                                                                                              | `missing`                                                                    |
+| Change the display of the sample values | The per-marker colour-space switcher. Adobe documents its function and places it in the Info panel — "To change the color space in which a color sampler displays values, move the pointer onto the color sampler icon in the Info panel" — and no source could be found for the options-bar label itself. The app has no Info panel, so it renders no switcher and reports RGB and hex, both direct readings of the sampled pixel; an invented Lab, XYZ or CMYK would be this app’s arithmetic presented as Adobe’s.                                                                                                         | `missing`                                                                    |
+
+**Modifiers**
+
+- **Alt** — Deletes the marker under the pointer — "To delete a color sampler, drag the sampler out of the document window. Alternatively, hold down Alt (Windows) or Option (Mac OS) until the pointer becomes a scissors and click the sampler." The app implements the deletion; the scissors CURSOR is not drawn, because this app has no cursor registry.
+- **Shift** — With the EYEDROPPER selected rather than this one, Shift-click places a sampler and Shift-Alt-click deletes one — "select the Eyedropper tool and Shift-click in the image", and "Option + Shift (Mac) | Alt + Shift (Win) -click on the Color Sampler to delete a Color Sampler (With the Eyedropper tool selected)". Both are implemented, and both live in the Eyedropper’s area because this tool’s area is not mounted while the Eyedropper holds the tile.
+
+**Shortcuts**
+
+- `I` — Selects the Color Sampler, or keeps the member of this tile that is already selected.
+- `Shift+I` — Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count. The app cycles the three it has and leaves the other two out of the cycle rather than landing on tools that do not exist.
+
+**In this app:** `partial` — The tool is implemented as a pixel-free tool, and that classification is the reason its history behaviour is not a bug. Adobe’s own one-line summary is a readout — "Color Sampler tool | Displays color values for up to four areas" — so placing a marker changes no pixel, there is no history state to record and no durable operation to replay, and the tool has no entry in `toolProcessors.ts` at all. The sampler’s colour is read into a module store and never written to the foreground swatch: the store is module state for the Ruler’s reason, that a sample is not a document fact, and a sample that reached `StoreContext` would be a field undo has no opinion about. Six things diverge, and the two sharpest are the cap and the readouts. THE CAP IS FOUR, and the number is contested: Adobe’s current pages say four in two places — "use up to four Color Samplers" and "place up to four color samplers on the image", plus the tools table’s "up to four areas" — while Adobe’s own staff blogger and two dated third-party observations of the running product say ten. Four is taken because the authority ladder puts Adobe’s documentation above a blog post, and because four is where a reader of Adobe’s pages will meet it; the conflict is recorded rather than resolved away, so a user who has placed ten samplers in Photoshop finds four surprising. What happens AT the cap is a refusal, not a replacement: no source describes Photoshop silently replacing or deleting the oldest marker, and the only observation of the cap being reached is a message, so the app refuses loudly and changes nothing. THE READOUTS ARE RGB AND HEX, and they are frozen at placement: every number is a channel value of the sampled pixel, which is a fact, where an invented Lab or XYZ would be this app’s arithmetic wearing Adobe’s name — and the Info panel that carries them in Photoshop does not exist here, so the options bar is the only surface, which is the Ruler’s arrangement. The readouts do NOT track an edit, and that is a real loss: Adobe’s are live, "the color values under the color samplers appear in the lower half of the Info panel" while an adjustment is open, whereas the app has no invalidation seam for a pixel change outside the pointer gesture, so a stored colour would report what the pixel was when the marker was placed. Storing it is still the right choice over re-reading on every render, which would go stale on every edit rather than on none. The SAMPLERS DO NOT SURVIVE CLOSING THE IMAGE, which is the one place Photoshop is explicit and the app is not: "These samplers are saved in the image, so you can refer to them repeatedly as you work, even if you close and reopen the image." The app keeps them across a tool switch and drops them when the document frame size changes, which is the cheapest signal for "a different document" and also covers a crop — and it has nowhere to put them that a document owns. The layer-source dropdown and the colour-space switcher are absent for the reasons their own control rows give, and the SCISSORS POINTER is not drawn because this app has no cursor registry, though the deletion it accompanies is implemented. One number is the app’s rather than Adobe’s: a press within eight document pixels of a marker grabs it, because Adobe states the drag and publishes no tolerance, and without one every click would either move a marker or place a second one on top of it. What is implemented is all four of Adobe’s gestures, both controls, the cap, and every deletion Adobe names.
+
+Implementation:
+
+- `src/components/Main/ColorSamplerToolArea.tsx:166`
+- `src/components/Main/ColorSamplerToolArea.tsx:210`
+- `src/components/Main/ColorSamplerToolArea.tsx:152`
+- `src/components/Main/ColorSamplerToolArea.tsx:51`
+- `src/components/Main/EyedropperToolArea.tsx:114`
+- `src/components/ToolbarsRight/ColorSampler/ColorSampler.tsx:49`
+- `src/components/ToolbarsRight/ColorSampler/ColorSampler.tsx:64`
+- `src/tools/colorSampler.ts:137`
+- `src/tools/colorSampler.ts:68`
+- `src/tools/color-sampler-store.ts:69`
+- `src/tools/toolProcessors.ts:110`
+- `src/tools/toolsMap.ts:154`
+- `toolbar-mapping.ts:81`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html>
+- <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
+- <https://helpx.adobe.com/photoshop/using/image-information.html>
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html>
+- <https://helpx.adobe.com/photoshop/using/show-or-hide-non-printing.html>
+- <https://developer.adobe.com/photoshop/uxp/ps_reference/classes/colorsampler>
+- <https://cdn.edex.adobe.com/v3/uploads/resourceFile/2023/c0c1aaee-43e8-4c03-9b2c-aaec2c3d9285/08d7c4a0-c2ba-4d6a-8fa2-396d2d99c346.pdf>
+
+---
+
 ### Ruler Tool
 
 `ruler`
