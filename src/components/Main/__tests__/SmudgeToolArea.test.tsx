@@ -328,6 +328,13 @@ describe('SmudgeToolArea', () => {
     // With no active layer there is also no raster to rebase onto: `rasterBounds` is `null`, and
     // a stroke that reached a writer would be addressing a buffer nobody named. Both writers,
     // because the preview is the one that repaints.
+    //
+    // The guard is the ONLY thing that stops it: `isEnabled` is
+    // `Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock)` and, unlike `BurnToolArea`
+    // and `DodgeToolArea`, neither callback re-checks — they pass `activeLayerId!` straight through
+    // to `tempUpdateLayer` / `updateLayerByTool`. So a regression that dropped `activeLayerId &&`
+    // would publish a preview against `id: null` and commit a history item for a layer that does
+    // not exist, and nothing else in this file would see it.
     expect(tempUpdateLayerMock).not.toHaveBeenCalled();
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
     expect(createLayerFromToolMock).not.toHaveBeenCalled();
@@ -437,8 +444,10 @@ describe('SmudgeToolArea', () => {
     // The whole args object, not only `points`. `smudge()` reads `size` for the tip diameter,
     // `hardness` for the falloff and `strength` as a 0-100 percentage it maps onto per-dab
     // coverage; a spread that dropped one of them, or spread the args BEFORE the rebased points
-    // over them, would smudge with the wrong tip and no test would notice.
-    expect(commitCalls()[0].toolArgs).toEqual({
+    // over them, would smudge with the wrong tip and no test would notice. Every setting here
+    // differs from what `smudgeArgs()` seeds, so the payload is distinguishable from a
+    // default-shaped one field by field rather than only by `toolName`.
+    const expected = {
       toolName: 'smudge',
       size: 41,
       hardness: 0.25,
@@ -447,7 +456,15 @@ describe('SmudgeToolArea', () => {
         { x: 20, y: 20 },
         { x: 100, y: 60 },
       ],
-    });
+    };
+    expect(commitCalls()[0].toolArgs).toEqual(expected);
+    // And the PREVIEW carries the same settings, which is the half this case was missing. The
+    // commit is the undo boundary and is written once on release; `tempUpdateLayer` is what the
+    // options bar shows while the drag is still running, and a Smudge re-runs its whole drag from
+    // the SOURCE raster on every call — so a spread that reached only the commit would preview with
+    // the seeded `size: 24 / hardness: 0.5 / strength: 60` and commit with the user's own, which is
+    // an edit the user never saw and cannot get back by undoing the drag they actually made.
+    expect(previewCalls()[0].toolArgs).toEqual(expected);
   });
 
   it('previews once per pointer move and commits once per gesture', () => {

@@ -1155,7 +1155,10 @@ describe('retirement when a promotion replaces an adopted raster', () => {
       layers: { [layerId]: layerWithCanvas(layerId, null), [secondLayerId]: layerWithCanvas(secondLayerId, null) },
     });
 
-    expect(store().layers[layerId].bitmap).not.toBe(adopted);
+    // Exact, not merely "not the adopted raster": a record that stopped naming the
+    // raster at all leaves `bitmap: null`, so a `not.toBe` would also pass for an
+    // unrelated wrong value.
+    expect(store().layers[layerId].bitmap).toBeNull();
     expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
   });
 });

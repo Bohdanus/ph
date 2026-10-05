@@ -325,10 +325,35 @@ describe('MigrationDiagnostic code mapping', () => {
       'unsupported-history-feature',
       'invalid-history-entry',
     ]);
-    expect(result.diagnostics.every((diagnostic) => diagnostic.severity === 'error')).toBe(true);
-    expect(result.diagnostics.every((diagnostic) => typeof diagnostic.message === 'string')).toBe(true);
-    expect(result.diagnostics.every((diagnostic) => typeof diagnostic.historyId === 'string')).toBe(true);
-    expect(result.diagnostics.every((diagnostic) => typeof diagnostic.actionName === 'string')).toBe(true);
+    // The whole array, not `every(diagnostic => typeof … === 'string')`: that
+    // predicate is satisfied by ANY string, so it could not tell a diagnostic
+    // that names the offending entry and the rule that fired from one carrying
+    // the wrong entry's id or another rule's message. Severity is pinned per
+    // diagnostic here for the same reason the `every` check cannot be trusted —
+    // it passes over an empty array.
+    expect(result.diagnostics).toEqual([
+      {
+        historyId: 'replacement',
+        actionName: OPEN_DOCUMENT_ACTION,
+        severity: 'error',
+        code: 'document-replacement',
+        message: 'Document replacement must create a new durable document and cannot appear inside a document history.',
+      },
+      {
+        historyId: 'unknown-tool',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+        message: 'Unknown processor nonexistent-tool',
+      },
+      {
+        historyId: 'malformed',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'invalid-history-entry',
+        message: 'Non-plain value at history:malformed.args.radius',
+      },
+    ]);
   });
 });
 

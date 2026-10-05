@@ -446,6 +446,137 @@ describe('Image Comparison Helpers', () => {
     });
   });
 
+  /**
+   * The ratio's DENOMINATOR, on an image that is not a square.
+   *
+   * Every successful comparison in this file up to here is square — 100x100, 50x50, 10x10,
+   * 1x1 — so `actualInfo.width * actualInfo.height` and `width * width` and
+   * `(width + height) / 2` all produce the same number on all of them, and a denominator
+   * that quietly stopped using the height passes the whole file. The screenshots this
+   * helper judges are captures of whatever region a caller measured, and a region is
+   * rectangular and routinely not square.
+   *
+   * 100x50 with a 10x5 patch: 50 differing pixels out of 5000, which is exactly
+   * `DEFAULT_MAX_DIFF_PIXEL_RATIO` (0.01) and exactly half of the default pixel budget.
+   */
+  describe('compareScreenshots - the ratio divides by the image AREA, not the width', () => {
+    const WIDE: Size = { width: 100, height: 50 };
+    const WIDE_PIXELS = WIDE.width * WIDE.height;
+    const WIDE_PATCH: Rect = { left: 0, top: 0, width: 10, height: 5 };
+    const WIDE_PATCH_PIXELS = WIDE_PATCH.width * WIDE_PATCH.height;
+
+    it('computes the ratio over width x height, so a half-height image doubles it', async () => {
+      // 50 / 5000. A `width * width` denominator answers 0.005 here.
+      const result = await compareScreenshots(
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH]),
+        await solidPng(WIDE, OPAQUE_RED)
+      );
+
+      expect(result.diffPixels).toBe(WIDE_PATCH_PIXELS);
+      expect(result.diffRatio).toBe(WIDE_PATCH_PIXELS / WIDE_PIXELS);
+      expect(result.diffRatio).toBe(0.01);
+    });
+
+    it('does not take the height from the expected image when only the widths agree', async () => {
+      // Both images are the same shape here, so a denominator mixing the two images'
+      // geometry is also caught — and `width * height` of the EXPECTED image is the shape a
+      // refactor is most likely to reach for, because `expectedInfo` is the other name in
+      // scope at the top of the function.
+      const result = await compareScreenshots(
+        await solidPng(WIDE, OPAQUE_RED),
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH])
+      );
+
+      expect(result.diffPixels).toBe(WIDE_PATCH_PIXELS);
+      expect(result.diffRatio).toBe(0.01);
+    });
+
+    it('sits on the default ratio allowance on a non-square image, and one pixel over leaves it', async () => {
+      const EXTRA: Rect = { left: 99, top: 49, width: 1, height: 1 };
+
+      const onTheLimit = await compareScreenshots(
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH]),
+        await solidPng(WIDE, OPAQUE_RED)
+      );
+      expect(onTheLimit.diffRatio).toBe(0.01);
+      expect(onTheLimit.matches).toBe(true);
+
+      const oneOver = await compareScreenshots(
+        await patchedPng(WIDE, OPAQUE_RED, [WIDE_PATCH, EXTRA]),
+        await solidPng(WIDE, OPAQUE_RED)
+      );
+      expect(oneOver.diffPixels).toBe(WIDE_PATCH_PIXELS + 1);
+      expect(oneOver.diffRatio).toBe((WIDE_PATCH_PIXELS + 1) / WIDE_PIXELS);
+      expect(oneOver.matches).toBe(false);
+    });
+
+    it('reports every pixel of a fully different non-square image as a ratio of 1', async () => {
+      // The one case a square assumption cannot disguise at all: the ratio saturates at 1
+      // only when the denominator is the true area.
+      const result = await compareScreenshots(await solidPng(WIDE, OPAQUE_RED), await solidPng(WIDE, OPAQUE_GREEN));
+
+      expect(result.diffPixels).toBe(WIDE_PIXELS);
+      expect(result.diffRatio).toBe(1);
+      expect(result.matches).toBe(false);
+    });
+  });
+
+  /**
+   * `ensureAlpha()` on both decodes.
+   *
+   * Every fixture above is built with `channels: 4`, so pixelmatch is always handed two
+   * RGBA buffers of the same length and the `.ensureAlpha()` calls are never the thing that
+   * made that true. A capture that comes back without an alpha channel — a JPEG, an
+   * `image/jpeg` data URL, any `format` other than `'png'` on the CDP capture, a format a
+   * future caller adds — decodes to three bytes per pixel instead of four, and the raw
+   * buffers handed to pixelmatch are then a quarter too short: it reads past the end of
+   * both, and the result is a diff count and a ratio that mean nothing.
+   */
+  describe('compareScreenshots - decodes images that carry no alpha channel', () => {
+    const rgbPng = (background: Rgba): Promise<Buffer> =>
+      sharp({ create: { width: SQUARE_100.width, height: SQUARE_100.height, channels: 3, background } })
+        .png()
+        .toBuffer();
+
+    it('matches a three-channel image against itself', async () => {
+      // Without `ensureAlpha()` the raw buffer is 30000 bytes where pixelmatch reads 40000,
+      // and the two ends disagree on their length before a single pixel is compared.
+      const image = await rgbPng({ r: 255, g: 0, b: 0, alpha: 1 });
+
+      const { info } = await sharp(image).raw().toBuffer({ resolveWithObject: true });
+      expect(info.channels, 'the fixture really is the three-channel case').toBe(3);
+
+      expect(await compareScreenshots(image, image)).toEqual({
+        matches: true,
+        diffPixels: 0,
+        diffRatio: 0,
+        channelDelta: NO_MOVEMENT,
+      });
+    });
+
+    it('compares three-channel against four-channel on equal terms', async () => {
+      // Both sides name the same colour, so the only difference between a match and a
+      // whole-image diff is whether both sides were widened to four channels first.
+      const result = await compareScreenshots(await rgbPng({ r: 255, g: 0, b: 0, alpha: 1 }), await redPng100());
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+    });
+
+    it('still counts a real difference in a three-channel image', async () => {
+      // The other half of the contract: widening must not turn every sample into a match.
+      const result = await compareScreenshots(
+        await rgbPng({ r: 0, g: 0, b: 0, alpha: 1 }),
+        await rgbPng({ r: 255, g: 255, b: 255, alpha: 1 })
+      );
+
+      expect(result.diffPixels).toBe(SQUARE_100_PIXELS);
+      expect(result.diffRatio).toBe(1);
+      expect(result.matches).toBe(false);
+    });
+  });
+
   describe('compareScreenshots - explicit maxDiffPixelRatio boundary', () => {
     it('matches when diffRatio is exactly maxDiffPixelRatio', async () => {
       const result = await compareScreenshots(await red10x10(), await green10x10(), {

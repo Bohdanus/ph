@@ -257,7 +257,7 @@ describe('StoreContext buildDurableDocument fail-closed boundary', () => {
     expect(convertLegacyHistorySafelyMock).toHaveBeenCalledTimes(2);
   });
 
-  it('passes the pending document identity, revision and cursor to the conversion', () => {
+  it('passes the pending document identity and revision to the conversion, and refuses to fabricate a cursor for one it cannot map', () => {
     convertLegacyHistorySafelyMock.mockImplementation(() => currentAttempt('doc-options'));
     const { getProbe, dispatch } = renderWithProbe();
     const history = [baselineItem(), toolItem('blur-edit', 'blur', { radius: 4 })];
@@ -277,6 +277,19 @@ describe('StoreContext buildDurableDocument fail-closed boundary', () => {
       initialSize: { width: 400, height: 300 },
       initialFrame: defaultFrame,
     });
-    expect(getProbe().store.durableStatus).toBe('current');
+    const store = getProbe().store;
+    expect(store.durableStatus).toBe('current');
+
+    // The cursor half of what this test used to claim. `currentAttempt` returns a
+    // one-entry `legacyCursorToDurableCursor` and the replacement names
+    // `historyIndex: 1`, so the lookup is past the end of the map. Reading that as
+    // anything other than "no durable position" is the defect this pins: a fallback
+    // to `history.length - 1` would place the shadow at the TIM TIP, and a silent
+    // `undefined` would publish an unusable cursor. Both leave every other
+    // assertion in this test green, which is why the name had to be split from it.
+    expect(store.durableDocument!.cursor).toBe(-1);
+    // The mapped value is the only one that could have been a position at all, so
+    // the document really is at the baseline rather than merely unconvertible.
+    expect(store.durableDocument!.history).toEqual([]);
   });
 });

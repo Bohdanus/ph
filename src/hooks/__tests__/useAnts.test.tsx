@@ -1,7 +1,8 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import type { Layer } from '../../contexts/layer-types.ts';
-import { DASH_LENGTH, SPEED, useMarchingAnts } from '../useAnts.ts';
+import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED, useMarchingAnts } from '../useAnts.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
 function createRafMocks() {
@@ -120,6 +121,28 @@ describe('useMarchingAnts', () => {
     expect(ctx.clearRect).toHaveBeenCalledWith(8, 18, 34, 34);
   });
 
+  it('keeps the ants at the same on-screen size when zoomed IN, not just when zoomed out', () => {
+    // The divisor's other direction. `useSelectionAnts.test.tsx` covers both sides of 1;
+    // this file only ever went below, so an inverted divisor (`scale` instead of `/ scale`)
+    // would have gone red there and stayed green here.
+    const { result, ctx } = setup(2);
+    const offsets: number[] = [];
+    vi.mocked(ctx.stroke).mockImplementation(() => offsets.push(ctx.lineDashOffset));
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 40, y: 25 },
+      ])
+    );
+    frame();
+    frame();
+
+    // At scale 2 a 6 CSS px dash is 3 document px, and the crawl is half a document px.
+    expect(ctx.setLineDash).toHaveBeenCalledWith([DASH_LENGTH / 2, GAP_LENGTH / 2]);
+    expect(ctx.lineWidth).toBe(LINE_WIDTH / 2);
+    expect(offsets).toEqual([0, DASH_LENGTH / 2, -SPEED / 2, DASH_LENGTH / 2 - SPEED / 2]);
+  });
+
   it('closes arbitrary contours and animates both strokes without changing the cursor', () => {
     const { result, ctx, containerRef } = setup();
     const offsets: number[] = [];
@@ -143,8 +166,18 @@ describe('useMarchingAnts', () => {
     frame();
     expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(ctx.clearRect).toHaveBeenCalledWith(9, 19, 32, 32);
-    expect(ctx.save).toHaveBeenCalled();
-    expect(ctx.restore).toHaveBeenCalled();
+    // One bracket per FRAME, around both ant passes: the loop rewrites `lineWidth`,
+    // `lineJoin`, `lineCap` and `setLineDash` on a context the whole session shares, so a
+    // missing or doubled pair leaves the last painter's state behind. A bare "was called"
+    // is satisfied by the balanced case and by both broken ones. Two frames run above, and
+    // the four offsets are the two paints of each, so the count has to be two and not four.
+    expect(ctx.save).toHaveBeenCalledTimes(2);
+    expect(ctx.restore).toHaveBeenCalledTimes(2);
+    // And the bracket actually brackets: the restore has to come after the LAST stroke, not
+    // before the first, or the second pass paints with whatever the previous painter left.
+    expect((ctx.restore as unknown as Mock).mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      (ctx.stroke as unknown as Mock).mock.invocationCallOrder.at(-1)!
+    );
   });
 
   it('supports open drafts and clears old geometry when replaced by a custom path', () => {

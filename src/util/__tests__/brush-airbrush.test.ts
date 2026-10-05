@@ -90,4 +90,59 @@ describe('createAirbrushEmitter', () => {
     expect(emitter.accumulate(4)).toBe(0);
     expect(emitter.accumulate(4)).toBe(1);
   });
+
+  /**
+   * The interval's own guard, which nothing in this file reached.
+   *
+   * `intervalMs: 0` would make `debtMs / interval` an Infinity, `Math.floor(Infinity)` an
+   * Infinity, and the emitter would report 8 dabs on every frame forever with a `debt` of
+   * NaN. The fallback is the only thing standing between a misconfigured option and that, and
+   * 16.6ms at the spec 8.3ms interval is exactly 2 dabs — the same answer a correct emitter
+   * gives, so the fallback is pinned by value rather than by not throwing.
+   */
+  it('falls back to the spec interval for a zero, negative or non-finite interval', () => {
+    for (const intervalMs of [0, -8.3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const emitter = createAirbrushEmitter({ intervalMs });
+
+      expect(emitter.accumulate(16.6), String(intervalMs)).toBe(2);
+      expect(emitter.debt(), String(intervalMs)).toBeCloseTo(0, 9);
+    }
+  });
+
+  /**
+   * The cap's guard, and the arm that makes a misconfigured cap SILENT rather than loud.
+   *
+   * A non-positive or non-finite `maxDabsPerFrame` becomes `cap = 0`, so `Math.min(whole, 0)`
+   * is 0 and the emitter never fires — while still consuming the debt on line 27. That
+   * combination is the hazard: an airbrush that silently stops painting AND loses the time it
+   * accumulated, so nothing recovers when the option is corrected.
+   */
+  it('emits nothing at all for a zero, negative or non-finite cap', () => {
+    for (const maxDabsPerFrame of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const emitter = createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame });
+
+      expect(emitter.accumulate(80), String(maxDabsPerFrame)).toBe(0);
+      // The debt is spent even though nothing was emitted: 80ms of debt is fully drained.
+      expect(emitter.debt(), String(maxDabsPerFrame)).toBe(0);
+      // And it stays silent rather than catching up on a later frame.
+      expect(emitter.accumulate(80), String(maxDabsPerFrame)).toBe(0);
+    }
+  });
+
+  /**
+   * `Math.floor` on the cap, which is what keeps the return value an INTEGER dab count.
+   *
+   * 9 whole intervals are available at 74.7ms; with the cap floored to 8 the answer is 8, and
+   * without the floor `Math.min(9, 8.7)` is 8.7 — a fractional number of dabs handed to a
+   * loop that stamps whole tips. No other case in this file uses a non-integral cap.
+   */
+  it('floors a fractional cap so the dab count stays an integer', () => {
+    const emitter = createAirbrushEmitter({ intervalMs: 8.3, maxDabsPerFrame: 8.7 });
+
+    expect(emitter.accumulate(9 * 8.3)).toBe(8);
+    expect(Number.isInteger(emitter.accumulate(9 * 8.3))).toBe(true);
+
+    // And a fractional cap below 1 floors to 0, which is the same silent arm as a zero cap.
+    expect(createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame: 0.5 }).accumulate(80)).toBe(0);
+  });
 });

@@ -470,6 +470,49 @@ describe('ICO decoding of legacy colour depths', () => {
     expect(Array.from(image.data)).toEqual([255, 255, 0, 255, 0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255]);
   });
 
+  it('steps a multi-row 8-bit icon whose width is not a multiple of eight through both aligned scanline pitches', async () => {
+    installImageHarness();
+    // Width 10 gives an XOR pitch of `ceil(80 / 32) * 4` = 12 bytes against 10 bytes of
+    // indices, and an AND pitch of `ceil(10 / 8) * 4` = 8 bytes against 2. Every other entry
+    // in this file is either one row tall or a width where both pitches are already their
+    // minimum, so nothing else here can see a pitch that lost its 4-byte alignment: the mask
+    // would be read off the wrong scanline and the transparent pixel would survive.
+    const topRow = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0];
+    const bottomRow = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1];
+    const dib = buildDib({
+      width: 10,
+      height: 2,
+      bitsPerPixel: 8,
+      colorsUsed: 2,
+      palette: [
+        [255, 0, 0],
+        [0, 0, 255],
+      ],
+      rows: [
+        {
+          rgba: new Array(40).fill(0),
+          indices: topRow,
+          transparent: [false, false, false, false, false, false, false, false, false, true],
+        },
+        { rgba: new Array(40).fill(0), indices: bottomRow },
+      ],
+    });
+
+    const image = await decodeIco(icon(dib, 10, 2));
+
+    const red = [255, 0, 0, 255];
+    const blue = [0, 0, 255, 255];
+    expect([image.width, image.height]).toEqual([10, 2]);
+    expect(Array.from(image.data)).toEqual(
+      [
+        // x = 9 is the pixel the AND mask punches, so it keeps palette entry 0 and loses the
+        // alpha; every other pixel of both rows is opaque whatever its index.
+        ...topRow.map((entry, x) => (x === 9 ? [255, 0, 0, 0] : entry ? blue : red)),
+        ...bottomRow.map((entry) => (entry ? blue : red)),
+      ].flat()
+    );
+  });
+
   it('decodes a 1-bit monochrome icon', async () => {
     installImageHarness();
     const dib = buildDib({

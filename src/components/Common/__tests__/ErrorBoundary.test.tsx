@@ -190,6 +190,57 @@ describe('ErrorBoundary fallback surfaces durable diagnostics', () => {
     expect(screen.queryByTestId('error-boundary-diagnostics')).toBeNull();
   });
 
+  it('omits the action and the history id it does not have, rather than printing them empty', () => {
+    // `MigrationDiagnostic.historyId` and `.actionName` are both OPTIONAL, and every diagnostic
+    // above supplies both. So the two omitted halves of `diagnosticText` had no coverage at all:
+    // a production change that wrote `(history undefined)` or a bare ` undefined` into the line
+    // would still have passed all of them.
+    storeState.durableDiagnostics = [
+      { severity: 'error', code: 'unsupported-history-feature', message: 'no handler for it' },
+      { severity: 'warning', code: 'invalid-history-entry', historyId: 'h-9', message: 'skipped one' },
+      { severity: 'error', code: 'conversion-failed', actionName: LAYER_TRANSPARENCY_ACTION, message: 'gave up' },
+    ] as readonly MigrationDiagnostic[];
+
+    render(
+      <ErrorBoundary label="Canvas">
+        <Thrower error={new Error('boom')} />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByTestId('error-boundary-diagnostic-unsupported-history-feature')).toHaveTextContent(
+      'error: unsupported-history-feature — no handler for it'
+    );
+    expect(screen.getByTestId('error-boundary-diagnostic-invalid-history-entry')).toHaveTextContent(
+      'warning: invalid-history-entry (history h-9) — skipped one'
+    );
+    expect(screen.getByTestId('error-boundary-diagnostic-conversion-failed')).toHaveTextContent(
+      `error: conversion-failed ${LAYER_TRANSPARENCY_ACTION} — gave up`
+    );
+  });
+
+  it('lists two diagnostics that share a code and carry no history id as two separate lines', () => {
+    // The `<li>` key is `code-historyId ?? index`, so two diagnostics with the same code and no
+    // history id would collide if the key were the code alone, and React would drop one of them
+    // from the list. They share a `data-testid` because that is minted from the code, which is
+    // why the count is asserted through `getAllByTestId`.
+    storeState.durableDiagnostics = [
+      { severity: 'error', code: 'conversion-failed', message: 'first' },
+      { severity: 'warning', code: 'conversion-failed', message: 'second' },
+    ] as readonly MigrationDiagnostic[];
+
+    render(
+      <ErrorBoundary label="Canvas">
+        <Thrower error={new Error('boom')} />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByTestId('error-boundary-diagnostics').children).toHaveLength(2);
+    expect(screen.getAllByTestId('error-boundary-diagnostic-conversion-failed').map((li) => li.textContent)).toEqual([
+      'error: conversion-failed — first',
+      'warning: conversion-failed — second',
+    ]);
+  });
+
   it('omits the diagnostic list entirely when the store holds none', () => {
     storeState.durableStatus = 'current';
     storeState.durableDiagnostics = [];

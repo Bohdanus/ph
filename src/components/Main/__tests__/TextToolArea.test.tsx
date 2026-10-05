@@ -190,6 +190,14 @@ describe('TextToolArea', () => {
     // is a div; what is worth pinning here is only that the tool area contributes no input, because a
     // second field bound to the draft's text would be a second source of truth for it.
     expect(() => renderArea()).not.toThrow();
+
+    // The crash guard is only half the claim, and the half that fails is the one with a defect
+    // behind it: the reachable fix for a null `textareaRef.current` is `?.` at each use, NOT a
+    // guard that returns early out of the render. So the surface must still be there. `not.
+    // toThrow()` alone passes just as well against a component that renders nothing, which is
+    // the tool the user cannot click at all.
+    expect(h.useRectProps.current).not.toBeNull();
+    expect(document.querySelector('.cursor-text')).toBeInTheDocument();
   });
 
   it('does not render an options-bar textarea when the text tool becomes active', () => {
@@ -210,6 +218,14 @@ describe('TextToolArea', () => {
     // arm where the component has no box to publish — and the whole point of the case is that it says
     // so by doing nothing rather than by throwing out of a React handler.
     renderArea();
+
+    // The registration is asserted FIRST, and that is the point. The call below is guarded by
+    // `useRectProps.current?.` and `onChangeEnd?.`, so with nothing registered the expression is
+    // a no-op and `not.toThrow()` passes on a component that never called `useRect` at all —
+    // which is the shape a regression that dropped the rect surface would take. Asserting the
+    // registration makes the guarded call something that definitely ran.
+    expect(h.useRectProps.current).not.toBeNull();
+    expect(typeof h.useRectProps.current?.onChangeEnd).toBe('function');
 
     expect(() => act(() => h.useRectProps.current?.onChangeEnd?.({ x1: 0, y1: 0, x2: 10, y2: 10 }))).not.toThrow();
     expect(h.setToolArgs, 'an unmeasurable rectangle was published anyway').not.toHaveBeenCalled();

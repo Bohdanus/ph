@@ -134,6 +134,7 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
       code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/cannot be replayed durably/);
+    registry.shutdown();
   });
 
   it('records a per-entry diagnostic and skips the entry for an unknown processor', () => {
@@ -159,6 +160,7 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
       code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Unknown processor/);
+    registry.shutdown();
   });
 
   it('records a per-entry diagnostic and skips the entry for a mixed trapezoid-plus-affine transform', () => {
@@ -184,6 +186,7 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
       code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Mixed trapezoid and affine transform is unsupported/);
+    registry.shutdown();
   });
 
   it('produces a per-entry diagnostic and skips the entry for malformed non-plain arguments', () => {
@@ -212,6 +215,7 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
       code: 'invalid-history-entry',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Non-plain/);
+    registry.shutdown();
   });
 
   it('records a per-entry diagnostic and skips the entry for non-finite transform values', () => {
@@ -237,15 +241,27 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
       code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Transform values must be finite/);
+    registry.shutdown();
   });
 
   it('does not register raster assets for a baseline that only uses blank sources', () => {
     const registry = new AssetRegistry();
+    const register = vi.spyOn(registry, 'registerBaseline');
     const result = convert([], registry);
 
     expect(result.document.history).toHaveLength(0);
     expect(result.document.baseline.layers).toHaveLength(1);
     expect(result.diagnostics).toHaveLength(0);
+    // The claim in the title, asserted rather than implied by the layer count. A
+    // blank source carries no bitmap, so the conversion must reach no
+    // `registerRaster` call at all: if `convertSource` grew a registration for the
+    // blank arm, or `convertLayer` registered `layer.bitmap` on the no-source
+    // path, the baseline would still be one layer and this would still pass.
+    expect(register).not.toHaveBeenCalled();
+    // And the published document references no asset either, so an asset id
+    // cannot have entered the durable model through a route that never registered.
+    expect([...collectDurableAssetIds(result.document)]).toEqual([]);
+    registry.shutdown();
   });
 });
 
@@ -266,6 +282,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       severity: 'error',
       code: 'unsupported-history-feature',
     });
+    registry.shutdown();
   });
 
   it('returns unavailable status for an unknown processor entry', () => {
@@ -290,6 +307,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       severity: 'error',
       code: 'unsupported-history-feature',
     });
+    registry.shutdown();
   });
 
   it('returns unavailable status for non-finite transform values', () => {
@@ -314,6 +332,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       severity: 'error',
       code: 'unsupported-history-feature',
     });
+    registry.shutdown();
   });
 
   it('rolls back asset registration when conversion fails, leaving no dangling assets', () => {
@@ -351,6 +370,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(result.status).toBe('unavailable');
     expect(result.document).toBeNull();
     expect(close).not.toHaveBeenCalled();
+    registry.shutdown();
   });
 
   it('a later valid edit recovers durable conversion after a prior failure', () => {
@@ -372,6 +392,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(goodResult.diagnostics).toHaveLength(0);
     expect(goodResult.document?.history).toHaveLength(1);
     expect(goodResult.document?.history[0]?.id).toBe('blur-edit');
+    registry.shutdown();
   });
 
   it('a valid conversion with no errors returns current status and a populated document', () => {
@@ -388,6 +409,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(result.document).not.toBeNull();
     expect(result.diagnostics).toHaveLength(0);
     expect(result.document?.history).toHaveLength(2);
+    registry.shutdown();
   });
 
   it('commits the asset transaction and reconciles the reachable set for a valid conversion', async () => {
@@ -421,13 +443,27 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
 
     expect(result.status).toBe('current');
     expect(transaction).toHaveBeenCalledExactlyOnceWith('test-doc');
-    expect(reconcile).toHaveBeenCalledExactlyOnceWith('test-doc', collectDurableAssetIds(result.document!));
+    // Hand-derived on purpose. `collectDurableAssetIds(result.document!)` would be
+    // the very call the code under test makes on the very document it converted
+    // (`history-adapter.ts:906`), so it could only ever catch a hand-supplied
+    // document, never a defect in the set the adapter reconciles with. The id is
+    // read off the published layer instead, and the reconciled set must be exactly
+    // that one id: a set carrying a stray id would release an asset the document
+    // still references, and `expect.any(Set)` would accept it.
+    const operation = result.document!.history[0]?.operation;
+    const publishedSource = operation?.kind === 'create-layer' ? operation.layer.source : null;
+    expect(publishedSource?.kind).toBe('raster');
+    const publishedAssetId = publishedSource?.kind === 'raster' ? publishedSource.assetId : null;
+    expect(publishedAssetId).not.toBeNull();
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledWith('test-doc', new Set([publishedAssetId!]));
     const reachable = reconcile.mock.calls[0]?.[1] as ReadonlySet<AssetId>;
     expect(reachable.size).toBe(1);
     // The reconciled baseline is still resolvable through the registry.
     const lease = await registry.resolve([...reachable][0]!);
     expect(lease.bitmap).toBe(bitmap);
     lease.release();
+    registry.shutdown();
   });
 
   it('rolls back the asset transaction and skips reconciliation for a rejected conversion', () => {
@@ -465,6 +501,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(registeredIds).toHaveLength(1);
     expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
     expect(close).not.toHaveBeenCalled();
+    registry.shutdown();
   });
 });
 
@@ -487,6 +524,7 @@ describe('legacy-to-durable cursor mapping (P0.2)', () => {
     const cursorMap = result.legacyCursorToDurableCursor;
     expect(cursorMap[2]).toBe(0); // no-op → preceding durable entry
     expect(cursorMap[2]).not.toBe(1); // not the tip
+    registry.shutdown();
   });
 
   it('maps an unsupported (error) entry to the preceding durable cursor, never the tip', () => {
@@ -505,6 +543,7 @@ describe('legacy-to-durable cursor mapping (P0.2)', () => {
     const cursorMap = result.legacyCursorToDurableCursor;
     expect(cursorMap[2]).toBe(0); // unsupported → preceding durable entry
     expect(cursorMap[2]).not.toBe(1); // not the tip
+    registry.shutdown();
   });
 
   it('retains a disabled entry in history and maps the cursor to its durable index', () => {
@@ -528,6 +567,7 @@ describe('legacy-to-durable cursor mapping (P0.2)', () => {
     expect(result.document.history.map((entry) => entry.enabled)).toEqual([true, false, true]);
     const cursorMap = result.legacyCursorToDurableCursor;
     expect(cursorMap[2]).toBe(1); // disabled entry maps to its own index
+    registry.shutdown();
   });
 
   it('never advances the cursor to the tip when the legacy cursor precedes a later valid edit', () => {
@@ -545,6 +585,7 @@ describe('legacy-to-durable cursor mapping (P0.2)', () => {
     // not the tip (index 1).
     expect(cursorMap[1]).toBe(0);
     expect(cursorMap[1]).not.toBe(1);
+    registry.shutdown();
   });
 });
 
@@ -571,6 +612,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
       expect(result.diagnostics[0]?.message).toMatch(/unusable nextSelectionState/);
       // No fabricated entry: an unreadable state never becomes a cleared selection.
       expect(result.document.history).toHaveLength(0);
+      registry.shutdown();
     }
   );
 
@@ -586,6 +628,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
       actionName: SELECTION_ACTION,
       severity: 'error',
     });
+    registry.shutdown();
   });
 
   it('names the offending entry id in the diagnostic message', () => {
@@ -597,6 +640,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.diagnostics[0]?.message).toContain('unreadable-selection');
+    registry.shutdown();
   });
 
   it.each([
@@ -613,6 +657,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     const operation = result.document?.history[0]?.operation;
     expect(operation).toMatchObject({ kind: 'set-selection', after: { selections: [], activeSelectionId: null } });
     expect(operation?.kind === 'set-selection' && operation.before.selections[0]?.id).toBe('sel');
+    registry.shutdown();
   });
 
   it('separates an absent next state, which clears, from an unreadable one, which only reports', () => {
@@ -634,6 +679,81 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     // Only the unreadable entry is reported, and it contributes no entry at all.
     expect(converted.diagnostics).toHaveLength(1);
     expect(converted.diagnostics[0]).toMatchObject({ historyId: 'unreadable-selection', severity: 'error' });
+    registry.shutdown();
+  });
+
+  /**
+   * `isValidSelectionSnapshot` reads three shapes for `activeSelectionId`
+   * (`history-adapter.ts:320`): absent, null, or a string. Every unusable-shape
+   * table above feeds it an unusable `selections`, which the guard rejects on the
+   * FIRST clause — so the third clause is pinned nowhere in the suite, and a
+   * snapshot whose `selections` is perfectly readable is the only thing that can
+   * reach it.
+   */
+  it.each([
+    ['a number', 7],
+    ['a boolean', true],
+    ['an object', { id: 'sel' }],
+  ])('refuses a next selection state whose activeSelectionId is %s', (_label, activeSelectionId) => {
+    const registry = new AssetRegistry();
+    const next = { selections: selectionState('next').selections, activeSelectionId };
+    const result = convert([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    // Refused, not normalized: an id that cannot be matched to a selection is a
+    // state the model cannot read, and a fabricated `null` would assert "no active
+    // selection" for a user who has one. If the guard accepted any value here, the
+    // entry would be published and these three assertions would all fail.
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'selection-clear',
+      actionName: SELECTION_ACTION,
+      severity: 'error',
+      code: 'invalid-history-entry',
+    });
+    expect(result.document.history).toHaveLength(0);
+    expect(deriveSetSelectionEntry(createSelectionHistoryItem(selectionState(), next), selectionState())).toBeNull();
+    registry.shutdown();
+  });
+
+  it('accepts an explicitly null activeSelectionId and publishes it as null', () => {
+    const registry = new AssetRegistry();
+    const next = { selections: selectionState('next').selections, activeSelectionId: null };
+    const result = convert([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    // The accept side of the same three-clause guard, and the common shape: an
+    // ordinary select-none carries `activeSelectionId: null` explicitly. A guard
+    // tightened to require the key to be absent — or to reject `null` — would void
+    // the whole shadow for every ordinary deselect.
+    expect(result.diagnostics).toEqual([]);
+    const operation = result.document.history[0]?.operation;
+    expect(operation).toMatchObject({ kind: 'set-selection', after: { activeSelectionId: null } });
+    expect(operation?.kind === 'set-selection' && operation.after.selections.map((entry) => entry.id)).toEqual([
+      'next',
+    ]);
+    registry.shutdown();
+  });
+
+  /**
+   * CURRENT behaviour, pinned as a tripwire, and it is the wrong behaviour: the
+   * baseline derivation reads the first selection entry's previous state with no
+   * structural guard at all (`selection-baseline.ts:57`), so a malformed one throws
+   * OUTSIDE the per-entry try and voids the entire shadow. The same shape one
+   * entry later is merely ignored, because `deriveSetSelectionEntry` falls back to
+   * the tracked baseline. Fixing the tolerance must DELETE this test rather than
+   * edit it.
+   */
+  it('voids the whole conversion for an unreadable previous state on the FIRST selection entry', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely([createSelectionHistoryItem({ selections: null }, selectionState('next'))], registry);
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    // No per-entry diagnostic: the throw happens while the baseline is derived, so
+    // it is reported as a whole-conversion failure with no history id to blame.
+    expect(result.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'conversion-failed' })]);
+    expect(result.diagnostics[0]?.historyId).toBeUndefined();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    registry.shutdown();
   });
 });
 
@@ -666,6 +786,25 @@ describe('deriveSetSelectionEntry', () => {
 
     const derived = deriveSetSelectionEntry(createSelectionHistoryItem(undefined, nextSelection), currentSelection);
 
+    expect(beforeOf(derived)).toEqual(currentSelection);
+    expect(afterOf(derived)).toEqual(nextSelection);
+  });
+
+  it('uses the tracked current selections when the previous state is present but unreadable', () => {
+    const nextSelection = selectionState('next');
+
+    // PRESENT AND MALFORMED is a different input from absent, and the two tests
+    // above and here are the two halves of one ternary
+    // (`history-adapter.ts:359-361`). A production change that dropped the
+    // `isValidSelectionSnapshot(previous)` guard would call
+    // `selectionSnapshot(null, undefined)` on this fixture and throw out of the
+    // per-entry try, voiding the shadow instead of deriving an entry.
+    const derived = deriveSetSelectionEntry(
+      createSelectionHistoryItem({ selections: null }, nextSelection),
+      currentSelection
+    );
+
+    expect(derived).not.toBeNull();
     expect(beforeOf(derived)).toEqual(currentSelection);
     expect(afterOf(derived)).toEqual(nextSelection);
   });
@@ -789,7 +928,25 @@ describe('plainValue absence handling (history-adapter)', () => {
 
     expect(result.status).toBe('current');
     expect(result.document).not.toBeNull();
-    expect(result.document?.history).not.toHaveLength(0);
+    // The exact payload, not just "something was published". `.not.toHaveLength(0)`
+    // passed for a second entry, for an entry derived from the wrong args, and for
+    // an entry whose `stops` had been compacted to `[0, 1]`.
+    expect(result.document?.history).toHaveLength(1);
+    const operation = result.document?.history[0]?.operation;
+    expect(operation?.kind).toBe('apply-filter');
+    if (operation?.kind === 'apply-filter') {
+      const durableStops = operation.filter.args.stops as readonly unknown[];
+      // This array is DENSE, so the only clause of the array walk that can accept
+      // its middle element is `value[index] === undefined`
+      // (`history-adapter.ts:110`). Dropping that clause would call
+      // `plainValue(undefined, ...)`, which throws `Non-plain value`, and void the
+      // whole document — so the status assertion above is the one that catches it,
+      // while these three catch the array being rebuilt shorter or reordered.
+      expect(durableStops).toHaveLength(3);
+      expect(durableStops[0]).toBe(0);
+      expect(durableStops[2]).toBe(1);
+      expect(1 in durableStops).toBe(false);
+    }
     registry.shutdown();
   });
 
