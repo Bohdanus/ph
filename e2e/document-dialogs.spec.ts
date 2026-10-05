@@ -334,9 +334,9 @@ const CHANNELS: ReadonlyArray<keyof Rgb> = ['red', 'green', 'blue'];
  * The document's pixel dimensions, as the app published them.
  *
  * File > New resolves through `openNewImageDialog` and the header then calls
- * `setBlankImage(data)` (`src/components/DesktopHeader/DesktopHeader.tsx:185`), which is
- * `handleImageCreate(params.size)` (`src/hooks/useApp.ts:77-80`) — `resizeCanvas` on the
- * workspace canvas at `:61-65`. So the canvas element's own `width`/`height` ARE the
+ * `setBlankImage(data)` (the `File > New` item in `DesktopHeader.tsx`), which reaches
+ * `handleImageCreate(params.size)` in `setBlankImage()` and its `resizeCanvas` on the
+ * workspace canvas. So the canvas element's own `width`/`height` ARE the
  * created document's size, not a copy of what the dialog was showing.
  *
  * NOT exclusive, and measured, because a comment that names one caller as THE caller is
@@ -1051,7 +1051,7 @@ test.describe('unload guard on a document with unsaved work', () => {
 
     // File > Save is the route to clean, and it is the ONLY one of the two replacements the
     // app offers. `handleImageSave` dispatches `{ fileName, hasUnsavedChanges: false }`
-    // (`src/hooks/useApp.ts:68-72`), which clears the store term of `hasDiscardableWork`, and
+    // (`handleImageSave()`), which clears the store term of `hasDiscardableWork`, and
     // a completed drag leaves the other two empty — no unplaced text, no preview transaction.
     // File > New would NOT do this: a blank document is created with
     // `hasUnsavedChanges: true` (`src/contexts/useLayer.ts:290-293`), so a freshly created

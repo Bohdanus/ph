@@ -390,6 +390,82 @@ describe('smudge argument clamping', () => {
   });
 });
 
+/**
+ * Opaque red for `x < 6`, fully transparent from `x = 6` on.
+ *
+ * This is EXACTLY the shape `stageProcessorInput` produces when it widens a tight layer into a
+ * stroke frame that leaves it: the old pixels sit at their own offsets and everything past the
+ * old right edge is new, transparent, addressable canvas. A 12-wide buffer gives six pixels of
+ * that new region to drag across, which is what makes the carry's reach observable.
+ */
+const widenedSize: Size = { width: 12, height: 8 };
+
+const paddedField = (() => {
+  const data = new Uint8ClampedArray(widenedSize.width * widenedSize.height * 4);
+  for (let y = 0; y < widenedSize.height; y++) {
+    for (let x = 0; x < widenedSize.width; x++) {
+      if (x < 6) {
+        const offset = (y * widenedSize.width + x) * 4;
+        data[offset] = RED.r;
+        data[offset + 1] = RED.g;
+        data[offset + 2] = RED.b;
+        data[offset + 3] = RED.a;
+      }
+    }
+  }
+  return data;
+})();
+
+describe('smudge across a widened frame', () => {
+  /** A stroke that starts on opaque content and runs out across the transparent padding. */
+  const outwardStroke: Point[] = [
+    { x: 2, y: 4 },
+    { x: 11, y: 4 },
+  ];
+
+  const widenedRun = (args: Partial<SmudgeToolArgs> = {}) =>
+    smudgeWith(paddedField, { points: outwardStroke, strength: SMUDGE_STRENGTH_MAX, ...args }, widenedSize);
+
+  it('carries the last opaque sample across the newly transparent edge, so the stroke does not stop at it', () => {
+    const canvas = widenedRun({ rasterBounds: { x: 0, y: 0, width: 12, height: 8 } });
+
+    // The old edge is x=6. Without a carry every dab past it reads `a === 0`, `blendPixel`
+    // no-ops, and the stroke visibly stops at the layer boundary — the exact defect widening
+    // the frame exists to fix. So at least one pixel BEYOND the edge must have received red.
+    const beyondEdge = [6, 7, 8].map((x) => at(canvas.pixels, widenedSize, x, 4));
+    expect(beyondEdge.some((rgba) => rgba.a > 0 && rgba.r > 0)).toBe(true);
+  });
+
+  it('stops carrying after one dab, because an unbounded carry lays a stale-colour trail across empty canvas', () => {
+    const canvas = widenedRun({ rasterBounds: { x: 0, y: 0, width: 12, height: 8 } });
+
+    // The bug this pins: `carried` was sampled once and never cleared, so the red read at the
+    // start of the stroke was redeposited for EVERY remaining dab. At the far end of this
+    // stroke — five dab steps past the edge, over nothing at all — that produced solid red.
+    // The carry is bounded to the dab that follows the opaque read, so the far end stays empty.
+    expect(at(canvas.pixels, widenedSize, 11, 4)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+  });
+
+  it('paints nothing into the padding when the args carry no stroke frame', () => {
+    // The carry exists to serve the widened frame and is gated on it. Without `rasterBounds` the
+    // stroke must behave exactly as it always did: the new pixels are not part of this raster,
+    // so nothing lands there. This is what keeps every pre-existing smudge entry unchanged.
+    const canvas = widenedRun();
+
+    expect(at(canvas.pixels, widenedSize, 7, 4)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+    expect(at(canvas.pixels, widenedSize, 11, 4)).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+  });
+
+  it('leaves the original opaque content untouched, because a carry may add to the padding and never overwrites with it', () => {
+    const canvas = widenedRun({ rasterBounds: { x: 0, y: 0, width: 12, height: 8 } });
+
+    // A smudge that rewrote the layer's own pixels with the carried colour would flatten the
+    // source. The red block must survive exactly as it was.
+    expect(at(canvas.pixels, widenedSize, 0, 4)).toEqual(RED);
+    expect(at(canvas.pixels, widenedSize, 5, 4)).toEqual(RED);
+  });
+});
+
 describe('smudge tip contract', () => {
   it('stamps at a spacing of its own, because the args have no spacing field for it to read', () => {
     // `SmudgeToolArgs` carries no `spacing`, and Photoshop's Smudge bar exposes none, so the

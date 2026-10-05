@@ -423,6 +423,12 @@ describe('transform tool', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toBeInstanceOf(globalThis.OffscreenCanvas);
+      // The mirror is the negative `a`, and the `e` that recentres it: a 100-wide layer
+      // mirrored about its own centre maps x=0 to 100 and x=100 to 0. Asserting only the
+      // return shape proved nothing about the mirror — a production change that dropped it,
+      // or applied `+1`, returned the same canvas and the same length.
+      expect(destinationContextOf(result).ctmCalls).toEqual([{ op: 'setTransform', values: [-1, 0, 0, 1, 100, 0] }]);
+      expect([result[0].width, result[0].height]).toEqual([100, 50]);
     });
 
     it('applies vertical mirror via negative scaleY', () => {
@@ -432,6 +438,27 @@ describe('transform tool', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toBeInstanceOf(globalThis.OffscreenCanvas);
+      // `d` is the negation here and `f` is the recentring: a 50-tall layer mirrored about its
+      // centre maps y=0 to 50 and y=50 to 0. `c` and `b` stay 0, so a mirror must not leak a
+      // rotation in.
+      expect(destinationContextOf(result).ctmCalls).toEqual([{ op: 'setTransform', values: [1, 0, 0, -1, 0, 50] }]);
+      expect([result[0].width, result[0].height]).toEqual([100, 50]);
+    });
+
+    it('mirroring is not the same as negating the wrong axis', () => {
+      const params = makeParams(makeBitmap(100, 50), { width: 100, height: 50 });
+
+      const horizontal = destinationContextOf(transform(params)(withArgs({ mirrorH: true }))).ctmCalls[0].values;
+      const vertical = destinationContextOf(transform(params)(withArgs({ mirrorV: true }))).ctmCalls[0].values;
+      const both = destinationContextOf(transform(params)(withArgs({ mirrorH: true, mirrorV: true }))).ctmCalls[0]
+        .values;
+
+      // Guards against the two mirrors being transposed — `mirrorH` writing `-1` into `d` and
+      // `mirrorV` into `a` is a real inversion, and both would keep every dimension assertion
+      // above green because a transposed mirror still reports a 100x50 raster.
+      expect(horizontal).toEqual([-1, 0, 0, 1, 100, 0]);
+      expect(vertical).toEqual([1, 0, 0, -1, 0, 50]);
+      expect(both).toEqual([-1, 0, 0, -1, 100, 50]);
     });
 
     it('applies skewX and skewY', () => {
@@ -440,7 +467,44 @@ describe('transform tool', () => {
       const [canvas, patch] = transform(params)(withArgs({ skewX: 10, skewY: 5 }));
 
       expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
-      expect(patch).toBeDefined();
+      // Closed form, not a re-run of the unit under test. With no rotate/resize the
+      // linear part is the bare skew and the raster is the bounding box of the four
+      // sheared corners, so the patch is 100 + 100*tan(10deg) wide and
+      // 100 + 100*tan(5deg) tall. `toBeDefined()` on the patch passed for `{0, 0}`.
+      expect(patch).toEqual({ width: 118, height: 109 });
+      expect([canvas.width, canvas.height]).toEqual([118, 109]);
+
+      const [a, b, c, d, e, f] = destinationContextOf([canvas, patch]).ctmCalls[0].values;
+      // The linear part is the skew itself, in the order `transformToolArgsToAffine`
+      // composes it: `b` takes skewY and `c` takes skewX. Swapping them keeps a sheared
+      // raster of the same size and would pass every dimension assertion above.
+      expect(a).toBeCloseTo(1, 12);
+      expect(b).toBeCloseTo(Math.tan(Math.PI / 36), 12);
+      expect(c).toBeCloseTo(Math.tan(Math.PI / 18), 12);
+      expect(d).toBeCloseTo(1, 12);
+
+      // The translation is EXACTLY zero, and that is the assertion's whole point: the
+      // skew pivots on the untransformed centre, so the affine carries
+      // `e = -50*tan(10deg)` and `f = -50*tan(5deg)`, while the bounds offset subtracts
+      // `bounds.x`/`bounds.y` — and the leftmost sheared corner sits at exactly
+      // `-50*tan(10deg)`, so the two are the SAME number and cancel. This used to
+      // assert the uncancelled `-50*tan(10deg)` here, which is the pivot, not the draw
+      // matrix, so it pinned a value the renderer has never emitted.
+      expect(e).toBe(0);
+      expect(f).toBe(0);
+
+      // The cancellation is only meaningful if the pivot it cancels is really there,
+      // so the pivot is asserted separately on the affine the renderer is handed. A
+      // `getTransformDrawMatrix` that dropped the offset would leave `e` at
+      // -50*tan(10deg) and fail the `toBe(0)` above; one that dropped the pivot would
+      // leave the affine at zero and fail here.
+      const pivot = transformToolArgsToAffine(withArgs({ skewX: 10, skewY: 5 }), { width: 100, height: 100 })!;
+      expect(pivot.e).toBeCloseTo(-50 * Math.tan(Math.PI / 18), 12);
+      expect(pivot.f).toBeCloseTo(-50 * Math.tan(Math.PI / 36), 12);
+      expect(getAffineBounds(pivot, { width: 100, height: 100 })).toMatchObject({
+        x: -50 * Math.tan(Math.PI / 18),
+        y: -50 * Math.tan(Math.PI / 36),
+      });
     });
 
     it('applies resize scaling (resizeX 150, resizeY 85) and returns a position patch', () => {
@@ -455,14 +519,19 @@ describe('transform tool', () => {
     it('combines rotation, skew, and scale into a single canvas', () => {
       const bitmap = makeBitmap(60, 40);
       const params = makeParams(bitmap, { width: 60, height: 40 });
-      const [canvas, patch] = transform(params)(
+      const result = transform(params)(
         withArgs({ rotate: 30, skewX: 5, skewY: 3, mirrorH: true, resizeX: 120, resizeY: 90 })
       );
+      const [canvas, patch] = result;
 
       expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
-      expect(patch).toBeDefined();
-      expect(patch!.width).toBeGreaterThan(0);
-      expect(patch!.height).toBeGreaterThan(0);
+      // The name claims "into a single canvas" and nothing checked the length; `toBeGreaterThan(0)`
+      // on the patch passed for `{width: 1, height: 1}`. Both now pin the closed-form raster of the
+      // same argument set the neighbouring test already pins the matrix of, so the two cannot
+      // disagree about what this transform produces.
+      expect(result).toHaveLength(2);
+      expect(patch).toEqual({ width: 81, height: 70 });
+      expect([canvas.width, canvas.height]).toEqual([81, 70]);
     });
   });
 

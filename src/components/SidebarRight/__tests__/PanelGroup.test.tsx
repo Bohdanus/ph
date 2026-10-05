@@ -42,7 +42,14 @@ const setup = (overrides: Partial<Props> = {}) => {
     group: at(`panel-group-${props.id}`),
     row: at(`panel-header-row-${props.id}`),
     control: at(`panel-header-${props.id}`),
-    /** The element `aria-controls` names, resolved the way an assistive technology would. */
+    /**
+     * The element the body would occupy, looked up by the id the component builds. This does NOT
+     * resolve through `control.getAttribute('aria-controls')` — it reconstructs the string from the
+     * test's own prop, so on its own it proves only that the body mounts. The pairing is pinned
+     * twice, and it is worth naming both halves: `derives the group, the row and the control from one
+     * id` holds the two strings equal on a mount that was never rolled up, and the round-trip case
+     * holds them equal again AFTER a collapse, which is what a one-way attribute would break.
+     */
     body: () => utils.container.querySelector<HTMLElement>(`#panel-body-${props.id}`),
     /** Applies a prop change from the parent, which is what a toggle callback does upstream. */
     rerenderGroup: (next: Partial<Props>) => utils.rerender(<PanelGroup {...props} {...next} />),
@@ -157,7 +164,7 @@ describe('PanelGroup', () => {
       expect(control.textContent).toBe('Layers');
     });
 
-    it('hides the body and its children when rolled up, leaving the tab bar', () => {
+    it('removes the body and its children when rolled up, leaving the tab bar', () => {
       const { control, body, rerenderGroup } = setup();
       expect(body()).not.toBeNull();
 
@@ -191,6 +198,13 @@ describe('PanelGroup', () => {
 
       rerenderGroup({ isRolledUp: false });
       expect(body()!.textContent).toBe(BODY_MARKER);
+      // The name comes BACK too, not just the body. Asserting only the body is a one-way pin: an
+      // `aria-controls` that appeared while collapsed and never returned would satisfy every other
+      // assertion in this file, because the ones that require the attribute's PRESENCE all run on a
+      // mount that was never rolled up. This is the other half of `derives the group, the row and
+      // the control from one id`, and it is what makes the attribute a relationship rather than a
+      // one-shot announcement.
+      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
     });
 
     it('does not roll up when the double-click ended a drag', () => {

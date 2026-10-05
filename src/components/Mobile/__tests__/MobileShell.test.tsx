@@ -377,10 +377,21 @@ describe('MobileShell', () => {
       const panel = document.getElementById('mobile-menu-panel')!;
       expect(screen.getByRole('dialog', { name: 'Mobile Navigation Menu' })).toBeInTheDocument();
       expect(document.activeElement).toBe(panel);
+      // The trigger's `aria-controls` must RESOLVE here, where the drawer is actually mounted.
+      // `MobileHeader`'s own suite renders no drawer, so it can only pin which side of the open
+      // state the attribute sits on — without this, nothing in the repository ties the header's
+      // string to the drawer's id. Its layers twin already carried these three assertions; the menu
+      // drawer had none, which is how the pair ended up one-way for one drawer and two-way for the
+      // other.
+      expect(trigger.getAttribute('aria-controls')).toBe('mobile-menu-panel');
 
       await user.keyboard('{Escape}');
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(document.activeElement).toBe(trigger);
+      // And gone with it: the honest pair while closed is `aria-expanded="false"` and no
+      // `aria-controls` at all, not a name with no target.
+      expect(trigger).toHaveAttribute('aria-expanded', 'false');
+      expect(trigger).not.toHaveAttribute('aria-controls');
     });
   });
 });

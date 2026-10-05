@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildStrokeCoverage } from '../stroke-coverage.ts';
-import { BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_MIN, tipAlphaAt, type BrushTipSettings } from '../brush-engine.ts';
+import {
+  BRUSH_HARDNESS_MAX,
+  BRUSH_HARDNESS_MIN,
+  brushDabCenters,
+  tipAlphaAt,
+  type BrushTipSettings,
+} from '../brush-engine.ts';
 import type { Point, Size } from '../../contexts/general-types.ts';
 
 /**
@@ -207,6 +213,32 @@ describe('buildStrokeCoverage', () => {
     // (4, 12) is 8 from (12, 12) and is therefore 0 under hardness 100, not 1.
     expect(hard[12 * 24 + 4]).toBe(0);
     expect(hard[12 * 24 + 5]).toBe(1);
+  });
+
+  it('returns null for a ZERO-radius tip, because no dab can carry weight', () => {
+    // Two things have to hold at once here, and only the second is obvious. `brushDabCenters`
+    // is given size 0, substitutes BRUSH_SIZE_DEFAULT for the STEP and so emits several
+    // centres; `radius` is then computed from the RAW `settings.size`, not from that
+    // fallback. `tipAlphaAt` returns 0 for a non-positive radius at any distance, so no pixel
+    // is ever written and `touched` never rises.
+    //
+    // The mutants: radius taken from the clamped diameter (a 13px field would appear where
+    // there should be none), and the `if (!(weight > 0)) return;` guard deleted (every pixel
+    // would set `touched`, and the null would become an all-zero Float32Array — a field
+    // indistinguishable from a stroke that painted nothing, which is the exact reason the
+    // null exists).
+    const size: Size = { width: 16, height: 16 };
+    const zeroTip = tip(0, 100);
+
+    expect(brushDabCenters([point(4, 4), point(12, 8)], zeroTip.size, zeroTip.spacing).length).toBeGreaterThan(1);
+    expect(buildStrokeCoverage(size, [point(4, 4), point(12, 8)], zeroTip)).toBeNull();
+    expect(buildStrokeCoverage(size, [point(8, 8)], zeroTip)).toBeNull();
+  });
+
+  it('returns null for a NEGATIVE tip size, which is the same arm from the other side', () => {
+    // `brushDabCenters` also refuses a negative diameter (`size > 0` is required), so the
+    // centres exist, but the radius is negative and every weight is 0.
+    expect(buildStrokeCoverage({ width: 16, height: 16 }, [point(4, 4), point(12, 8)], tip(-8, 100))).toBeNull();
   });
 
   it('walks the interior of a segment, so a stroke is not just its two endpoints', () => {

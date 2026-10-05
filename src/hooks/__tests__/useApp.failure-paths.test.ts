@@ -117,7 +117,7 @@ describe('useApp failure paths', () => {
     expect(harness.layerMocks.createBlankLayer).toHaveBeenCalledExactlyOnceWith({ ...params }, true);
   });
 
-  it('resizes every owned canvas and clears the tool state before replacing the document', async () => {
+  it('clears the tool state and resizes every owned canvas around replacing the document', async () => {
     const canvas = document.createElement('canvas');
     const toolOverlay = document.createElement('canvas');
     const rectOverlay = document.createElement('canvas');

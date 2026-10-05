@@ -8,9 +8,15 @@ import {
 } from '../history-adapter.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, ToolLayerSource } from '../layer-types.ts';
+import type { ImageLayerSource, Layer, ToolLayerSource } from '../layer-types.ts';
 import type { ToolArgs } from '../tool-types.ts';
-import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  RENAME_LAYER_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -67,6 +73,11 @@ function convert(registry: AssetRegistry, ...items: HistoryItem[]) {
 function createBorrowedBitmap(width: number, height: number) {
   const close = vi.fn();
   return { bitmap: { width, height, close } as unknown as ImageBitmap, close };
+}
+
+/** Production raises non-Error values from data accessors; keep the shape local. */
+function raise(value: unknown): never {
+  throw value;
 }
 
 describe('tool layer source conversion', () => {
@@ -178,6 +189,115 @@ describe('tool layer source conversion', () => {
     expect(diagnostics[0]?.message).toMatch(/Non-plain value at layer:tool-hostile\.source\.args/);
     expect(document.history).toEqual([]);
     expect(document.cursor).toBe(-1);
+  });
+});
+
+describe('action entries that carry a layer source', () => {
+  it('publishes a create-layer for a tool action carrying a tool source, not a tool operation', () => {
+    const registry = new AssetRegistry();
+    const args = { toolName: 'shape', color: '#ff0000' } as unknown as ToolArgs;
+
+    const { document, diagnostics, legacyCursorToDurableCursor } = convert(registry, {
+      id: 'shape-tool',
+      actionName: TOOL_ACTION,
+      layerId: 'shape-layer',
+      layerSource: toolSource('shape', args),
+    });
+
+    // The create-layer arm (`history-adapter.ts:674`) is reached through the
+    // `TOOL_ACTION && source` half of its condition. The entry carries no `args` at
+    // all, so if that half were dropped `operationForTool` would find no
+    // `toolName`, return null and the entry would publish NOTHING: a
+    // tool-created layer missing from the shadow with no diagnostic to say so,
+    // while legacy replay — whose matching arm is `history-replay.ts:127` —
+    // keeps the layer. Every assertion below is about the entry surviving.
+    expect(diagnostics).toEqual([]);
+    expect(document.history.map((entry) => entry.id)).toEqual(['shape-tool']);
+    expect(legacyCursorToDurableCursor).toEqual([-1, 0]);
+    expect(document.cursor).toBe(0);
+
+    const created = document.history[0]?.operation;
+    if (created?.kind !== 'create-layer') throw new Error(`expected a create-layer operation, got ${created?.kind}`);
+    expect(created.layer.id).toBe('shape-layer');
+    // The snapshot name comes from `sourceToRuntimeLayer`, so it is derived from the
+    // tool name and never 'Blank'. `deriveLayerNameAndOrder` then appends the order it
+    // just derived, so the name and the order below come from ONE number and cannot
+    // disagree: the name is asserted as that pair rather than as a bare literal,
+    // because a name written without its suffix is what this assertion used to pin
+    // and it stopped matching the moment the suffix rule landed.
+    expect(created.layer.order).toBe(1);
+    expect(created.layer.name).toBe(`shape ${created.layer.order}`);
+    expect(created.layer.pos).toEqual({ ...layerPos });
+    expect(created.layer.source).toMatchObject({
+      kind: 'vector',
+      toolName: 'shape',
+      isBedrock: false,
+      size: { width: layerPos.width, height: layerPos.height },
+    });
+
+    // The user-visible half: the shadow replays the new layer AND keeps the
+    // baseline layer, which is what separates a create from a merge.
+    const replayed = replayDurableDocument(document);
+    expect(replayed.layers['shape-layer']?.snapshot.name).toBe(
+      `shape ${replayed.layers['shape-layer']?.snapshot.order}`
+    );
+    expect(replayed.layers[layerId]?.snapshot.id).toBe(layerId);
+  });
+
+  it('reads a merge source out of args, the field mergeAllLayers writes, and collapses the layer set', () => {
+    const registry = new AssetRegistry();
+    const { bitmap } = createBorrowedBitmap(40, 30);
+
+    const { document, diagnostics, legacyCursorToDurableCursor } = convert(registry, {
+      id: 'merge-args',
+      actionName: MERGE_ACTION,
+      layerId: 'merged-layer',
+      args: {
+        kind: 'image',
+        bitmap,
+        name: 'Merged Layer',
+        pos: { x: 0, y: 0, ...initialSize },
+        isBedrock: false,
+      } satisfies ImageLayerSource,
+    });
+
+    // `mergeAllLayers` retains the merged `LayerSource` in the entry's `args`
+    // (`useLayer.ts:838-842`), so THIS is the shape every real merge takes — no
+    // `layerSource` is written. If `asLegacyLayerSource(item.args)`
+    // (`history-adapter.ts:673`) stopped reading `args`, the merge arm would miss
+    // its `&& source` guard and fall through to the unknown-action throw: an
+    // ERROR diagnostic, which `convertLegacyHistorySafely` answers by withholding
+    // the whole shadow for every document the user has ever merged in.
+    expect(diagnostics).toEqual([]);
+    expect(document.history.map((entry) => entry.id)).toEqual(['merge-args']);
+    expect(legacyCursorToDurableCursor).toEqual([-1, 0]);
+
+    const merged = document.history[0]?.operation;
+    if (merged?.kind !== 'merge-document') throw new Error(`expected a merge-document operation, got ${merged?.kind}`);
+    // Every other converted layer is named as removed, which is the half a
+    // create-layer entry never carries.
+    expect(merged.removedLayerIds).toEqual([layerId]);
+    expect(merged.result.id).toBe('merged-layer');
+    // The name keeps the label the merge source carried, suffixed with the derived
+    // order by the same `deriveLayerNameAndOrder` rule the create-layer arm above
+    // exercises. Asserted as the pair so the label and the suffix cannot drift apart.
+    expect(merged.result.name).toBe(`Merged Layer ${merged.result.order}`);
+    expect(merged.result.pos).toEqual({ x: 0, y: 0, ...initialSize });
+    // The raster is derived from the args source: its size is the BITMAP's, and
+    // the layer keeps the name the source carried.
+    expect(merged.result.source).toMatchObject({
+      kind: 'raster',
+      width: 40,
+      height: 30,
+      name: 'Merged Layer',
+      isBedrock: false,
+    });
+
+    const replayed = replayDurableDocument(document);
+    expect(replayed.layers['merged-layer']?.snapshot.name).toBe(
+      `Merged Layer ${replayed.layers['merged-layer']?.snapshot.order}`
+    );
+    expect(replayed.layers[layerId]).toBeUndefined();
   });
 });
 
@@ -302,6 +422,48 @@ describe('raster tool conversion', () => {
       processorId: 'transform',
       version: 1,
     });
+  });
+
+  it('reports a retained-transform accessor that throws a non-Error as an unsupported transform', () => {
+    const registry = new AssetRegistry();
+    // `getTransformFromHistoryArgs` reads `candidate.transform` off the legacy
+    // args, and legacy args are unvalidated data — a hostile or corrupt entry can
+    // raise a non-Error there. `trapezoid` is absent so the truthiness guard at
+    // `history-adapter.ts:492` is skipped and the read happens inside the try.
+    const args: Record<string, unknown> = { toolName: 'transform' };
+    Object.defineProperty(args, 'transform', {
+      configurable: true,
+      get() {
+        return raise('legacy transform accessor exploded');
+      },
+    });
+
+    const { document, diagnostics, legacyCursorToDurableCursor } = convert(registry, {
+      id: 'corrupt-transform',
+      actionName: TOOL_ACTION,
+      layerId,
+      args,
+    });
+
+    // The catch's non-Error arm names the failure instead of forwarding the raw
+    // throw. Two mutants die here: dropping that arm would report the literal
+    // thrown text (or `undefined`, via `error.message`) as the message, and
+    // dropping the catch would let the raw string escape to the per-entry
+    // diagnostic, which classifies a non-`UnsupportedHistoryFeatureError` as
+    // `invalid-history-entry` — the wrong code for an unreadable transform.
+    expect(diagnostics).toStrictEqual([
+      {
+        historyId: 'corrupt-transform',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+        message: 'Invalid retained transform',
+      },
+    ]);
+    expect(document.history).toEqual([]);
+    // A refused entry consumes no durable index, so it maps to the preceding
+    // cursor rather than to the tip a later entry would create.
+    expect(legacyCursorToDurableCursor).toEqual([-1, -1]);
   });
 
   it('drops an unresolvable tool action without a toolName instead of recording a no-op entry', () => {

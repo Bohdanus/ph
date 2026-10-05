@@ -381,6 +381,124 @@ describe('materializeLayer safety (P0.3)', () => {
     registry.shutdown();
   });
 
+  it('widens a tight layer into the stroke frame BEFORE handing it to the processor', async () => {
+    // The durable half of the stroke-frame contract. The legacy staging path pads the presented
+    // raster into `rasterBounds`; if this loop did not, the durable composite would run the very
+    // same processor over a differently-sized raster and the two would publish different pixels
+    // for the same history entry. `processorInputs` is the only place that difference is visible,
+    // because a mock canvas cannot show its own size to the code under test.
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      processorInputs.push({ size: { ...params.size } });
+      return originalImageProcessor(params);
+    });
+
+    const layer = makeBlankLayer('layer-1', 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({
+          toolName: 'blur',
+          radius: 3,
+          points: Object.freeze([{ x: 120, y: 90 }]),
+          rasterBounds: Object.freeze({ x: -20, y: -20, width: 160, height: 140 }),
+        }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toEqual([{ size: { width: 160, height: 140 } }]);
+      // And the layer is PUBLISHED at the widened frame, which is what makes the transparent
+      // padding real pixels of the layer rather than a private buffer that vanishes on reload.
+      expect(materialized.bounds).toEqual({ x: -20, y: -20, width: 160, height: 140 });
+
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+    }
+
+    registry.shutdown();
+  });
+
+  it('leaves a legacy whole-layer blur unwidened', async () => {
+    // The other side of the same split. An entry with no `points` is the retained whole-layer
+    // form, and it must keep handing the processor the layer's own geometry — otherwise every
+    // filter already on a timeline would silently gain transparent padding.
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      processorInputs.push({ size: { ...params.size } });
+      return originalImageProcessor(params);
+    });
+
+    const layer = makeBlankLayer('layer-1', 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 3 }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toEqual([{ size: { width: 100, height: 80 } }]);
+      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 100, height: 80 });
+
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+    }
+
+    registry.shutdown();
+  });
+
+  it('does not widen when the stroke frame already is the layer', async () => {
+    const registry = new AssetRegistry();
+    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      processorInputs.push({ size: { ...params.size } });
+      return originalImageProcessor(params);
+    });
+
+    const layer = makeBlankLayer('layer-1', 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({
+          toolName: 'blur',
+          radius: 3,
+          points: Object.freeze([{ x: 10, y: 10 }]),
+          rasterBounds: Object.freeze({ x: 0, y: 0, width: 100, height: 80 }),
+        }),
+      }),
+    ]);
+
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      expect(processorInputs).toEqual([{ size: { width: 100, height: 80 } }]);
+
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+    }
+
+    registry.shutdown();
+  });
+
   it('materializes a blank layer with no operations successfully', async () => {
     const registry = new AssetRegistry();
     const layer = makeBlankLayer('layer-1', 100, 80);

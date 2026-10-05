@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import type { Selection } from '../../contexts/general-types.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import { DASH_LENGTH, GAP_LENGTH, SPEED } from '../useAnts.ts';
@@ -148,6 +149,23 @@ describe('useSelectionMarchingAnts', () => {
 
     expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(rafMocks.frames.size).toBe(1);
+  });
+
+  it('brackets the whole frame in one save/restore pair, not several', () => {
+    // The overlay context is shared for the session, and the loop rewrites `lineWidth`,
+    // `lineJoin`, `lineCap` and `setLineDash` on it. A `save` without its `restore` — or
+    // one per stroke rather than one per frame — leaves the last painter's state behind
+    // for whatever else draws into this canvas next. A bare "was called" cannot tell the
+    // two apart, because both are satisfied by the balanced case.
+    const { ctx } = setup();
+    frame();
+
+    expect(ctx.save).toHaveBeenCalledExactlyOnceWith();
+    expect(ctx.restore).toHaveBeenCalledExactlyOnceWith();
+
+    // The restore is what makes it a bracket: it has to come after the strokes, not before.
+    const strokeOrder = (ctx.stroke as unknown as Mock).mock.invocationCallOrder.at(-1)!;
+    expect((ctx.restore as unknown as Mock).mock.invocationCallOrder[0]).toBeGreaterThan(strokeOrder);
   });
 
   describe('a selection drag', () => {

@@ -46,6 +46,7 @@ import {
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
 import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
   readonly code = 'unsupported-history-feature';
@@ -678,7 +679,17 @@ export function operationForTool(
     });
   }
 
-  if (processor.commit === 'layer-operation') {
+  if (isRasterStrokeArgs(args)) {
+    return Object.freeze({
+      kind: 'apply-raster-processor',
+      layerId: item.layerId,
+      processorId: args.toolName,
+      version: processor.replay.version,
+      args: plainObject(args, `history:${item.id}.args`, compaction),
+    });
+  }
+
+  if (processor.commit === 'layer-operation' && !isRasterStrokeArgs(args)) {
     const filterArgs = plainObject(args, `history:${item.id}.args`, compaction);
     if (!['blur', 'color', 'levels'].includes(args.toolName)) {
       throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);

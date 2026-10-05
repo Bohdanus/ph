@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MAX_AFFINE_COORDINATE, MAX_AFFINE_PIXELS, type AffineTransform } from '../affine-transform.ts';
 import {
@@ -229,5 +229,81 @@ describe('the processor input boundary', () => {
     expect(() => stageProcessorInput(rasterLayer, { width: big.width, height: big.height } as ImageBitmap)).toThrow(
       /raster bounds/
     );
+  });
+
+  describe('a requested stroke frame', () => {
+    it('pads a tight layer into a wider frame with transparent pixels, offset so the old pixels keep their place', () => {
+      const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, []);
+      const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+      const staged = stageProcessorInput(rasterLayer, bitmap, { x: -10, y: -5, width: 80, height: 60 });
+
+      expect(staged.bounds).toEqual({ x: -10, y: -5, width: 80, height: 60 });
+      expect((staged.bitmap as OffscreenCanvas).width).toBe(80);
+      expect((staged.bitmap as OffscreenCanvas).height).toBe(60);
+      expect(staged.bitmap).not.toBe(bitmap);
+      // The blit offset is the whole difference between a PADDED frame and a SHIFTED one: the
+      // layer's own pixels must land 20 right and 10 down from the new origin, or every stroke
+      // would be applied to the wrong pixels.
+      expect(vi.mocked((staged.bitmap as OffscreenCanvas).getContext('2d')!.drawImage)).toHaveBeenCalledWith(
+        bitmap,
+        20,
+        10
+      );
+    });
+
+    it('hands back the layer raster untouched when the requested frame already is it', () => {
+      const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, []);
+      const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+      const staged = stageProcessorInput(rasterLayer, bitmap, { x: 10, y: 5, width: 40, height: 20 });
+
+      // No surface is allocated at all for the common in-layer case, which is what keeps an
+      // ordinary stroke from paying for a copy on every pointer move.
+      expect(staged.bitmap).toBe(bitmap);
+    });
+
+    it('pads the PRESENTED bounds of a transformed layer, so the frame is right after a retained affine', () => {
+      const rasterLayer = layerWith({ x: 10, y: 5, width: 40, height: 20 }, [
+        affine({ a: 2, b: 0, c: 0, d: 2, e: 5, f: 3 }),
+      ]);
+      const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+      const staged = stageProcessorInput(rasterLayer, bitmap, { x: 0, y: 0, width: 120, height: 80 });
+
+      // Presented extent is (15, 8, 80, 40); the padding is applied to THAT, not to `pos`.
+      expect(staged.bounds).toEqual({ x: 0, y: 0, width: 120, height: 80 });
+      expect((staged.bitmap as OffscreenCanvas).width).toBe(120);
+    });
+
+    it('declines an oversized frame instead of allocating one, because a stroke frame is sized by the stroke', () => {
+      // The defect: this branch never calls `evaluatePresentation`, so it inherited none of the
+      // caps, and a drag from one corner of a large document to the opposite named a frame far
+      // larger than the layer — allocated, and blitted, once per pointer move.
+      const over = Math.floor(Math.sqrt(MAX_AFFINE_PIXELS)) + 1;
+      const rasterLayer = layerWith({ x: 0, y: 0, width: 40, height: 20 }, []);
+      const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+      const staged = stageProcessorInput(rasterLayer, bitmap, { x: 0, y: 0, width: over, height: over });
+
+      // It REFUSES rather than throwing, because both callers already treat a staging failure as
+      // "this tool did nothing here"; declining is the answer a cap produces anywhere else.
+      expect(staged.bitmap).toBe(bitmap);
+      expect(staged.bounds).toEqual({ x: 0, y: 0, width: 40, height: 20 });
+    });
+
+    it('declines a frame whose origin is beyond the coordinate cap', () => {
+      const rasterLayer = layerWith({ x: 0, y: 0, width: 40, height: 20 }, []);
+      const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+      const staged = stageProcessorInput(rasterLayer, bitmap, {
+        x: MAX_AFFINE_COORDINATE * 2,
+        y: 0,
+        width: 40,
+        height: 20,
+      });
+
+      expect(staged.bitmap).toBe(bitmap);
+    });
   });
 });
