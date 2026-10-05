@@ -1383,9 +1383,9 @@ describe('conversion entry points', () => {
       { documentRevision: 7, branchRevision: 3, durableRevision: 41 }
     );
 
-    // The store is the only caller that supplies these three
-    // (`StoreContext.tsx:809-815`), and it compares revisions to detect a stale
-    // append, so the plumbing is load-bearing and otherwise unpinned: every other
+    // The store is the only caller that supplies these three — the
+    // `convertLegacyHistorySafely` call in `StoreContext.tsx` — and it compares revisions to
+    // detect a stale append, so the plumbing is load-bearing and otherwise unpinned: every other
     // conversion in this suite converts into a document that starts at zero, so
     // replacing `options.branchRevision ?? 0` with a literal `0` — or recomputing
     // `durableRevision` as `entries.length` and discarding the store's — would

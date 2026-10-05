@@ -319,7 +319,7 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable removal', () => {
 
       // Control: a refused publication still falls back to conversion, and the
       // conversion is itself transactional — `convertLegacyHistorySafely` opens and
-      // reconciles its own document transaction (`history-adapter.ts:892,906`). So
+      // reconciles its own document transaction. So
       // the second commit adds exactly one more of each, and the totals are exact
       // rather than "more than before": a fallback path that stopped reconciling,
       // or reconciled twice, fails here.

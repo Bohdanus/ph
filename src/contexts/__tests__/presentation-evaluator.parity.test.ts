@@ -44,8 +44,8 @@ type RenderCall = { op: string; args: unknown[] };
 
 /**
  * A stand-in for the global `OffscreenCanvas` that records what is drawn to it.
- * `materialization.ts:55` builds every surface through that global and never reaches
- * the `document.createElement` branch at line 57, so a spy on
+ * `createCanvas` in `materialization.ts` builds every surface through that global and never
+ * reaches its `document.createElement` fallback branch, so a spy on
  * `HTMLCanvasElement.prototype.getContext` cannot see any of it.
  *
  * `filter` is an accessor because `ctx.filter = …` is a property write, not a method
@@ -159,10 +159,11 @@ function transformMatrices(calls: readonly RenderCall[]): number[][] {
 }
 
 /**
- * The durable equivalent of the fixture above, in the runtime path's own record shape
- * (`layer-types.ts:31-44`): an affine carries `transform`, a filter carries the raw
- * tool args under `args`. This is deliberately NOT `PresentationOperation[]` — the two
- * paths are fed two different record shapes, which is the whole point of a parity test.
+ * The durable equivalent of the fixture above, in the runtime path's own record shape —
+ * `AffineLayerOperation` and `FilterLayerOperation` in `layer-types.ts`: an affine carries
+ * `transform`, a filter carries the raw tool args under `args`. This is deliberately NOT
+ * `PresentationOperation[]` — the two paths are fed two different record shapes, which is the
+ * whole point of a parity test.
  */
 function runtimeLayerOperations(kind: 'none' | 'affine' | 'filter' | 'affine-filter'): Layer['operations'] {
   const operations: Layer['operations'][number][] = [];
@@ -344,9 +345,16 @@ describe('presentation evaluator parity', () => {
     // runtime translates by the document-space origin, materialization translates the
     // source back into a `localBounds`-sized surface at the origin. For this fixture
     // `localBounds` is (0, 0, 80, 40), so the durable translate is (0, 0) where the
-    // runtime's is (10, 14). If the durable path stopped compensating, the blit would
-    // land at the surface origin and the frame blit above would still read (10, 14) —
-    // so this is the assertion that makes the compensation load-bearing.
+    // runtime's is DOCUMENT_ORIGIN — (12, 18), not a number invented for the prose.
+    //
+    // This test does NOT make that compensation load-bearing, and an earlier version of
+    // this comment said it did. It asserts only `localBounds` and `bounds`, both computed
+    // by the evaluator itself, so they would read the same whether or not the durable
+    // renderer compensated at all. What pins the compensation is the frame-blit
+    // placement asserted above, which reads the durable path's own `drawImage` offset.
+    // What this test owns is that the evaluator's two bounds are the ones both paths then
+    // place, so a change to either would move the durable render and the runtime overlay
+    // together rather than silently apart.
     const evaluation = evaluatePresentation({
       position,
       sourceSize: { width: position.width, height: position.height },

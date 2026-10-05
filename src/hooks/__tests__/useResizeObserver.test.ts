@@ -165,23 +165,26 @@ describe('useResizeObserverRAF', () => {
   });
 
   /**
-   * THE ONE-FRAME BOUND, asserted from both sides of it.
+   * THE FRAME BOUNDARY, asserted from both sides of it.
    *
-   * Every other test in this file advances a full 16ms in one step, which cannot tell
-   * "one animation frame" apart from "any delay up to 16ms" — a gate that fired on a
-   * 15ms timer, or on the second frame, would pass all of them. This one advances 15ms,
-   * requires silence, then advances 1ms more and requires the publish, so the gate is
-   * pinned to exactly one frame.
+   * Every other test in this file advances a full 16ms in one step, which cannot tell a
+   * 16ms gate apart from any shorter one — a gate that fired on a 5ms timer would pass all
+   * of them. This one advances 15ms, requires silence, then advances 1ms more and requires
+   * the publish, so the boundary is pinned from both sides.
+   *
+   * The bound is 16ms because that is the delay this hook schedules, and the suite's fake
+   * timers fake `requestAnimationFrame` as a fixed 16ms timer, so "one frame" and "16ms" are
+   * indistinguishable here. That is a limitation worth stating rather than glossing: a real
+   * frame is however long the compositor takes. What IS discriminated is the case this
+   * matters for — a COARSE timer standing in for the frame — because a coarse timer leaves
+   * the callback uncalled at 16ms, which is exactly the "every slider becomes a slideshow"
+   * failure the old constant's upper bound existed to catch.
    *
    * This assertion replaces a salvaged one. The abandoned `unit-hardening` work pinned
    * `THROTTLE_TIME` (50) and `THROTTLE_DRAW` (30) and required both to sit inside
-   * `[16ms, 100ms]` — coarse enough to coalesce a pointer burst, fine enough that no
-   * user perceives lag. Those two numbers died with their barrel module, which existed
-   * only to be tested, so there is no longer a millisecond to compare. The rule they
-   * protected survives as this gate, and its upper bound is what the 15ms silence pins:
-   * a gate opened by a coarse timer instead of a frame leaves the callback uncalled at
-   * 16ms, which is the "turns every slider into a slideshow" failure the old upper bound
-   * existed to catch.
+   * `[16ms, 100ms]`. Those two numbers died with their barrel module, which existed only to
+   * be tested, so there is no longer a millisecond to compare. The rule they protected
+   * survives as this gate.
    */
   it('opens the gate at exactly one frame, so a coarser timer cannot stand in for it', () => {
     const el = makeElement();

@@ -619,8 +619,8 @@ describe('Draw toolbar', () => {
       // Exactly one rasterisation per mount and one per published change, not merely "more than
       // before": `toBeGreaterThan` passed for a bar that redrew three times per keystroke, which
       // is the expensive half of this effect — `draw` allocates and rasterises a full preview on
-      // every call. The preview effect's dependency list (`Draw.tsx:120`) is the load-bearing
-      // thing being pinned: it is why the count is 1 and not 0 after a change that only re-renders.
+      // every call. The preview effect's dependency list is the load-bearing thing being
+      // pinned: it is why the count is 1 and not 0 after a change that only re-renders.
       expect(drawCreatorMock).toHaveBeenCalledTimes(1);
 
       changeSize('31');

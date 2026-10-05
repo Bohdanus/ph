@@ -204,12 +204,12 @@ describe('action entries that carry a layer source', () => {
       layerSource: toolSource('shape', args),
     });
 
-    // The create-layer arm (`history-adapter.ts:674`) is reached through the
+    // The create-layer arm of `operationForTool` is reached through the
     // `TOOL_ACTION && source` half of its condition. The entry carries no `args` at
     // all, so if that half were dropped `operationForTool` would find no
     // `toolName`, return null and the entry would publish NOTHING: a
     // tool-created layer missing from the shadow with no diagnostic to say so,
-    // while legacy replay — whose matching arm is `history-replay.ts:127` —
+    // while legacy replay — whose matching arm is `history-replay.ts` —
     // keeps the layer. Every assertion below is about the entry surviving.
     expect(diagnostics).toEqual([]);
     expect(document.history.map((entry) => entry.id)).toEqual(['shape-tool']);
@@ -261,10 +261,10 @@ describe('action entries that carry a layer source', () => {
       } satisfies ImageLayerSource,
     });
 
-    // `mergeAllLayers` retains the merged `LayerSource` in the entry's `args`
-    // (`useLayer.ts:838-842`), so THIS is the shape every real merge takes — no
+    // `mergeAllLayers` retains the merged `LayerSource` in the entry's
+    // `args`, so THIS is the shape every real merge takes — no
     // `layerSource` is written. If `asLegacyLayerSource(item.args)`
-    // (`history-adapter.ts:673`) stopped reading `args`, the merge arm would miss
+    // stopped reading `args`, the merge arm would miss
     // its `&& source` guard and fall through to the unknown-action throw: an
     // ERROR diagnostic, which `convertLegacyHistorySafely` answers by withholding
     // the whole shadow for every document the user has ever merged in.
@@ -428,8 +428,8 @@ describe('raster tool conversion', () => {
     const registry = new AssetRegistry();
     // `getTransformFromHistoryArgs` reads `candidate.transform` off the legacy
     // args, and legacy args are unvalidated data — a hostile or corrupt entry can
-    // raise a non-Error there. `trapezoid` is absent so the truthiness guard at
-    // `history-adapter.ts:492` is skipped and the read happens inside the try.
+    // raise a non-Error there. `trapezoid` is absent so the truthiness guard in
+    // `history-adapter.ts` is skipped and the read happens inside the try.
     const args: Record<string, unknown> = { toolName: 'transform' };
     Object.defineProperty(args, 'transform', {
       configurable: true,
