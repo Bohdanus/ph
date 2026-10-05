@@ -266,8 +266,9 @@ describe('action entries that carry a layer source', () => {
     // `layerSource` is written. If `asLegacyLayerSource(item.args)`
     // stopped reading `args`, the merge arm would miss
     // its `&& source` guard and fall through to the unknown-action throw: an
-    // ERROR diagnostic, which `convertLegacyHistorySafely` answers by withholding
-    // the whole shadow for every document the user has ever merged in.
+    // ERROR diagnostic, so the document would be published MISSING the merge for
+    // every document the user has ever merged in, and navigation would decline to
+    // descend through it.
     expect(diagnostics).toEqual([]);
     expect(document.history.map((entry) => entry.id)).toEqual(['merge-args']);
     expect(legacyCursorToDurableCursor).toEqual([-1, 0]);

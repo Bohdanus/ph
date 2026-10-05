@@ -5,6 +5,7 @@ import { AssetRegistry } from '../asset-registry.ts';
 import {
   convertLegacyHistorySafely,
   deriveSetSelectionEntry,
+  isStructurallyValidConversion,
   legacyHistoryToDurable,
   type DurableConversionAttempt,
 } from '../history-adapter.ts';
@@ -17,7 +18,7 @@ import {
 } from '../history-model.ts';
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, NEW_LAYER_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 
 const layerId = 'layer-1';
@@ -266,15 +267,28 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
 });
 
 describe('convertLegacyHistorySafely boundary (P0.1)', () => {
-  it('returns unavailable status with a diagnostic and null document for an unsupported tool entry', () => {
+  it('publishes the document with the entry omitted for an unsupported tool entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
+    // The partition. An `error` diagnostic names an entry the document does NOT
+    // contain, which is a fact about one entry rather than a verdict on the whole
+    // conversion, so the document is published and the entry is absent. What this
+    // test asserted before is the defect: one pen entry cost the entire timeline
+    // its document and its cursor map.
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.document?.history).toHaveLength(0);
+    // The baseline survived, so the shadow still shadows something: the document
+    // holds the opening state even though the only edit did not convert.
+    expect(result.document?.baseline.layers).toHaveLength(1);
+    // The cursor map is the part that is expensive to recompute, and the part the
+    // old contract discarded. Neither legacy cursor has a durable entry to name,
+    // so both map to -1 rather than to the tip of a document with no entries.
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, -1]);
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'pen-tool',
@@ -285,7 +299,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     registry.shutdown();
   });
 
-  it('returns unavailable status for an unknown processor entry', () => {
+  it('publishes the document for an unknown processor entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -299,8 +313,9 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.document?.history).toHaveLength(0);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'unknown-tool',
       actionName: TOOL_ACTION,
@@ -310,7 +325,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     registry.shutdown();
   });
 
-  it('returns unavailable status for non-finite transform values', () => {
+  it('publishes the document for non-finite transform values', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -324,8 +339,10 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.document?.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'nan-transform',
       actionName: TOOL_ACTION,
@@ -335,7 +352,38 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     registry.shutdown();
   });
 
-  it('rolls back asset registration when conversion fails, leaving no dangling assets', () => {
+  it('withholds the document when a conversion throws instead of producing one', () => {
+    const registry = new AssetRegistry();
+    // The whole-conversion half of the partition, and the only reason
+    // `status: 'unavailable'` still exists. The opening layer carries neither a
+    // source nor a raster, so `snapshotFromDocumentSource` throws BEFORE the
+    // per-entry loop — nothing inside the conversion catches it, and the catch in
+    // `convertLegacyHistorySafely` is the boundary that reports it. Passed as the
+    // only entry, not through `convertSafely`, because the throw happens while the
+    // OPENING state is read: as a later entry this same item would be refused by
+    // the document-replacement branch and never reach `convertLayer`.
+    const opening = {
+      ...baselineHistory()[0],
+      documentSource: {
+        layers: { [layerId]: { ...blankLayer(), source: undefined, bitmap: null } },
+        size: initialSize,
+        frame: baselineFrame,
+      },
+    } as unknown as HistoryItem;
+    const result = convertLegacyHistorySafely([opening], { documentId: 'test-doc', registry });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({ severity: 'error', code: 'unsupported-history-feature' });
+    // A failure that names no entry is not entry-local, so it has no `historyId`
+    // to name. That difference is the whole partition.
+    expect(result.diagnostics[0]?.historyId).toBeUndefined();
+    registry.shutdown();
+  });
+
+  it('keeps the asset of a published layer resolvable when a later entry does not convert', () => {
     const registry = new AssetRegistry();
     const { bitmap, close } = createOwnedBitmap(10, 10);
     const imageLayer = {
@@ -367,21 +415,81 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
+    // The old contract rolled the transaction back, which also discarded the asset
+    // the PUBLISHED layer names — a per-entry problem paid for by an entry that
+    // converted. The published document keeps that entry, and its asset is still
+    // registered.
+    expect(result.status).toBe('current');
+    expect(result.document?.history.map((entry) => entry.id)).toEqual(['img-layer-item']);
+    const operation = result.document!.history[0]?.operation;
+    const source = operation?.kind === 'create-layer' ? operation.layer.source : undefined;
+    expect(source?.kind).toBe('raster');
+    const assetId = source?.kind === 'raster' ? source.assetId : undefined;
+    expect(assetId).toBeDefined();
+    expect(registry.getRecord(assetId!)).toBeDefined();
+    // `registerRaster` records borrowed ownership, so reconciling a REACHABLE
+    // asset releases nothing and closes nothing. Legacy replay reads this same
+    // bitmap straight off the history item, so closing it would be data loss.
     expect(close).not.toHaveBeenCalled();
     registry.shutdown();
   });
 
-  it('a later valid edit recovers durable conversion after a prior failure', () => {
+  it('reclaims the asset an unpublished entry registered, rather than leaving it dangling', () => {
+    const registry = new AssetRegistry();
+    const first = createOwnedBitmap(8, 8);
+    const second = createOwnedBitmap(8, 8);
+    const imageItem = (id: string, layerId: string, bitmap: ImageBitmap): HistoryItem => ({
+      id,
+      actionName: NEW_LAYER_ACTION,
+      layerId,
+      layerSource: {
+        kind: 'image',
+        bitmap,
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 8, height: 8 },
+      } as never,
+    });
+    const registered = vi.spyOn(registry, 'registerBaseline');
+
+    // The leak the new contract has to answer for, and it is REACHABLE rather
+    // than hypothetical. A `create-layer` whose id repeats one already published
+    // registers its raster on the way through and is then withheld from the
+    // document, so the conversion commits and the asset is named by nothing in
+    // the document that gets published. `reconcileDocumentAssets` releases by
+    // REACHABILITY, which is why the success path reconciles at all; a commit
+    // without reconciliation would dangle it until some later conversion.
+    const result = convertSafely(
+      [imageItem('layer-item', 'first-layer', first.bitmap), imageItem('layer-item', 'second-layer', second.bitmap)],
+      registry
+    );
+
+    expect(result.status).toBe('current');
+    expect(result.document?.history).toHaveLength(1);
+    const registeredIds = registered.mock.results.map((call) => call.value as AssetId);
+    expect(registeredIds).toHaveLength(2);
+    const reachable = [...collectDurableAssetIds(result.document!)];
+    expect(reachable).toEqual([registeredIds[0]]);
+    expect(registry.getRecord(registeredIds[0]!)).toBeDefined();
+    // The withheld entry's asset is gone, and only the withheld one.
+    expect(registry.getRecord(registeredIds[1]!)).toBeUndefined();
+    registry.shutdown();
+  });
+
+  it('a later valid edit converts after an earlier entry did not', () => {
     const registry = new AssetRegistry();
 
     const badResult = convertSafely(
       [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
       registry
     );
-    expect(badResult.status).toBe('unavailable');
-    expect(badResult.document).toBeNull();
+    // Before the partition this was an "unavailable, then recover" pair, and the
+    // recovery was the evidence of how much the failure cost. There is no
+    // unavailable here to recover from: the pen entry is simply absent from a
+    // published document.
+    expect(badResult.status).toBe('current');
+    expect(badResult.document).not.toBeNull();
+    expect(badResult.document?.history).toHaveLength(0);
+    expect(badResult.diagnostics[0]).toMatchObject({ historyId: 'pen-tool', severity: 'error' });
 
     const goodResult = convertSafely(
       [{ id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } }],
@@ -467,7 +575,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     registry.shutdown();
   });
 
-  it('rolls back the asset transaction and skips reconciliation for a rejected conversion', () => {
+  it('reconciles by reachability for a conversion that omitted an entry', () => {
     const registry = new AssetRegistry();
     const { bitmap, close } = createOwnedBitmap(10, 10);
     const imageLayer = {
@@ -496,11 +604,17 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
-    expect(reconcile).not.toHaveBeenCalled();
+    // The counterpart of the withheld-document rule: the transaction COMMITS, and
+    // reconciliation runs with the set the published document actually names. The
+    // image layer is in that document, so its asset survives — where a rollback
+    // would have released an asset a published entry still referenced, and where
+    // no reconciliation at all would have released nothing.
+    expect(result.status).toBe('current');
+    expect(reconcile).toHaveBeenCalledOnce();
     const registeredIds = register.mock.results.map((call) => call.value as AssetId);
     expect(registeredIds).toHaveLength(1);
-    expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
+    expect(reconcile).toHaveBeenCalledWith('test-doc', new Set([registeredIds[0]!]));
+    expect(registry.getRecord(registeredIds[0]!)).toBeDefined();
     expect(close).not.toHaveBeenCalled();
     registry.shutdown();
   });
@@ -596,6 +710,51 @@ function createOwnedBitmap(width = 1, height = 1) {
   return { bitmap, close };
 }
 
+/**
+ * The fail-closed half of the partition, pinned on hand-built results.
+ *
+ * No conversion in `history-adapter.ts` produces an out-of-range cursor, so a test
+ * that tried to reach this through `convertSafely` would prove nothing: it would
+ * pass because the guard never fires, not because the guard is right. The rule
+ * itself is the subject, so it is given results the converter cannot build and
+ * asked about them directly.
+ */
+describe('isStructurallyValidConversion', () => {
+  const withCursors = (cursors: readonly number[], entryCount = 1) =>
+    ({
+      document: { history: new Array(entryCount).fill({ id: 'entry' }) },
+      diagnostics: [],
+      legacyCursorToDurableCursor: cursors,
+    }) as unknown as Parameters<typeof isStructurallyValidConversion>[0];
+
+  it('accepts a map whose every value is an index the document holds, or -1', () => {
+    // 0 is the only entry a one-entry document has, so 0 and -1 are the whole
+    // vocabulary here; anything else is out of range by construction.
+    expect(isStructurallyValidConversion(withCursors([0]))).toBe(true);
+    expect(isStructurallyValidConversion(withCursors([-1, 0]))).toBe(true);
+    expect(isStructurallyValidConversion(withCursors([], 0))).toBe(true);
+  });
+
+  it.each([
+    ['a cursor past the tip', [1]],
+    ['a negative cursor below the baseline', [-2]],
+    ['a non-integer cursor', [0.5]],
+    ['NaN', [Number.NaN]],
+    ['a cursor that is not a number at all', ['0']],
+    ['one bad value among good ones', [-1, 0, 2]],
+  ])('refuses %s', (_label, cursors) => {
+    expect(isStructurallyValidConversion(withCursors(cursors as readonly number[]))).toBe(false);
+  });
+
+  it('bounds the accepted range by the document the conversion actually produced', () => {
+    // The same cursor, two documents. A three-entry document holds 0..2, so 2 is a
+    // real target; a one-entry document does not, so 2 navigates to nothing. A
+    // check hard-coded to any single bound would get one of the two wrong.
+    expect(isStructurallyValidConversion(withCursors([2], 3))).toBe(true);
+    expect(isStructurallyValidConversion(withCursors([2], 1))).toBe(false);
+  });
+});
+
 describe('legacyHistoryToDurable selection fail-closed boundary', () => {
   it.each(UNUSABLE_NEXT_STATES)(
     'records an error diagnostic naming the entry for %s next selection state',
@@ -617,20 +776,29 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     }
   );
 
-  it.each(UNUSABLE_NEXT_STATES)('voids the document for %s next selection state', (_label, next) => {
-    const registry = new AssetRegistry();
-    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+  it.each(UNUSABLE_NEXT_STATES)(
+    'omits the entry but publishes the document for %s next selection state',
+    (_label, next) => {
+      const registry = new AssetRegistry();
+      const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
-    expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]).toMatchObject({
-      historyId: 'selection-clear',
-      actionName: SELECTION_ACTION,
-      severity: 'error',
-    });
-    registry.shutdown();
-  });
+      // The document is no longer withheld, and the entry is no longer INVENTED as a
+      // clear. What the throw in the `SELECTION_ACTION` arm buys now is the omission
+      // plus the diagnostic: the shadow asserts nothing about a state it cannot read,
+      // and `legacy replay` — which crashes on the very same shapes — is not shadowed
+      // by an answer it never gave.
+      expect(result.status).toBe('current');
+      expect(result.document).not.toBeNull();
+      expect(result.document?.history).toHaveLength(0);
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]).toMatchObject({
+        historyId: 'selection-clear',
+        actionName: SELECTION_ACTION,
+        severity: 'error',
+      });
+      registry.shutdown();
+    }
+  );
 
   it('names the offending entry id in the diagnostic message', () => {
     const registry = new AssetRegistry();
@@ -639,7 +807,7 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('current');
     expect(result.diagnostics[0]?.message).toContain('unreadable-selection');
     registry.shutdown();
   });
@@ -735,26 +903,70 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
   });
 
   /**
-   * CURRENT behaviour, pinned as a tripwire, and it is the wrong behaviour: the
-   * baseline derivation reads the first selection entry's previous state with no
-   * structural guard at all — `deriveSelectionBaseline` reads the first selection entry's
-   * previous state directly — so a malformed one throws
-   * OUTSIDE the per-entry try and voids the entire shadow. The same shape one
-   * entry later is merely ignored, because `deriveSetSelectionEntry` falls back to
-   * the tracked baseline. Fixing the tolerance must DELETE this test rather than
-   * edit it.
+   * The tripwire this replaces — `it('voids the whole conversion for an unreadable
+   * previous state on the FIRST selection entry')` — was deleted rather than
+   * edited, as its own docblock required. It pinned the asymmetry: the baseline
+   * derivation read the first selection entry's `previousSelectionState` with no
+   * structural guard, so a malformed one threw outside every per-entry boundary
+   * and voided the whole shadow, while the identical value one entry later was
+   * tolerated by `deriveSetSelectionEntry`. Below, the same value at the same
+   * position is a `warning` on a published document, and the next test proves the
+   * two positions now cost the same thing.
    */
-  it('voids the whole conversion for an unreadable previous state on the FIRST selection entry', () => {
+  it('tolerates an unreadable previous state on the FIRST selection entry, as it does one entry later', () => {
     const registry = new AssetRegistry();
-    const result = convertSafely([createSelectionHistoryItem({ selections: null }, selectionState('next'))], registry);
+    const firstEntry = createSelectionHistoryItem({ selections: null }, selectionState('next'), { id: 'first-clear' });
+    const result = convertSafely([firstEntry], registry);
 
-    expect(result.status).toBe('unavailable');
-    expect(result.document).toBeNull();
-    // No per-entry diagnostic: the throw happens while the baseline is derived, so
-    // it is reported as a whole-conversion failure with no history id to blame.
-    expect(result.diagnostics).toEqual([expect.objectContaining({ severity: 'error', code: 'conversion-failed' })]);
-    expect(result.diagnostics[0]?.historyId).toBeUndefined();
-    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    // Not withheld, and not a `conversion-failed` with no id to blame. The entry
+    // that carried the unreadable state is named instead.
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'first-clear',
+        actionName: SELECTION_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+      }),
+    ]);
+    // The baseline is the EMPTY selection, which is what `replayHistory` starts
+    // from for the same timeline: both callers read the state through
+    // `deriveSelectionBaseline`, so the fallback is parity rather than a guess.
+    expect(result.document?.baseline.selections).toEqual({ selections: [], activeSelectionId: null });
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0]);
+    registry.shutdown();
+  });
+
+  it('gives a malformed previous state the same cost on the first entry as on a later one', () => {
+    const registry = new AssetRegistry();
+    const malformed = { selections: null };
+    const first = convertSafely(
+      [createSelectionHistoryItem(malformed, selectionState('next'), { id: 'first-clear' })],
+      registry
+    );
+    const later = convertSafely(
+      [
+        createSelectionHistoryItem(selectionState('seed'), selectionState('next'), { id: 'seed' }),
+        createSelectionHistoryItem(malformed, selectionState('later-next'), { id: 'later-clear' }),
+      ],
+      registry
+    );
+
+    // Position in the timeline decided the blast radius before, and that was the
+    // defect. Now both positions publish a document, and the difference between
+    // them is only the diagnostic the FIRST one earns for a baseline it had to
+    // fabricate: a later entry's `previous` is merely unused, because the tracked
+    // selections already hold the answer.
+    expect(first.status).toBe('current');
+    expect(later.status).toBe('current');
+    expect(first.document?.history).toHaveLength(1);
+    expect(later.document?.history).toHaveLength(2);
+    expect(first.diagnostics).toHaveLength(1);
+    expect(later.diagnostics).toEqual([]);
+    // And the fabricated baseline is genuinely empty rather than an alias of
+    // something, so a reader holding the document cannot mistake it for a state.
+    expect(first.document?.baseline.selections.selections).toEqual([]);
     registry.shutdown();
   });
 });
@@ -890,14 +1102,13 @@ describe('deriveSetSelectionEntry', () => {
 });
 
 /**
- * `plainValue` (`history-adapter.ts:113`) treats `undefined` as ABSENCE in the
- * object branch, and after the fix as absence PRESERVED AS A HOLE in the array
- * branch. The two branches disagreeing WAS the defect: an array element of
- * `undefined` fell through to the non-plain throw, the throw became an `error`
- * diagnostic, and `convertLegacyHistorySafely` withholds the WHOLE durable
- * shadow on the first one — so a single holey tool-arg array was enough to lose
- * the document, which is a far worse outcome than the object branch's own
- * handling of the very same value.
+ * `plainValue` treats `undefined` as ABSENCE in the object branch, and after the
+ * fix as absence PRESERVED AS A HOLE in the array branch. The two branches
+ * disagreeing WAS the defect: an array element of `undefined` fell through to the
+ * non-plain throw, and the throw became an `error` diagnostic naming the whole
+ * entry — so a single holey tool-arg array was enough to take that entry out of
+ * the durable document and stop navigation descending through it, which is a far
+ * worse outcome than the object branch's own handling of the very same value.
  *
  * The array branch KEEPS the absence rather than compacting it away, because
  * legacy replay (`history-replay.ts`) hands the processor the original array and
@@ -914,7 +1125,7 @@ describe('deriveSetSelectionEntry', () => {
  * explicitly admits at the top of the function, so only `undefined` is absence.
  */
 describe('plainValue absence handling (history-adapter)', () => {
-  it('an explicit undefined element in a tool-arg array does not void the document', () => {
+  it('an explicit undefined element in a tool-arg array does not cost the entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
       [
@@ -1020,7 +1231,7 @@ describe('plainValue absence handling (history-adapter)', () => {
     return Array.isArray(stops) ? stops : undefined;
   }
 
-  it('converts an array arg that carries an absent element instead of withholding the whole shadow', () => {
+  it('converts an array arg that carries an absent element instead of dropping the entry', () => {
     const registry = new AssetRegistry();
 
     const result = convertSafely([levelsItem({ stops: [0, undefined, 0.5, undefined, 1] })], registry);

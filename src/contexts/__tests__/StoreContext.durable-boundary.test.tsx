@@ -100,7 +100,7 @@ function renderWithProbe() {
 }
 
 describe('StoreContext durable conversion boundary', () => {
-  it('dispatching an unsupported tool does not throw and marks the durable state unavailable', () => {
+  it('dispatching an unsupported tool does not throw and keeps the durable document without that entry', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     const baseline = baselineItem();
@@ -141,10 +141,13 @@ describe('StoreContext durable conversion boundary', () => {
 
     expect(threw).toBe(false);
     const after = getProbe().store;
-    // The failed conversion explicitly marks the durable state unavailable
-    // rather than silently presenting a partially converted document as current.
-    expect(after.durableDocument).toBeNull();
-    expect(after.durableStatus).toBe('unavailable');
+    // The store holds a document that describes every entry it CAN describe, with
+    // the pen edit absent and named. It used to hold `null` here, so one
+    // unconvertible edit cost the shadow the blur edit before it, the cursor map,
+    // and undo/redo for the document.
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDocument).not.toBeNull();
+    expect(after.durableDocument?.history.map((entry) => entry.id)).toEqual(['blur-edit']);
     expect(after.durableDiagnostics).toHaveLength(1);
     expect(after.durableDiagnostics[0]).toMatchObject({
       historyId: 'pen-edit',
@@ -155,7 +158,7 @@ describe('StoreContext durable conversion boundary', () => {
     expect(after.durableDiagnostics[0]?.message).toMatch(/pen/);
   });
 
-  it('recovers durable conversion via a subsequent valid document replacement', () => {
+  it('keeps the document the pen edit could not contribute, and a replacement is still a fresh conversion', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     const penEdit = toolItem('pen-edit', 'pen');
@@ -171,10 +174,16 @@ describe('StoreContext durable conversion boundary', () => {
       });
     });
 
-    expect(getProbe().store.durableDocument).toBeNull();
+    // A store with no opening document cannot convert a tool action, and the layer
+    // it names is absent — so the entry is reported and the document is published
+    // empty rather than withheld.
+    expect(getProbe().store.durableStatus).toBe('current');
+    expect(getProbe().store.durableDocument).not.toBeNull();
+    expect(getProbe().store.durableDocument?.history).toHaveLength(0);
     expect(getProbe().store.durableDiagnostics[0]).toMatchObject({ severity: 'error' });
     expect(getProbe().store.durableDiagnostics[0]?.code).toBe('unsupported-history-feature');
 
+    const previousDocument = getProbe().store.durableDocument;
     const cleanBaseline = baselineItem('clean-baseline');
     const blur = toolItem('blur-edit', 'blur', { radius: 4 });
 
@@ -192,8 +201,10 @@ describe('StoreContext durable conversion boundary', () => {
     const after = getProbe().store;
     expect(after.durableDocument).not.toBeNull();
     expect(after.durableDiagnostics).toHaveLength(0);
-    // The new document is a fresh conversion, distinct from the null result.
-    expect(after.durableDocument).not.toBeNull();
+    // The new document is a fresh conversion, a new object, not the previous
+    // document re-labelled — the assertion the `null` result used to make by
+    // accident now has to be made explicitly.
+    expect(after.durableDocument).not.toBe(previousDocument);
   });
 
   it('records a diagnostic and skips an entry with malformed non-plain arguments instead of throwing', () => {
@@ -231,10 +242,14 @@ describe('StoreContext durable conversion boundary', () => {
 
     expect(threw).toBe(false);
     const store = getProbe().store;
-    // The malformed entry produces a diagnostic and is skipped, which marks
-    // the durable state unavailable rather than presenting a partial document.
-    expect(store.durableDocument).toBeNull();
-    expect(store.durableStatus).toBe('unavailable');
+    // The malformed entry is skipped and named, and the document holding the
+    // opening state is published. `status: 'current'` alongside an `error` is not a
+    // claim of faithfulness: the diagnostic is what says the shadow is missing an
+    // edit, and it is why navigation presentation refuses this shadow.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument).not.toBeNull();
+    expect(store.durableDocument?.history).toHaveLength(0);
+    expect(store.durableDocument?.baseline.layers).toHaveLength(1);
     expect(store.durableDiagnostics).toHaveLength(1);
     expect(store.durableDiagnostics[0]).toMatchObject({
       historyId: 'malformed-edit',
@@ -684,10 +699,30 @@ describe('StoreContext DurableDocumentStatus contract', () => {
   it('keeps unavailable rather than downgrading to stale when a selection commits after a failure', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
+    // The setup reached `unavailable` through `SET_DURABLE_STATUS` rather than
+    // through a conversion that produced an `error` diagnostic. That is a change
+    // of route, not of subject: a conversion error no longer withholds the
+    // document, so the sticky-`unavailable` guard this test is about is now
+    // reached by the writers that really do withhold one — a legacy-replay failure
+    // through `resetHistoryTo`, or a boundary diagnostic through
+    // `appendBoundaryDiagnostics`. `SET_DURABLE_STATUS` is the store's own record of
+    // that verdict, and driving it directly is the only way to hold the state still
+    // while a later transition runs.
     act(() => {
       dispatch()({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: { historyItem: toolItem('pen-edit', 'pen') },
+        type: 'SET_DURABLE_STATUS',
+        payload: {
+          status: 'unavailable',
+          diagnostics: [
+            {
+              historyId: 'pen-edit',
+              actionName: TOOL_ACTION,
+              severity: 'error',
+              code: 'conversion-failed',
+              message: 'History replay is unavailable',
+            },
+          ],
+        },
       });
     });
     expect(getProbe().store.durableStatus).toBe('unavailable');
@@ -732,7 +767,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     expect(committed.durableDiagnostics[0]).toMatchObject({
       historyId: 'pen-edit',
       severity: 'error',
-      code: 'unsupported-history-feature',
+      code: 'conversion-failed',
     });
   });
 });

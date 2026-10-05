@@ -126,6 +126,30 @@ export function durablePresentationIsRendererIdentical(
   );
 }
 
+/**
+ * Whether a converted shadow describes EVERY entry of the timeline it shadows.
+ *
+ * `durablePresentationIsRendererIdentical` accepts a layer only when the durable
+ * replay asserts its pixels ARE the source: no operations, the same bounds, a
+ * raster or blank source. That acceptance is sound only while the shadow and the
+ * legacy timeline agree about WHICH layers have been edited, so it is not sound
+ * for a shadow missing an edit — and a conversion that omitted an entry produces
+ * exactly that: the durable replay layer carries no operations, the check passes,
+ * and the un-edited materialization is written over the `tmpCanvas` the renderer
+ * draws (`layer-renderer.ts`). So navigation publication is the one consumer of
+ * the shadow that must refuse a conversion reporting a per-entry `error`, even
+ * though the document itself is published and every other consumer can use it.
+ *
+ * Stated as a predicate over diagnostics rather than a flag on the document: an
+ * `error` diagnostic IS the conversion saying "an entry the legacy timeline has
+ * is absent from this document", which is the premise. `history-adapter.ts` owns
+ * the other half — it publishes the partial document rather than withholding
+ * one — and this is the consumer that pays for that by not presenting it.
+ */
+function durableShadowDescribesEveryEntry(diagnostics: readonly MigrationDiagnostic[]): boolean {
+  return !diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+}
+
 export type StoreData = {
   // refs
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -1520,7 +1544,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
-      if (converted.status === 'current' && converted.document) {
+      if (
+        converted.status === 'current' &&
+        converted.document &&
+        durableShadowDescribesEveryEntry(converted.diagnostics)
+      ) {
         const durableCursor = converted.legacyCursorToDurableCursor?.[action.payload.timeline.cursor] ?? -1;
         void publishDurableNavigationPresentation(nextState, converted.document, durableCursor);
       }

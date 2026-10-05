@@ -293,9 +293,20 @@ The boundary is `history-adapter.ts`: `legacyHistoryToDurable()` in,
 `LAYER_PROPERTY_BY_ACTION`, `deriveSetSelectionEntry()`,
 `operationForTool()`. An unsupported tool throws
 `UnsupportedHistoryFeatureError` from `operationForTool()` rather than fabricating
-a no-op, and one
-`severity: 'error'` diagnostic voids the whole document, which
-`convertLegacyHistorySafely()` does.
+a no-op. That throw is caught per entry, so the entry is **omitted and named** by
+an `error` diagnostic, and `convertLegacyHistorySafely()` publishes the rest of
+the document rather than withholding it — including the cursor map, which is the
+part that is expensive to recompute. It withholds a document only when the result
+is structurally invalid, which `isStructurallyValidConversion()` decides from the
+cursor map rather than from any diagnostic's severity, and when the conversion
+threw before producing one. The transaction follows the document, not the entry:
+the success path commits and then reconciles the reachable set, so an asset
+registered for an omitted entry is reclaimed by
+`reconcileDocumentAssets()` rather than by a rollback. One consumer needs the
+stronger property and says so itself: `publishDurableNavigationPresentation()`
+refuses a shadow whose conversion reported a per-entry `error`, because
+`durablePresentationIsRendererIdentical()`'s acceptance assumes the shadow and the
+legacy timeline agree about which layers have been edited.
 
 Rasters are named, not embedded. A durable raster is `{ assetId, width, height }` —
 the `'raster'` arm of `DurableLayerSource` — and an `AssetId` is
@@ -409,6 +420,19 @@ timeline, and must. A selection is created by a gesture that writes no history
 entry, so bounding the search at the replay target makes undoing a tool-switch
 deselect a silent no-op. Its own JSDoc says so; the reasoning is
 in project memory under `selection_baseline_helper`.
+
+It also owns what "readable" means for a selection snapshot,
+`isValidSelectionSnapshot()`, because both consumers need that answer and a
+`previousSelectionState` is read by the baseline derivation while a
+`nextSelectionState` is read by `deriveSetSelectionEntry()`. An unreadable
+`previousSelectionState` on the **first** selection entry therefore falls back to
+the empty snapshot rather than throwing: `SelectionSnapshot` types the field, so
+the shape is outside the contract, and a `TypeError` out of it used to void the
+whole durable shadow with a diagnostic carrying no `historyId` while the identical
+value one entry later was tolerated. The fallback is parity rather than a guess —
+`replayHistory()` and `legacyHistoryToDurable()` read the state through the same
+derivation — and `legacyHistoryToDurable()` reports the fabricated baseline as a
+`warning` naming the entry, because parity is not observability.
 
 ## File I/O
 

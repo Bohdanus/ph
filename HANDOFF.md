@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
+### Items 0, 2-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236, 248 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -75,31 +75,6 @@ once.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
-
----
-
-## 4. P0 — one error diagnostic voids the entire durable shadow
-
-**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts`) checks
-`converted.diagnostics.some((d) => d.severity === 'error')` and, if any one entry
-produced an error, rolls back the asset transaction and returns `status: 'unavailable'` with
-`document: null`.
-
-Fail-closed is the right instinct, but this is fail-closed far too coarsely to be usable: a single
-unsupported pen or curve history entry discards a correctly-computed document _and_ a correct
-cursor map for the whole timeline. The cursor map in particular is the part that is hard to
-recompute, and it is thrown away for a problem local to one entry.
-
-**Fix.** Partition diagnostics. Entries that convert cleanly should produce a document with those
-entries omitted and a per-entry `error` diagnostic naming the `historyId`; only a failure that makes
-the document structurally invalid (frame mismatch, branch/cursor inconsistency, thrown conversion)
-should return `unavailable`. `b027de3` already establishes the vocabulary for this — it skips the
-offending entry rather than failing the conversion — so the pattern exists; apply it to the
-severity check too.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/StoreContext.tsx`
-
----
 
 ---
 
@@ -6555,41 +6530,3 @@ container-verification layer wholesale and re-adds `color`, `levels` and `transf
 rail. Board issue `ph-108` carries the full evidence.
 
 ---
-
-## 248. One malformed `previousSelectionState` voids the entire durable shadow, and the same shape one entry later is tolerated
-
-**Problem.** `legacyHistoryToDurable` derives the selection baseline with
-`deriveSelectionBaseline(legacyHistory)` **before** its per-entry loop and outside any
-`try`, so a single malformed argument anywhere in the timeline is not a per-entry
-diagnostic — it is the failure of the whole conversion.
-
-`deriveSelectionBaseline` (`selection-baseline.ts`) takes the first non-disabled
-`SELECTION_ACTION` and passes `previous?.selections` straight to `selectionSnapshot`.
-That function's parameter is `readonly Selection[] = []`, so the default rescues
-`undefined` and nothing else: a first entry carrying `previousSelectionState: { selections:
-null }` supplies `null`, and `null.map` throws a `TypeError`. The result is
-`status: 'unavailable'`, `document: null`, and one `conversion-failed` diagnostic with
-**no `historyId`** — the user is told the document is unavailable and is given nothing to
-blame. Undo and redo for the whole document stop working.
-
-The asymmetry is the defect. `deriveSetSelectionEntry` reads the same field **through a
-three-clause structural guard** and falls back to the tracked baseline when it fails, so a
-malformed `previousSelectionState` one entry later is merely ignored. Identical data,
-opposite blast radius, decided only by position in the timeline.
-
-Current behaviour is pinned as a tripwire by
-`it('voids the whole conversion for an unreadable previous state on the FIRST selection entry')`
-in `src/contexts/__tests__/history-adapter.safety.test.ts`, whose docblock states that a fix
-must DELETE that test rather than edit it.
-
-**Fix.** Give `deriveSelectionBaseline` the same structural tolerance
-`deriveSetSelectionEntry` already has — an unreadable `previousSelectionState` falls back to
-the empty selection snapshot — and move the derivation inside the conversion's error boundary
-so a failure is attributable rather than fatal. The type says `previousSelectionState?: SelectionSnapshot`,
-so `{ selections: null }` is already outside the contract; the defect is that nothing checks
-it before dereferencing. Do NOT fix this by bounding the baseline lookup: that is §31's rule
-and reopening it reintroduces a data-loss bug.
-
-**Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`, `selectionSnapshot`),
-`src/contexts/history-adapter.ts` (`legacyHistoryToDurable`),
-`src/contexts/__tests__/history-adapter.safety.test.ts`
