@@ -39,7 +39,7 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 
 ### Model policy
 
-**THE DEFAULT MODEL IS `Space Bunny Alpha (retires Oct 5)` ON PROVIDER `kilo`, AT VARIANT `max`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
+**THE DEFAULT MODEL IS `Poolside: Laguna S 2.1 (free)` ON PROVIDER `kilo`, AT VARIANT `thinking`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
 
 - **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
