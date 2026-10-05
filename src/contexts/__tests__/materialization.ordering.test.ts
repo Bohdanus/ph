@@ -839,7 +839,19 @@ describe('materialization operation ordering (P1.10)', () => {
       expect(callsOf('filter')).toEqual([{ op: 'filter', args: ['blur(3px)'] }]);
 
       // The composed bounds, as the renderer offsets the source back into them.
-      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-20, -40] }]);
+      //
+      // The affine product of `translate(10,20)` and `scale(2,2)` maps the 100x80 source into
+      // (20, 40, 200, 160): scale doubles the rectangle and translate then shifts it 10,20 of
+      // SOURCE pixels, which is 20,40 once doubled. The renderer negates that origin, because it
+      // has already allocated a surface exactly the size of the composed extent and is placing the
+      // source inside it.
+      //
+      // The blur's own spread is in those numbers: the surface has to HOLD the halo, so the extent
+      // is the composed affine extent grown by three sigmas of the radius-3 kernel — nine pixels on
+      // every edge — and the source is offset back by the GROWN origin, landing 9,9 inside the
+      // surface rather than at its corner. A translate of (-20, -40) here would be a surface that
+      // starts nine pixels before the content it was allocated for, with the halo cut at its edge.
+      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-11, -31] }]);
       expect(callsOf('drawImage')).toEqual([{ op: 'drawImage', args: [expect.anything(), 0, 0, 100, 80] }]);
 
       // ORDER, and only the two orders that change pixels. `transform` post-
