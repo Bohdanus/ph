@@ -52,6 +52,9 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
   // DOM state where `isOpen` is true, the list is absent and the attribute names it, but no painted
   // frame and no settled state in which a test or a user can observe it. So this is the alignment,
   // not a visible-bug fix -- unlike a collapsed panel, which is a state the user sits in.
+  // A direct boolean alias on purpose: TypeScript's aliased-condition narrowing only keeps `position`
+  // non-null downstream while the alias is literally that condition. Routing it through a helper
+  // would break the build for no visible reason.
   const listIsMounted = isOpen && position !== null;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);

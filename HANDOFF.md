@@ -6324,6 +6324,16 @@ mounted on `isInfoOpen && infoTooltipPos`. Nothing short of evaluating the expre
 from `isOpen && position`. A rule loose enough to catch them also fires on the seven legitimate unconditional
 references, `DesktopHeader`'s `aria-controls="right-panel"` among them.
 
+**A second blind spot in the same class, found while reviewing the fixes.** While the mobile tool sheet is
+open, `ToolbarHorizontal` stays mounted at every width and renders the same `ToolComponent` the sheet
+renders, so two copies of the tool's options subtree are in the document at once — including two elements
+with `id="font-family-select"`. ARIA 1.2 §8.6.1 resolves a duplicate id to the FIRST match, and the first
+is the desktop copy inside a `max-md:hidden` subtree, so any `aria-describedby` naming one of those ids
+describes the hidden instance on a phone. `MobileShell` and `App` already document the CROSSING direction
+and close both flags when the viewport leaves the mobile band; the mobile-band direction — two live copies,
+one relationship resolving to the wrong one — has no test and no comment. It needs the same real-document
+harness as the entry above, so it is recorded here rather than split out.
+
 **What would close it.** One rendered-tree invariant: render the shell in each state a trigger can be in and
 assert that every `aria-controls`, `aria-describedby`, `aria-labelledby` and `aria-owns` in the document
 resolves through `document.getElementById`. That is a property of the TREE rather than of any component, so
