@@ -47,8 +47,11 @@ const expectedShapeFlyout = [
 
 describe('toolbar mapping shape contract', () => {
   it('exposes the shape flyout', () => {
-    expect(shapeFlyout).toBeDefined();
-    expect(shapeFlyout.length).toBeGreaterThan(1);
+    // `shapeFlyout` is `find(...)!`, so `toBeDefined()` on it can never fail and asserted
+    // nothing. The claim worth making here is the COUNT — six entries, which is the shape
+    // flyout's whole surface — and it is a different claim from the exact array asserted in
+    // `toolbar mapping shape group contract`, which says which six and in what order.
+    expect(shapeFlyout).toHaveLength(6);
   });
 
   it('has no dedicated Circle or Square tools', () => {
@@ -278,10 +281,6 @@ describe('toolbar mapping shortcut contract', () => {
     expect(draw[0].shortcut).toBeUndefined();
   });
 });
-
-describe('toolbar mapping icon contract', () => {
-  /**
-    * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
 
 describe('toolbar mapping icon contract', () => {
   /**

@@ -43,7 +43,8 @@ import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import type { Layer, LayerId, LayerSource, ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
-import type { ToolName } from './tool-types.ts';
+import type { ToolArgs, ToolName } from './tool-types.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.freeze([]), activeSelectionId: null });
 
@@ -861,6 +862,7 @@ function retainedToolOperationKind(legacyArgs: Record<string, unknown>): Retaine
   }
   const processor = findToolProcessor(toolName as ToolName);
   if (!processor) return null;
+  if (isRasterStrokeArgs(legacyArgs as ToolArgs)) return 'apply-raster-processor';
   if (processor.commit === 'layer-operation') {
     return DURABLE_FILTER_TOOLS.includes(toolName) ? 'apply-filter' : null;
   }

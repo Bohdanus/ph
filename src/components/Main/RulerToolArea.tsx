@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from 'react';
 
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -7,6 +7,7 @@ import { resetOverlayAlpha } from '../../util/canvas.ts';
 import type { Point, Size } from '../../contexts/general-types.ts';
 import {
   RULER_ENDPOINT_HIT_RADIUS,
+  carryRulerLeg,
   constrainRulerAngle,
   isOnRulerLine,
   rulerLegVertex,
@@ -64,8 +65,8 @@ const CAP_LENGTH_CSS = 8;
  * line with a dark edge.
  *
  * These are the overlay's own constants rather than theme tokens because the overlay is a canvas and
- * reads no CSS custom property of its own. The casing is two backing pixels wider than the core, so
- * on the fitted canvas a pixel of white shows on each side.
+ * reads no CSS custom property of its own. `CASING_EXTRA_CSS` is the TOTAL extra, not a per-side one:
+ * four CSS px wider than the core, which leaves two device px of white on each side of it.
  */
 const RULER_RULE_CORE = '#000000';
 const RULER_RULE_CASING = '#ffffff';
@@ -230,32 +231,45 @@ export const drawRulerRule = (ctx: CanvasRenderingContext2D, measurement: RulerM
   }
 };
 
-/** Moves every point of a measurement by `(dx, dy)`, so a moved line keeps its angle and length. */
+/**
+ * Moves every point of a measurement by `(dx, dy)`, so a moved line keeps its angle and length.
+ *
+ * `carryRulerLeg` rather than `legAt: measurement.legAt`, because an object literal writes the key
+ * even when the value is `undefined` and `legAt` is documented as ABSENT unless it says `'start'`.
+ */
 const translateMeasurement = (measurement: RulerMeasurement, dx: number, dy: number): RulerMeasurement => {
   const moved: RulerMeasurement = {
     start: { x: measurement.start.x + dx, y: measurement.start.y + dy },
     end: { x: measurement.end.x + dx, y: measurement.end.y + dy },
   };
   if (measurement.legEnd === undefined) return moved;
-  return {
+  return carryRulerLeg({
     ...moved,
     legEnd: { x: measurement.legEnd.x + dx, y: measurement.legEnd.y + dy },
     legAt: measurement.legAt,
-  };
+  });
 };
 
 /**
  * The measurement a `resize` drag publishes with `endpoint` at `pointer`.
  *
  * The two ends are not symmetric, and the asymmetry is the whole reason this is a function rather
- * than an assignment. Dragging `start` leaves the vertex `end` — and any protractor leg hanging off
- * it — exactly where it was, so A and D2 do not move while W and H do. Dragging `end` moves the
- * vertex, and a leg hanging off that vertex has to move WITH it or the angle the protractor was
- * measuring silently becomes a different angle.
+ * than an assignment. Which end is the protractor's VERTEX is `legAt`, not `endpoint`: a leg can hang
+ * off either end, so the two are independent and this function has to consult both.
  *
- * A leg is carried rather than dropped in the second case for the same reason: the user pulled that
- * leg out deliberately, and discarding it because they adjusted the line would be the tool deciding
- * that their intent was a plain measuring line again.
+ * So the rule is one sentence: **the leg follows the vertex, and only the vertex.** Dragging the end
+ * that carries the leg carries the leg with it, or the angle the protractor was measuring silently
+ * becomes a different angle. Dragging the other end leaves the vertex — and therefore A and D2 —
+ * exactly where it was, while W and H change.
+ *
+ * Getting that backwards is not hypothetical. The first version assumed the vertex was always `end`,
+ * so dragging `end` always dragged the leg: on a line whose leg hangs off its `start`, dragging the
+ * far end slid the leg sideways by a delta the vertex never made, and D2 and A both moved for no
+ * reason the user could see.
+ *
+ * A leg is carried rather than dropped in either case for the same reason: the user pulled that leg
+ * out deliberately, and discarding it because they adjusted the line would be the tool deciding that
+ * their intent was a plain measuring line again.
  *
  * NEITHER branch translates the whole measurement, which is the bug the test caught when this was
  * written as one `translateMeasurement` call: that moved the far end as well, so a resize turned
@@ -266,20 +280,20 @@ const resizeMeasurement = (
   endpoint: 'start' | 'end',
   pointer: Point
 ): RulerMeasurement => {
-  if (endpoint === 'start') {
-    return measurement.legEnd === undefined
-      ? { start: pointer, end: measurement.end }
-      : { start: pointer, end: measurement.end, legEnd: measurement.legEnd, legAt: measurement.legAt };
-  }
-  if (measurement.legEnd === undefined) return { start: measurement.start, end: pointer };
-  const dx = pointer.x - measurement.end.x;
-  const dy = pointer.y - measurement.end.y;
-  return {
-    start: measurement.start,
-    end: pointer,
-    legEnd: { x: measurement.legEnd.x + dx, y: measurement.legEnd.y + dy },
-    legAt: measurement.legAt,
+  const plain = {
+    start: endpoint === 'start' ? pointer : measurement.start,
+    end: endpoint === 'start' ? measurement.end : pointer,
   };
+  if (measurement.legEnd === undefined) return plain;
+  // The leg rides on the vertex, so it moves only when the vertex is the end being dragged.
+  const movesVertex = (endpoint === 'start' ? 'start' : 'end') === (measurement.legAt === 'start' ? 'start' : 'end');
+  if (!movesVertex) return carryRulerLeg({ ...plain, legEnd: measurement.legEnd, legAt: measurement.legAt });
+  const from = endpoint === 'start' ? measurement.start : measurement.end;
+  return carryRulerLeg({
+    ...plain,
+    legEnd: { x: measurement.legEnd.x + (pointer.x - from.x), y: measurement.legEnd.y + (pointer.y - from.y) },
+    legAt: measurement.legAt,
+  });
 };
 
 /**
@@ -295,21 +309,35 @@ const resizeMeasurement = (
  */
 export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) => {
   const [{ containerRef, documentId, totalSize }] = useStore();
+  /**
+   * The fit the paint effect draws at, as state rather than off `dimensionsRef`.
+   *
+   * A ref is the wrong source for it here because a ref that changes without a render cannot be an
+   * effect dependency: reading it left the line at the width it was drawn with until the next pointer
+   * event, so a window resize showed a hairline on screen.
+   *
+   * It starts at 1 and is corrected in a layout effect below, which is the sanctioned way to derive
+   * state from a ref — seeding the `useState` initializer would read `dimensionsRef.current` during
+   * render, which `react-hooks/immutability` forbids, and a plain `useEffect` is too late to matter.
+   * Declared above the resize callback because that callback closes over `setFitScale`.
+   */
+  const [fitScale, setFitScale] = useState(1);
+
+  // The hook holds `onResize` in a ref, so this only has to be stable enough not to churn anything —
+  // an empty dependency list is that, and there is no per-render identity to pay for.
+  const handleFitResize = useCallback((fit: { scale: number }) => setFitScale(fit.scale), []);
   const { toolArgs } = useCurrentTool();
   const measurement = useRulerMeasurement();
 
-  const [fitScale, setFitScale] = useState(1);
-
-  // The paint effect needs the fit as state rather than off `dimensionsRef`, because a ref that
-  // changes without a render cannot be a dependency: reading the ref left the line at the width it
-  // was drawn with until the next pointer event, so a window resize left a hairline on screen. The
-  // hook holds this callback in a ref, so its identity changing per render costs nothing.
-  const handleFitResize = useCallback((fit: { scale: number }) => setFitScale(fit.scale), []);
-
-  const { getLocalCoords, isPointerDownValid, isPointerMoveValid, isPointerUpValid, releasePointer } =
+  const { getLocalCoords, dimensionsRef, isPointerDownValid, isPointerMoveValid, isPointerUpValid, releasePointer } =
     usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: handleFitResize });
 
   const draftRef = useRef<RulerDraft | null>(null);
+
+  // Before paint, so the first painted frame is already at the fitted width rather than a frame late.
+  useLayoutEffect(() => {
+    setFitScale(dimensionsRef.current.scale);
+  }, [dimensionsRef]);
 
   // A document or frame change is the signal that the line under this gesture is a different one's,
   // so the line is dropped rather than measured against an origin that has moved.
@@ -361,7 +389,20 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
    */
   const constrainedPoint = (event: PointerEvent<HTMLDivElement>, draft: RulerDraft): Point => {
     const pointer = getLocalCoords(event);
-    return event.shiftKey ? constrainRulerAngle(draft.anchor, pointer) : pointer;
+    /**
+     * `Shift` is a no-op on a MOVE, and deliberately so.
+     *
+     * Adobe's sentence for the modifier is "holding the Shift key while you drag has the additional
+     * function of ensuring that the line is kept straight" — the LINE, and a move cannot change the
+     * line's straightness because it translates the line rather than redrawing it. Snapping the
+     * pointer about the press point instead constrains the direction of TRAVEL, which is not what
+     * Shift says and is visibly wrong: the 45-degree snap of a travel vector moves the line somewhere
+     * other than under the cursor, leaving a dragged line tens of pixels away from the pointer that
+     * is dragging it. For a `resize` the modifier does the documented thing, because there the
+     * dragged end really is the line's angle.
+     */
+    if (!event.shiftKey || draft.mode === 'move') return pointer;
+    return constrainRulerAngle(draft.anchor, pointer);
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -416,7 +457,7 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
        * near the middle of a 10 px line would move the whole thing instead of dragging the end the
        * pointer is plainly on.
        */
-      const endpoint = isNear(pointer, measurement.start) ? 'start' : isNear(pointer, measurement.end) ? 'end' : null;
+      const endpoint = nearestEndpoint(measurement, pointer);
       if (endpoint !== null) {
         draftRef.current = {
           base: measurement,
@@ -474,7 +515,14 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
     // a drag out and back is one ordinary gesture and only the end of it is a decision. It covers
     // moving an existing line as well as drawing one, which is how Adobe words it: "place the
     // pointer on the line away from either endpoint, drag the line out of the image".
-    if (!isInsideFrame(pointer, totalSize)) {
+    //
+    // ONLY THOSE TWO. Adobe scopes the gesture to the LINE, and a resize or a protractor drag is not
+    // the line — applying this to all four modes meant that a line lying within a pixel of the frame
+    // border lost its whole measurement because the user dragged one END one pixel out, and that
+    // Alt-dragging a leg past the edge deleted the line and the leg together. Both were deletions the
+    // user did not ask for, unrecoverable, because the tool records no history and Clear is then the
+    // only route left.
+    if (draft.mode !== 'resize' && draft.mode !== 'protractor' && !isInsideFrame(pointer, totalSize)) {
       clearRulerMeasurement();
       return;
     }
@@ -485,35 +533,38 @@ export const RulerToolArea = ({ className, overlayCtxRef }: RulerToolAreaProps) 
      * Left as a published measurement it is the worst outcome available: a zero-length line the bar
      * reports as 0 px, which then owns the pointer's next drag — the press that made it lands on its
      * endpoint, so the line the user is trying to draw is MOVED instead of replaced — and which has
-     * to be dismissed with Clear before measuring anything else. So a collapsed `measure` release
-     * puts back the line that stood before the press, which is nothing when there was nothing.
+     * to be dismissed with Clear before measuring anything else. So a collapsed release puts back the
+     * line that stood before the press, which is nothing when there was nothing.
+     *
+     * It is stated for `measure` AND `protractor` because an Option-click on an endpoint is the same
+     * non-gesture, and treating it as one used to publish `draft.base` — a line carrying
+     * `legAt: 'start'` with NO `legEnd`, which is the one shape the field's own contract forbids: a
+     * vertex with no leg to hang off. `draft.replaced` is the untouched measurement instead, so an
+     * Alt-click leaves the line exactly as it was.
      */
-    if (draft.mode === 'measure' && pointer.x === draft.from.x && pointer.y === draft.from.y) {
+    const collapsed = pointer.x === draft.from.x && pointer.y === draft.from.y;
+    if ((draft.mode === 'measure' || draft.mode === 'protractor') && collapsed) {
       setRulerMeasurement(draft.replaced);
       return;
     }
 
     // Published from the same expression as the last move, so a released line is exactly the line
-    // the pointer was holding. A protractor released where it started keeps the line it was pulled
-    // from, because a zero-length leg is not a protractor.
-    setRulerMeasurement(
-      draft.mode === 'protractor' && pointer.x === draft.from.x && pointer.y === draft.from.y
-        ? draft.base
-        : lineFor(draft, pointer)
-    );
+    // the pointer was holding.
+    setRulerMeasurement(lineFor(draft, pointer));
   };
 
   /**
-   * A gesture that ended without a release — a touch pan, a browser-taken pointer, an unmount.
+   * A gesture that ended without a release — a touch pan, or a browser-taken pointer.
    *
    * Both halves, and what each is for is NOT the same reason.
    *
-   * `releasePointer` covers the routes the hook's own `pointercancel` listener never sees. That
-   * listener (`src/hooks/usePointerPosition.ts`, the `addEventListener('pointercancel', …)` effect
-   * beside `isPointerUpValid`) calls `clearEvent()` itself whenever the cancelled pointer is the
-   * active one, so the hook does NOT keep claiming the pointer across a cancel and every later
-   * `isPointerDownValid` still returns true. What no native listener sees is the unmount, and a
-   * ref that outlives its area is the residue of that.
+   * The hook's own `pointercancel` listener (`src/hooks/usePointerPosition.ts`, the
+   * `addEventListener('pointercancel', …)` effect beside `isPointerUpValid`) releases the pointer it
+   * was tracking, so on its own it is enough for the CAPTURE and not for the DRAFT: the ref below
+   * would survive, and the next `pointermove` carrying a reused mouse pointer id would republish the
+   * abandoned line. `releasePointer()` is here for symmetry with the sibling tool areas and for the
+   * case where the React handler runs for a pointer the hook had already let go; the draft clearing
+   * is the half that is genuinely this component's to do.
    *
    * Clearing `draftRef` is the half that is load-bearing today: a surviving draft would be read by
    * the next `pointermove` that passes `isPointerMoveValid`, republishing a measurement the user
@@ -554,3 +605,19 @@ const isNear = (point: Point, end: Point): boolean =>
 /** Whether an Alt-drag at `point` is close enough to either end of `line` to pull a leg from it. */
 export const isNearEitherEnd = (line: RulerMeasurement, point: Point): boolean =>
   isNear(point, line.start) || isNear(point, line.end);
+
+/**
+ * Which end of `line` a press at `point` grabs, or `null` when it is near neither.
+ *
+ * The NEAREST one, and the comparison is by distance rather than by testing `start` first. The two
+ * radii are the same size, so on any line shorter than twice it both ends are within reach at once —
+ * a 10 px line is inside both almost everywhere — and checking `start` first makes the FAR end win
+ * whenever the two overlap, which is the case the comment above the call site names: a press near
+ * the middle of a short line would pivot about the endpoint the pointer is not on.
+ */
+const nearestEndpoint = (line: RulerMeasurement, point: Point): 'start' | 'end' | null => {
+  const toStart = Math.hypot(point.x - line.start.x, point.y - line.start.y);
+  const toEnd = Math.hypot(point.x - line.end.x, point.y - line.end.y);
+  if (toStart > RULER_ENDPOINT_HIT_RADIUS && toEnd > RULER_ENDPOINT_HIT_RADIUS) return null;
+  return toStart <= toEnd ? 'start' : 'end';
+};

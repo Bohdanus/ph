@@ -151,13 +151,23 @@ const INK_SUM_CEILING = 240;
 /**
  * How far the measured centre may sit from the canvas centre, in CANVAS pixels.
  *
- * One, and it is not slack: it is the half pixel the measurement owes to `right`/`bottom` being
- * inclusive indices. A block whose left edge is at `P` and which is `W` pixels wide measures back as
- * spanning `P` through `P + W - 1`, so its measured centre is `P + (W - 1) / 2` while the true
- * centre of the canvas is `width / 2`. At `P = (width - W) / 2` those differ by exactly half a
- * pixel, for every `W`, which is why the tolerance is one and not zero. The disagreement this file
- * exists to detect is a whole frame origin — 100 canvas pixels here, a hundred times the tolerance.
+ * A half pixel, and it is not slack: it is exactly the disagreement the measurement owes to
+ * `right`/`bottom` being inclusive indices. A block whose left edge is at `P` and which is `W`
+ * pixels wide measures back as spanning `P` through `P + W - 1`, so its measured centre is
+ * `P + (W - 1) / 2` while the true centre of the canvas is `width / 2`. Wherever `P` can be
+ * `(width - W) / 2` — that is, wherever the centred placement is a whole number of pixels — those
+ * differ by exactly half a pixel, for every such `W`. Half a pixel is therefore the floor for any
+ * placement the app can actually produce, and zero would fail on a correct paste. Where `width` and
+ * `W` differ in parity the centred `P` is not an integer, no placement sits at it, and the error
+ * is smaller — so this is the worst case, not a universal one.
+ *
+ * This block's own first draft said one, from the first commit that added this file, while the two
+ * assertions below have always enforced `0.5` and no constant was ever declared — so the comment
+ * and the code contradicted each other from birth, and "a hundred times the tolerance" only worked
+ * for the value the code was not using. `0.5` is what the arithmetic above gives, so that is what
+ * is declared here and what both assertions read.
  */
+const CENTRE_TOLERANCE_CANVAS_PX = 0.5;
 
 /** The contain fit the app publishes for the CURRENT document, from `usePointerPosition`. */
 interface Fit {
@@ -452,11 +462,11 @@ test.describe('Paste placement', () => {
     expect(
       Math.abs(centre.x - expected.x),
       `the pasted block is not horizontally centred in the visible canvas. ${detail}`
-    ).toBeLessThanOrEqual(0.5);
+    ).toBeLessThanOrEqual(CENTRE_TOLERANCE_CANVAS_PX);
     expect(
       Math.abs(centre.y - expected.y),
       `the pasted block is not vertically centred in the visible canvas. ${detail}`
-    ).toBeLessThanOrEqual(0.5);
+    ).toBeLessThanOrEqual(CENTRE_TOLERANCE_CANVAS_PX);
 
     // The block must be the SOLID rectangle the marquee copied, judged by how completely it fills
     // its own bounding box rather than by how big it is. A centre is a weak thing on its own: two

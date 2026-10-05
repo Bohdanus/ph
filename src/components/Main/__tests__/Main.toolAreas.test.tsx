@@ -120,6 +120,7 @@ vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedro
 vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
 vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
 vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') }));
+vi.mock('../BlurToolArea.tsx', () => ({ BlurToolArea: marker('blur') }));
 vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
 vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
 vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
@@ -149,6 +150,7 @@ const TOOL_AREA_IDS = [
   'eraser',
   'clone-stamp',
   'sharpen',
+  'blur',
   'smudge',
   'dodge',
   'burn',
@@ -161,29 +163,6 @@ const TOOL_AREA_IDS = [
 const toolAreaTestId = () => {
   return TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
-
-/**
- * The index the routing table expects, so a routing row can assert WHICH area mounted.
- *
- * `toolAreaTestId()` returns the FIRST index in `TOOL_AREA_IDS` whose marker is mounted, so
- * comparing it with this one pins WHICH marker came first: a router that sent a tool to some other
- * area yields that area's index, and a tool that fell through to the hidden dummy yields `-1`,
- * which is no row's index. The presence of the expected marker rides on the same comparison — an
- * absent marker can only produce another index or `-1`, neither of which is this row's — so a row
- * needs no second query to ask it.
- *
- * What it does NOT pin is the COUNT. `findIndex` reports the first hit, so a second, DIFFERENT
- * area mounted BESIDE the expected one leaves that first hit where it is and this comparison still
- * passes — which is the half of the old claim that was false. A duplicate of the SAME marker is
- * the one doubled case that surfaces, and it surfaces as `queryByTestId` refusing to choose
- * between two elements rather than as a comparison failing; the `.toBeTruthy()` on a
- * `screen.getByTestId` result this replaced could not report even that, because the query throws
- * before its matcher runs. The count is the neighbouring
- * `it('mounts exactly one tool area for every tool that has one')` test's claim, and leaving it
- * there is what keeps this assertion about identity; `magic-eraser` is the one routed tool absent
- * from that test's list, so its count is pinned nowhere.
- */
-const expectedToolAreaIndex = (name: string) => TOOL_AREA_IDS.findIndex((id) => id === name);
 
 const canvases = (container: HTMLElement) => Array.from(container.querySelectorAll('canvas'));
 
@@ -239,6 +218,7 @@ describe('Main tool-area routing', () => {
     ['eraser', 'eraser'],
     ['clone-stamp', 'clone-stamp'],
     ['sharpen', 'sharpen'],
+    ['blur', 'blur'],
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
@@ -254,11 +234,29 @@ describe('Main tool-area routing', () => {
 
     render(<GuardedMain />);
 
-    // The one claim: the FIRST marker `Main` mounted is the one this row names, so a router that
-    // pointed this tool at a neighbour fails. Presence is carried by the same comparison rather
-    // than by a query of its own — an absent marker can only produce another index or `-1`, and
-    // this row's index is neither — and the COUNT is the neighbouring test's claim.
-    expect(toolAreaTestId(), toolName).toBe(expectedToolAreaIndex(expected));
+    // THREE assertions, in order, because no one of them can do the job alone.
+    //
+    // Presence: `screen.getByTestId` on its own cannot see a second area — its argument is the name
+    // this test supplied, so it throws on a miss and says nothing about anything mounted beside the
+    // right one.
+    //
+    // Identity: the `findIndex` form this replaced cannot do presence either. `-1` is what it
+    // reports for BOTH "nothing mounted" and "the name is not in the marker list", so an `expected`
+    // typo compared `-1` with `-1` and passed, and a router that pointed the tool at a neighbour
+    // reported the neighbour's index, which is a failure only because every row's index is distinct.
+    // Reading the mounted element and comparing it to the queried one is the statement that cannot
+    // be satisfied by the wrong element.
+    //
+    // Exclusivity, and this is the half the old claim could not reach: the list is walked in full,
+    // so a second, DIFFERENT area mounted BESIDE the expected one is caught here as well as by
+    // `mounts exactly one tool area for every tool that has one` — which is a separate list and so
+    // leaves a tool added to this table and not to that one unchecked.
+    const expectedArea = screen.getByTestId(`tool-area-${expected}`);
+    expect(expectedArea).toBeInTheDocument();
+
+    const mounted = TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).filter((el) => el !== null);
+    expect(mounted).toHaveLength(1);
+    expect(mounted[0]).toBe(expectedArea);
   });
 
   it('mounts exactly one tool area for every tool that has one', () => {
@@ -290,10 +288,16 @@ describe('Main tool-area routing', () => {
       'eraser',
       'clone-stamp',
       'sharpen',
+      'blur',
       'smudge',
       'dodge',
       'burn',
       'sponge',
+      // `magic-eraser` is here because the routing table above routes it and this list did not:
+      // the two lists are maintained apart, so a tool added to one and not the other would have
+      // its "exactly one area" claim silently unchecked — and `magic-eraser` shares `fill`'s
+      // area, which is precisely the case where a second area would go unnoticed.
+      'magic-eraser',
       'paint-bucket',
       'gradient',
     ] as const;
@@ -363,67 +367,17 @@ describe('Main tool-area routing', () => {
     // that mounted SOME area rather than none would still be caught — which is the half of the
     // old assertion below that was load-bearing. The other half was not: the produced
     // `div[style*="display: none"]` is byte-identical for `SharpenToolArea` and `DummyToolArea`,
-    // so it could not tell a hidden area from the hidden one, and would have passed identically
-    // if the router had sent some other tool to `SharpenToolArea`. `SharpenToolArea`'s rendered
-    // surface is pinned directly in the describe below.
+    // so it can detect any accidental routing into a real tool area rather than only checking the
+    // hidden dummy's implementation details.
     expect(toolAreaTestId()).toBe(-1);
   });
 
-  /**
-   * The two components this file could not tell apart, compared directly.
-   *
-   * `SharpenToolArea` (`../SharpenToolArea.tsx:46`) renders
-   * `<div className={className} style={{ display: 'none' }} />` and `DummyToolArea`
-   * (`../DummyToolArea.tsx:11-18`) renders the same element, so the DOM is byte-identical and
-   * every `style`-shaped query matched both. The identity is the DESIGN — Sharpen is a one-shot
-   * filter with no gesture, and its area is "the documented ABSENCE of one" — so this asserts the
-   * identity rather than reporting it as a duplication.
-   *
-   * The inertness is the load-bearing half, and the reason is spelled out in `SharpenToolArea`'s
-   * own JSDoc: `Main` mounts the area with `className="absolute inset-0 h-full w-full"`, i.e. over
-   * the whole document. A pointer handler there would swallow every pointer event over the canvas
-   * without doing anything with any of them, and a drag would select text or scrub the layers
-   * panel instead of being inert. `toBeInTheDocument`-style assertions cannot see that, so the
-   * props React attached to the DOM node are read instead.
-   */
-  it('mounts SharpenToolArea as the same inert surface as DummyToolArea, with no pointer handler at all', async () => {
-    // This file mocks every tool area, so the real `SharpenToolArea` is unreachable through a
-    // normal import; `importActual` is the route that bypasses the mock without lifting it for
-    // the routing table, which needs the marker.
-    const { SharpenToolArea: ActualSharpenToolArea } =
-      await vi.importActual<typeof import('../SharpenToolArea.tsx')>('../SharpenToolArea.tsx');
-
-    const { container: dummyContainer } = render(<DummyToolArea className="probe" />);
-    const { container: sharpenContainer } = render(
-      <ActualSharpenToolArea className="probe" overlayCtxRef={{ current: null }} />
-    );
-
-    expect(sharpenContainer.innerHTML).toBe(dummyContainer.innerHTML);
-    expect(sharpenContainer.innerHTML).not.toBe('');
-
-    // The detector has to be shown to work, or "no handler names" is indistinguishable from
-    // "the probe found nothing". React DOM stores the props it attached to every host node under
-    // a `__reactProps$<key>` property (`updateFiberProps`), which is the only place an event
-    // handler is observable from the outside — React never reflects one onto a DOM attribute.
-    const reactProps = (element: Element): Record<string, unknown> => {
-      // React's internal prop key is an expando, so it is absent from the DOM's own typing and
-      // has to be read through an index signature.
-      const host = element as unknown as Record<string, unknown>;
-      const key = Object.keys(host).find((candidate) => candidate.startsWith('__reactProps$'));
-      if (!key) throw new Error('React attached no props to the element, so this probe proves nothing');
-
-      return host[key] as Record<string, unknown>;
-    };
-    const handlerNames = (element: Element): string[] =>
-      Object.keys(reactProps(element)).filter((name) => /^on[A-Z]/.test(name));
-
-    const control = render(<div className="probe" onPointerDown={() => undefined} />).container
-      .firstElementChild as Element;
-    expect(handlerNames(control)).toEqual(['onPointerDown']);
-
-    const sharpen = sharpenContainer.firstElementChild as Element;
-    expect(handlerNames(sharpen)).toEqual([]);
-  });
+  // NOTE: there is deliberately no focus-tool case of its own here. The `it.each` routing table
+  // above already carries a `blur` and a `sharpen` row, and each asserts strictly more than a
+  // presence check — that exactly one area from `TOOL_AREA_IDS` mounted AND that it is the expected
+  // one. What the markers cannot show is that the REAL surfaces bind pointer handlers, because the
+  // markers are inert stand-ins; that claim is pinned against the real components in
+  // `FocusToolArea.test.tsx`, which has the store and tool contexts they need.
 
   it('never mounts any tool area while no image is open', () => {
     storeState.hasImage = false;
@@ -437,7 +391,7 @@ describe('Main tool-area routing', () => {
     // `opens a file through the dialog and uploads it`, `does not upload when the file dialog is
     // dismissed` and `reports the failure through console.error when the file dialog rejects`, so
     // the claim kept here is the one none of them makes — the control is not disabled, which is
-    // what a `disabled` empty state would satisfy `.toBeTruthy()` on just as well.
+    // what a `disabled` empty state would satisfy `.toBeInTheDocument()` on just as well.
     expect(screen.getByRole('button', { name: 'Open File' })).toBeEnabled();
   });
 
@@ -613,13 +567,24 @@ describe('Main tool-area routing', () => {
     drawAllLayers.mockClear();
     const previousFrame = storeState.documentFrame;
 
+    // The negative half, and it is the half that was missing: the effect's deps are
+    // `[documentFrame, drawAllLayers, layers]` (`src/components/Main/Main.tsx:146-148`), all
+    // three unchanged by identity here, so a re-render must repaint NOTHING. Asserting only the
+    // positive case below passes against an effect whose deps were emptied — which would
+    // re-rasterize the whole document on every render, including every pointer move that
+    // re-renders `Main`. `GuardedMain`, not a bare `Main`: `Main` reads `useUnsavedChanges`, which
+    // throws outside its provider, and the render under test is the same one the positive half uses.
+    rerender(<GuardedMain />);
+    expect(drawAllLayers).not.toHaveBeenCalled();
+
     storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
     rerender(<GuardedMain />);
 
     // `Main` calls `drawAllLayers()` from a `[documentFrame, drawAllLayers, layers]` effect, so
     // the repaint is triggered BY THE FRAME and carries no argument of its own. The bare
-    // `toHaveBeenCalled()` accepted any argument list and any number of repaints; this names the
-    // zero-argument call and the single repaint a frame change owes the document.
+    // `toHaveBeenCalled()` accepted any argument list and any number of repaints, and
+    // `toHaveBeenCalledTimes(1)` still accepted any argument list; this names the zero-argument
+    // call and the single repaint a frame change owes the document in one assertion.
     expect(drawAllLayers).toHaveBeenCalledExactlyOnceWith();
     storeState.documentFrame = previousFrame;
   });

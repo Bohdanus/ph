@@ -94,7 +94,11 @@ describe('useResizeObserverRAF', () => {
 
     const instance = getInstance();
     expect(instance).not.toBeNull();
-    expect(instance!.observe).toHaveBeenCalled();
+    // The observed element BY IDENTITY, not merely that observe ran: `el` is the only
+    // element the hook ever observes, so a bare call-count would be satisfied by observing
+    // anything at all — a body, a freshly constructed node — and the real container would
+    // then never report a resize.
+    expect(instance!.observe).toHaveBeenCalledExactlyOnceWith(el);
 
     instance!.callback([makeEntry(50, 60)], instance! as unknown as ResizeObserver);
 
@@ -158,6 +162,44 @@ describe('useResizeObserverRAF', () => {
     expect(onResize).toHaveBeenCalledTimes(1);
     expect(onResize).toHaveBeenCalledWith({ x: 0, y: 0, width: 70, height: 80 });
     expect(onResize).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 30, height: 40 });
+  });
+
+  /**
+   * THE ONE-FRAME BOUND, asserted from both sides of it.
+   *
+   * Every other test in this file advances a full 16ms in one step, which cannot tell
+   * "one animation frame" apart from "any delay up to 16ms" — a gate that fired on a
+   * 15ms timer, or on the second frame, would pass all of them. This one advances 15ms,
+   * requires silence, then advances 1ms more and requires the publish, so the gate is
+   * pinned to exactly one frame.
+   *
+   * This assertion replaces a salvaged one. The abandoned `unit-hardening` work pinned
+   * `THROTTLE_TIME` (50) and `THROTTLE_DRAW` (30) and required both to sit inside
+   * `[16ms, 100ms]` — coarse enough to coalesce a pointer burst, fine enough that no
+   * user perceives lag. Those two numbers died with their barrel module, which existed
+   * only to be tested, so there is no longer a millisecond to compare. The rule they
+   * protected survives as this gate, and its upper bound is what the 15ms silence pins:
+   * a gate opened by a coarse timer instead of a frame leaves the callback uncalled at
+   * 16ms, which is the "turns every slider into a slideshow" failure the old upper bound
+   * existed to catch.
+   */
+  it('opens the gate at exactly one frame, so a coarser timer cannot stand in for it', () => {
+    const el = makeElement();
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(20, 20)], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(15);
+
+    expect(onResize).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 0, y: 0, width: 20, height: 20 });
   });
 
   it('uses the current element position instead of the initial one for resize notifications', () => {

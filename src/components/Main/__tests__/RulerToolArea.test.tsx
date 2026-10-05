@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RULER_ENDPOINT_HIT_RADIUS, type RulerMeasurement } from '../../../tools/ruler.ts';
 import { resetRulerMeasurementForTest, useRulerMeasurement } from '../../../tools/ruler-measurement-store.ts';
 import { RulerToolArea, drawRulerRule } from '../RulerToolArea.tsx';
+import { measureRuler, rulerLegVertex, rulerProtractorAngle } from '../../../tools/ruler.ts';
 
 const h = vi.hoisted(() => ({
   dispatch: vi.fn(),
@@ -512,6 +513,183 @@ describe('RulerToolArea', () => {
   });
 
   it('honours a hit radius that is reachable, in document pixels', () => {
-    expect(RULER_ENDPOINT_HIT_RADIUS).toBeGreaterThan(0);
+    // "Reachable" was `expect(RULER_ENDPOINT_HIT_RADIUS).toBeGreaterThan(0)` — a tautology about a
+    // constant, in a test file that renders nothing for it, and a radius of 0.001 would have passed.
+    // What makes it reachable is the ENDPOINT test using it, so that is what is asserted: a press just
+    // inside the radius grabs the end, and one just outside it falls through to the body.
+    expect(RULER_ENDPOINT_HIT_RADIUS).toBe(8);
+
+    const { container: el } = renderArea();
+    drag(el, { x: 100, y: 100 }, { x: 300, y: 100 });
+
+    // Just INSIDE the radius of the far end: the end is grabbed, so the far end lands on the pointer
+    // and the near one does not move. A press this close that started a fresh measurement would leave
+    // the line's origin at 292 and fail this.
+    const inside = 300 - (RULER_ENDPOINT_HIT_RADIUS - 0.5);
+    drag(el, { x: inside, y: 100 }, { x: inside, y: 180 });
+    expect(lineAt(el)).toEqual({ start: { x: 100, y: 100 }, end: { x: inside, y: 180 } });
+
+    // Just OUTSIDE it, on a fresh horizontal line: the press is near neither end nor the body, so it
+    // starts a measurement of its own rather than grabbing anything.
+    drag(el, { x: 100, y: 300 }, { x: 300, y: 300 });
+    const outside = 300 + RULER_ENDPOINT_HIT_RADIUS + 1;
+    drag(el, { x: 100, y: outside }, { x: 200, y: 400 });
+    expect(lineAt(el)).toEqual({ start: { x: 100, y: outside }, end: { x: 200, y: 400 } });
+  });
+  describe('the protractor vertex moves both ways', () => {
+    const readVertex = (el: HTMLElement) => {
+      const raw = lineAt(el);
+      return raw ? rulerLegVertex(raw) : null;
+    };
+
+    it('CLEARED a start vertex when a leg is then pulled from the far end', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+
+      // Leg pulled from the START, which records `legAt: 'start'`.
+      drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
+      expect(readVertex(el)).toEqual({ x: 10, y: 10 });
+
+      // Now pull a leg from the FAR end instead. This is the case that used to keep `legAt: 'start'`,
+      // because the helper returned the measurement unchanged for `'end'` — so the leg was drawn from
+      // the wrong endpoint and D2 and A were both measured at the wrong vertex, for the rest of the
+      // line's life.
+      drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
+
+      expect(readVertex(el)).toEqual({ x: 110, y: 10 });
+      expect(lineAt(el)?.legAt).toBeUndefined();
+      // And the geometry agrees with the vertex: D2 is the leg off the FAR end, so 80, not the 128 a
+      // leg measured from the near end would be.
+      expect(measureRuler(lineAt(el)!).secondLegLength).toBeCloseTo(80);
+      expect(rulerProtractorAngle(lineAt(el)!)).toBeCloseTo(90);
+    });
+
+    it('is undone by an Alt-CLICK on the other endpoint, which must leave the line alone', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+      drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
+      const before = lineAt(el);
+
+      // Press and release on the far end without moving: a click, not a gesture.
+      drag(el, { x: 110, y: 10 }, { x: 110, y: 10 }, { altKey: true });
+
+      // An Option-click used to publish `draft.base` — the line carrying `legAt: 'start'` with NO
+      // `legEnd`, which is the one shape the field's contract forbids: a vertex with no leg on it.
+      expect(lineAt(el)).toEqual(before);
+      expect(lineAt(el)?.legAt).toBe('start');
+    });
+  });
+
+  describe('resize and the vertex', () => {
+    it('moves the leg ONLY when the dragged end is the one it hangs off', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+      // Vertex at the START.
+      drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
+
+      // Drag the FAR end. The vertex is `start` and it is not moving, so the leg must not move either:
+      // it used to be translated by the far end's delta, which slid it 100 px sideways and changed D2
+      // and A for no reason the user could see.
+      drag(el, { x: 110, y: 10 }, { x: 210, y: 10 });
+
+      expect(lineAt(el)).toEqual({
+        start: { x: 10, y: 10 },
+        end: { x: 210, y: 10 },
+        legEnd: { x: 10, y: 90 },
+        legAt: 'start',
+      });
+    });
+
+    it('moves the leg when the dragged end IS the vertex', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+      drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
+
+      drag(el, { x: 110, y: 10 }, { x: 210, y: 10 });
+
+      // The vertex travels with it, so the leg comes too and the right angle is preserved.
+      expect(lineAt(el)).toEqual({
+        start: { x: 10, y: 10 },
+        end: { x: 210, y: 10 },
+        legEnd: { x: 210, y: 90 },
+      });
+    });
+  });
+
+  describe('an endpoint press takes the NEAREST end', () => {
+    it('grabs the nearer end on a line short enough that both are in reach', () => {
+      const { container: el } = renderArea();
+      // 8 px apart: both ends are inside the 8 px radius almost everywhere on it, so which one wins is
+      // a distance question. Checking `start` first made the FAR end win in that whole overlap.
+      drag(el, { x: 100, y: 100 }, { x: 108, y: 100 });
+
+      // 3 px from `end`, 5 px from `start`: the press is plainly on `end`.
+      drag(el, { x: 105, y: 100 }, { x: 105, y: 140 });
+
+      expect(lineAt(el)).toEqual({ start: { x: 100, y: 100 }, end: { x: 105, y: 140 } });
+    });
+  });
+
+  describe('Shift during a move', () => {
+    it('follows the cursor instead of snapping the direction of travel', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+
+      // A move cannot change the line's straightness, so Shift has nothing to constrain — and snapping
+      // the travel vector left the line tens of pixels away from the pointer dragging it.
+      drag(el, { x: 60, y: 10 }, { x: 60, y: 70 }, { shiftKey: true });
+
+      expect(lineAt(el)).toEqual({ start: { x: 10, y: 70 }, end: { x: 110, y: 70 } });
+    });
+  });
+
+  describe('an out-of-frame release only removes the line for the gestures Adobe scopes it to', () => {
+    it('keeps the line when a RESIZE ends outside the frame', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+
+      // Adobe scopes "drag it outside the image area" to the LINE. A line lying within a pixel of the
+      // border used to lose its whole measurement because the user dragged one END one pixel out.
+      drag(el, { x: 110, y: 10 }, { x: 900, y: 10 });
+
+      expect(lineAt(el)).toEqual({ start: { x: 10, y: 10 }, end: { x: 900, y: 10 } });
+    });
+
+    it('keeps the line and its leg when a protractor drag ends outside the frame', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+      drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
+
+      // Re-pull the leg from the same endpoint, and let it go past the frame edge. Adobe scopes "drag it
+      // outside the image area" to the LINE, so a longer leg is a longer leg and not a deletion — and it
+      // used to delete the line and the leg together, which is unrecoverable because the tool records no
+      // history.
+      drag(el, { x: 110, y: 10 }, { x: 110, y: 900 }, { altKey: true });
+
+      expect(lineAt(el)).toEqual({
+        start: { x: 10, y: 10 },
+        end: { x: 110, y: 10 },
+        legEnd: { x: 110, y: 900 },
+      });
+    });
+
+    it('still removes the line when a MEASURE ends outside the frame', () => {
+      const { container: el } = renderArea();
+      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+
+      drag(el, { x: 20, y: 20 }, { x: 900, y: 20 });
+
+      expect(lineAt(el)).toBeNull();
+    });
+  });
+
+  it('never writes legAt as a key on a measurement that has no vertex', () => {
+    const { container: el } = renderArea();
+    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
+    drag(el, { x: 60, y: 10 }, { x: 60, y: 70 });
+
+    // `legAt: measurement.legAt` in an object literal creates the key with value `undefined`, which is
+    // the opposite of the field's contract and makes `'legAt' in moved` true for a plain line.
+    expect('legAt' in (lineAt(el) as object)).toBe(false);
   });
 });

@@ -133,13 +133,18 @@ describe('useMarchingPath animation lifecycle', () => {
     expect(rafMocks.frames.size).toBe(1);
     frame();
     expect(rafMocks.frames.size).toBe(1);
+    // The handle the LOOP scheduled, which is not the one the initial draw did.
+    const loopHandle = [...rafMocks.frames.keys()][0];
 
     rerender({ points: POINTS, isPaused: true });
     expect(rafMocks.frames.size).toBe(0);
-    expect(rafMocks.cancelAnimationFrame).toHaveBeenCalled();
+    expect(rafMocks.cancelAnimationFrame).toHaveBeenCalledExactlyOnceWith(loopHandle);
 
     rerender({ points: POINTS, isPaused: false });
     expect(rafMocks.frames.size).toBe(1);
+    // A FRESH handle, so the restarted loop is not the one just cancelled: reusing the old
+    // id would make the map hold a callback under an identifier already cancelled.
+    expect([...rafMocks.frames.keys()][0]).toBe(loopHandle + 1);
   });
 
   it('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:148)', () => {
@@ -283,16 +288,25 @@ describe('useMarchingPath animation lifecycle', () => {
   it('tolerates clear without a canvas and without a context', () => {
     const { result, canvas, canvasRef } = setup();
 
+    // Nothing to clear, and nothing to cancel either: with no canvas the loop must not be
+    // torn down by a call that had no target, so the frame it already scheduled is still
+    // pending afterwards. `not.toThrow` alone would accept a `clear()` that dropped the
+    // canvas write AND stopped the animation.
     canvasRef.current = null;
     expect(() => {
       result.current.clear();
     }).not.toThrow();
+    expect(rafMocks.cancelAnimationFrame).not.toHaveBeenCalled();
+    expect(rafMocks.frames.size).toBe(1);
 
+    // A canvas whose context cannot be obtained: the clear is skipped, the loop is not.
     canvasRef.current = canvas;
     vi.mocked(canvas.getContext).mockReturnValue(null);
     expect(() => {
       result.current.clear();
     }).not.toThrow();
+    expect(rafMocks.cancelAnimationFrame).not.toHaveBeenCalled();
+    expect(rafMocks.frames.size).toBe(1);
   });
 
   it('clears the canvas and stops the loop on unmount', () => {

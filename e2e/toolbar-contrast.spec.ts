@@ -1,6 +1,7 @@
 import { expect, type Page, type TestInfo, test } from './fixtures/extended-test';
 import {
   NON_TEXT_FLOOR,
+  type Rgb,
   contrastRatioOver,
   contrastRatioUnderFilter,
   formatRatio,
@@ -59,6 +60,14 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 type Reading = {
   /** Every `background-color` from the element upward, nearest first. */
   backgrounds: string[];
+  /**
+   * The same walk starting at the element's PARENT.
+   *
+   * A component's boundary is judged against the surface its outer edge abuts, which is never the
+   * element's own fill. Slicing `backgrounds` to drop it is wrong whenever the fill is opaque, because
+   * the walk stops there and the slice is empty; this is collected in the same pass instead.
+   */
+  outsideBackgrounds: string[];
   color: string;
   borderColor: string;
   borderWidth: string;
@@ -87,9 +96,16 @@ const readPainted = (page: Page, selector: string): Promise<Reading> =>
      */
     const alphaOf = (value: string): number => {
       if (value.toLowerCase() === 'transparent') return 0;
+      // The slash form carries the alpha in EVERY colour function Chrome emits here, so it is read
+      // first and independently of the function's name.
+      const slash = value.split('/');
+      if (slash.length === 2) {
+        const alpha = Number.parseFloat(slash[1].replace(/[)\s]/g, ''));
+        if (!Number.isNaN(alpha)) return alpha;
+      }
       const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/i);
-      // `oklab()`/`oklch()` carry their alpha after a slash, so a form without one is opaque and the
-      // walk stops on it — which is right, since an opaque fill hides everything behind it.
+      // A form with no alpha component at all is opaque, and the walk stops on it — which is right,
+      // since an opaque fill hides everything behind it.
       if (!rgbMatch) return 1;
       const parts = rgbMatch[1].split(/[,/\s]+/).filter((part) => part.length > 0);
       if (parts.length < 4) return 1;
@@ -100,19 +116,38 @@ const readPainted = (page: Page, selector: string): Promise<Reading> =>
     const node = document.querySelector(target);
     if (!node) throw new Error(`no element matches ${target}`);
     const style = window.getComputedStyle(node);
-    const backgrounds: string[] = [];
-    let cursor: Element | null = node;
-    while (cursor) {
-      const background = window.getComputedStyle(cursor).backgroundColor;
-      backgrounds.push(background);
-      // Stop at the first OPAQUE background, because nothing behind it can reach the screen. The test
-      // is on the alpha rather than on a string prefix, so `rgba(0, 0, 0, 0)` — which begins `rgba`
-      // and is the common case on the way up — does not end the walk.
-      if (alphaOf(background) === 1) break;
-      cursor = cursor.parentElement;
-    }
+    /**
+     * Walks up from `start`, and stops at the first OPAQUE background because nothing behind it can
+     * reach the screen.
+     *
+     * Reading the alpha out of `oklab(L a b / 0.2)` matters more than it looks: `dark:bg-blue-500/20`
+     * comes back in that form, and treating it as opaque ends the walk one element early. The chain is
+     * then one entry long, `parseColor` reads the same alpha correctly, and the ratio is computed
+     * against the white default — 1.02:1 for a tile that is really 9.13:1, on a live selector, in the
+     * one theme this file exists to gate.
+     */
+    const walkUp = (start: Element | null): string[] => {
+      const chain: string[] = [];
+      let cursor = start;
+      while (cursor) {
+        const background = window.getComputedStyle(cursor).backgroundColor;
+        chain.push(background);
+        if (alphaOf(background) === 1) break;
+        cursor = cursor.parentElement;
+      }
+      return chain;
+    };
+
+    // The element's own fill, then whatever shows through it.
+    const own = window.getComputedStyle(node).backgroundColor;
+    const backgrounds = alphaOf(own) === 1 ? [own] : [own, ...walkUp(node.parentElement)];
+    // The surface the element's BORDER abuts, which is behind its own fill and so needs its own walk:
+    // both boundary subjects here have an OPAQUE fill, so a walk that stopped at the element would
+    // find nothing outside it at all.
+    const outsideBackgrounds = walkUp(node.parentElement);
     return {
       backgrounds,
+      outsideBackgrounds,
       color: style.color,
       borderColor: style.borderTopColor,
       borderWidth: style.borderTopWidth,
@@ -124,6 +159,16 @@ const readPainted = (page: Page, selector: string): Promise<Reading> =>
 
 /** The opaque colour actually behind `reading`, from its background chain. */
 const backdropOf = (reading: Reading) => reading.backgrounds.map(parseColor);
+
+/** Throws when the outside chain found no opaque surface, rather than measuring against white. */
+const outsideChainOf = (reading: Reading): Rgb[] => {
+  if (reading.outsideBackgrounds.length === 0) {
+    throw new Error(
+      `no surface outside this element to measure its boundary against, for ${JSON.stringify(reading.outsideBackgrounds)}`
+    );
+  }
+  return reading.outsideBackgrounds.map(parseColor);
+};
 
 /** A failed floor, carrying both numbers so a reader does not have to go and measure them again. */
 type Failure = { label: string; got: string; floor: string };
@@ -153,12 +198,20 @@ const expectTextFloor = async (page: Page, label: string, selector: string): Pro
  */
 const expectNonTextFloor = async (page: Page, label: string, selector: string): Promise<Failure | null> => {
   const reading = await readPainted(page, selector);
+  // A zero-width border is not a boundary at all, so there is nothing for 1.4.11 to judge.
   if (Number.parseFloat(reading.borderWidth) === 0) return null;
-  const ratio = contrastRatioOver(parseColor(reading.borderColor), backdropOf(reading).slice(1));
+  // Against the surface OUTSIDE the element, which is where the collection has to come from the
+  // ELEMENT'S OWN reading rather than from a slice of the chain: `slice(1)` drops the element's fill
+  // on the assumption that the fill is translucent, and both callers here have an OPAQUE one, so the
+  // walk had already stopped and the slice left an empty chain. That flattens to the white default,
+  // which is not adjacent to anything in either theme — and it turned the exact regression this file
+  // exists to catch, `dark:border-gray-500` back to `dark:border-gray-600`, from 1.94:1 to a green
+  // 7.56:1 measured against white.
+  const ratio = contrastRatioOver(parseColor(reading.borderColor), outsideChainOf(reading));
   if (ratio >= NON_TEXT_FLOOR) return null;
   return {
     label,
-    got: `${formatRatio(ratio)} (${reading.borderColor})`,
+    got: `${formatRatio(ratio)} (${reading.borderColor} against the surface outside it)`,
     floor: `${NON_TEXT_FLOOR}:1`,
   };
 };
@@ -220,12 +273,15 @@ const waitForColoursToSettle = async (page: Page) => {
     page.evaluate(() => {
       const tile = document.querySelector('[data-testid="tool-button-eyedropper"]');
       const grip = document.querySelector('[data-testid="rail-re-dock-handle"]');
-      const read = (node: Element | null) => {
-        if (!node) return 'absent';
+      const read = (node: Element | null, what: string) => {
+        // A missing element is a FAILURE, not a sample value. Returning the string 'absent' made any
+        // two reads equal, so a selector that matched nothing reported the colours as SETTLED — and the
+        // failure then surfaced at the measurement instead, as an unrelated "no element matches".
+        if (!node) throw new Error(`the rail has no ${what}, so its colours cannot settle`);
         const style = window.getComputedStyle(node);
         return `${style.color}|${style.backgroundColor}|${style.borderTopColor}`;
       };
-      return `${read(tile)}#${read(grip)}`;
+      return `${read(tile, 'eyedropper tile')}#${read(grip, 're-dock grip')}`;
     });
 
   let previous = await sample();
@@ -292,15 +348,27 @@ test.describe('the toolbars in the dark theme', () => {
     // against a tile that no longer wears them — and would still pass, because an inactive tile is
     // easier to read. That is the direction a mistake in this file hides in.
     await clickToolButton(page, 'crop');
+    // PROOF OF STATE BEFORE THE MEASUREMENT, and then the colours settled — in that order, because
+    // getting it wrong is silent in exactly the direction that hides a defect.
+    //
+    // The poll used to sit AFTER the measurement, so the reading named "selected" was taken of a tile
+    // that had not been selected yet: an instrumented run showed the two readings byte-identical, down
+    // to the `oklab` fill, because both were the INACTIVE one. Moving the poll up without also
+    // settling would trade that silent pass for a false red, because the click starts a
+    // `transition-colors` and the reading then lands mid-interpolation — an `oklab` with a fractional
+    // alpha that is neither the fill before nor the fill after.
+    await expect.poll(() => page.getByTestId('tool-button-crop').getAttribute('aria-pressed')).toBe('true');
+    await waitForColoursToSettle(page);
     const activeFailures = [
       // The GLYPH, not the border: a tool tile is identified by its icon, so the icon is the pair that
-      // has to clear a text floor, and the 24px icon is scored as large text at 3.0.
+      // has to clear a floor. It is scored at the size the BUTTON reports, which is the inherited 16px
+      // rather than the icon's own 28px box, so it is held to the ordinary 4.5 and not to 3.0.
       await expectTextFloor(page, 'the selected tile glyph', '[data-testid="tool-button-crop"]'),
     ].filter((failure): failure is Failure => failure !== null);
-    await expect.poll(() => page.getByTestId('tool-button-crop').getAttribute('aria-pressed')).toBe('true');
 
     await clickToolButton(page, 'eyedropper');
     await expect.poll(() => page.getByTestId('tool-button-eyedropper').getAttribute('aria-pressed')).toBe('true');
+    await waitForColoursToSettle(page);
     const inactiveFailures = [
       await expectTextFloor(page, 'an inactive tile glyph', '[data-testid="tool-button-eyedropper"]'),
       // The rail's own two header controls, the re-dock grip and the one/two-column toggle. These

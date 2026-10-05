@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1003,8 +1003,7 @@ building the target list — the list as written ships a rail that is still not 
 | Adjustment Brush has "zero Adobe pages" — exclude it                          | Two Adobe pages, "Select Adjustment Brush Tool **from the toolbar**". Include it; it is a large _feature_, which is a different decision from membership.                                                                                                                                                                                                                              |
 | —                                                                             | **Remove tool** and **Content-Aware Tracing tool** are absent from the list entirely. Both are Adobe-documented, and the Remove tool's page says "In the Tools panel, select Remove tool." A sweep of Adobe's _overview tables_ misses both, because each has its own page instead. Content-Aware Tracing's own page confirms its **group**: "from the Pen tool group in the toolbar". |
 | —                                                                             | **Artboard, Frame, Perspective Crop, Slice, Slice Select** are also absent. All are in Adobe's own shortcut PDF. **The Ruler was in this list and is built** — `src/tools/ruler.ts`, `src/components/Main/RulerToolArea.tsx`, `src/components/ToolbarsRight/Ruler/Ruler.tsx` — so it is named here rather than left in a row that would read as a gap.                                 |
-
-| §68 below points at this section | The `AGENTS.md` pointer named a section that did not exist. It exists now. |
+| §68 below points at this section                                              | The `AGENTS.md` pointer named a section that did not exist. It exists now.                                                                                                                                                                                                                                                                                                             |
 
 Two that must **not** be added despite appearing in the shortcut PDF: **3D Material Eyedropper** and
 **3D Material Drop** (the removed 3D feature), and **Rounded Rectangle** (CC-era, in neither 2026
@@ -1114,9 +1113,10 @@ that defect class.
 closure check must be given the commit the fix was supposed to start from, and must assert against
 that, or every value that a _concurrent_ session fixed in the same window is silently credited to
 the fixer. Here `main` moved several times while the work was in flight; the audit read a moving
-target and reported the motion as work. The concrete form of the rule: **`git show <fix-parent>:<path>`
-is the only honest baseline**, and when the pass cannot name that commit its "already fixed"
-verdicts are unattributable and must be reported as unknown rather than as a win.
+target and reported the motion as work. The concrete form of the rule is mechanical, and
+[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md#citations) carries it; what matters here is
+that a pass which cannot name the commit its fix started from has "already fixed" verdicts
+that are unattributable, and those must be reported as unknown rather than as a win.
 
 This is the same shape as the one this file used to open with — a citation that moves and still reads
 plausibly, or a verdict that moves and is credited to the wrong commit. A plausible reading is not
@@ -2363,11 +2363,13 @@ equivalent in `Mobile/mobile-tools.ts` and the keyboard map in `AppKeyboardShort
 in `src`, so the enumeration is complete. A fourth surface existed until 2026-10-02: the header's
 `Tools` menu, the one menu this app carried that Adobe does not have, and the menu bar's rebuild
 against Adobe's own list removed it. What that menu recorded about dispatching the key directly is
-still true of the three that remain, and it is why they dispatch `shape` plus the figure rather
-than the figure key: `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed** — it
-mounted the Shape panel where the
-`toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
-red and the shape committed black.
+still true of the three that remain. The reason it gave for dispatching `shape` plus the figure
+rather than the figure key — `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed**, on
+the ground that the key mounted the Shape panel where a `toolName !== 'shape'` guard suppressed
+the colour publish, so the well said red and the shape committed black — **no longer holds.**
+`aef65eff` replaced that guard with `isShapeFamilyToolName()`, which admits all six shape-family
+names, so the colour publish reaches a figure dispatched under its own key; `Shape.test.tsx` pins
+that for every family member. The entry that recorded the colour half is deleted.
 
 So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
 (its `rectangle`, `ellipse`, `triangle`, `polygon` and `line` variants in `tool-types.ts`), a
@@ -2914,46 +2916,6 @@ tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
 
-## 126. The five figure tools never see the foreground colour, because of one guard in the swatch
-
-**Problem.** `rectangle`, `ellipse`/`oval`, `triangle`, `polygon` and `line` all take their colour from
-a hardcoded literal rather than the foreground swatch:
-
-- `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`, in the `args.toolName !== 'shape'`
-  guard — mirrors the swatch behind that guard, and one options-bar component serves all six of
-  `toolsMap.ts`
-- `src/tools/settings.ts` — the five figure entries in `defaultSettings`, which give each of those
-  five a hardcoded `color: '#000000'`
-- `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
-  `args.color` and nothing sets it
-
-So moving the foreground swatch does nothing for five of the six figure tools.
-
-**Fix.** In `ShapeToolArea.tsx`, read `color` and `backgroundColor` off the store AT GESTURE TIME —
-the same shape `FillToolArea.tsx` already ships — and inject them into the committed args and the
-live preview. Do **not** route through `setToolArgs`: `saveLastSettings` persists those five names as
-a bare `{ toolName }`, so a tool-args write would leave `args.points` and `lineWidth` undefined after a
-tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard in
-`Figures/Shape.tsx`'s `Shape()` — writes through the args context, so that persistence hazard has to
-be closed first.
-
-Baked-in args rather than replay-time reads are what keep undo/redo re-rasterising in the painted
-colour with no migration, because the durable `legacy-tool` conversion already serialises the whole
-args object. Add BOTH colours: `hasFill` and the fill swatch are store-owned for the same reason, and
-a half-fixed shape tool strokes in the swatch while still filling in the default.
-
-**Where this came from.** The abandoned branch `fix/paint-overlay`. Its other two commits are dead:
-`139cc432` (clear the tool overlay on unmount) is on `main` verbatim in `useRect.ts`'s unmount
-cleanup `useEffect`, and
-`37132d95`'s primary claim about `brush`/`pencil`/`color-replacement` being wired to a placeholder is
-false on main, which built a real options panel in
-`src/components/ToolbarsRight/Paint/Paint.tsx` — `createPaintToolbar()`'s `PaintToolbar`. Only this
-rider survives.
-
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`;
-`src/tools/settings.ts` — the five figure entries in `defaultSettings`;
-`src/components/Main/ShapeToolArea.tsx`
-
 ## 132. The shape's three document-frame conversions are correct, and no test pins that
 
 **This entry is a guard against a future "simplification", plus a missing tripwire.** An earlier
@@ -3376,13 +3338,15 @@ git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
   | cut -d' ' -f1 | sort | uniq -c
 ```
 
-**Most worktrees resolve their packages from the main checkout, and those are the ones
-that hit this trap**: with no `node_modules/react` above the worktree, Node resolution
+**Most worktrees UNDER THIS REPOSITORY resolve their packages from the main checkout, and
+those are the ones that hit this trap** (the command below counts every registered worktree, so
+subtract the main checkout and any out-of-tree one — a worktree outside the repository does not
+resolve upward into it, which is the same fact that makes `/tmp/avif-check` need its own install): with no `node_modules/react` above the worktree, Node resolution
 walks up into `/Users/bkalynovskyi/ph/node_modules`, so the wasm URL is a main-checkout
 path that a worktree-rooted Vite will not serve. The command above tests
-`node_modules/react` and NOT `node_modules`, and the distinction is not cosmetic — on the
-day it was written, 87 of the 102 worktrees failing that test still HAD a `node_modules`
-directory, holding nothing but Vite's own `.vite` and `.tmp` caches. So the shape that
+`node_modules/react` and NOT `node_modules`, and the distinction is not cosmetic — almost
+every worktree failing that test still HAS a `node_modules` directory, holding nothing but Vite's
+own `.vite`, `.vite-temp` and `.tmp` caches. So the shape that
 matters is "no `node_modules/react`", not "no `node_modules`". **Treat any count as a dated
 measurement and re-run the command rather than quoting one**: the totals moved twice in an
 hour while this entry was being written, because worktrees are created and disposed
@@ -5865,11 +5829,13 @@ The remaining test defects, each with the fix that was proven to work:
   none of them drifts silently: `commitKinds` is derived from `findToolProcessor(toolName)!.commit`
   over the registry and compared to `declaredCommitKinds`, `kinds` is derived the same way from
   `replay.kind` and compared to `replayKinds` with `toEqual` on two records so a tool entering or
-  leaving the registry cannot slip past, `declaredReplayKinds` is compared to the union those same
-  derived kinds produce, and `realBarControlIds` is compared to the `id` set each bar actually
-  renders. **The cost is therefore where a failure sends you:** a production table that gains or
-  renames a member fails in a TABLE in this test file rather than at the site that changed, and each
-  copy is a second place to edit when the registry moves. **What would close it** is deleting the
+  leaving the registry cannot slip past, `declaredReplayKinds` is compared to the union `replayKinds`
+  produces — which the assertion just before it has already pinned to the registry, so the pin is real
+  but one hop indirect — and `realBarControlIds` is compared to the `id` set each bar actually
+  renders. **The cost is therefore where a failure sends you:** a production table that renames a member,
+  or gains one a processor actually selects, fails in a TABLE in this test file rather than at the site
+  that changed, while a kind nothing selects fails nothing anywhere — which is deliberate, and the test
+  says so. Each copy is also a second place to edit when the registry moves. **What would close it** is deleting the
   four copies and deriving each from its production table the way `placeholderCards` already derives
   its chips — a `configKey` column resolved through `placeholderToolGroups`, the form
   `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` uses, which is what replaced
@@ -6283,19 +6249,28 @@ picked from the rail commits the outgoing tool against the incoming tool's args.
 commit takes its drop branch: `useLayer`'s text branch reads `args.text` and `args.rect`, finds
 neither on a shape args object, early-returns, and an unapplied text layer is dropped with nothing to
 undo. The inverse order is what `mobile-tools.ts`'s `makeSelectTool` already does, and what the
-header's figure rows used to do before the `Tools` menu was removed; the rail is the one caller left
-that does it the other way. Nothing pins either order: the header's own test for it was deleted with
-its surface, and no rail test asserts the sequence.
+header's figure rows used to do before the `Tools` menu was removed. Nothing pins either order:
+the header's own test for it was deleted with its surface, and neither the rail nor the keyboard
+has a test asserting the sequence.
 
-**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; the surviving safe order is in
-`src/components/Mobile/mobile-tools.ts`.
+**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; `src/components/Common/AppKeyboardShortcuts.tsx`;
+the surviving safe order is in `src/components/Mobile/mobile-tools.ts`.
 
-**What would close it.** Select first, then patch, in `SidebarLeft`, plus a test that asserts the
-order the way the header's asserted it: have `commitDirtyTool` record the args it sees and fail if
-they are the incoming figure's. Ordering it against `makeSelectTool` also removes the last place the
-two surfaces can disagree, which is how the sheet and the bar came to differ once already.
+**What would close it.** Select first, then patch, in `SidebarLeft` **and** in
+`AppKeyboardShortcuts`'s `selectShapeTool`, plus a test that asserts the order the way the header's
+asserted it: have `commitDirtyTool` record the args it sees and fail if they are the incoming
+figure's.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`
+**This entry's scope was wrong and is corrected here.** It used to claim the rail was "the one
+caller left that does it the other way" and that reordering it "removes the last place the two
+surfaces can disagree". Both are false. `selectShapeTool` in `AppKeyboardShortcuts.tsx` patches and
+then selects at two sites, reachable from plain `U` and from `Shift+U`, so three call sites carry
+the hazard and only `mobile-tools.ts`'s `makeSelectTool` gets the order right. Reordering the rail
+alone would leave the keyboard surface able to commit an outgoing tool against a replaced figure,
+while this entry read as satisfied.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Common/AppKeyboardShortcuts.tsx`,
+`src/components/Mobile/mobile-tools.ts`
 
 ## 238. Nothing can detect a dangling `aria-controls` or `aria-describedby`, and a static scan cannot either
 
@@ -6304,15 +6279,19 @@ dock's panel tab, the mobile tool sheet's header, the mobile header's menu and l
 bottom bar's options toggle, `FontSelect`'s trigger, and `FeatherMagneticLasso`'s settings button — and the
 last two were found only by a review pass, after the first five were already landed and merged. There is
 still no gate that would find a seventh.
-
 **Why the accessibility gates cannot, structurally.** `node_modules/axe-core/axe.js`'s pre-check for
 `aria-controls` in the `aria-valid-attr-value` rule returns early — skipping the check — when
 `aria-expanded="false"`, when `aria-selected="false"`, or when `aria-haspopup` is present. A collapsed
-trigger is in one of those three states by definition, so the rule never evaluates the case. When it is
-reached anyway it sets `needsReview`, which surfaces as `incomplete`, and `e2e/accessibility.spec.ts`
-deliberately does not assert that bucket. Its `excludeHidden` defaults to true, so anything inside a
-`hidden` or `md:hidden` subtree — the whole mobile shell at desktop width — is skipped outright. Adding a
-scan at a mobile viewport would still not reach a collapsed trigger.
+trigger is in one of those three states by definition, so the rule never evaluates the case.
+
+Two neighbouring paths matter and they are different. `aria-describedby` is not in that skip list, so an
+unresolvable one takes `messageKey = 'noId'` and surfaces as `incomplete`, which
+`e2e/accessibility.spec.ts` deliberately does not assert — that is the `FeatherMagneticLasso` case exactly.
+An `aria-controls` reached without `aria-haspopup` would be a real `invalid.push(...)` violation, which the
+spec does assert; it is unreachable only because of the three skip states above, so widening a scan would
+not help. And `excludeHidden` defaults to true, so anything inside a `hidden` or `md:hidden` subtree — the
+whole mobile shell at desktop width — is skipped outright, which is why a mobile-width scan alone still would
+not reach these.
 
 **Why a static source scan cannot either, which is the part worth knowing.** The obvious gate is a regex
 over `src/components`: fail where an IDREF is written as a literal and the id it names is rendered under a
@@ -6321,8 +6300,9 @@ real survivors, because both write an EXPRESSION rather than a literal. `FontSel
 `aria-controls={isOpen ? LIST_ID : undefined}` against a popup mounted on `isOpen && position`, and
 `FeatherMagneticLasso` had `aria-describedby={isInfoOpen ? INFO_TOOLTIP_ID : undefined}` against a tooltip
 mounted on `isInfoOpen && infoTooltipPos`. Nothing short of evaluating the expression distinguishes `isOpen`
-from `isOpen && position`. A rule loose enough to catch them also fires on the seven legitimate unconditional
-references, `DesktopHeader`'s `aria-controls="right-panel"` among them.
+from `isOpen && position`. A rule loose enough to catch them also fires on the six legitimate unconditional
+references — `DesktopHeader`'s `aria-controls="right-panel"`, the three dialogs' `aria-labelledby`, and
+`ConfirmDialog`'s second one — all of which name targets that exist whenever the component renders.
 
 **A second blind spot in the same class, found while reviewing the fixes.** While the mobile tool sheet is
 open, `ToolbarHorizontal` stays mounted at every width and renders the same `ToolComponent` the sheet
@@ -6333,49 +6313,188 @@ describes the hidden instance on a phone. `MobileShell` and `App` already docume
 and close both flags when the viewport leaves the mobile band; the mobile-band direction — two live copies,
 one relationship resolving to the wrong one — has no test and no comment. It needs the same real-document
 harness as the entry above, so it is recorded here rather than split out.
-
 **What would close it.** One rendered-tree invariant: render the shell in each state a trigger can be in and
 assert that every `aria-controls`, `aria-describedby`, `aria-labelledby` and `aria-owns` in the document
 resolves through `document.getElementById`. That is a property of the TREE rather than of any component, so
 an instance nobody thought to pin still fails — which is the whole point, since five of the six were found by
-a human reading a diff. It needs a harness that renders the real `StoreProvider` with a real document; every
-existing suite that mounts these components mocks `useStore`, and a mocked tree would let the gate pass for
-the wrong reason. Two conditions have to be driven explicitly, because neither is a state a user sits in:
+a human reading a diff. It needs a harness that renders the real `StoreProvider` with a real
+document, and that is a smaller job than it looks: `PanelGroup`'s and `FontSelect`'s own suites mock nothing
+at all, and the real provider already mounts in jsdom — `StoreContext.test.tsx` passes against it without
+stubbing. The obstacle is only that a MOCKED tree would let the gate pass for the wrong reason, so the
+harness has to be the real store. Two conditions have to be driven explicitly, because neither is a state a user sits in:
 `FontSelect`'s window is closed inside the same commit by its `useLayoutEffect`, so it is never painted, and
 `FeatherMagneticLasso`'s is closed after one painted frame by a passive effect. Until that harness exists, the
 only gate is a test beside each trigger, which is what let this run twice.
-
 **Files.** `src/components/ToolbarsRight/Text/FontSelect.tsx`, `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
 `src/components/SidebarRight/PanelGroup.tsx`, `src/components/Mobile/MobileHeader.tsx`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileToolSheet.tsx`,
-`node_modules/axe-core/axe.js`, `e2e/accessibility.spec.ts`, `src/components/SidebarLeft/__tests__/harness.tsx`
+`node_modules/axe-core/axe.js`, `e2e/accessibility.spec.ts`, `src/contexts/__tests__/StoreContext.durable-boundary.test.tsx`
 
 **Provenance.** Found 2026-10-05 on `main` by a four-way review of the five preceding fixes, split one
 reviewer per file group. Two of the seven instances were still live at that point and are fixed in the same
 series; the sixth was the precedent the first fix cited as its justification.
 
-## 239. `restoreVisibleCanvas()` holds a documented contract and no test
+## 239. `restoreVisibleCanvas()` cannot undo a partial resize, and the suite pins that it does not
 
-**The problem.** `restoreVisibleCanvas()` is the third writer of the visible canvas's backing store, after
-`useApp`'s `handleImageCreate` and `layer-renderer`'s `drawLayersToCanvas`. `docs/ARCHITECTURE.md` states its
-contract as a guarantee — _"A source or processor that throws leaves the visible canvas exactly as it was"_ —
-and `drawLayersToCanvas` calls it on every failure path after a partial resize. It has no test, direct or
-indirect: grepping `src/contexts/__tests__/` for the name returns nothing, and the only other reference in the
-tree is the pixel fixture. So the one function that puts the canvas BACK is unpinned, in a surface where the
-other two writers have just been re-ordered twice.
+**The problem.** `restoreVisibleCanvas()` is the only code that can put the visible canvas back after a
+failed publish, and it is skipped for exactly the case it exists for. `drawLayersToCanvas` sets
+`wrote = true` **after** `resizeCanvas` returns:
 
-**Why it matters beyond the missing test.** It takes `previousSize` and re-applies it, so it is the only code
-that can undo a wrong-extent resize after the fact. Both canvas-ordering fixes this series removed the
-resize-before-publish shape from `useApp`, and this is the mechanism that would have papered over it — silently,
-with a `console.error` rather than a thrown assertion.
+```ts
+resizeCanvas(canvas, size.width, size.height);
+wrote = true;
+context.clearRect(0, 0, size.width, size.height);
+context.drawImage(stagingCanvas, 0, 0);
+```
 
-**What would close it.** A test that makes `drawLayersToCanvas` fail after a partial resize and asserts the
-visible canvas is back at `previousSize` with its prior content. `drawLayersToCanvas` takes its throw paths
-from `createLayerSource` and the layer's own `source`, so a layer whose processor throws is enough; the pixel
-fixture in `src/__tests__/fixtures/pixelCanvas.ts` already provides the content to compare.
+and `resizeCanvas` assigns `width` and then `height` as two separate statements. So if the second
+assignment throws — which it does past the browser's maximum canvas size, and `canvas.width`/`canvas.height`
+are the classic `IndexSizeError` pair — the canvas has been given the new width and still carries the old
+height, `wrote` is still false, and the `if (wrote) restoreVisibleCanvas(...)` in the catch does nothing. The
+canvas is left torn, at neither the previous extent nor the new one.
+
+**This is already pinned, as the desired behaviour.** `it('reports a publish failure when resizing the
+visible canvas throws')` in `src/contexts/__tests__/layer-renderer.drawLayersToCanvas.test.ts` overrides the
+`width` setter to throw and asserts no restore blit happens. So the suite certifies the hole. That is the
+finding: the assertion is right about what the code does and wrong about what the code should do.
+
+**What the restore does cover, so the scope is not overstated.** Three of the four failure paths, all already
+exercised by that suite: the blit throws after a completed resize, `clearRect` throws, and the staging
+`drawImage` throws. `reports a publish failure when blitting the staging canvas throws` even asserts
+`restoreVisibleCanvas`'s own console message by string, which is emitted nowhere else. A throwing layer
+processor is **not** one of them — it rethrows into the outer compose catch, which returns before
+`previousSize`, `snapshot` and `wrote` are declared, so nothing is restored and nothing needs to be.
+
+**What would close it.** Set `wrote = true` before the resize rather than after, or — better — have
+`resizeCanvas` apply the two dimensions atomically so a throw leaves neither applied. Then
+`restoreVisibleCanvas(canvas, previousSize, snapshot)` puts both back, and the existing case flips from
+asserting no blit to asserting the canvas is whole again at `previousSize`. Either way the change is one line
+and the test that pins the hole is the test that should catch its removal.
+
+**The four writers, since "the restore" only means something against the alternatives.** The visible canvas's
+backing store is written in four places: `handleImageCreate()` in `useApp.ts`, the three-surface loop at the
+end of `setImageFromUpload`'s PSD arm, `drawLayersToCanvas()`, and `restoreVisibleCanvas()` itself. The
+overlays are separate surfaces written from `Main.tsx`. This matters because the restore is the only one of
+the four that can undo the other three.
 
 **Files.** `src/contexts/layer-renderer.ts` — `restoreVisibleCanvas()`, `drawLayersToCanvas()`;
-`docs/ARCHITECTURE.md` — "Stage, then publish"
+`src/util/canvas.ts` — `resizeCanvas()`; `src/contexts/__tests__/layer-renderer.drawLayersToCanvas.test.ts` —
+`'reports a publish failure when resizing the visible canvas throws'`; `docs/ARCHITECTURE.md` —
+"Stage, then publish", whose guarantee this narrows.
 
-**Provenance.** Found 2026-10-05 on `main` while auditing the canvas's writers during the review of the
-open-ordering fix.
+**Provenance.** Found 2026-10-05 on `main` by a review of the two entries added alongside the
+dangling-IDREF fixes, which checked the writer count and the reachability of the restore against the tree
+instead of against a grep. An earlier draft of this entry claimed `restoreVisibleCanvas` had no test and
+that a throwing layer processor was a way to reach it; both were false — it is module-private, so no test can
+name it, but three drive it, and `createLayerSource` appears nowhere in `layer-renderer.ts`.
+
+## 240. Durable materialization never sees a `reposition` that follows a raster operation, so a moved layer's pixels land at the wrong origin
+
+**Problem.** `durable-replay.ts` folds a move into `layer.snapshot.pos` and leaves `layer.operations`
+untouched. The producer loop in `materialization.ts` pushes only `apply-affine-transform` and
+`apply-filter` into its retained segment and `continue`s past everything else, so it cannot observe a
+move that was recorded after a raster operation. It starts from the post-move origin and then applies
+each raster op's own frame from there.
+
+Concrete: a layer at `pos` `{0,0,100,100}`; a Blur stroke dragged outside it commits
+`rasterBounds` `{-20,-20,140,140}`; the user then moves the layer `+50,+50`. Legacy replay publishes
+the layer at `{30,30,140,140}`. Durable materialization starts `origin` at `{50,50}`, widens it to
+`{-20,-20}`, blits the source at `+70,+70` rather than `+50,+50`, and publishes `{-20,-20,140,140}` —
+every pixel of the stroke, including the transparent padding the widening added, is 50px off.
+
+**Why it is not fixed here.** Pre-existing in kind for any raster operation followed by a move, but the
+focus-stroke frame turns a placement slip into a wrong _frame_: the padding is real published area, so
+the error is the size of the stroke footprint rather than a few pixels. Closing it needs the reposition
+to reach the producer loop as an ordered operation, which is a durable-schema question (a new
+`apply-position` marker, and what it means for an entry published before it existed), not a local fix.
+
+**What would close it.** Carry the reposition into `layer.operations` in `durable-replay.ts` so the
+producer loop can accumulate the delta into `origin` at the point each raster op occurs. Failing that,
+refuse materialization of a layer whose operation list contains a raster op recorded before a
+reposition, so the failure is loud rather than a misplaced layer.
+
+**Files.** `src/contexts/durable-replay.ts` — the `reposition-layer` arm; `src/contexts/materialization.ts` —
+the producer's operation loop and `origin` bookkeeping;
+`src/contexts/__tests__/materialization.ordering.test.ts` — the only suite that observes `origin`.
+
+**Provenance.** Found 2026-10-05 on `main` by a review of the focus-tool stroke frame, which checked
+whether the durable path stages the same frame the live path does. The staging itself is correct and now
+tested; this is the one case where the surrounding replay disagrees with it.
+
+## 241. `isRasterStrokeArgs` names the focus family in a literal, so a fourth focus tool must be remembered in two places
+
+**Problem.** `src/util/typeGuards.ts` lists `['blur', 'sharpen', 'smudge']` as the focus family. Four
+other modules — `useLayer.ts`, `history-replay.ts`, `history-append.ts`, `history-adapter.ts` — combine
+that predicate with the registry's `commit` kind independently. `sharpen` and `smudge` are already
+`commit: 'raster'`, so only `blur` depends on the guard.
+
+Register a fourth focus tool with `commit: 'layer-operation'` and, unless the literal is also updated,
+its stroke bakes as a retained whole-layer filter in the live path, in legacy replay, in the durable
+validator (where `retainedToolOperationKind` returns `'apply-filter'`), and in the adapter — with nothing
+failing, and the stroke rendering as a whole-layer blur under a brush-shaped history entry.
+
+**Why it is not fixed here.** Deriving the family from the registry inside `isRasterStrokeArgs` makes a
+`util` module depend on the processor registry, which `StoreContext.boundary-gates.test.ts` governs, and
+no fourth focus tool is registered. The failure needs the new tool to be forgotten in one place, which is
+a narrower risk than the import-graph change to prevent it.
+
+**What would close it.** Give the registry a `stroke: true` capability flag and have the predicate read
+it, so registering the tool is the whole of the work. `toolProcessors.ts` already carries per-tool
+capabilities (`commit`, `requiresCanvasFilter`, `compositesOntoInput`), so this is the same shape.
+
+**Files.** `src/util/typeGuards.ts` — `isRasterStrokeArgs()`; `src/tools/toolProcessors.ts` —
+`ToolProcessorDefinition`; `src/contexts/useLayer.ts`, `src/contexts/history-replay.ts`,
+`src/contexts/history-append.ts`, `src/contexts/history-adapter.ts` — the four independent re-questions.
+
+**Provenance.** Found 2026-10-05 on `main` by the same review as §240.
+
+## 242. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
+
+**The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate every
+viewport-relative screenshot clip passes through. It decides the region is already on screen only when
+
+```
+pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height
+```
+
+which a clip **taller than the viewport** can never satisfy. Such a clip therefore takes the scroll
+path, and the returned clip keeps its full height untouched — only `y` is rewritten:
+
+```
+clip: { ...clip, y: pageRect.y - scrolledTo },
+```
+
+Nothing compares `clip.height` against `viewport.height`, and no clamp exists anywhere in `e2e/` or
+`src/`.
+
+**Why that is a silent wrong answer rather than a loud one.** The CDP path pins
+`captureBeyondViewport: false`, and the comment beside it states the invariant this breaks:
+"the clip is inside the viewport by construction, so there is nothing beyond it to capture." With
+that flag set, Chrome clips the capture to the viewport and returns successfully, so a caller asking
+for 900px of canvas in a 720px window receives the 720px it could get — a smaller region than was
+requested, at exit 0. Any visual-regression baseline recorded through this path from an over-tall
+clip is then a baseline of the wrong region, and it will keep passing.
+
+**What makes this a defect rather than an unreachable case.** The function's own docblock calls
+itself "a SAFETY NET, not a workaround for a bug that is present", and the reason it is described as
+necessary is that a future layout change reintroducing a scrolling page would otherwise break every
+capture. The safety net handles the vertical **offset**; it does not handle the vertical **extent**,
+which is exactly the case the docblock says it exists to absorb.
+
+**What would close it.** Refuse a clip that cannot fit, rather than returning a short one: a
+`clipToViewport`-style helper that throws when `clip.height` exceeds the viewport height, called once
+at the top of `waitForCanvasPixels` before its deadline is armed and in `takeLineScreenshot`, so the
+failure names the caller instead of producing a plausible wrong image. Raising nothing and skipping
+nothing: the current code answers a different question than the one it is asked.
+
+**Files.** `e2e/helpers/canvas-helpers.ts` — `onScreenClip()` and its `alreadyVisible` test;
+`e2e/helpers/cdp-helpers.ts` — the `captureBeyondViewport: false` flag and the comment asserting
+viewport-boundedness; `e2e/helpers/history-helpers.ts` — the caller that documents `onScreenClip` as
+private to the module.
+
+**Provenance.** Found 2026-10-05 on `main` while triaging `land/audit-falsehoods-verified`, whose
+author had recorded it against a 2026-09-30 tree. Re-derived against the current tree: the
+`alreadyVisible` predicate, the untouched `height`, the absence of any clamp and the
+`captureBeyondViewport` flag were each read directly. Not reproduced as a failing screenshot — the
+defect needs a capture whose clip is taller than the window, and the suite's own viewport fixtures do
+not ask for one — so this is a read of the code path, not an observed wrong image.

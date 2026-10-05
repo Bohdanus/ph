@@ -3,6 +3,8 @@ import {
   getAffineBounds,
   IDENTITY_AFFINE_TRANSFORM,
   isIdentityAffineTransform,
+  MAX_AFFINE_COORDINATE,
+  MAX_AFFINE_PIXELS,
   multiplyAffineTransforms,
   transformCorners,
 } from './affine-transform.ts';
@@ -403,6 +405,57 @@ export type ProcessorStaging = Readonly<{
   operations: readonly PresentationOperation[];
 }>;
 
+const sameBounds = (a: Pos, b: Pos): boolean =>
+  a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
+/**
+ * Whether a frame is small enough to allocate a surface from.
+ *
+ * This is the caps question `getAffineBounds` asks, asked here for the one caller that sizes a
+ * canvas from a caller-supplied extent on the no-retained-operations path — the path that never
+ * calls `evaluatePresentation` and therefore inherits none of its refusals. A stroke frame is
+ * sized by the stroke's own extent, which is bounded by nothing in particular: one drag across a
+ * large document names a frame far larger than the layer it started on, and sharpen then
+ * allocates a `Float32Array` of sixteen bytes per pixel on top of it, once per pointer move.
+ */
+const frameIsAllocatable = (bounds: Pos): boolean => {
+  const width = Math.ceil(bounds.width);
+  const height = Math.ceil(bounds.height);
+  return (
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width >= 1 &&
+    height >= 1 &&
+    Math.abs(bounds.x) <= MAX_AFFINE_COORDINATE &&
+    Math.abs(bounds.y) <= MAX_AFFINE_COORDINATE &&
+    width <= MAX_AFFINE_COORDINATE &&
+    height <= MAX_AFFINE_COORDINATE &&
+    width * height <= MAX_AFFINE_PIXELS
+  );
+};
+
+const createProcessorSurface = (bounds: Pos): OffscreenCanvas | HTMLCanvasElement => {
+  const width = Math.max(1, Math.ceil(bounds.width));
+  const height = Math.max(1, Math.ceil(bounds.height));
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
+  if (typeof document === 'undefined') throw new Error('No canvas implementation is available');
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+};
+
+const drawIntoProcessorSurface = (
+  target: OffscreenCanvas | HTMLCanvasElement,
+  source: BitmapSource,
+  sourceBounds: Pos,
+  targetBounds: Pos
+): void => {
+  const context = target.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+  if (!context) throw new Error('A 2D canvas context is required to stage a processor raster');
+  context.drawImage(source, sourceBounds.x - targetBounds.x, sourceBounds.y - targetBounds.y);
+};
+
 /**
  * Stages the raster a processor must address for `layer`: its own bitmap, or a private surface
  * carrying the retained operations already evaluated into it.
@@ -412,12 +465,30 @@ export type ProcessorStaging = Readonly<{
  * the caller refusing to write pixels, and both callers already contain it rather than letting it
  * reach a pointer handler or a replay.
  *
+ * `requestedBounds` is the persisted document-space processing frame for a paint stroke. When it
+ * is present, the presented raster is padded with transparent pixels into that frame before the
+ * processor runs. It is deliberately a raster-frame concern, not a document-frame mutation:
+ * the active layer may widen, while the document and neighbouring layers do not.
+ *
  * `bounds` is a fresh object rather than the frozen `evaluation.bounds`: it becomes a layer's
- * `pos`, and nothing that follows treats a published position as immutable.
+ * `pos`, and nothing that follows treats a published position as immutable. Runtime replay and
+ * durable materialization must pass the same requested frame or their pixels will diverge.
  */
-export function stageProcessorInput(layer: Layer, bitmap: BitmapSource): ProcessorStaging {
+export function stageProcessorInput(layer: Layer, bitmap: BitmapSource, requestedBounds?: Pos): ProcessorStaging {
   const operations = retainedPresentationOperations(layer);
-  if (operations.length === 0) return { bitmap, bounds: { ...layer.pos }, operations };
+  if (operations.length === 0) {
+    const sourceBounds = { ...layer.pos };
+    if (!requestedBounds || sameBounds(requestedBounds, sourceBounds))
+      return { bitmap, bounds: sourceBounds, operations };
+    // Refuse the WRITE rather than throwing. Every caller already treats a staging failure as
+    // "this tool did nothing here" — `tempUpdateLayer` catches and returns false, replay catches
+    // and records a diagnostic — so declining the oversized frame is the same answer a cap
+    // produces anywhere else, and it keeps one enormous drag from allocating per pointer move.
+    if (!frameIsAllocatable(requestedBounds)) return { bitmap, bounds: sourceBounds, operations };
+    const surface = createProcessorSurface(requestedBounds);
+    drawIntoProcessorSurface(surface, bitmap, sourceBounds, requestedBounds);
+    return { bitmap: surface as BitmapSource, bounds: requestedBounds, operations };
+  }
 
   const evaluation = evaluatePresentation({
     position: layer.pos,
@@ -425,18 +496,9 @@ export function stageProcessorInput(layer: Layer, bitmap: BitmapSource): Process
     operations,
     mode: 'layer-bounds',
   });
-  const width = Math.max(1, Math.ceil(evaluation.localBounds.width));
-  const height = Math.max(1, Math.ceil(evaluation.localBounds.height));
-  const surface =
-    typeof OffscreenCanvas !== 'undefined'
-      ? new OffscreenCanvas(width, height)
-      : (() => {
-          if (typeof document === 'undefined') throw new Error('No canvas implementation is available');
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          return canvas;
-        })();
+  const presentedBounds = { ...evaluation.bounds };
+  const bounds = requestedBounds ?? presentedBounds;
+  const surface = createProcessorSurface(presentedBounds);
   const context = surface.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
   if (!context) throw new Error('A 2D canvas context is required to stage a presented raster');
 
@@ -447,5 +509,12 @@ export function stageProcessorInput(layer: Layer, bitmap: BitmapSource): Process
     context.restore();
   }
 
-  return { bitmap: surface as BitmapSource, bounds: { ...evaluation.bounds }, operations };
+  if (sameBounds(bounds, presentedBounds)) return { bitmap: surface as BitmapSource, bounds, operations };
+  if (!frameIsAllocatable(bounds)) {
+    return { bitmap: surface as BitmapSource, bounds: presentedBounds, operations };
+  }
+
+  const widened = createProcessorSurface(bounds);
+  drawIntoProcessorSurface(widened, surface as BitmapSource, presentedBounds, bounds);
+  return { bitmap: widened as BitmapSource, bounds, operations };
 }

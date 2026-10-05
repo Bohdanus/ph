@@ -1240,9 +1240,13 @@ const SidebarLeft = () => {
          * **4.39:1** on the light rail's `bg-gray-100`, a 2.4% shortfall against the 4.5 that
          * WCAG 1.4.3 asks of a glyph this size. `gray-600` is 6.86:1.
          *
-         * It is the same pair `HANDOFF.md` already records for `SidebarRight`'s `«`/`»`, found
-         * again by measuring rather than by looking, and both controls here are fixed together
-         * because they are one row of chrome that must not disagree with itself. `dark:text-gray-400`
+         * The same FAILURE `HANDOFF.md` records for `SidebarRight`'s `«`/`»` — a `text-gray-500`
+         * control missing 4.5:1 — found again by measuring rather than by looking, and both controls
+         * here are fixed together because they are one row of chrome that must not disagree with
+         * itself. The four ratios are not the same, though: those are on `bg-gray-200` and
+         * `dark:bg-gray-700` and read 3.90:1 and 4.06:1, where these are on the rail's own
+         * `bg-gray-100` and `dark:bg-gray-800` and read 4.39:1 and 5.78:1. What the two records share
+         * is the utility and the shortfall, not the pair. `dark:text-gray-400`
          * is 5.78:1 and was already past the floor, so only the light value moved.
          */}
         <div className="mb-1 flex w-full shrink-0 items-center justify-between">

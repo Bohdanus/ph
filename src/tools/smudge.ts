@@ -5,8 +5,9 @@ import {
   tipAlphaAt,
   type BrushTipSettings,
 } from '../util/brush-engine.ts';
-import { blendPixel, clampPointToSize, pixelIndex, readRgba } from '../util/pixels.ts';
+import { blendPixel, clampPointToSize, pixelIndex, readRgba, type Rgba } from '../util/pixels.ts';
 import type { Point, Size } from '../contexts/general-types.ts';
+import type { Pos } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type SmudgeToolArgs = {
@@ -14,6 +15,7 @@ export type SmudgeToolArgs = {
   hardness: number;
   strength: number;
   points: Point[];
+  rasterBounds?: Pos;
   toolName: 'smudge';
 };
 
@@ -126,7 +128,8 @@ const smudgeDab = (
   raster: Size,
   source: Point,
   target: Point,
-  settings: BrushTipSettings
+  settings: BrushTipSettings,
+  carried: Rgba | null
 ): void => {
   const { width, height } = raster;
   const radius = settings.size / 2;
@@ -147,7 +150,8 @@ const smudgeDab = (
       if (!(weight > 0)) continue;
 
       const from = clampPointToSize({ x: Math.round(x + deltaX), y: Math.round(y + deltaY) }, raster);
-      blendPixel(outputData, pixelIndex(x, y, width), readRgba(sourceData, from.x, from.y, width), weight);
+      const sampled = readRgba(sourceData, from.x, from.y, width);
+      blendPixel(outputData, pixelIndex(x, y, width), sampled.a > 0 || carried === null ? sampled : carried, weight);
     }
   }
 };
@@ -177,7 +181,8 @@ const smudgeStroke = (
   ctx: OffscreenCanvasRenderingContext2D,
   size: Size,
   points: Point[],
-  settings: BrushTipSettings
+  settings: BrushTipSettings,
+  carryTransparent: boolean
 ): void => {
   if (points.length === 0 || !(settings.opacity > 0) || settings.size <= 0) return;
 
@@ -204,11 +209,37 @@ const smudgeStroke = (
   const sourceData = new Uint8ClampedArray(image.data);
   const outputData = image.data;
 
+  // The carry is bounded to ONE dab step, and that bound is the whole correctness of it.
+  //
+  // A widened frame puts transparent, addressable pixels around a previously tight layer, and a
+  // dab whose read lands in that new area samples nothing. Without a carry the stroke simply
+  // stops at the old edge, which is the defect widening exists to fix. But an UNBOUNDED carry is
+  // far worse than the defect: one opaque sample early in the stroke would be redeposited for
+  // every remaining dab, laying a solid trail of stale colour across arbitrarily much empty
+  // canvas. So the sample is honoured only for the dab immediately following the one that read
+  // it — enough to cross the newly added edge, and no further.
+  let carried: Rgba | null = null;
+  let carriedAge = Number.POSITIVE_INFINITY;
   for (let i = 0; i + 1 < centers.length; i++) {
-    smudgeDab(sourceData, outputData, raster, centers[i], centers[i + 1], settings);
+    const sample = readRgba(sourceData, Math.round(centers[i].x), Math.round(centers[i].y), raster.width);
+    if (sample.a > 0) {
+      carried = sample;
+      carriedAge = 0;
+    } else {
+      carriedAge += 1;
+    }
+    smudgeDab(
+      sourceData,
+      outputData,
+      raster,
+      centers[i],
+      centers[i + 1],
+      settings,
+      carryTransparent && carriedAge <= 1 ? carried : null
+    );
   }
   if (centers.length === 1) {
-    smudgeDab(sourceData, outputData, raster, centers[0], centers[0], settings);
+    smudgeDab(sourceData, outputData, raster, centers[0], centers[0], settings, null);
   }
 
   ctx.putImageData(image, 0, 0);
@@ -227,7 +258,7 @@ const smudgeStroke = (
  * speak Photoshop's Smudge vocabulary and the engine speaks the Brush panel's, and the two
  * name the same per-dab coverage.
  *
- * The returned canvas is always FULL DOCUMENT SIZE and always freshly allocated, even for an
+ * The returned canvas is always the staged PROCESSING FRAME size and always freshly allocated, even for an
  * empty path. `tempUpdateLayer` (`src/contexts/useLayer.ts:560`) assigns the result straight to
  * `layer.tmpCanvas`, so handing back the source bitmap instead would leave the layer's
  * `tmpCanvas` holding the very object it already had, and the preview would show no edit at
@@ -235,7 +266,7 @@ const smudgeStroke = (
  */
 export const smudge =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ size: tipSize, hardness, strength, points }: SmudgeToolArgs): ToolResult => {
+  ({ size: tipSize, hardness, strength, points, rasterBounds }: SmudgeToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
@@ -255,7 +286,10 @@ export const smudge =
       spacing: SMUDGE_SPACING_PERCENT,
     });
 
-    smudgeStroke(ctx, size, points, settings);
+    // Widening an active layer adds transparent addressable pixels. Carry the last opaque
+    // active-layer sample across that new area; this preserves active-layer-only sampling while
+    // preventing an outward stroke from fading immediately at the old tight edge.
+    smudgeStroke(ctx, size, points, settings, Boolean(rasterBounds));
 
     return [canvas];
   };

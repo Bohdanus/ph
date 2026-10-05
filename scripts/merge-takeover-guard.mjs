@@ -439,7 +439,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
  * side's blob, and a hand edit is by definition neither. The fix is to ask git what IT would
  * have produced and compare.
  *
- * THE MEASUREMENT. At `main` 7c32cd76, over 544 merges, every figure below produced by running
+ * THE MEASUREMENT. At `main` 7c32cd76, over 541 merges, every figure below produced by running
  * THIS function over every merge reachable from that ref — except the two counts it cannot see
  * from the outside, the hand-written resolutions as a whole and the conflicted paths, which need
  * `merge-tree`'s own `--name-only` list. A re-implementation of this measurement produced a
@@ -478,15 +478,18 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
  *   fire on 136 paths, and refusing a reworded hunk is how a gate teaches `--no-verify`.
  *
  * WHAT IT STILL CANNOT SEE, stated here so nobody relies on it.
- * - A strategy flag, and it is undetectable. `git merge -X ours` makes git take this side's
- *   hunk on a path it would otherwise have reported as conflicted, so that path looks
- *   hand-edited here. Measured with a hook installed, `GIT_REFLOG_ACTION` for `git merge -X
- *   ours feat` is plain `merge feat`: git records a merge's RESULT, not its invocation, so no
- *   hook can read the flag. The cost is report lines only — a strategy option resolves a hunk
- *   and never removes a path, so it cannot cause the refusal.
- * - `rerere`. A recorded preimage can resolve a conflict without a human, and this counts
- *   that as a hand edit for the same reason. It is off in this repository
- *   (`git config rerere.enabled` is unset) and the limit is stated rather than assumed.
+ * - A strategy flag, and it is both undetectable and harmless here. `git merge -X ours` makes
+ *   git take this side's hunk on a path it would otherwise have reported as conflicted, and this
+ *   census then EXCLUDES that path, so the merge is silent rather than over-reported — measured
+ *   with a hook installed, where `GIT_REFLOG_ACTION` for `git merge -X ours feat` is plain
+ *   `merge feat`: git records a merge's RESULT, not its invocation, so no hook can read the flag
+ *   and there was nothing to skip on. The direction is safe — a strategy option resolves a hunk
+ *   and never removes a path, so it cannot cause the refusal — and the cost is silence on a merge
+ *   whose whole point was to take no content. `-s ours` is caught by shape 3 instead.
+ * - `rerere`. A recorded preimage resolves a conflict without a human, and the path is still in
+ *   the CONFLICT set, so the census EXCLUDES it: measured, a rerere replay exits 0 with no output
+ *   at all. Under-reporting is the safe direction — a recorded resolution that deleted a test file
+ *   would be the dangerous variant, and git 2.50 cannot write one. `rerere.enabled` is unset here.
  */
 export function findHandResolutions({ cwd = process.cwd(), head, incoming, resultTree } = {}) {
   const headRef = head ?? tryGit(['rev-parse', 'HEAD'], { cwd });

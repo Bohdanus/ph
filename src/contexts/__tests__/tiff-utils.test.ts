@@ -249,10 +249,19 @@ describe('TIFF error paths', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
+  // One case per clause of the guard at `tiff-utils.ts:156-161`, because each clause is a
+  // separate way for a page to describe something no canvas can hold. The positive cases
+  // above cover none of them: a negative or fractional extent is truthy, so it survives the
+  // `!width || !height` catch and lands on `canvas.width = -4` / `canvas.width = 2.5`.
   it.each([
     ['an empty page', {}],
     ['a zero width', { width: 0, height: 1 }],
     ['a zero height', { width: 1, height: 0 }],
+    ['a negative width', { width: -4, height: 2 }],
+    ['a negative height', { width: 2, height: -4 }],
+    ['a fractional width', { width: 2.5, height: 2 }],
+    ['a fractional height', { width: 2, height: 2.5 }],
+    ['a NaN width', { width: Number.NaN, height: 2 }],
   ])('rejects %s', async (_label, page) => {
     decode.mockReturnValue([page]);
 
