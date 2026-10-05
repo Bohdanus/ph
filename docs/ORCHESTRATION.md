@@ -402,6 +402,29 @@ node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, writ
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
+## What Git Is Doing Right Now
+
+A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
+git directory. No commit records it, no branch name carries it, and `git status` in
+the main checkout cannot see it. `npm run repo:state` reports every registered
+worktree using Git's operation markers and `git diff --name-only --diff-filter=U`.
+
+The command is advisory and is intentionally not a hook: another worktree's
+unfinished operation must not block unrelated pushes. It reports what is in
+progress, never who owns it. Inspect the affected worktree itself before choosing
+whether to finish or abandon the operation.
+
+`MERGE_HEAD` with no unmerged paths is especially dangerous: the resolution is
+staged but uncommitted, `git commit` lands it, and `git merge --abort` discards it.
+`npm run dispose` refuses operation state, unreadable operation state, and an
+omitted operation-state result. Removing a worktree deletes the state files with
+no reflog entry, so an absent signal is not a clear worktree.
+
+When a worktree directory is gone, its administrative git directory may still hold
+the operation markers. `repo:state` and `dispose` match that directory from Git's
+worktree administration rather than deriving its name. Run `npm run repo:state`
+before `git worktree prune` on a prunable worktree.
+
 **Read `action` first.** Every record carries one value, and it is the whole
 answer — which of the seven things it is:
 
