@@ -51,7 +51,7 @@ const EllipticalSelection: React.FC<{}> = () => {
   };
 
   // A half-typed number reaches here as `0` or `''`, and a locked ratio of zero is not a
-  // constraint at all — `resolveEllipseRect` would silently fall back to a free drag while
+  // constraint at all — `resolveUnclampedEllipseRect` would silently fall back to a free drag while
   // the field claims a ratio, so an incomplete value is not written.
   const handleRatioChange = (event: ChangeEvent<HTMLInputElement>) => {
     const fixedRatio = Number(event.target.value);
