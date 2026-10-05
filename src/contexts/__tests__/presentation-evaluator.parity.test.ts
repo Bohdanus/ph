@@ -235,6 +235,7 @@ function durableLayer(kind: 'none' | 'affine' | 'filter' | 'affine-filter'): Dur
 
 async function durableRender(kind: 'none' | 'affine' | 'filter' | 'affine-filter'): Promise<{
   retainedCalls: RenderCall[];
+  retainedSurface: { width: number; height: number };
   frameCalls: RenderCall[];
   frameSurface: { width: number; height: number };
 }> {
@@ -267,6 +268,7 @@ async function durableRender(kind: 'none' | 'affine' | 'filter' | 'affine-filter
     const frameSurface = surfaces.at(-1)!;
     return {
       retainedCalls: surfaces.at(-2)!.calls,
+      retainedSurface: surfaces.at(-2)!.createdWith,
       frameCalls: frameSurface.calls,
       frameSurface: frameSurface.createdWith,
     };
@@ -283,35 +285,51 @@ describe('presentation evaluator parity', () => {
   // hand-derived from `position`, `frame` and `scale` above; none of them is read back
   // out of `evaluatePresentation`, so a change to the evaluator that moved the layer,
   // dropped a filter or reordered the matrix composition fails here.
+  //
+  // `margin` is the filter's own spread, carried per edge: three sigmas of the fixture's
+  // radius-3 blur, which is 9. It is the one number the two routes cannot both report, and
+  // the reason is structural rather than accidental — see the blit assertions.
   it.each([
     {
       fixture: 'none' as const,
       filter: 'none',
       matrices: [] as number[][],
       extent: { width: position.width, height: position.height },
+      margin: 0,
     },
     {
       fixture: 'affine' as const,
       filter: 'none',
       matrices: [[2, 0, 0, 2, 0, 0]],
       extent: { width: position.width * 2, height: position.height * 2 },
+      margin: 0,
     },
     {
       fixture: 'filter' as const,
       filter: 'blur(3px)',
       matrices: [] as number[][],
       extent: { width: position.width, height: position.height },
+      margin: 3 * 3,
     },
     {
       fixture: 'affine-filter' as const,
       filter: 'blur(3px)',
       matrices: [[2, 0, 0, 2, 0, 0]],
       extent: { width: position.width * 2, height: position.height * 2 },
+      margin: 3 * 3,
     },
   ])(
     'places the $fixture fixture identically in the runtime and durable render paths',
-    async ({ fixture, filter, matrices, extent }) => {
+    async ({ fixture, filter, matrices, extent, margin }) => {
       const expected: Placement = { x: DOCUMENT_ORIGIN.x, y: DOCUMENT_ORIGIN.y, ...extent };
+      // The extent `expected` describes, grown by the filter's spread — the box the durable route
+      // hands the compositor, and the box it had to stage the presentation into.
+      const staged: Placement = {
+        x: expected.x - margin,
+        y: expected.y - margin,
+        width: expected.width + margin * 2,
+        height: expected.height + margin * 2,
+      };
 
       const runtimeCalls = runtimeRenderCalls(runtimeLayer(fixture));
       const durable = await durableRender(fixture);
@@ -328,11 +346,23 @@ describe('presentation evaluator parity', () => {
       expect(transformMatrices(durable.retainedCalls)).toEqual(matrices);
 
       // The placement itself, from both routes, against the hand-derived value.
+      //
+      // The runtime route draws the source straight onto the document-sized canvas, so the box it
+      // blits is `expected`: the halo has somewhere to go and needs no box of its own. The durable
+      // route stages the presentation on a surface that DOES have to hold the halo, so it carries
+      // `staged` — and inside that surface the source sits at exactly the runtime's placement,
+      // which is what `runtimePlacement` below still asserts. Reading the durable blit as `expected`
+      // would have been the assertion that let the spread be clipped out of the staging surface in
+      // the first place.
       const durableBlit = durable.frameCalls.find((call) => call.op === 'drawImage');
       const durableArgs = (durableBlit?.args ?? []).slice(1) as number[];
-      expect({ x: durableArgs[0], y: durableArgs[1], width: durableArgs[2], height: durableArgs[3] }).toEqual(expected);
+      expect({ x: durableArgs[0], y: durableArgs[1], width: durableArgs[2], height: durableArgs[3] }).toEqual(staged);
 
       expect(runtimePlacement(runtimeCalls)).toEqual(expected);
+
+      // The staging surface is sized from the same extent, so a spread that the blit admits and
+      // the surface does not would be a spread clipped at the surface's own edge.
+      expect(durable.retainedSurface).toEqual({ width: staged.width, height: staged.height });
 
       // And the frame surface is the requested frame, not the layer's extent.
       expect(durable.frameSurface).toEqual({ width: frame.width, height: frame.height });
