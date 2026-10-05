@@ -1788,7 +1788,9 @@ export class Board {
         stdio: ['ignore', 'pipe', 'ignore'],
       });
       for (const line of listed.split('\0')) {
-        if (line.startsWith('worktree ')) roots.add(line.slice('worktree '.length).trim());
+        // No `.trim()`: `--porcelain` does not quote paths, so a trailing space is part
+        // of the path. This set is what the board treats as real checkout roots.
+        if (line.startsWith('worktree ')) roots.add(line.slice('worktree '.length));
       }
     } catch {
       // Not a repository, or git refused: what is left is enough.

@@ -78,7 +78,7 @@ function git(args, cwd) {
   }
 }
 
-/** Parsed `git worktree list --porcelain` into `{ path, branch }` records. */
+/** Parsed `git worktree list --porcelain -z` into `{ path, branch }` records. */
 function listWorktrees(repoRoot) {
   const out = git(['worktree', 'list', '--porcelain', '-z'], repoRoot);
   if (!out) return [];
@@ -90,7 +90,11 @@ function listWorktrees(repoRoot) {
   for (const line of out.split('\0')) {
     if (line === '') continue;
     if (line.startsWith('worktree ')) {
-      current = { path: line.slice('worktree '.length).trim(), branch: null };
+      // No `.trim()`: `--porcelain` does not quote paths, so trimming truncates a worktree
+      // whose path ends in a space — and this script RELEASES worktrees, so a wrong path here
+      // is one it acts on. `existsSync` then fails on a directory that exists and the tool
+      // reports it as gone.
+      current = { path: line.slice('worktree '.length), branch: null };
       records.push(current);
     } else if (line.startsWith('branch ') && current) {
       // `refs/heads/fix/x` -> `fix/x`, which is the form the board stores as an agent id.

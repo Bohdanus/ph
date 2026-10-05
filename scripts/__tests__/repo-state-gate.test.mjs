@@ -1020,3 +1020,147 @@ describe('the cross-check must not invent worktrees either', () => {
     for (const shape of shapes) expect(Object.hasOwn(shape, 'bare')).toBe(true);
   });
 });
+
+describe('what the last review proved this suite could not catch', () => {
+  it('reports an admin directory whose gitdir file is gone but which holds a merge', () => {
+    // A CRITICAL I introduced and a review caught. Treating a missing `gitdir` file as
+    // proof the directory is "not a worktree" discarded a directory holding `MERGE_HEAD`,
+    // an `index` and a `HEAD` — exit 0, "clean", with the merge on disk, after which
+    // `git worktree prune` deleted it. So the absence now has to be corroborated.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'forgotten');
+    git(path, 'checkout', '-B', 'wt/forgotten');
+    mergeThatConflicts(path, 'theirs');
+    rmSync(join(repo, '.git', 'worktrees', 'forgotten', 'gitdir'), { force: true });
+
+    const scanned = scanRepository(repo);
+    const found = scanned.worktrees.find((w) => w.name === 'forgotten');
+    expect(found.present).toBe(false);
+    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+    expect(found.readError).toMatch(/holds worktree state/);
+    expect(findings(scanned.worktrees)).toHaveLength(1);
+  });
+
+  it('still calls a directory with no gitdir and no state a non-worktree', () => {
+    // The false positive that fix was written for: a stray directory must stay silent, or
+    // the cross-check trains the reader to ignore it.
+    const repo = makeRepo();
+    mkdirSync(join(repo, '.git', 'worktrees', 'stray'), { recursive: true });
+    expect(findings(scanRepository(repo).worktrees)).toEqual([]);
+  });
+
+  it('resolves a relative gitdir for a worktree whose checkout is GONE', () => {
+    // The relative-path fix is load-bearing on the ABSENT path, through
+    // `resolveAdminDirFor` — and the earlier test only exercised the present path, so
+    // removing the `resolve()` call failed nothing. Measured without it: `gitDir=null`,
+    // `ops=[]`, and a message stating as fact that the git directory was gone while it
+    // sat on disk.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const relative = join(scratch(), 'gone-rel');
+    git(repo, 'worktree', 'add', '-q', '--relative-paths', '-b', 'wt/gone-rel', relative);
+    git(relative, 'checkout', '-q', '-B', 'wt/gone-rel');
+    mergeThatConflicts(relative, 'theirs');
+    expect(isAbsolute(readFileSync(join(repo, '.git', 'worktrees', 'gone-rel', 'gitdir'), 'utf8').trim())).toBe(false);
+    rmSync(relative, { recursive: true, force: true });
+
+    const found = scanRepository(repo).worktrees.find((w) => w.name === 'gone-rel');
+    expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+    expect(found.readError).toBeNull();
+  });
+
+  it('reports two admin directories claiming one worktree, naming BOTH claimants', () => {
+    // The earlier version asserted only that some finding had operations — which the
+    // live worktree's own `MERGE_HEAD` satisfies. Reverting `owners` to a `Set` passed it.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'one');
+    git(path, 'checkout', '-B', 'wt/one');
+    mergeThatConflicts(path, 'theirs');
+
+    // Both administrative directories stay VALID and the roster keeps reporting the
+    // worktree — the case a review measured, where the second directory's state was read
+    // by nothing and no finding appeared at all.
+    const twin = join(repo, '.git', 'worktrees', 'twin');
+    mkdirSync(twin, { recursive: true });
+    writeFileSync(
+      join(twin, 'gitdir'),
+      readFileSync(join(repo, '.git', 'worktrees', basename(path), 'gitdir'), 'utf8')
+    );
+    writeFileSync(join(twin, 'MERGE_HEAD'), 'deadbeef\n');
+
+    const reported = findings(scanRepository(repo).worktrees);
+    const both = reported.find((f) => /administrative directories claim this worktree/.test(f.readError ?? ''));
+    expect(both, 'two directories claiming one worktree must be reported').toBeDefined();
+    expect(both.readError).toContain(basename(path));
+    expect(both.readError).toContain('twin');
+    // And the twin's own `MERGE_HEAD` is reachable, not merely mentioned.
+    expect(both.operations.map((o) => o.operation)).toEqual(['merge']);
+  });
+
+  it('refuses when the administrative ROOT is unreadable, and counts nothing', () => {
+    // `adminDirs` reverted to `catch { return { dirs: [], readError: null } }` — the exact
+    // defect it was fixed for — failed every test, because the `chmod` case targeted a
+    // CHILD directory and never the parent. It also checks `adminDirs` is `null` and not
+    // `0`: a zero there is a number nobody obtained.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = addWorktree(repo, 'inner');
+    git(path, 'checkout', '-B', 'wt/inner');
+    mergeThatConflicts(path, 'theirs');
+
+    chmodSync(join(repo, '.git', 'worktrees'), 0o000);
+    try {
+      const scanned = scanRepository(repo);
+      expect(scanned.adminDirsReadError).toMatch(/could not be read/);
+      expect(scanned.adminDirs).toBeNull();
+      const reported = findings(scanned.worktrees);
+      expect(reported.length).toBeGreaterThan(0);
+      expect(
+        reported.some((f) => /administrative director/.test(f.readError ?? '') || /administrative/.test(f.name))
+      ).toBe(true);
+    } finally {
+      chmodSync(join(repo, '.git', 'worktrees'), 0o755);
+    }
+  });
+
+  it('reads an UNCLAIMED admin directory at mode 0111 instead of denying the read', () => {
+    // At 0111 `readdirSync` throws while the markers read perfectly. The probe that used
+    // its answer to build a message was unreachable for a CLAIMED directory, so every
+    // earlier version of this assertion passed against the code it was meant to pin. This
+    // one drives an unclaimed directory, where the message reaches a record.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = join(scratch(), 'claimed-no-longer');
+    git(repo, 'worktree', 'add', '-qb', 'wt/x', path);
+    git(path, 'checkout', '-q', '-B', 'wt/x');
+    mergeThatConflicts(path, 'theirs');
+    rmSync(join(repo, '.git', 'worktrees', 'x', 'gitdir'), { force: true });
+
+    // git names the administrative directory after the WORKTREE PATH, not the branch.
+    const adminDir = join(repo, '.git', 'worktrees', basename(path));
+    chmodSync(adminDir, 0o111);
+    try {
+      // `realpathSync` on this side: git reports resolved paths and `mkdtempSync` hands
+      // back the unresolved form, so on macOS the two strings differ for one directory.
+      const found = scanRepository(repo).worktrees.find(
+        (w) => w.gitDir && realpathSync(w.gitDir) === realpathSync(adminDir)
+      );
+      expect(found, 'the unclaimed directory must appear').toBeDefined();
+      expect(found.operations.map((o) => o.operation)).toEqual(['merge']);
+      expect(found.readError ?? '').not.toMatch(/could not be read/);
+    } finally {
+      chmodSync(adminDir, 0o755);
+    }
+  });
+
+  it('round-trips a worktree path ending in a space, which three parsers used to trim', () => {
+    // `--porcelain` does not quote paths, so trimming truncates a trailing space exactly
+    // as it truncates a newline. `merge-release.mjs` RELEASES worktrees, so a wrong path
+    // there is one it acts on — it reported such a worktree as `directory-gone`.
+    const repo = addConflictingBranch(makeRepo(), 'theirs');
+    const path = join(scratch(), 'trailing ');
+    git(repo, 'worktree', 'add', '-qb', 'wt/trailing', path);
+    expect(scanRepository(repo).worktrees.find((w) => w.branch === 'wt/trailing').path).toBe(realpathSync(path));
+
+    const out = execFileSync('git', ['worktree', 'list', '--porcelain', '-z'], { cwd: repo, encoding: 'utf8' });
+    const record = out.split('\0').find((r) => r.startsWith('worktree ') && r.includes('trailing '));
+    expect(record.slice('worktree '.length)).toBe(realpathSync(path));
+  });
+});
