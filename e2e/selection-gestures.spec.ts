@@ -445,7 +445,7 @@ test.describe('Selection tools', () => {
     expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
   });
 
-  test('Deselect removes the selection outline', async ({ page }) => {
+  test('Clear removes the selection outline', async ({ page }) => {
     const box = await workspaceBox(page);
     const clip = await overlayClip(page, box);
 
@@ -459,10 +459,10 @@ test.describe('Selection tools', () => {
       { x: dragged.x, y: dragged.y },
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
-    await waitForSelectionBlue(page, clip, 'a selection outline before Deselect');
+    await waitForSelectionBlue(page, clip, 'a selection outline before Clear');
     expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
 
-    const clearButton = page.getByRole('button', { name: 'Deselect', exact: true });
+    const clearButton = page.getByRole('button', { name: 'Clear', exact: true });
     await expect(clearButton).toBeEnabled();
     await clearButton.click();
     // The button going disabled is the store-level effect. Waiting for it means the first
@@ -470,7 +470,7 @@ test.describe('Selection tools', () => {
     // "the outline is gone" cannot pass by being sampled before the click landed.
     await expect(clearButton).toBeDisabled();
 
-    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Deselect');
+    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Clear');
   });
 
   // Two separate assertions because they were two separate halves of one defect: the tool switch
@@ -534,7 +534,7 @@ test.describe('Selection tools', () => {
     await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after the tool switch');
   });
 
-  test('Copy and Deselect are enabled only while a selection exists', async ({ page }) => {
+  test('Copy and Clear are enabled only while a selection exists', async ({ page }) => {
     const box = await workspaceBox(page);
     const clip = await overlayClip(page, box);
 
@@ -542,9 +542,9 @@ test.describe('Selection tools', () => {
     await expectMoveTransformBoxHidden(page);
 
     const copyButton = page.getByRole('button', { name: 'Copy', exact: true });
-    const clearButton = page.getByRole('button', { name: 'Deselect', exact: true });
+    const clearButton = page.getByRole('button', { name: 'Clear', exact: true });
     await expect(copyButton, 'Copy with no selection').toBeDisabled();
-    await expect(clearButton, 'Deselect with no selection').toBeDisabled();
+    await expect(clearButton, 'Clear with no selection').toBeDisabled();
     await waitForNoSelectionBlue(page, clip, 'no selection outline before any drag');
 
     const dragged = boxRect(box, 0.3, 0.32, 0.58, 0.6);
@@ -558,12 +558,12 @@ test.describe('Selection tools', () => {
     await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
     expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
     await expect(copyButton, 'Copy with a committed selection').toBeEnabled();
-    await expect(clearButton, 'Deselect with a committed selection').toBeEnabled();
+    await expect(clearButton, 'Clear with a committed selection').toBeEnabled();
 
     await clearButton.click();
     await expect(clearButton).toBeDisabled();
     await expect(copyButton).toBeDisabled();
-    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Deselect');
+    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Clear');
   });
 
   test('magic wand click outlines the region under the cursor', async ({ page }) => {

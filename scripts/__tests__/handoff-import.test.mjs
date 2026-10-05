@@ -66,12 +66,8 @@ const ROOT_FILE_SHAPED =
 /** The items a document still calls open: everything its dead set does not name. */
 function liveItems(parsed) {
   return parsed.items.filter((item) => {
-    const id = /#(\d+)$/.exec(item.origin);
-    // A sha origin ends in hex, so the numeric test does not match it and the
-    // item reads as live. `dead` holds numbers as numbers and shas as strings,
-    // so both forms are compared in the type they are held in.
-    if (!id) return !parsed.dead.includes(String(item.origin).slice(String(item.origin).indexOf('#') + 1));
-    return !parsed.dead.includes(Number(id[1]));
+    const number = /#(\d+)$/.exec(item.origin);
+    return !number || !parsed.dead.includes(Number(number[1]));
   });
 }
 
@@ -146,20 +142,15 @@ describe('the three real documents', () => {
     );
   });
 
-  it('gives every HANDOFF.md origin a number or a sha, each claimed once', () => {
+  it("keeps HANDOFF.md's own numbering, so every origin there is a number", () => {
     const origins = handoff.parsed.items.map((item) => item.origin);
     expect(origins.length).toBeGreaterThan(0);
-    // A migrating document holds both forms, so this asserts the SHAPE rather
-    // than the document's current text. Asserting `/^HANDOFF\.md#\d+$/` held
-    // until the first sha entry was written and then failed on the very change
-    // that made sha entries legal — a tripwire on somebody else's prose.
-    for (const origin of origins) expect(origin, origin).toMatch(/^HANDOFF\.md#(?:\d+|[0-9a-f]{7,40})$/);
-    // No id claimed twice — the property that makes an origin stable enough to
-    // key an import on. Ordering is NOT asserted across the two forms: numbers
-    // sort ascending, shas have no order, and a document that holds both is not
-    // sorted by either rule.
-    const ids = origins.map((origin) => origin.split('#')[1]);
-    expect(new Set(ids).size).toBe(ids.length);
+    for (const origin of origins) expect(origin, origin).toMatch(/^HANDOFF\.md#\d+$/);
+    // Ascending by number, and no number claimed twice — the two properties
+    // that make an origin stable enough to key an import on.
+    const numbers = origins.map((origin) => Number(origin.split('#')[1]));
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect([...numbers].sort((a, b) => a - b)).toEqual(numbers);
   });
 
   it('reads OPEN_PROBLEMS.md’s severity headings, which carry no number at all', () => {
@@ -1069,123 +1060,5 @@ describe('the document shapes the parser has to survive', () => {
     const visible = parse('## 9.  — deleted .\n\nBody.\n');
     expect(visible.dead).toEqual([]);
     expect(visible.items.map((item) => item.origin)).toEqual(['HANDOFF.md#9']);
-  });
-});
-
-/**
- * Sha item ids — the form a NEW entry carries instead of a number.
- *
- * A number is a shared allocator with no owner: two sessions that each append an
- * entry to the same document read the same highest number and both claim it, and
- * the merge arbitrates a collision over prose. A sha derived from the entry needs
- * no allocator, so the collision cannot be created. Every assertion below is
- * paired with the case that would catch the rule being widened or narrowed past
- * the shape, because a sha grammar that also swallows prose headings retires real
- * entries silently.
- */
-describe('sha item ids', () => {
-  const parse = (body, file = 'HANDOFF.md') => parseHandoffDoc({ file, text: body });
-  const SHA = 'a1b2c3d';
-
-  it('opens an item under a sha and keeps the sha out of the title', () => {
-    const parsed = parse(`## ${SHA}. The crop commits on Enter but not on Escape\n\nBody.\n`);
-
-    expect(parsed.items.map((item) => item.origin)).toEqual([`HANDOFF.md#${SHA}`]);
-    expect(parsed.items[0].title).toBe('The crop commits on Enter but not on Escape');
-    expect(parsed.dead).toEqual([]);
-    expect(planImport([parsed], []).create.map((item) => item.origin)).toEqual([`HANDOFF.md#${SHA}`]);
-  });
-
-  it('spells the sha id the same three ways the numeric id is spelled', () => {
-    for (const heading of [`## ${SHA}. Title`, `## ${SHA} Title`, `## Item ${SHA} — Title`]) {
-      const parsed = parse(`${heading}\n\nBody.\n`);
-      expect(
-        parsed.items.map((item) => item.origin),
-        heading
-      ).toEqual([`HANDOFF.md#${SHA}`]);
-      expect(parsed.items[0].title, heading).toBe('Title');
-    }
-  });
-
-  it('normalises an uppercase sha, so two authors cannot mint the same id twice', () => {
-    const upper = parse('## A1B2C3D. Title\n\nBody.\n');
-    const lower = parse(`## ${SHA}. Title\n\nBody.\n`);
-
-    expect(upper.items.map((item) => item.origin)).toEqual(lower.items.map((item) => item.origin));
-  });
-
-  it('retires a sha from a heading that ends in a dead word', () => {
-    const parsed = parse(`## ${SHA}. A real problem — resolved\n\nBody.\n`);
-
-    expect(parsed.dead).toEqual([SHA]);
-    expect(parsed.items).toEqual([]);
-    expect(planImport([parsed], []).create).toEqual([]);
-  });
-
-  it('retires a sha named in a list of finished ids', () => {
-    const parsed = parse(
-      `## 3. An open problem\n\nBody.\n\n## ${SHA}. Another open problem\n\nBody.\n\n### Items 3, ${SHA} — deleted\n`
-    );
-
-    expect(parsed.dead).toEqual([3, SHA]);
-    // Both are still parsed; the dead set is what says they are finished, and
-    // `planImport` is what acts on it.
-    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#3', `HANDOFF.md#${SHA}`]);
-    expect(planImport([parsed], []).create).toEqual([]);
-  });
-
-  it('retires only the id a list names, leaving its neighbours live', () => {
-    const parsed = parse(
-      `## 3. An open problem\n\nBody.\n\n## ${SHA}. Another open problem\n\nBody.\n\n### Items 3 — deleted\n`
-    );
-
-    expect(parsed.dead).toEqual([3]);
-    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#3', `HANDOFF.md#${SHA}`]);
-    // The retirement must reach the plan, or a retired entry is filed as open work.
-    expect(planImport([parsed], []).create.map((item) => item.origin)).toEqual([`HANDOFF.md#${SHA}`]);
-  });
-
-  it('does not read the digits inside a retired sha as retired item numbers', () => {
-    const parsed = parse(`## 1. Still open\n\nBody.\n\n### Items ${SHA} — deleted\n`);
-
-    // 1, 2 and 3 all appear as digits inside the sha. Retiring them would close
-    // entries the document never said were finished.
-    expect(parsed.dead).toEqual([SHA]);
-    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#1']);
-  });
-
-  it('leaves a heading made only of hex letters alone, and one that carries no digit', () => {
-    for (const heading of ['## Defaced shapes in the panel', '## Facade module', '## Added']) {
-      const parsed = parse(`${heading}\n\nBody.\n`);
-      expect(parsed.items, heading).toEqual([]);
-      expect(parsed.dead, heading).toEqual([]);
-    }
-  });
-
-  it('reads a seven-digit number as a number, not as a sha', () => {
-    const parsed = parse('## 1234567. A number long enough to satisfy the sha shape\n\nBody.\n');
-
-    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#1234567']);
-  });
-
-  it('holds numbers before shas in the dead set, so a mixed document reads in its own order', () => {
-    const parsed = parse(`## ${SHA}. Gone — resolved\n\nBody.\n\n### Items 9, 12, ${SHA}, d4e5f6a — deleted\n`);
-
-    expect(parsed.dead).toEqual([9, 12, SHA, 'd4e5f6a']);
-  });
-
-  it('gives two sha entries in one document distinct origins', () => {
-    const parsed = parse(`## ${SHA}. First\n\nBody.\n\n## d4e5f6a. Second\n\nBody.\n`);
-
-    expect(parsed.items.map((item) => item.origin)).toEqual([`HANDOFF.md#${SHA}`, 'HANDOFF.md#d4e5f6a']);
-    expect(new Set(parsed.items.map((item) => item.origin)).size).toBe(parsed.items.length);
-  });
-
-  it('does not let a sha id become a duplicate when the same heading is repeated', () => {
-    const parsed = parse(`## ${SHA}. First\n\nBody.\n\n## ${SHA}. Second\n\nBody.\n`);
-
-    // A repeated id in one document is a document defect and the first wins, the
-    // same rule a repeated number follows.
-    expect(parsed.items.map((item) => item.title)).toEqual(['First']);
   });
 });

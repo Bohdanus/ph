@@ -201,13 +201,13 @@ describe('useSelectionClipboard layerViaCopy', () => {
   });
 
   it('lands the copied layer on the selection in document space, unshifted by the frame origin', async () => {
-    // `layerViaCopy` converts the selection into canvas space with `documentToCanvasPos`,
-    // snapshots it there, and converts the snapshot's bounds back with
-    // `canvasToDocumentPos` — so the round trip is the identity on position and the
+    // `layerViaCopy` converts the selection into canvas space at
+    // `useSelectionClipboard.ts:92`, snapshots it there, and converts the snapshot's
+    // bounds back at `:100` — so the round trip is the identity on position and the
     // layer must land exactly where the selection is, whatever the frame origin is.
-    // `createLayerFromBitmap` reads `pos` as document space: `layer-renderer.ts` hands
-    // `evaluation` to `drawEvaluatedPresentation` with `{ kind: 'document', frame }`, and
-    // `presentation-evaluator.ts` subtracts the frame there.
+    // `createLayerFromBitmap` reads `pos` as document space: `layer-renderer.ts:115`
+    // hands `evaluation` to `drawEvaluatedPresentation` with `{ kind: 'document',
+    // frame }`, and `presentation-evaluator.ts:277` subtracts the frame there.
     storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
     storeState.totalSize = { width: 90, height: 80 };
     const api = renderProbe();

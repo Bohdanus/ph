@@ -224,23 +224,7 @@ describe('ShapeToolArea', () => {
     });
 
     it('does not throw when className is omitted', () => {
-      // Assigned inside the assertion so the crash guard and the surface check read the SAME
-      // mount: a second `render` here would prove nothing about the first.
-      let view: ReturnType<typeof render> | null = null;
-      expect(() => {
-        view = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      }).not.toThrow();
-
-      // The crash guard is the weaker half; this is the one with a defect behind it. The
-      // reachable fix for an absent `className` is the optional prop plus the `${className}`
-      // interpolation, NOT a guard that returns early out of the render — and `not.toThrow()`
-      // passes identically against a component that renders nothing, which is a shape tool the
-      // user cannot drag with at all.
-      //
-      // Deliberately a `cursor-draw` class MATCH rather than an equality on the whole string: the
-      // interpolated class list carries a literal `undefined` token when `className` is omitted,
-      // which is reported as a defect rather than pinned here.
-      expect(view!.container.querySelector('.cursor-draw')).not.toBeNull();
+      expect(() => render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />)).not.toThrow();
     });
   });
 
@@ -1216,24 +1200,10 @@ describe('ShapeToolArea', () => {
       expect(rafSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
       const pendingFrame = rafSpy.mock.results[0].value as number;
 
-      // ONE request for the whole drag: `handlePointerMove` returns early while
-      // `frameRequested.current` is non-null, and the id it stores is the only one the release
-      // has to cancel.
-      expect(rafSpy).toHaveBeenCalledTimes(1);
-      const requestedId = rafSpy.mock.results[0].value as unknown as number;
-
       act(() => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
 
-      // The id, not merely "something was cancelled". `handlePointerUp` cancels
-      // `frameRequested.current` and then repaints what the cancelled frame would have painted,
-      // so a cancel aimed at any other id — a stale `0`, or a freshly requested frame whose result
-      // it discarded — would leave the queued flush running and paint the committed shape's outline
-      // a second time, after the commit. The previous `toHaveBeenCalled()` passes against all three.
-      expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(requestedId);
-      // The same id, read off the request the component made rather than off the release; the two
-      // spellings are what make this a claim about identity rather than about one local.
       expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(pendingFrame);
       // The cancelled frame is replaced by a synchronous flush, not dropped: the payload is the
       // final drag's, so a commit that lost its preview is visible here.

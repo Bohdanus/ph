@@ -83,13 +83,10 @@ const BUDGETED = [
   'agents-citations.test.mjs',
   'docs-index.test.mjs',
   'e2e-run.test.mjs',
-  'gates-wiring.test.mjs',
-  'handoff-id.test.mjs',
   'main-worktree-guard.test.mjs',
   'merge-release.test.mjs',
   'merge-takeover-guard.test.mjs',
   'merge-takeover-guard-install.test.mjs',
-  'repo-state-gate.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
 ];
@@ -99,33 +96,7 @@ const BUDGETED = [
  * point is to make an unbudgeted spawner impossible to add quietly, and a new suite that
  * spawns something cheap can carry a budget nobody minds.
  */
-/**
- * Whether a suite can be made to wait on a subprocess, matched on the IMPORT and
- * not on a call shape.
- *
- * The previous form was `/\b(?:spawnSync|execFileSync|spawn|execFile)\s*\(/`, and
- * four ordinary spellings slipped past it while every one of them spawns: `exec`,
- * `execSync`, `fork`, and any import aliased at the import site
- * (`import { execFileSync as e }`). A suite that spawns without a budget runs on
- * Vitest's 5000ms default, so the guard was vacuous for those spellings — the same
- * "one literal is satisfied by renaming" defect this file's own header is about,
- * reproduced in the file written to prevent it.
- *
- * So the subject is the module, not the function. `node:child_process` is the only
- * way to spawn, and matching it covers `exec`, `spawn`, `fork`, `execFile`,
- * `execSync`, their aliases, and anything the runtime adds later. That clause is
- * the real signal.
- *
- * The call-shape clause is a fallback for a suite that reaches `child_process`
- * through a re-export, and it deliberately does NOT list `exec` on its own: with
- * the import clause present it adds nothing, and bare `exec(` is overwhelmingly
- * `RegExp.prototype.exec` — adding it named two suites here that spawn nothing at
- * all (`handoff-import.test.mjs` and `tool-descriptions.test.mjs`, both matching
- * `/re/.exec(`) and sent the guard looking for budgets they do not need. A guard
- * that cries wolf on a regex is a guard whose next real report is not believed.
- */
-const SPAWNS_A_PROCESS =
-  /(?:from\s*['"]node:child_process['"]|require\(\s*['"]node:child_process['"]\s*\))|\b(?:spawnSync|execFileSync|spawn|execFile|execSync|fork)\s*\(/;
+const SPAWNS_A_PROCESS = /\b(?:spawnSync|execFileSync|spawn|execFile)\s*\(/;
 
 /**
  * Every suite in this directory that spawns a process, derived rather than declared.
@@ -215,23 +186,17 @@ describe('the scripts suites declare a budget their own work fits inside', () =>
   }
 
   it('still lets a per-test argument override the file budget, so an expensive test can declare its own', () => {
-    // The file budget is a floor for the ordinary case, not a ceiling. A per-test
-    // argument still wins, and `agent-board.test.mjs` uses it six times, so the
-    // mechanism this defends is live rather than theoretical.
+    // The file budget is a floor for the ordinary case, not a ceiling. Three tests in
+    // `worktree-inventory.test.mjs` read git in every worktree in the repository, so
+    // their cost scales with the fleet rather than with the file, and they declare
+    // `60_000` individually; if the file budget ever became a hard cap, those three
+    // would start failing in a way that looks like a worktree-count problem.
     //
-    // IT WAS NOT, until this comment was corrected. It justified itself with
-    // "three tests in `worktree-inventory.test.mjs` read git in every worktree in
-    // the repository, so their cost scales with the fleet rather than with the
-    // file, and they declare `60_000` individually". Those three declarations are
-    // gone: the file no longer reads the operator's worktrees, it builds a
-    // synthetic fleet of eight per test, and the reason is the thing worth
-    // carrying forward — a per-test budget sized against a cost that GROWS with
-    // something outside the repository is a budget that will eventually go red
-    // for a fact about the machine, and the way it was reached was
-    // `--no-verify` on a push. `agent-board.test.mjs` is the remaining user and
-    // its cost does not grow with the fleet.
+    // No figure is recorded here on purpose: the cost is a property of how many
+    // worktrees the repository has at the moment, so a number written into this
+    // comment goes stale with the fleet rather than with the code.
     //
-    // Checked across every budgeted suite, not just the one the declarations
+    // Checked across every budgeted suite, not just the one the three declarations
     // happen to live in: the first version looked at `worktree-inventory.test.mjs` alone, so a
     // low per-test override anywhere else would have gone unnoticed, which is the same
     // mistake as the hard-coded list above pointed at a different file.

@@ -328,13 +328,6 @@ describe('SmudgeToolArea', () => {
     // With no active layer there is also no raster to rebase onto: `rasterBounds` is `null`, and
     // a stroke that reached a writer would be addressing a buffer nobody named. Both writers,
     // because the preview is the one that repaints.
-    //
-    // The guard is the ONLY thing that stops it: `isEnabled` is
-    // `Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock)` and, unlike `BurnToolArea`
-    // and `DodgeToolArea`, neither callback re-checks — they pass `activeLayerId!` straight through
-    // to `tempUpdateLayer` / `updateLayerByTool`. So a regression that dropped `activeLayerId &&`
-    // would publish a preview against `id: null` and commit a history item for a layer that does
-    // not exist, and nothing else in this file would see it.
     expect(tempUpdateLayerMock).not.toHaveBeenCalled();
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
     expect(createLayerFromToolMock).not.toHaveBeenCalled();
@@ -444,10 +437,8 @@ describe('SmudgeToolArea', () => {
     // The whole args object, not only `points`. `smudge()` reads `size` for the tip diameter,
     // `hardness` for the falloff and `strength` as a 0-100 percentage it maps onto per-dab
     // coverage; a spread that dropped one of them, or spread the args BEFORE the rebased points
-    // over them, would smudge with the wrong tip and no test would notice. Every setting here
-    // differs from what `smudgeArgs()` seeds, so the payload is distinguishable from a
-    // default-shaped one field by field rather than only by `toolName`.
-    const expected = {
+    // over them, would smudge with the wrong tip and no test would notice.
+    expect(commitCalls()[0].toolArgs).toEqual({
       toolName: 'smudge',
       size: 41,
       hardness: 0.25,
@@ -456,15 +447,7 @@ describe('SmudgeToolArea', () => {
         { x: 20, y: 20 },
         { x: 100, y: 60 },
       ],
-    };
-    expect(commitCalls()[0].toolArgs).toEqual(expected);
-    // And the PREVIEW carries the same settings, which is the half this case was missing. The
-    // commit is the undo boundary and is written once on release; `tempUpdateLayer` is what the
-    // options bar shows while the drag is still running, and a Smudge re-runs its whole drag from
-    // the SOURCE raster on every call — so a spread that reached only the commit would preview with
-    // the seeded `size: 24 / hardness: 0.5 / strength: 60` and commit with the user's own, which is
-    // an edit the user never saw and cannot get back by undoing the drag they actually made.
-    expect(previewCalls()[0].toolArgs).toEqual(expected);
+    });
   });
 
   it('previews once per pointer move and commits once per gesture', () => {
@@ -702,76 +685,6 @@ describe('SmudgeToolArea', () => {
     // assignment of ANY value — 'source-over' included — fails here.
     expect(canvasCtx.compositeWrites).toEqual([]);
     expect(overlayCtx.compositeWrites).toEqual([]);
-  });
-
-  describe('widening the raster frame when a stroke leaves the layer', () => {
-    /**
-     * A layer tight around its content, so a stroke crossing its edge has to widen the frame.
-     * Every other case in this file strokes inside the default full-size layer, which is why the
-     * widening branch was reachable from production and from no test here at all.
-     */
-    const useTightLayer = () => {
-      storeState.layers = { base: makeLayer('base', { pos: { x: 40, y: 30, width: 60, height: 40 } }) };
-      storeState.activeLayerId = 'base';
-    };
-
-    it('widens the frame and rebases onto it when the stroke crosses outward', () => {
-      useTightLayer();
-      const { toolArea } = renderArea();
-
-      stroke(toolArea, [50, 40], [120, 90]);
-
-      // reach is `size / 2` = 12 from `smudgeArgs()`, so the frame is the layer grown by 12 on
-      // every side: (40-12, 30-12) to (100+12, 70+12). Two wrong answers are excluded and each is
-      // a different pair of numbers — no widening rebases by `layer.pos` and gives
-      // [{10,10},{80,60}]; no rebase at all gives the raw client points.
-      for (const call of [...previewCalls(), ...commitCalls()]) {
-        expect(call.toolArgs.rasterBounds).toEqual({ x: 38, y: 28, width: 94, height: 74 });
-        expect(call.toolArgs.points).toEqual([
-          { x: 12, y: 12 },
-          { x: 82, y: 62 },
-        ]);
-      }
-    });
-
-    it('omits rasterBounds ENTIRELY for a stroke that stays inside the layer', () => {
-      useTightLayer();
-      const { toolArea } = renderArea();
-
-      stroke(toolArea, [45, 35], [95, 65]);
-
-      // The KEY, not the value. `smudge` reads `Boolean(rasterBounds)` to decide whether to carry a
-      // sample across transparent pixels, so an in-layer stroke that carried a frame would also
-      // carry — changing smudge's behaviour on the most common gesture in the tool.
-      expect('rasterBounds' in commitCalls()[0].toolArgs).toBe(false);
-      expect(commitCalls()[0].toolArgs.points).toEqual([
-        { x: 5, y: 5 },
-        { x: 55, y: 35 },
-      ]);
-    });
-
-    it('does not widen a stroke that never enters the layer at all', () => {
-      // Widening is gated on having STARTED inside, which is the rule that keeps a stroke begun on
-      // empty canvas from growing the layer around nothing.
-      useTightLayer();
-      const { toolArea } = renderArea();
-
-      stroke(toolArea, [20, 20], [100, 80]);
-
-      expect('rasterBounds' in commitCalls()[0].toolArgs).toBe(false);
-    });
-
-    it('widens when a stroke leaves from the exact far corner, because that point is inside', () => {
-      useTightLayer();
-      const { toolArea } = renderArea();
-
-      stroke(toolArea, [100, 70], [130, 80]);
-
-      // (100, 70) is the layer's own bottom-right corner, and `<=` on both far edges is what makes
-      // it inside. A strict `<` regression here would be invisible to every other case, because no
-      // other stroke starts on a corner.
-      expect(commitCalls()[0].toolArgs.rasterBounds).toBeDefined();
-    });
   });
 
   it('renders a div carrying the supplied className and the crosshair cursor', () => {

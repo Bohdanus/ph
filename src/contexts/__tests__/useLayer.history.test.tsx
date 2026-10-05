@@ -18,7 +18,6 @@ import {
   REORDER_ACTION,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
-  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -477,32 +476,6 @@ describe('useLayers layer-property writers', () => {
     // The document baseline is not a durable entry, so the cursor lags the
     // legacy one and must never lead it.
     expect(store.durableDocument!.cursor).toBeLessThan(store.historyIndex);
-  });
-
-  it('routes opacity through the boundary and publishes the canonical patch', () => {
-    const result = setupWithDocument();
-    const id = Object.keys(result.current.store.layers)[0]!;
-
-    act(() => {
-      result.current.layers.updateLayer(id, { opacity: 0.5 }, SET_LAYER_OPACITY_ACTION);
-    });
-
-    expect(planHistoryAppend).toHaveBeenCalledTimes(1);
-    expect(planHistoryAppend.mock.calls[0]![0]).toMatchObject({
-      item: { layerId: id, actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.5 } },
-    });
-    const store = result.current.store;
-    expect(store.layers[id].opacity).toBe(0.5);
-    expect(store.history[1]).toMatchObject({
-      actionName: SET_LAYER_OPACITY_ACTION,
-      layerId: id,
-      args: { opacity: 0.5 },
-    });
-    expect(store.durableStatus).toBe('current');
-    expect(store.durableDocument!.history[0]).toMatchObject({
-      id: store.history[1]!.id,
-      operation: { kind: 'set-layer-properties', layerId: id, patch: { opacity: 0.5 } },
-    });
   });
 
   it('applies only the derived property to the runtime layer, not every field the caller passed', () => {

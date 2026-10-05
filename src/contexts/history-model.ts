@@ -100,25 +100,6 @@ export type DurableLayerSnapshot = Readonly<{
   blendMode: GlobalCompositeOperation;
   order: number;
   pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-  /**
-   * The document frame this snapshot's geometry was taken against, copied at
-   * construction and never rewritten.
-   *
-   * Provenance, not a claim about the document's current frame. `pos` and a
-   * vector or text `source`'s `size` and `sourcePos` are document-space numbers,
-   * and a crop moves the frame those numbers are read in, so a snapshot that did
-   * not name the frame it was captured against cannot say whether it still
-   * describes the layer it claims to. A baseline layer and a layer created after
-   * a crop therefore legitimately carry different frames in one document, and
-   * replay preserves each rather than restamping it: restamping would destroy the
-   * only evidence that the two were captured under different frames.
-   *
-   * Required rather than optional on purpose. An absent frame is indistinguishable
-   * from a frame nobody recorded, which is the defect this field exists to remove,
-   * so every producer — conversion, the append planners, every test fixture —
-   * states the frame it captured against and `tsc` names the ones that do not.
-   */
-  frame: DocumentFrame;
   source: DurableLayerSource;
 }>;
 
@@ -370,12 +351,6 @@ export function toLayerSnapshot(
   return Object.freeze({
     ...layer,
     pos: Object.freeze({ ...layer.pos }),
-    // Copied and frozen with the rest of the geometry rather than spread through
-    // `...layer`, because the frame is the one field whose mutation would
-    // invalidate every position in the snapshot: a caller holding the live
-    // `documentFrame` must not be able to reach through the snapshot and restate
-    // what frame it was captured against.
-    frame: Object.freeze({ ...layer.frame }),
     source: cloneLayerSource(source),
   });
 }
@@ -392,7 +367,6 @@ export function cloneLayerSnapshot(layer: DurableLayerSnapshot): DurableLayerSna
       blendMode: layer.blendMode,
       order: layer.order,
       pos: layer.pos,
-      frame: layer.frame,
     },
     layer.source
   );
@@ -544,24 +518,10 @@ export function freezeDurableDocument(document: DurableDocument): DurableDocumen
  * The changes `refreezeDurableDocument` accepts. Scoped to the four scalars plus
  * `history` on purpose: a baseline is NOT expressible here, so no caller can reach
  * the reuse path while replacing the structure the reuse depends on.
- *
- * `cursor` is REQUIRED, and that is the load-bearing part of this shape. `history`
- * stays optional because a cursor move passes none and must allocate nothing
- * proportional to the timeline — but a caller that replaces `history` while
- * omitting `cursor` would silently keep the old one, and a truncated history
- * rewound to its new tip is how an undone edit comes back. Nothing downstream reads
- * that as an error, so the type refuses the combination instead of the review
- * catching it.
- *
- * What this does NOT buy: a *corresponding* cursor. `{ history: base.history.slice(0, 2),
- * cursor: base.cursor }` type-checks and still lands on a silently clamped position. The
- * type turns an OMISSION into a compile error; a STALE cursor stays silent, and only the
- * caller can rule that out. If `cursor` is nullish anyway — a cast, or a plain-JS caller —
- * both branches clamp it to `-1`, which is the baseline-only position rather than a throw.
  */
 export type DurableDocumentRefreeze = Readonly<{
-  cursor: number;
   history?: readonly DurableHistoryEntry[];
+  cursor?: number;
   documentRevision?: number;
   branchRevision?: number;
   durableRevision?: number;
@@ -618,7 +578,7 @@ function freezeDurableHistory(
  */
 export function refreezeDurableDocument(base: DurableDocument, changes: DurableDocumentRefreeze): DurableDocument {
   const history = changes.history ?? base.history;
-  const cursor = changes.cursor;
+  const cursor = changes.cursor ?? base.cursor;
   if (!ownDeepFrozenCopies.has(base)) {
     return freezeDurableDocument({ ...base, ...changes, history, cursor });
   }

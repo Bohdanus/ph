@@ -112,11 +112,6 @@ function seed(layers: LayersRecord = initialLayers, activeLayerId: LayerId | nul
   liveStore.snapshot = { layers, activeLayerId };
 }
 
-const INITIAL_ORDER = ['Top Layer', 'Layer 2', 'Background'];
-
-const renderedOrder = (container: HTMLElement): (string | null)[] =>
-  Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent);
-
 describe('LayersTab against a live layer store', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -388,12 +383,7 @@ describe('LayersTab against a live layer store', () => {
     vi.useFakeTimers();
     const { container } = render(<LayersTab />);
     const dataTransfer = createDataTransfer();
-    const orderBefore = renderedOrder(container);
-    // The baseline is the order the panel actually starts in, not merely whatever it happened
-    // to be. Compared against itself, "untouched" also passes when the rail rendered the rows
-    // in the wrong order from the start, or rendered nothing at all — both sides empty and
-    // equal. This pins what "untouched" is untouched FROM.
-    expect(orderBefore).toEqual(INITIAL_ORDER);
+    const orderBefore = Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent);
 
     // 'Layer 2' sits directly below the dragged 'Top Layer', which the component refuses as a target
     act(() => {
@@ -418,8 +408,7 @@ describe('LayersTab against a live layer store', () => {
   it('leaves the stacking order untouched when the drag is abandoned', () => {
     const { container } = render(<LayersTab />);
     const dataTransfer = createDataTransfer();
-    const orderBefore = renderedOrder(container);
-    expect(orderBefore).toEqual(INITIAL_ORDER);
+    const orderBefore = Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent);
 
     act(() => {
       fireEvent.dragStart(getRowByName('Top Layer'), { dataTransfer });

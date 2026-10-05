@@ -4,7 +4,6 @@ import { toolsMap } from '../../tools/toolsMap.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
-import { isMobileToolOptionsMounted, MOBILE_TOOL_OPTIONS_ID } from './mobile-tools.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
 import { findMobileToolGroup, makeSelectTool } from './mobile-tools.ts';
 
@@ -19,9 +18,6 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
   const { goToTool } = useApp();
 
   if (!toolName || !hasImage) return null;
-
-  // The single source of "the panel exists", shared with `MobileBottomBar`'s toggle.
-  const panelIsMounted = isMobileToolOptionsMounted(isOpen, toolName, hasImage);
 
   const toolMeta = toolsMap[toolName];
   const ToolComponent = toolMeta?.toolboxComponent;
@@ -49,15 +45,7 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          // Only while the panel it names exists. Inside this component the predicate is provably
-          // `isOpen` — the early return above already guarantees a tool name and an image — so the
-          // extra clauses are INERT here and load-bearing only in `MobileBottomBar`, which is a
-          // sibling that stays mounted when this sheet does not. It is read from the shared source
-          // anyway so the two cannot drift, and so relaxing the early return cannot start dangling a
-          // reference: the render below is gated on the same value as this attribute. A closed
-          // sheet's header used to advertise a region that was not in the tree beside
-          // `aria-expanded="false"`: the dangling IDREF `PanelGroup`'s tab control had too.
-          aria-controls={panelIsMounted ? MOBILE_TOOL_OPTIONS_ID : undefined}
+          aria-controls="mobile-tool-options"
           className="flex min-h-11 w-full items-center justify-between gap-2 px-4 py-2 text-left bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 cursor-pointer"
         >
           <span className="flex min-w-0 items-center gap-2">
@@ -71,12 +59,12 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           </span>
         </button>
 
-        {panelIsMounted && (
+        {isOpen && (
           // `touch-pan-x touch-pan-y` is not redundant with the overflow classes:
           // a scroller only pans by touch when its own `touch-action` allows it,
           // and a `touch-action` set by an ancestor silently wins.
           <div
-            id={MOBILE_TOOL_OPTIONS_ID}
+            id="mobile-tool-options"
             className="scrollbar-none px-4 py-3 max-h-[300px] overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y"
           >
             {group && group.tools.length > 1 && (

@@ -3,7 +3,6 @@ import type { Selection, Size } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource, LayersRecord } from '../layer-types.ts';
 import type { SharpenToolArgs } from '../../tools/sharpen.ts';
-import type { BlurToolArgs } from '../../tools/blur.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 import {
@@ -16,7 +15,6 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
-  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -180,22 +178,6 @@ export const transformArgs: TransformToolArgs = {
 
 const sharpenArgs: SharpenToolArgs = { toolName: 'sharpen', amount: 120, radius: 1 };
 
-/**
- * A STROKE, which is the one raster shape that republishes its layer at a frame
- * of its own. `rasterBounds` is the frame the layer was padded into, in document
- * space, and the layer's box after the commit is that frame — not the box the
- * stroke was drawn over.
- */
-const strokeBlurArgs: BlurToolArgs = {
-  toolName: 'blur',
-  radius: 4,
-  points: [
-    { x: 60, y: 60 },
-    { x: 95, y: 75 },
-  ],
-  rasterBounds: { x: 0, y: 10, width: 160, height: 120 },
-};
-
 export type ReplayParityScenario = Readonly<{
   name: string;
   history: readonly HistoryItem[];
@@ -214,7 +196,6 @@ export const replayParityScenarios: readonly ReplayParityScenario[] = [
       historyItem('hide', HIDE_LAYER_ACTION, layerA),
       historyItem('show', SHOW_LAYER_ACTION, layerA),
       historyItem('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
-      historyItem('opacity', SET_LAYER_OPACITY_ACTION, layerA, { opacity: 0.35 }),
     ],
   },
   {
@@ -339,18 +320,18 @@ export const replayParityScenarios: readonly ReplayParityScenario[] = [
 ];
 
 /**
- * The scenarios the PIXEL differential adds, and the logical differential does not run.
+ * The one scenario the PIXEL differential adds, and the logical differential does not run.
  *
- * WHY THEY ARE SEPARATE. They exercise `commit: 'raster'`, the arm `history-adapter.ts` converts
+ * WHY IT IS SEPARATE. It exercises `commit: 'raster'`, the arm `history-adapter.ts` converts
  * into an `apply-raster-processor` operation and `replayHistory()` routes through
  * `dependencies.applyRasterTool` — the one dependency the logical suite stubs to identity, and
  * the one path where a REAL processor runs on both sides. None of the twelve carries a
- * `commit: 'raster'` tool, so without these rows the whole raster-processor axis would be wired
+ * `commit: 'raster'` tool, so without this row the whole raster-processor axis would be wired
  * and never entered.
  *
- * They are NOT in the logical list because the logical list is the existing gate: adding a row to
+ * It is NOT in the logical list because the logical list is the existing gate: adding a row to
  * it changes what `history-replay.parity.test.ts` asserts, and S1 changes no production
- * behaviour. `selection-replay.parity.test.ts` covers selection; these rows belong beside the
+ * behaviour. `selection-replay.parity.test.ts` covers selection; this row belongs beside the
  * pixel axis until a later step widens the logical corpus deliberately.
  */
 export const rasterProcessorScenarios: readonly ReplayParityScenario[] = [
@@ -359,30 +340,6 @@ export const rasterProcessorScenarios: readonly ReplayParityScenario[] = [
     history: [
       baselineEntry({ [layerA]: rasterLayer(layerA, 0, { x: 20, y: 30, width: 120, height: 80 }) }),
       historyItem('sharpen', TOOL_ACTION, layerA, sharpenArgs),
-    ],
-  },
-  {
-    /**
-     * The one ordering neither axis carried until now: a stroke, and a move AFTER
-     * it.
-     *
-     * A stroke republishes the layer at `rasterBounds`, so from that commit the
-     * layer's box is the stroke's frame and nothing else in the record can say so
-     * — the durable snapshot never learns it. A move recorded afterwards therefore
-     * moves a box the durable fold is not holding, and the two authorities part
-     * company by the whole offset: the frame is absolute, and where the source
-     * sits INSIDE it is the box the stroke was drawn over, which only the box
-     * before the stroke states.
-     *
-     * Every cursor is compared, and cursor 1 is the one that fails without the
-     * ordered fold: at cursor 0 the two agree, and at cursor 2 the move is the last
-     * thing the timeline does.
-     */
-    name: 'stroke then move',
-    history: [
-      baselineEntry({ [layerA]: rasterLayer(layerA, 0, { x: 20, y: 30, width: 120, height: 80 }) }),
-      historyItem('stroke', TOOL_ACTION, layerA, strokeBlurArgs),
-      historyItem('move', TOOL_ACTION, layerA, { toolName: 'reposition', move: { x: 40, y: 40 } }),
     ],
   },
 ];

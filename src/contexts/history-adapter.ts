@@ -28,13 +28,7 @@ import type { HistoryItem } from './history-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord, ToolLayerSource } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
-import {
-  deriveSelectionBaseline,
-  isValidSelectionSnapshot,
-  selectionBaselineEntry,
-  selectionSnapshot,
-  type SelectionHistoryArgs,
-} from './selection-baseline.ts';
+import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
 import type { ActionType } from '../util/constants.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -46,14 +40,12 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
-  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
 import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
-import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
   readonly code = 'unsupported-history-feature';
@@ -267,20 +259,7 @@ function convertSource(
   }
 }
 
-/**
- * `frame` is the document frame in effect where this layer is converted, not the
- * frame the conversion ends with: a layer created before a crop keeps the frame it
- * was authored against, and a baseline layer carries the frame that opened the
- * document. Callers hold that frame already — the baseline from the document
- * source, and every later conversion from the fold's `currentFrame` — so this
- * reads it rather than being handed the live store state it could not trust.
- */
-export function convertLayer(
-  layer: Layer,
-  documentId: string,
-  registry: AssetRegistry,
-  frame: DocumentFrame
-): DurableLayerSnapshot {
+export function convertLayer(layer: Layer, documentId: string, registry: AssetRegistry): DurableLayerSnapshot {
   if (!layer.source) {
     if (!layer.bitmap)
       throw new UnsupportedHistoryFeatureError(`Layer ${layer.id} has no durable source or raster materialization`);
@@ -296,7 +275,6 @@ export function convertLayer(
         blendMode: layer.blendMode,
         order: layer.order,
         pos: { ...layer.pos },
-        frame,
       },
       { kind: 'raster', assetId, width: layer.bitmap.width, height: layer.bitmap.height, isBedrock: layer.isBedrock }
     );
@@ -312,21 +290,15 @@ export function convertLayer(
       blendMode: layer.blendMode,
       order: layer.order,
       pos: { ...layer.pos },
-      frame,
     },
     convertSource(layer.source, layer, documentId, registry)
   );
 }
 
-function snapshotLayers(
-  layers: LayersRecord,
-  documentId: string,
-  registry: AssetRegistry,
-  frame: DocumentFrame
-): DurableLayerSnapshot[] {
+function snapshotLayers(layers: LayersRecord, documentId: string, registry: AssetRegistry): DurableLayerSnapshot[] {
   return Object.values(layers)
     .sort((left, right) => left.order - right.order)
-    .map((layer) => convertLayer(layer, documentId, registry, frame));
+    .map((layer) => convertLayer(layer, documentId, registry));
 }
 
 function frameFromLegacy(
@@ -400,6 +372,24 @@ export function deriveSetDocumentFrameEntry(
 }
 
 /**
+ * Structural guard for a durable selection snapshot.
+ *
+ * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts:122`): a snapshot that
+ * omits the id still retains its selections and only loses the active id.
+ * Rejecting that shape here would make the shadow clear selections that legacy
+ * replay keeps. The guard only asks whether the value can be read as a snapshot
+ * at all; normalizing the id to `null` is `deriveSetSelectionEntry`'s job.
+ */
+function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as { selections?: unknown; activeSelectionId?: unknown };
+  if (!Array.isArray(candidate.selections)) return false;
+  const { activeSelectionId } = candidate;
+  return activeSelectionId === undefined || activeSelectionId === null || typeof activeSelectionId === 'string';
+}
+
+/**
  * The single derivation of a selection durable entry.
  *
  * This is the selection twin of `deriveSetDocumentFrameEntry`, for the same
@@ -453,16 +443,15 @@ export function deriveSetSelectionEntry(
  * The value is the closed set of properties an action may own, not every key
  * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
  * derivation and the append validator exhaustively switch on the owned key —
- * a new action must name its property here and receive its own derivation and
- * validation branch rather than silently inheriting another property's rule.
+ * widening it to `keyof DurableLayerPropertyPatch` would let a new action own
+ * `opacity` and fall into the visibility arm as a silent default.
  */
-type LayerPropertyKey = 'visible' | 'name' | 'opacity';
+type LayerPropertyKey = 'visible' | 'name';
 
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
-  [SET_LAYER_OPACITY_ACTION]: 'opacity',
 } as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
@@ -508,10 +497,6 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     const name = (item.args as { name?: unknown } | undefined)?.name;
     if (typeof name !== 'string') return null;
     patch = { name };
-  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'opacity') {
-    const opacity = (item.args as { opacity?: unknown } | undefined)?.opacity;
-    if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
-    patch = { opacity };
   } else {
     // Visibility comes from the action, never from `args.visible`: that is the
     // rule legacy replay applies, and a hand-built args object must not be able
@@ -693,17 +678,7 @@ export function operationForTool(
     });
   }
 
-  if (isRasterStrokeArgs(args)) {
-    return Object.freeze({
-      kind: 'apply-raster-processor',
-      layerId: item.layerId,
-      processorId: args.toolName,
-      version: processor.replay.version,
-      args: plainObject(args, `history:${item.id}.args`, compaction),
-    });
-  }
-
-  if (processor.commit === 'layer-operation' && !isRasterStrokeArgs(args)) {
+  if (processor.commit === 'layer-operation') {
     const filterArgs = plainObject(args, `history:${item.id}.args`, compaction);
     if (!['blur', 'color', 'levels'].includes(args.toolName)) {
       throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);
@@ -729,28 +704,6 @@ export function operationForTool(
     });
   }
   if (processor.commit === 'raster') {
-    // The same refusal the live append boundary makes, on the same registry field and in the same
-    // words: a processor that creates its raster from its own input rather than reading the layer's
-    // pixels has no retained operation to replay, because materialization would have to recreate
-    // the stroke that created it. `history-append.ts` reads this in `retainedToolOperationKind`
-    // (which returns `null` and degrades the one entry) and again in `translate()` (which refuses
-    // a plan it was handed); without the arm here the conversion path published an
-    // `apply-raster-processor` those two refuse, so the same timeline converted and appended
-    // differently.
-    //
-    // A throw rather than `null` because this is a tool that owes the timeline an edit and has no
-    // way to express it — the same answer as an unregistered tool, an unsupported filter and a
-    // tool that cannot be replayed durably. `null` is the shape for an argument set that plans
-    // nothing, which is not this. What a refusal costs is the SEVERITY, and that asymmetry between
-    // this path's `error` (which withholds the whole shadow document through
-    // `convertLegacyHistorySafely`) and the append boundary's per-entry `warning` is a separate
-    // open decision, not part of the rule.
-    if (processor.compositesOntoInput === false) {
-      throw new UnsupportedHistoryFeatureError(
-        `Tool ${args.toolName} creates a raster from its own input and cannot replay as a retained processor`,
-        item.id
-      );
-    }
     return Object.freeze({
       kind: 'apply-raster-processor',
       layerId: item.layerId,
@@ -766,17 +719,13 @@ export function operationForTool(
 function snapshotFromDocumentSource(item: HistoryItem, documentId: string, registry: AssetRegistry) {
   const documentSource = item.documentSource;
   if (!documentSource) return null;
-  // The frame is derived before the layers because it is the frame those layers
-  // were authored against: every snapshot in a baseline carries the document's
-  // opening frame, which is what `DurableLayerSnapshot.frame` records.
-  const frame = frameFromLegacy(item, documentSource.size);
-  const layers = snapshotLayers(documentSource.layers, documentId, registry, frame);
+  const layers = snapshotLayers(documentSource.layers, documentId, registry);
   const activeLayerId =
     item.layerId && layers.some((layer) => layer.id === item.layerId)
       ? item.layerId
       : (layers[layers.length - 1]?.id ?? null);
   return {
-    frame,
+    frame: frameFromLegacy(item, documentSource.size),
     layers,
     activeLayerId,
   };
@@ -798,52 +747,12 @@ export function legacyHistoryToDurable(
   const registry = options.registry ?? getAssetRegistry();
   const first = legacyHistory[0];
   const initialSize = options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 };
-  const diagnostics: MigrationDiagnostic[] = [];
   // Both branches must seed identically, so the durable baseline reads the same
   // unbounded rule legacy replay uses. It cannot be narrowed to the pre-first-entry
   // state while a selection is created outside history: the tool-switch clear's
   // `previousSelectionState` is the only record that the selection existed, and
   // `durable-replay.ts` applies only each operation's `after`.
-  //
-  // The derivation is INSIDE this function's boundary, behind the same per-entry
-  // attribution every other read here has. It used to run ahead of the loop with
-  // nothing around it, so a `previousSelectionState` this file cannot read was
-  // not a diagnostic naming an entry — it was the failure of the whole
-  // conversion, reported with no `historyId` at all, which cost the user every
-  // entry in the timeline for one entry's bad data. `deriveSelectionBaseline`
-  // now tolerates the unreadable shape the same way the per-entry
-  // `SELECTION_ACTION` arm tolerates it one entry later; what is left here is a
-  // read that throws, and a throw is attributed to the entry that supplied it.
-  const baselineSelectionEntry = selectionBaselineEntry(legacyHistory);
-  let selectionBaseline: SelectionSnapshot;
-  try {
-    selectionBaseline = deriveSelectionBaseline(legacyHistory);
-  } catch (error) {
-    diagnostics.push(diagnosticFromError(error, baselineSelectionEntry ?? undefined));
-    selectionBaseline = selectionSnapshot();
-  }
-  // A PRESENT-BUT-UNREADABLE `previousSelectionState` is reported even though it
-  // is now tolerated, because parity is not observability: the shadow seeds an
-  // empty baseline, and the diagnostic is what tells a reader that the state was
-  // unreadable rather than genuinely empty. An ABSENT one is not reported — that
-  // is the ordinary shape of a selection created inside history, where the entry
-  // records a `nextSelectionState` and no previous one.
-  const baselinePreviousState = (baselineSelectionEntry?.args as SelectionHistoryArgs | undefined)
-    ?.previousSelectionState;
-  if (
-    baselineSelectionEntry &&
-    baselinePreviousState !== undefined &&
-    baselinePreviousState !== null &&
-    !isValidSelectionSnapshot(baselinePreviousState)
-  ) {
-    diagnostics.push({
-      historyId: baselineSelectionEntry.id,
-      actionName: baselineSelectionEntry.actionName,
-      severity: 'warning',
-      code: 'invalid-history-entry',
-      message: `History entry ${baselineSelectionEntry.id} carries a previousSelectionState the durable selection baseline cannot read, so the baseline is the empty selection. Legacy replay reads the same state through the same derivation and therefore starts empty too, so the two models still agree at every cursor.`,
-    });
-  }
+  const selectionBaseline = deriveSelectionBaseline(legacyHistory);
   // A source never carries a document frame. Bedrock establishes the frame only
   // at history index 0; the durable path's only frame writer is the
   // `set-document-frame` operation.
@@ -853,6 +762,7 @@ export function legacyHistoryToDurable(
     activeLayerId: null,
   };
   const baseline: DurableBaseline = { ...initial, selections: selectionBaseline };
+  const diagnostics: MigrationDiagnostic[] = [];
   const legacyCursorToDurableCursor: number[] = [];
   let currentLayers = new Map(initial.layers.map((layer) => [layer.id, layer]));
   let currentFrame = { ...initial.frame };
@@ -923,10 +833,7 @@ export function legacyHistoryToDurable(
       const source = item.layerSource ?? asLegacyLayerSource(item.args);
       if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
-        // `currentFrame`, not the frame this conversion ends with: the layer is
-        // authored against the frame in effect here, and a later `set-document-frame`
-        // must not restate the provenance of a layer that predates it.
-        const layer = convertLayer(runtimeLayer, documentId, registry, currentFrame);
+        const layer = convertLayer(runtimeLayer, documentId, registry);
         if (enabled) currentLayers.set(layer.id, layer);
         operation = Object.freeze({ kind: 'create-layer', layer });
       } else if (isSetLayerPropertiesAction(item.actionName)) {
@@ -1055,10 +962,7 @@ export function legacyHistoryToDurable(
         }
       } else if (item.actionName === MERGE_ACTION && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
-        // The merge result is authored in the frame in effect at the merge, for the
-        // same reason the create-layer arm reads `currentFrame` rather than a frame
-        // this conversion reaches later.
-        const layer = convertLayer(runtimeLayer, documentId, registry, currentFrame);
+        const layer = convertLayer(runtimeLayer, documentId, registry);
         const removedLayerIds = [...currentLayers.keys()].filter((id) => id !== layer.id);
         if (enabled) currentLayers = new Map([[layer.id, layer]]);
         operation = Object.freeze({ kind: 'merge-document', result: layer, removedLayerIds });
@@ -1183,16 +1087,9 @@ export function legacyHistoryToDurable(
 }
 
 /**
- * Conversion has runtime asset side effects, so it is transactional — and the
- * transaction follows the DOCUMENT, not the entry.
- *
- * An entry the converter cannot express is omitted and named by an `error`
- * diagnostic; the rest of the document is published and the assets the omitted
- * entry registered are reclaimed by reconciliation. What the transaction still
- * refuses to publish is a document that is structurally invalid, or a conversion
- * that threw before producing one — the two cases where a partial document
- * would be worse than none. The legacy path remains the fallback until every
- * history action has a durable equivalent.
+ * Conversion has runtime asset side effects, so do not expose a partial
+ * document after an unsupported entry. The legacy path remains the fallback
+ * until every history action has a durable equivalent.
  */
 export function convertLegacyHistorySafely(
   history: readonly HistoryItem[] | DurableDocument,
@@ -1206,37 +1103,12 @@ export function convertLegacyHistorySafely(
 
   try {
     const converted = legacyHistoryToDurable(history, { ...options, registry });
-    // The severity of a diagnostic does NOT decide whether the document survives.
-    // A diagnostic that names an `historyId` is ENTRY-LOCAL by construction: the
-    // entry is absent from the document and the diagnostic is what says so, so
-    // the rest of the timeline describes the same document the legacy timeline
-    // does for every entry it converted. Withholding the whole shadow for one of
-    // those discarded a correctly-computed document AND a correct cursor map —
-    // the cursor map being the part that is expensive to recompute — over a
-    // problem one entry caused, and one `{}` in one selection's
-    // `previousSelectionState` was enough to stop undo and redo for the document.
-    //
-    // What withholds the document is a failure that makes it structurally
-    // invalid, which is the only question left: a document the store could not
-    // hold and could not recover from. The asset transaction commits with it,
-    // and `reconcileDocumentAssets` reclaims whatever the omitted entry
-    // registered, so publishing a partial document leaks nothing — see
-    // `reconcileDocumentAssets`, which releases by REACHABILITY rather than by
-    // what this transaction added.
-    if (!isStructurallyValidConversion(converted)) {
+    if (converted.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
       transaction?.rollback();
       return {
         status: 'unavailable',
         document: null,
-        diagnostics: [
-          ...converted.diagnostics,
-          {
-            severity: 'error',
-            code: 'conversion-failed',
-            message:
-              'The converted durable document is not structurally valid, so it was withheld rather than shadowing a timeline it cannot describe.',
-          },
-        ],
+        diagnostics: converted.diagnostics,
         legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
       };
     }
@@ -1252,49 +1124,6 @@ export function convertLegacyHistorySafely(
       legacyCursorToDurableCursor: [],
     };
   }
-}
-
-/**
- * Whether a conversion produced a document the store can hold at all.
- *
- * This is the whole-conversion half of the partition in
- * `convertLegacyHistorySafely`, and it is deliberately a property of the RESULT
- * rather than of the diagnostics that produced it.
- *
- * The one thing checked is the cursor map, which is what navigation reads to
- * place a legacy cursor in the shadow. Every value in it has to be `-1` or the
- * index of a durable entry the document actually holds; anything else is a
- * navigation write with no target, and a document that can be navigated to an
- * entry it does not contain is worse than no document.
- *
- * Two things that look like they belong here and deliberately do not:
- *
- * - The baseline FRAME. `isValidDocumentFrame` requires a POSITIVE width and
- *   height, and the store genuinely holds a 0x0 frame before a document is
- *   loaded — `initialState` carries `{ width: 0, height: 0 }` and a conversion
- *   over that state produces it faithfully. Requiring a positive size would
- *   withhold the shadow for a state the store itself is in, which is the
- *   fail-closed-too-coarsely mistake this partition exists to undo. Every other
- *   frame is already validated where it is derived: `deriveSetDocumentFrameEntry`
- *   returns `null` for a `nextFrame` that is not a document frame.
- * - The document CURSOR. `freezeDurableDocument` clamps it, so a value out of
- *   range is silently repaired rather than published, and a repaired cursor is
- *   not a failure worth withholding a document for.
- *
- * No conversion in this file produces an out-of-range cursor: every push is
- * `entries.length - 1`, and the document-source baseline pushes the `-1` that
- * means "before the first entry". So this is a guard on the fail-closed half of a
- * boundary that is no longer fail-closed on severity, not a branch production
- * reaches — stated here so the answer to "what still withholds a document?" is a
- * property of the document rather than a severity nobody reasoned about. It is
- * EXPORTED and tested on hand-built results for that reason: an unreached guard
- * that nothing pins is a guard that quietly stops guarding.
- */
-export function isStructurallyValidConversion(converted: LegacyConversionResult): boolean {
-  const lastDurableCursor = converted.document.history.length - 1;
-  return converted.legacyCursorToDurableCursor.every(
-    (cursor) => Number.isInteger(cursor) && cursor >= -1 && cursor <= lastDurableCursor
-  );
 }
 
 /** Named alias used at the compatibility boundary by importers and callers. */

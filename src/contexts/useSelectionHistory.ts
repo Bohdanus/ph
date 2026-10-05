@@ -250,13 +250,12 @@ export const useSelectionHistory = () => {
   /**
    * Commit a drawn or moved selection as one undoable document edit.
    *
-   * This is the creation counterpart of `clearSelections`, and it exists for
-   * the same reason plus one. Selection creation used to write no history at
-   * all, so a drawn selection survived only as the `previousSelectionState` of
-   * whatever cleared it later. Recording creation is what retires that
-   * arrangement, and it is what lets the selection baseline lookup be bounded:
-   * the rule `selection-baseline.ts` still carries was written for the
-   * unrecorded world and is kept by tests, not by that premise.
+   * This is the creation counterpart of `clearSelections`, and it exists for the
+   * same reason plus one. Selection creation used to write no history at all, so
+   * a drawn selection survived only as the `previousSelectionState` of whatever
+   * cleared it later — which is why the selection baseline lookup in
+   * `history-replay.ts` has to scan the whole timeline. Recording creation
+   * itself is what eventually lets that lookup be bounded.
    *
    * `mode` selects which post-state the edit describes: `'create'` appends and
    * activates, `'move'` replaces the geometry of an existing selection. Both

@@ -7,44 +7,17 @@
 // filter desaturates that case as well, so a tool that is both chosen and unfinished reads as
 // unfinished, which is the honest reading.
 //
-// TIED TO `disabled:opacity-40` IN LIGHT ONLY, and that is a correction rather than a
-// restatement. This rule used to carry one value for both themes on the argument that "40% of a
-// grey lands at the same perceived weight in each", because the rail's chrome varies under the
-// filter. Measured, that argument is false: the filter applies to the element's WHOLE rendering —
-// its background and its border go through `grayscale(1)` and the opacity along with its glyph, and
-// the result is composited over the rail — and the two themes do not land in the same place.
+// The fraction is the button's own: `TOOL_BUTTON_BASE_CLASS` already carries
+// `disabled:opacity-40`, so this matches the dim the component would already draw for a
+// genuinely disabled control. A tile is not disabled — see `UNIMPLEMENTED_TOOL_CLASS` in
+// `SidebarLeft.tsx` — but the two should not disagree about what "greyed out" looks like.
 //
-//                     light tile   dark tile   dark flyout row
-//   opacity 0.40        2.05:1       3.25:1          3.17:1
-//   opacity 0.55        2.81:1       4.96:1          4.68:1
-//   opacity 0.80        5.11:1       9.29:1          8.17:1
-//
-// (Composited from this repository's own `@theme` hexes in `src/index.scss`. The 3.17:1 and the
-// 4.68:1 are pinned in `e2e/helpers/__tests__/contrast.unit.test.ts`, which is what a change to this
-// table has to keep honest. `e2e/toolbar-contrast.spec.ts` measures ONE dimmed cell in a browser — the
-// dark flyout row, at whatever opacity ships — so it gates the 0.55 and not the table: it does not
-// sweep the fractions, and it measures no dimmed tile and no light-theme dim.)
-//
-// The cell that drives the dark value is the flyout row, and the dark TILE is short too — so the
-// honest statement is that BOTH are under the floor at 0.40, not that the tile was never broken. A
-// row's label is 11px text, so it is owed the ordinary 4.5:1, and it got 3.17:1; the tile glyph got
-// 3.25:1, because the tile is measured at the size the BUTTON reports — the inherited 16px, not the
-// icon's own 28px box — so nothing here is scored at the 3:1 non-text floor after all. Dark is
-// therefore 0.55, where both dark cells clear 4.5:1, and light stays at the button's own
-// `disabled:opacity-40` because it is unregressed there and 0.55 buys nothing: light was already the
-// darker of the two readings and raising it only makes working tools look less finished by
-// comparison.
-//
-// WHAT LIGHT STILL DOES NOT CLEAR, stated rather than hidden: its tile sits at 2.05:1 and its flyout
-// row at 2.06:1 at the fraction it keeps. Reaching 4.5:1 in light needs 0.80, at which point the dim
-// is 5.11:1 against a working tool's 8.55:1 — still dimmer, but by a margin that no longer reads as
-// "does not work yet" at a glance. (8.55 is the working tile's glyph on its own fill, `bg-gray-200/80`
-// over the rail; the bare rail is 9.37:1 and is not what a tile is drawn on.) That is a real shortfall
-// rather than an oversight, and it is the honest cost of an operator-requested treatment Adobe does
-// not have. The greyed controls are also
-// the one category WCAG exempts as an inactive component — but only genuinely inactive ones, and
-// these are not: a dimmed tile still selects and still mounts its placeholder options bar, which is
-// why they are scored here rather than excused.
+// One value for both themes, and not an oversight. Photoshop uses one treatment in its light
+// and dark interfaces, and the rail's own chrome already varies with the theme underneath this
+// filter rather than in it: the tile is `text-gray-700` on `bg-gray-200/80` in light and
+// `text-gray-200` on `bg-gray-900/60` in dark, so 40% of a grey is a different pixel value in
+// each and lands at the same perceived weight. A separate dark value would be this repository
+// inventing a second chrome Adobe does not have.
 //
 // VISUAL ONLY, deliberately: no `pointer-events`, no reduced contrast for anything but the
 // dimmed pixels. The tile is still a button and the row is still a menu item, so the hover,
@@ -57,8 +30,4 @@
 // future `blur-sm` on the same element would be silently overridden by this line.
 .tool-unimplemented {
   filter: opacity(0.4) grayscale(1);
-}
-
-.dark .tool-unimplemented {
-  filter: opacity(0.55) grayscale(1);
 }

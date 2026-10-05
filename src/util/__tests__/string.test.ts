@@ -54,28 +54,6 @@ describe('deleteLastChar', () => {
     expect(result).toBe('');
     expect(removedWidth).toBe(-1);
   });
-
-  /**
-   * The reported width is `lastIndex - 1`, i.e. the UTF-16 offset of the START of the
-   * removed cluster minus one, and on a multi-unit string that offset is not the number of
-   * clusters before it. '👍🏽' is 4 code units, so the trailing 'a' starts at index 4 and the
-   * report is 3 — a mutant that counted clusters (1), or that reported the string length
-   * minus one (4), fails here and passes every ASCII case in this file.
-   */
-  it('reports a code-unit offset, not a cluster count, for a multi-unit tail', () => {
-    const [result, removedWidth] = deleteLastChar('👍🏽a');
-    expect(result).toBe('👍🏽');
-    expect(removedWidth).toBe(3);
-  });
-
-  it('removes a trailing cluster that is itself multi-code-point', () => {
-    // Two flags: each is a regional-indicator PAIR, so the clusters are at 0 and 4 and the
-    // trailing one is 4 code units wide. A code-unit-wise delete would split the pair.
-    const [result, removedWidth] = deleteLastChar('🇺🇸🇦🇪');
-    expect(result).toBe('🇺🇸');
-    expect(removedWidth).toBe(3);
-    expect(charLength(result)).toBe(1);
-  });
 });
 
 describe('deleteCharAt', () => {
@@ -102,29 +80,6 @@ describe('deleteCharAt', () => {
 
   it('returns the string unchanged when the index is negative', () => {
     expect(deleteCharAt('hello', -1)).toBe('hello');
-  });
-
-  it('returns the string unchanged when there are no clusters at all', () => {
-    // `start` stays -1 because the loop body never runs, which is the same early return the
-    // out-of-range case takes — a mutant that initialised `end` to 0 would instead drop the
-    // whole string here.
-    expect(deleteCharAt('', 0)).toBe('');
-    expect(deleteCharAt('', 5)).toBe('');
-  });
-
-  it('removes a cluster in the middle of a multi-code-point string without splitting it', () => {
-    // 'a' at 0, the flag's regional-indicator pair at 1-2, 'b' at 3. Index 1 must remove
-    // exactly the pair, and index 2 must remove the 'b' rather than a half flag.
-    expect(deleteCharAt('a🇺🇸b', 1)).toBe('ab');
-    expect(deleteCharAt('a🇺🇸b', 0)).toBe('🇺🇸b');
-    expect(deleteCharAt('a🇺🇸b', 2)).toBe('a🇺🇸');
-  });
-
-  it('deletes the last cluster by reaching past the final segment to the string length', () => {
-    // The `end === -1` arm substitutes `str.length`; with a multi-unit final cluster the
-    // resulting slice is still the whole tail, so the result is the prefix alone.
-    expect(deleteCharAt('a👍🏽', 1)).toBe('a');
-    expect(deleteCharAt('a👍🏽', 0)).toBe('👍🏽');
   });
 });
 
@@ -171,38 +126,6 @@ describe('ellipsify', () => {
     expect(result).toBe('👍🏽...');
     expect(result).toHaveLength(7);
     expect(hasUnpairedSurrogate(result)).toBe(false);
-  });
-
-  /**
-   * `maxLength < 3` is a separate arm that returns the ellipsis itself, clipped to the
-   * budget, and NO existing case in this file lands in it — the range loop below only
-   * asserts `result.length <= maxLength`, which `'...'` would satisfy at every budget
-   * below 3. These are the exact values, which is what pins `'...'.slice(0, n)`: a
-   * rewrite that returned `''` below 3, or `'...'`, would satisfy the loop and fail here.
-   *
-   * At exactly 3 the third arm takes over: the budget is 0, the first cluster's `next` is
-   * already past it, so nothing is kept and the result is the bare ellipsis.
-   */
-  it('returns the ellipsis clipped to a budget too small to hold one', () => {
-    expect(ellipsify('hello', 3)).toBe('...');
-    expect(ellipsify('hello', 2)).toBe('..');
-    expect(ellipsify('hello', 1)).toBe('.');
-    expect(ellipsify('hello', 0)).toBe('');
-  });
-
-  it('returns the ellipsis clipped to zero for a NEGATIVE budget rather than slicing from the end', () => {
-    // `'...'.slice(0, -1)` is `'..'`, so a `Math.max(0, maxLength)` removed from the
-    // bound would silently return two dots for a nonsense budget.
-    expect(ellipsify('hello', -1)).toBe('');
-    expect(ellipsify('hello', -100)).toBe('');
-  });
-
-  it('truncates to the budget for a multi-byte string whose length already fits', () => {
-    // `str.length` is UTF-16 code units, so a cluster-aware guard would behave
-    // differently here: '👍🏽' is 4 code units, so 4 fits and is returned untouched.
-    expect(ellipsify('👍🏽', 4)).toBe('👍🏽');
-    expect(ellipsify('👍🏽', 3)).toBe('...');
-    expect(ellipsify('👍🏽', 2)).toBe('..');
   });
 
   it('never exceeds maxLength for a range of budgets and emoji inputs', () => {

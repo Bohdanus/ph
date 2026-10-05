@@ -25,6 +25,10 @@ describe('currentDevicePixelRatio', () => {
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('falls back to 1 for %s', (bad) => {
     withDpr(bad, () => expect(currentDevicePixelRatio()).toBe(1));
   });
+
+  it('reports 1 when there is no window', () => {
+    expect(currentDevicePixelRatio()).toBeGreaterThan(0);
+  });
 });
 
 describe('useDevicePixelRatio', () => {

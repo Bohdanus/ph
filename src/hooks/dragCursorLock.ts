@@ -6,16 +6,10 @@
  * the unlock a shared resource, and every writer has to share the count — a second writer that
  * adds and removes the class directly will take the lock away from a gesture it never knew about.
  *
- * There are two writers of `document.body` and both go through here: `useDockDrag` (the dock
- * gestures) and `LayersTab` (the layer-row reorder, which predates this). They used to be
- * independent, and a layer drag that ended while a dock divider was still being dragged removed
- * the class from under the dock gesture.
- *
- * `MoveToolArea` is a third site that writes `cursor-grabbing`, and it deliberately does not come
- * here: it adds the class to its own container element rather than to `document.body`, so it
- * neither needs the count nor corrupts it. It is listed because the hazard above is about the
- * CLASS NAME, not about this module — a future writer that puts it on `document.body` without
- * taking the count would reintroduce the exact bug this module exists to prevent.
+ * There are two writers and both go through here: `useDockDrag` (the dock gestures) and
+ * `LayersTab` (the layer-row reorder, which predates this). They used to be independent, and a
+ * layer drag that ended while a dock divider was still being dragged removed the class from under
+ * the dock gesture.
  */
 
 let liveLocks = 0;

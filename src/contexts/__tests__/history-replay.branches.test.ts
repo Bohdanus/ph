@@ -11,10 +11,8 @@ import {
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
-  REPLACE_LAYER_SOURCE_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
-  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -100,7 +98,7 @@ describe('replayHistory document source and frame branches', () => {
     // the same shape the durable converter already refuses as an error
     // (`history-adapter.ts:640`) — so honouring it here is exactly the
     // authority/shadow disagreement that gate closes. Unreachable in production: the
-    // only writer is `REPLACE_DOCUMENT` with `history: [entry]` (`setImageFromUpload()`), so
+    // only writer is `REPLACE_DOCUMENT` with `history: [entry]` (`useApp.ts:120`), so
     // a `documentSource` always lands at index 0.
     expect(Object.keys(result.layers)).toEqual(['layer-1']);
     expect(result.layers['layer-9']).toBeUndefined();
@@ -415,46 +413,6 @@ describe('replayHistory layer bookkeeping actions', () => {
     expect(dependencies.createLayer).not.toHaveBeenCalled();
   });
 
-  it('keeps the retained operations of a layer whose source is replaced', () => {
-    // The load-bearing half of "a text layer with a filter on it can be retyped": the replace arm
-    // installs the replacement's name, `pos`, `source` and rasters and copies the EXISTING layer's
-    // `operations` across, so a source edit is an edit of the layer's arguments rather than of the
-    // edits already applied to it. `replayDurableDocument` keeps the list for the same reason and
-    // pins it in `durable-replay.source-edit.test.ts`; without this half the two replay authorities
-    // would disagree about a retyped layer, and both renderers re-apply the list to the new source
-    // (`drawLayerSource` at draw time, `materializeLayer`'s retained segment).
-    //
-    // The arm is otherwise unobservable from this file's other cases: nothing here seeds a layer
-    // that already carries an operation, so a replace that dropped the list passed every other test.
-    const dependencies = createDependencies();
-    const blur: FilterLayerOperation = { id: 'blur', args: { toolName: 'blur', radius: 4 }, enabled: true };
-    const replacement: LayerSource = {
-      kind: 'tool',
-      args: { toolName: 'text', text: 'Retyped' },
-      isBedrock: false,
-      pos: { x: 0, y: 0, width: 60, height: 40 },
-    } as LayerSource;
-    const history: HistoryItem[] = [
-      {
-        id: 'baseline',
-        actionName: OPEN_DOCUMENT_ACTION,
-        layerId: 'layer-1',
-        documentSource: {
-          layers: { 'layer-1': createTestLayer('layer-1', { operations: [blur] }) },
-          size: initialSize,
-          frame: { x: 0, y: 0, width: 400, height: 300 },
-        },
-      },
-      { id: 'retype', actionName: REPLACE_LAYER_SOURCE_ACTION, layerId: 'layer-1', args: { source: replacement } },
-    ];
-
-    const result = replayHistory(history, 1, initialSize, dependencies);
-
-    expect(result.layers['layer-1'].operations).toEqual([blur]);
-    // The replacement still took the source, so the layer is retyped rather than untouched.
-    expect(result.layers['layer-1'].source).toEqual(replacement);
-  });
-
   it('creates a layer from a tool layer source on a tool action', () => {
     const dependencies = createDependencies();
     const toolSource: LayerSource = {
@@ -515,20 +473,6 @@ describe('replayHistory layer bookkeeping actions', () => {
     const result = replayHistory(history, 2, initialSize, dependencies);
 
     expect(result.layers['layer-1'].name).toBe('Renamed');
-    expect(result.layers.ghost).toBeUndefined();
-  });
-
-  it('applies opacity to a present layer and ignores it for a missing or invalid layer', () => {
-    const history: HistoryItem[] = [
-      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
-      { id: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity: 0.35 } },
-      { id: 'missing', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'ghost', args: { opacity: 0.2 } },
-      { id: 'invalid', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity: 2 } },
-    ];
-
-    const result = replayHistory(history, history.length - 1, initialSize, createDependencies());
-
-    expect(result.layers['layer-1'].opacity).toBe(0.35);
     expect(result.layers.ghost).toBeUndefined();
   });
 
@@ -610,26 +554,15 @@ describe('replayHistory layer bookkeeping actions', () => {
   });
 
   it.each(['layer transparency', 'some unsupported action'])(
-    'refuses the action name %s it has no arm for, leaving the layer set untouched',
+    'ignores the unknown action %s without touching the layer set',
     (actionName) => {
-      // This is the only test in the tree that feeds an action name OUTSIDE the
-      // `ActionType` union, so it is the whole coverage of a corrupt, truncated or
-      // foreign timeline reaching `replayHistory`. Before `unhandled-action` existed
-      // such an entry was skipped SILENTLY, which the layer-set assertion alone could
-      // not distinguish from a correctly-applied no-op — so the diagnostic is asserted
-      // here too, not only the absence of a change.
       const dependencies = createDependencies();
       const history: HistoryItem[] = [
         { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
         { id: 'unknown', actionName, layerId: 'layer-1', args: {} },
       ] as HistoryItem[];
 
-      const result = replayHistory(history, 1, initialSize, dependencies);
-
-      expect(Object.keys(result.layers)).toEqual(['layer-1']);
-      expect(result.diagnostics).toEqual([
-        expect.objectContaining({ code: 'unhandled-action', historyId: 'unknown', actionName }),
-      ]);
+      expect(Object.keys(replayHistory(history, 1, initialSize, dependencies).layers)).toEqual(['layer-1']);
     }
   );
 });

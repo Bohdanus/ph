@@ -81,26 +81,8 @@ const TOOL_BUTTON_BASE_CLASS =
 const TOOL_BUTTON_ACTIVE_CLASS =
   'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
 
-/**
- * The inactive tile, and the two dark values that were measured rather than chosen.
- *
- * The rail is `dark:bg-gray-800` and the tile was `dark:bg-gray-900/60` over it, which composites
- * to `#171f2d` against the rail's `#1f2937` — **1.13:1**. A tile is a target the user aims at, and a
- * panel background is not a target, so the tile is now solid `dark:bg-gray-900` at 1.21:1 with its
- * border lifted from `dark:border-gray-700` (1.42:1) to `dark:border-gray-600` (1.94:1).
- *
- * Why the border stops short of the 3:1 that WCAG 1.4.11 asks of a component boundary: that rule
- * governs components identified ONLY by their boundary, and a tool tile is identified by its glyph,
- * which is `dark:text-gray-200` on the new fill at **14.33:1**. A 3:1 border on all forty-odd tiles
- * would draw a grid across the rail to satisfy a requirement this control is not subject to. The
- * boundary still had to move, because 1.42:1 is close enough to the panel's own edge to read as an
- * artefact rather than as a tile, which is a different defect from an inaccessible one.
- *
- * `TOOL_BUTTON_BASE_CLASS`'s own `text-gray-700` was 8.55:1 in light and needs nothing; only the two
- * `dark:` values on this line moved.
- */
 const TOOL_BUTTON_INACTIVE_CLASS =
-  'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-600 dark:bg-gray-900 dark:hover:border-gray-500 dark:hover:bg-gray-700';
+  'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
 /**
  * The one/two-column toggle's glyph, and WHICH WAY IT POINTS.
@@ -1235,26 +1217,12 @@ const SidebarLeft = () => {
           `availableHeight` (`toolbar-fit-store.ts`). The tools box's own chrome is the part
           the fit subtracts separately, and this change takes 14px off THAT one as well. */}
       <div className="flex h-full flex-col items-center py-2">
-        {/**
-         * The grip and the layout toggle share `text-gray-600`, and both were `text-gray-500`:
-         * **4.39:1** on the light rail's `bg-gray-100`, a 2.4% shortfall against the 4.5 that
-         * WCAG 1.4.3 asks of a glyph this size. `gray-600` is 6.86:1.
-         *
-         * The same FAILURE `HANDOFF.md` records for `SidebarRight`'s `«`/`»` — a `text-gray-500`
-         * control missing 4.5:1 — found again by measuring rather than by looking, and both controls
-         * here are fixed together because they are one row of chrome that must not disagree with
-         * itself. The four ratios are not the same, though: those are on `bg-gray-200` and
-         * `dark:bg-gray-700` and read 3.90:1 and 4.06:1, where these are on the rail's own
-         * `bg-gray-100` and `dark:bg-gray-800` and read 4.39:1 and 5.78:1. What the two records share
-         * is the utility and the shortfall, not the pair. `dark:text-gray-400`
-         * is 5.78:1 and was already past the floor, so only the light value moved.
-         */}
         <div className="mb-1 flex w-full shrink-0 items-center justify-between">
           {!isTablet && (
             <button
               {...railDrag.handleProps}
               aria-label="Move the toolbar to the other side"
-              className="cursor-grab rounded p-1 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               // The keyboard path, and the reason this is a `<button>` at all rather than a
               // decorative `<div>`. Dragging needs a pointer; this control is announced, sits in
               // the tab order, and is next to a sibling that works on click — so a button with no
@@ -1284,7 +1252,7 @@ const SidebarLeft = () => {
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
               aria-pressed={isSingleColumn}
-              className="rounded p-1 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               onClick={() => {
                 setIsSingleColumn((current) => !current);
                 closeFlyout();

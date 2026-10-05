@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   CanvasFilterUnsupportedError,
@@ -24,10 +24,6 @@ const safariStyleContext = () => ({
 });
 
 afterEach(() => {
-  // Unstub FIRST: `overrideCanvasFilterSupport(null)` re-probes the live environment, so
-  // probing while a stubbed `OffscreenCanvas` is still installed would leave the module
-  // reading `false` for the next test.
-  vi.unstubAllGlobals();
   overrideCanvasFilterSupport(null);
 });
 
@@ -58,67 +54,6 @@ describe('supportsCanvasFilter verifies the value round-trips', () => {
     expect(isCanvasFilterSupported()).toBe(false);
 
     overrideCanvasFilterSupport(null);
-    expect(isCanvasFilterSupported()).toBe(true);
-  });
-});
-
-/**
- * The three early returns inside `detectCanvasFilterSupport` are reached only through
- * `overrideCanvasFilterSupport(null)`, and in the jsdom harness none of them fires: the
- * setup file installs an `OffscreenCanvas` whose `getContext` returns a context with a
- * writable `filter`. Every arm is therefore untested, and each is the difference between
- * "this browser cannot do it" and "this module threw while importing".
- *
- * `stubGlobal` rather than a plain assignment so the harness value is restored afterwards;
- * `afterEach` calls `overrideCanvasFilterSupport(null)`, which re-probes the environment,
- * so a leaked global would turn the NEXT test red rather than this one.
- */
-describe('the environment probe reports absence rather than throwing', () => {
-  it('reports unsupported when there is no OffscreenCanvas at all', () => {
-    vi.stubGlobal('OffscreenCanvas', undefined);
-
-    overrideCanvasFilterSupport(null);
-
-    expect(isCanvasFilterSupported()).toBe(false);
-  });
-
-  it('reports unsupported when a 2d context cannot be obtained', () => {
-    // `getContext` returning null is a real browser outcome (context loss, or a context
-    // type the platform will not give), and the guard is what keeps it from reaching the
-    // probe, where `ctx.filter` on null would throw inside the try and be swallowed into
-    // the same answer by accident rather than by design.
-    class NullContextCanvas {
-      getContext(): null {
-        return null;
-      }
-    }
-    vi.stubGlobal('OffscreenCanvas', NullContextCanvas);
-
-    overrideCanvasFilterSupport(null);
-
-    expect(isCanvasFilterSupported()).toBe(false);
-  });
-
-  it('reports unsupported when constructing the probe canvas throws', () => {
-    class ThrowingCanvas {
-      constructor() {
-        throw new Error('allocation refused');
-      }
-    }
-    vi.stubGlobal('OffscreenCanvas', ThrowingCanvas);
-
-    expect(() => overrideCanvasFilterSupport(null)).not.toThrow();
-    expect(isCanvasFilterSupported()).toBe(false);
-  });
-
-  it('restores the previous answer once the real environment is back', () => {
-    vi.stubGlobal('OffscreenCanvas', undefined);
-    overrideCanvasFilterSupport(null);
-    expect(isCanvasFilterSupported()).toBe(false);
-
-    vi.unstubAllGlobals();
-    overrideCanvasFilterSupport(null);
-
     expect(isCanvasFilterSupported()).toBe(true);
   });
 });

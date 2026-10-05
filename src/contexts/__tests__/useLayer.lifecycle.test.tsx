@@ -21,21 +21,7 @@ import {
 
 type DrawLayersToCanvas = (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => boolean;
 
-/**
- * Records what the compositor was handed and resizes the target the way the real one does.
- *
- * The resize is the contract `renderExportCanvas` verifies: it reads the extent back off the
- * surface it was given and throws when it disagrees with the frame, so a mock that only recorded
- * calls would make `mergeLayers`' composite look like an unrendered document and the merge would
- * refuse. Layers are still what these tests read; the pixels are the mocked canvas context's job.
- */
-const drawLayersToCanvas = vi.hoisted(() =>
-  vi.fn<DrawLayersToCanvas>((canvas, _layers, frame) => {
-    canvas.width = frame.width;
-    canvas.height = frame.height;
-    return true;
-  })
-);
+const drawLayersToCanvas = vi.hoisted(() => vi.fn<DrawLayersToCanvas>(() => true));
 
 vi.mock('../layer-renderer.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../layer-renderer.ts')>();
@@ -110,23 +96,6 @@ function lastDrawnLayers(): readonly Layer[] {
   return drawnLayers(drawLayersToCanvas.mock.calls.length - 1);
 }
 
-/**
- * The layers the compositor was handed for the surface `createImageBitmap` last snapshotted.
- *
- * A merge is the only `createImageBitmap` in these paths, so that snapshot IS the composite, and
- * this finds the call that painted it. Reading it back is what separates "merged the record" from
- * "snapshotted the display", which are the same pixels until one of them is stale.
- */
-function compositedLayers(): readonly Layer[] {
-  const snapshotted = vi.mocked(globalThis.createImageBitmap).mock.calls.at(-1)?.[0];
-  const calls = drawLayersToCanvas.mock.calls;
-  for (let index = calls.length - 1; index >= 0; index -= 1) {
-    const call = calls[index]!;
-    if (call[0] === snapshotted) return call[1];
-  }
-  return [];
-}
-
 beforeEach(() => {
   drawLayersToCanvas.mockClear();
 });
@@ -196,129 +165,6 @@ describe('useLayers mergeAllLayers', () => {
     expect(merged!.bitmap).not.toBeNull();
     expect(merged!.isBedrock).toBe(false);
     expect(result.current.store.activeLayerId).toBe(merged!.id);
-  });
-});
-
-describe('useLayers mergeAllLayers composite source', () => {
-  const flatCanvas = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = size.width;
-    canvas.height = size.height;
-    return canvas;
-  };
-
-  it('renders the merged raster from the layer record, not from the visible canvas', async () => {
-    const canvas = flatCanvas();
-    const { result } = setup({ layers: { bottom: makeLayer('bottom', 0) }, activeLayerId: 'bottom', canvas });
-    drawLayersToCanvas.mockClear();
-
-    await act(async () => {
-      await result.current.layers.mergeAllLayers();
-    });
-
-    // IDENTITY is the assertion. The display canvas is the one surface a merge must not read:
-    // it repaints behind the record, so a snapshot of it is the one raster that can hold a layer
-    // the document no longer has. The composite is the surface `renderExportCanvas` painted,
-    // unattached and at the frame's extent, and it is the surface the merged bitmap came from.
-    const snapshotted = vi.mocked(globalThis.createImageBitmap).mock.calls.at(-1)?.[0];
-    expect(snapshotted).toBeInstanceOf(HTMLCanvasElement);
-    expect(snapshotted).not.toBe(canvas);
-    expect((snapshotted as HTMLCanvasElement).isConnected).toBe(false);
-    expect(compositedLayers().map((layer) => layer.id)).toEqual(['bottom']);
-  });
-
-  it('composites the committed record, so a layer hidden since the last paint is not baked in', async () => {
-    const canvas = flatCanvas();
-    const { result } = setup({
-      layers: { bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) },
-      activeLayerId: 'top',
-      canvas,
-    });
-
-    // Hide a layer and leave the glass showing it. This is not an exotic state: the repaint after
-    // a property edit is `Main`'s POST-PAINT effect, and every publish whose
-    // `drawLayersToCanvas` refused only logs and keeps the last good canvas. What is under test is
-    // the merge's READ, so the stale composite is left standing deliberately.
-    act(() => {
-      result.current.layers.toggleVisibility('top');
-    });
-    expect(result.current.store.layers.top!.visible).toBe(false);
-    drawLayersToCanvas.mockClear();
-
-    await act(async () => {
-      await result.current.layers.mergeAllLayers();
-    });
-
-    // Both layers reach the compositor, and the hidden one reaches it AS HIDDEN — the record the
-    // merge publishes. Read from the display instead, the flattened raster would carry the ink of
-    // a layer the document had already hidden, and no pixel comparison would have shown it.
-    const composited = compositedLayers();
-    expect(composited.map((layer) => layer.id)).toEqual(['bottom', 'top']);
-    expect(composited.find((layer) => layer.id === 'top')!.visible).toBe(false);
-  });
-
-  it('repaints the merged record it published rather than the stack it collapsed', async () => {
-    const canvas = flatCanvas();
-    const { result } = setup({
-      layers: { bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) },
-      activeLayerId: 'top',
-      canvas,
-    });
-    drawLayersToCanvas.mockClear();
-
-    let merged: Layer | null = null;
-    await act(async () => {
-      merged = await result.current.layers.mergeAllLayers();
-    });
-
-    // The DISPLAY is the surface that has to show the merge, and it is handed the published
-    // record. `drawAllLayers` closes over the pre-merge `layers`, so an unnamed repaint drew the
-    // stack this call collapsed and left it on the glass until `Main`'s effect ran.
-    const last = drawLayersToCanvas.mock.calls.at(-1)!;
-    expect(last[0]).toBe(canvas);
-    expect(last[1].map((layer) => layer.id)).toEqual([merged!.id]);
-  });
-
-  it('refuses the merge and repaints the record it kept when the composite cannot be rendered', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const canvas = flatCanvas();
-    const { result } = setup({
-      layers: { bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) },
-      activeLayerId: 'top',
-      canvas,
-    });
-
-    // Asymmetric on purpose, because that is the shape of the real failure: the display KEEPS its
-    // last good pixels when a composite fails, so a merge that read the display would look like it
-    // worked while the glass went on showing the pre-merge document. Only the merge's own surface
-    // fails here, and the display still repaints.
-    drawLayersToCanvas.mockImplementation((target, _layers, frame) => {
-      if (target !== canvas) return false;
-      target.width = frame.width;
-      target.height = frame.height;
-      return true;
-    });
-
-    let merged: Layer | null = null;
-    await act(async () => {
-      merged = await result.current.layers.mergeAllLayers();
-    });
-
-    // Nothing is published: the stack survives and no `MERGE_ACTION` claims a flatten that never
-    // rendered. `null` is the refusal every caller already handles, and the refusal is named.
-    expect(merged).toBeNull();
-    const store = result.current.store;
-    expect(Object.keys(store.layers).sort()).toEqual(['bottom', 'top']);
-    expect(store.history.filter((entry) => entry.actionName === MERGE_ACTION)).toEqual([]);
-    expect(error).toHaveBeenCalledWith('Unable to render the document for a layer merge', expect.anything());
-
-    // The display is repainted from the record this call kept, so a refusal cannot leave the
-    // pre-merge composite standing as though it were the result.
-    const last = drawLayersToCanvas.mock.calls.at(-1)!;
-    expect(last[0]).toBe(canvas);
-    expect(last[1].map((layer) => layer.id)).toEqual(['bottom', 'top']);
-
-    error.mockRestore();
   });
 });
 
@@ -729,29 +575,6 @@ describe('useLayers layer mutation commands', () => {
     expect(store.deletedLayers.top).toMatchObject({ id: 'top', bitmap: null, tmpCanvas: null });
     expect(store.activeLayerId).toBe('middle');
     expect(store.history.at(-1)).toMatchObject({ actionName: REMOVE_ACTION, layerId: 'top' });
-  });
-
-  it('repaints the record it published, so a removed layer leaves the canvas with the removal', () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = size.width;
-    canvas.height = size.height;
-    const { result } = setup({
-      layers: { bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) },
-      activeLayerId: 'top',
-      canvas,
-    });
-    drawLayersToCanvas.mockClear();
-
-    act(() => {
-      result.current.layers.removeLayer('top');
-    });
-
-    // The DISPLAY is the surface, and the removed layer is not on it. `drawAllLayers` closes over
-    // the pre-removal record, so a repaint that named nothing would have drawn the deleted layer
-    // straight back and left its pixels on the glass until `Main`'s post-paint effect ran.
-    const last = drawLayersToCanvas.mock.calls.at(-1)!;
-    expect(last[0]).toBe(canvas);
-    expect(last[1].map((layer) => layer.id)).toEqual(['bottom']);
   });
 
   it('clears the active layer when the last remaining layer is removed', () => {

@@ -31,11 +31,19 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 
 ## Subagents
 
+### Delegation
+
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
+- Never exceed 9 simultaneous subagents/processes.
 - A task subagent inherits the working directory. Give it the absolute worktree path and never let two agents edit the same file.
-- **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION.
-- Specify provider. `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is the catalog.
-- GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds!
+
+### Model policy
+
+**THE DEFAULT MODEL IS `Space Bunny Alpha (retires Oct 5)` ON PROVIDER `kilo`, AT VARIANT `max`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
+
+- **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
+- A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
+- GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
 - `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
 - Findings need evidence. The formatted board message cap is 4096 bytes; its body has about 3840 bytes: 3800 ASCII characters or 1200 characters when non-ASCII may occur. Put longer findings in a file or swarm issue.
 
@@ -58,11 +66,8 @@ Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for o
 
 ## Worktrees and dev servers
 
-- `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files, reports every path a merge resolution hand-edited after git had merged it cleanly, and refuses a resolution that dropped a test file BOTH sides still carry. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
+- `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
-- `npm run repo:state` reports every worktree with a merge, rebase or bisect in progress. Nothing else in the tree can see that state, and it lives in no commit, branch name or `git status`. Run it before a sweep or a landing. [`docs/ORCHESTRATION.md#what-git-is-doing-right-now`](docs/ORCHESTRATION.md#what-git-is-doing-right-now) is the detailed source.
-- `npm run inventory:verify` is a REPORT about the worktrees on this machine, not a gate, and no hook or CI job runs it. The gated suite asserts the same rules over a fleet it builds, so run this one before a sweep or a landing instead of blocking a push on it; [`docs/TESTING.md#gates`](docs/TESTING.md#gates) is where the split is stated.
-- Its exit code is its own verdict about this machine, and it is non-zero on a finding **and** on a check that could not run — a worktree holding work on no ref that could not be classified, facts git could not be read for, or a session audit that could not run — because "git could not be asked" is not "nothing is at risk". Read the exit line before acting on the number; `docs/TESTING.md` §Gates has the full set and every line the report can print.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
 
 ## Test traps
@@ -81,16 +86,14 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
-| `npm run test:staged` | nowhere             | manual `vitest related` command                                |
+| `npm run test:staged` | **NOWHERE**         | manual `vitest related` command                                |
 | `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
-- CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs, and none of them may carry `continue-on-error`: all three are gates. It audits high-severity vulnerabilities but does not enforce dependency licences.
+- CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs. It audits high-severity vulnerabilities but does not enforce dependency licences.
 - Never weaken a gate with a skip, raised threshold, deleted assertion, or re-recorded baseline. A baseline is re-recorded only with `--update-snapshots=all`.
 - Hooks dispatch from `<common-dir>/.git/hooks-gate/`, not each worktree's `.husky/_`; `HUSKY=0` bypasses them. A blocked commit may leave `.git/lint-staged_unstaged.patch`.
-- Reference timings, each one a single command on one machine: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` about 9s, `test:staged` 2.8s.
-- **Quote a per-file measurement and say which machine it came from. A suite total is a statement about the machine as much as the tree.** `scripts/__tests__/worktree-inventory.test.mjs` measured at 9.62-9.72s over five consecutive isolated runs, all green at `168 passed`, on this machine at load average 4.4. A spread rather than a figure because the fleet it builds is real `git` worktrees and a busy host moves it; a single number for it would be a guess wearing a measurement's clothes.
-- The same file, BEFORE it stopped reading the operator's own worktrees, took 61.47s of a 142.78s `npm run test` at 92 live worktrees. After: 340 files and 9100 tests in 47.94s, measured at the `pre-push` hook during the `git push` of `6b142f04`, with two further full-suite runs on a busier machine at 60.84s and 71.28s. The before/after pair is stated as the record it is, not as targets.
+- Reference timings: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` about 9s, `test:staged` 2.8s, and the full test about 7-14s.
 
 ## Known failures
 
@@ -130,26 +133,6 @@ deliberate and described in [`docs/DOCUMENTATION.md#citations`](docs/DOCUMENTATI
 no changelogs, completion summaries, or status reports. Verify every claim against the tree;
 each entry needs a validated problem, affected files, and an actionable fix. Fixed and verified deletes the entry.
 
-### Entry ids
-
-**A NEW ENTRY GETS A SHA, NOT A NUMBER. MINT IT WITH `npm run handoff:id -- "<title>"`, PASTE THE
-RESULT, AND NEVER RECOMPUTE IT.**
-
-A number is a shared allocator with no owner: every session reads the same highest number and
-claims it, so two sessions adding one entry each collide by construction and the merge arbitrates a
-conflict over prose. A sha derived from the entry's own title needs no allocator. The parser reads
-either form, so `## a1b2c3d. Title` and `## 242. Title` are both items and a document may hold both.
-
-- **Retitling changes the id**, because the id is the hash of the title. A retitled entry reads as a
-  new item on the board. Mint once, on creation.
-- **The id is 7 lowercase hex characters.** `## Defaced shapes` is a prose heading, not an entry —
-  an id must carry a digit. Do not invent a longer or mixed-case one; uppercase is normalised, but a
-  non-hex token is not an id at all.
-- **Numbers are not being removed.** An existing numbered entry stays numbered. Renumbering the
-  document to convert it is a separate, larger change and is not required.
-- Retiring an entry works for both forms: end the heading with a dead word, or list the id under a
-  heading like `### Items 3, a1b2c3d — deleted`.
-
 ## Architecture status
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**. The durable document is mounted only
@@ -157,13 +140,3 @@ as a **navigation presentation cache**; it remains subordinate to legacy replay,
 export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
-
-## Free subagent models
-
-| Model | Provider | Variant | Notes |
-|-------|----------|----------|-------|
-| Nemotron 3 Ultra | kilo | high | Best quality; thorough |
-| Dots3-Note Preview | kilo | thinking | Consistent, fast |
-| Step 3.7 Flash | kilo | high | Fast, accurate |
-
-Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.

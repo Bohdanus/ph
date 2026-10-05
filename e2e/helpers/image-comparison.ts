@@ -35,19 +35,6 @@ export interface CompareResult {
    * where it is `Infinity` because no channel was measured.
    */
   channelDelta: Record<ChannelName, ChannelDelta>;
-  /**
-   * Both decoded sizes, or `null` when they agreed. Non-null exactly when the comparison is
-   * the size-mismatch sentinel, so `sizeMismatch !== null` IS the verdict a caller tests for
-   * rather than inferring one from `diffPixels`.
-   *
-   * WHY THIS IS NOT A BOOLEAN. The sentinel reports `diffPixels: Number.MAX_SAFE_INTEGER`,
-   * which is the same number an entirely-different pair of same-sized images would approach,
-   * so a red export diff could not be triaged: the operator saw "every pixel differs" for a
-   * 1-pixel size disagreement, which is a different defect with a different fix. Reporting the
-   * two sizes names which of the pair moved and by how much, so the message can say
-   * "exported 800x600 against a baseline of 800x601" instead of restating the budget failure.
-   */
-  sizeMismatch: { actual: CaptureSize; expected: CaptureSize } | null;
 }
 
 /**
@@ -127,14 +114,6 @@ const unmeasuredChannelDelta = (): Record<ChannelName, ChannelDelta> =>
   ) as Record<ChannelName, ChannelDelta>;
 
 /**
- * A capture's decoded dimensions, in pixels, as `sharp` reports them.
- */
-export interface CaptureSize {
-  width: number;
-  height: number;
-}
-
-/**
  * Compare two PNG buffers using Node.js (sharp + pixelmatch).
  * Runs entirely in Node.js - no browser round-trip needed.
  * Much faster and more reliable than browser-based comparison.
@@ -176,13 +155,6 @@ export async function compareScreenshots(
       diffPixels: Number.MAX_SAFE_INTEGER,
       diffRatio: 1,
       channelDelta: unmeasuredChannelDelta(),
-      // The reason the sentinel exists at all, reported rather than inferred: without these two
-      // numbers the caller cannot tell this apart from "the picture is completely different",
-      // because `diffPixels` is MAX_SAFE_INTEGER in both cases and `matches` is false in both.
-      sizeMismatch: {
-        actual: { width: actualInfo.width, height: actualInfo.height },
-        expected: { width: expectedInfo.width, height: expectedInfo.height },
-      },
     };
   }
 
@@ -206,6 +178,5 @@ export async function compareScreenshots(
     diffPixels,
     diffRatio,
     channelDelta: measureChannelDelta(actualData, expectedData),
-    sizeMismatch: null,
   };
 }

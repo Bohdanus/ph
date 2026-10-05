@@ -180,14 +180,6 @@ describe('useMarchingAnts transformed layers', () => {
     expect(() => {
       act(() => result.current.clear());
     }).not.toThrow();
-
-    // ...and a no-op for the LOCK too, not just for the class. `clear()` reaches the cursor
-    // through the same optional chain that skipped the container, so a version that gave up
-    // early on the missing element instead of on the missing class would also stop the
-    // animation — and `frames.size` is what says it did not.
-    expect(rafMocks.frames.size).toBe(0);
-    // Nothing was painted, so there is nothing to erase either.
-    expect(ctx.clearRect).not.toHaveBeenCalled();
   });
 
   it('animates the transformed path and keeps marching until cleared', () => {

@@ -71,30 +71,6 @@ export type ToolProcessorDefinition = {
    * refusal in `src/util/canvas-filter.ts` has one place to read the answer from.
    */
   requiresCanvasFilter?: boolean;
-  /**
-   * This tool takes a STROKE as well as a whole-layer form, so `commit` alone cannot classify its
-   * arguments: the same tool commits as a retained operation from its options bar and bakes a
-   * raster under a dragged brush. Set it on every tool whose `ToolArgs` can carry `points` plus
-   * `rasterBounds`, and the stroke/whole-layer split becomes one registry fact instead of a tool
-   * name list repeated by every classifier.
-   *
-   * It is a CAPABILITY and not a second commit kind, because the split is orthogonal to the kind:
-   * `blur` strokes and retains (`layer-operation`), while `sharpen` and `smudge` stroke and bake
-   * (`raster`). What all three share is the consequence — a stroke is addressed at the frame in its
-   * own args, so it widens the layer's disposable raster and drops the retained operations instead
-   * of appending one. `src/util/typeGuards.ts`'s `isRasterStrokeArgs` grades the args and this
-   * answers which tools may be graded that way; `src/contexts/history-replay.ts`,
-   * `src/contexts/useLayer.ts`, `src/contexts/useHistory.ts`, `src/contexts/materialization.ts`,
-   * `src/contexts/history-adapter.ts` and `src/contexts/history-append.ts` all read that one
-   * predicate, so the durable and legacy classifications cannot disagree about a stroke.
-   *
-   * A tool whose args cannot carry `rasterBounds` MUST NOT set it: `rasterBounds` is the frame a
-   * stroke is staged at (`stageProcessorInput`, `materialization.ts`), so a tool with no such arg
-   * has no frame to honour, and declaring the capability would make every path stage a frame the
-   * processor cannot address. `tool-processors.test.ts` pins the two sets against each other by
-   * deriving the argument types' half of the rule at compile time.
-   */
-  strokeShaped?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -139,17 +115,6 @@ export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>
 export const findToolProcessor = (toolName: ToolName): ToolProcessorDefinition | undefined =>
   (toolProcessors as Partial<Record<ToolName, ToolProcessorDefinition>>)[toolName];
 
-/**
- * Whether this tool takes a stroke, as `ToolProcessorDefinition.strokeShaped` declares it.
- *
- * The reader rather than the field at every call site, for the reason `findToolProcessor` gives
- * for its own: a name from outside the registry is a real possibility, so a tool that is not
- * registered — and a pixel-free tool, which resolves to nothing — has to answer `false` here rather
- * than throw. Every classifier that must tell a stroke from a whole-layer edit reads this, so the
- * set of stroke-taking tools is declared once, beside the tools themselves.
- */
-export const toolIsStrokeShaped = (toolName: ToolName): boolean => findToolProcessor(toolName)?.strokeShaped === true;
-
 const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: number): DrawToolArgs =>
   ({
     ...(args as Partial<DrawToolArgs>),
@@ -175,10 +140,6 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   blur: {
     requiresCanvasFilter: true,
-    // The only tool that both strokes and retains: the dragged brush bakes, and the options bar
-    // appends a whole-layer filter. That is why `strokeShaped` exists rather than a second commit
-    // kind — `ToolCommitKind` cannot name "this one, for these arguments".
-    strokeShaped: true,
     commit: 'layer-operation',
     replay: replay('layer-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
@@ -308,14 +269,12 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   sharpen: {
     commit: 'raster',
-    strokeShaped: true,
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: sharpen,
   },
   smudge: {
     commit: 'raster',
-    strokeShaped: true,
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: smudge,

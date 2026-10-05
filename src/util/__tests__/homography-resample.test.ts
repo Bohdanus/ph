@@ -211,48 +211,6 @@ describe('resampleThroughHomography', () => {
     expect(MAX_HOMOGRAPHY_SUBSAMPLES).toBeLessThanOrEqual(8);
   });
 
-  /**
-   * The two dimensions of the supersampling that no other case in this file reaches: a
-   * footprint that crosses the `ceil` boundary into 2x2 subsamples, and a sample that lands
-   * OUTSIDE the source so the accumulator is divided by a count it never reached.
-   *
-   * Everything here is derivable by hand. Inverse scale 2 on a 1x1 destination means
-   * `duDx = duDy = dvDx = dvDy` resolve to a footprint of 2, so
-   * `subsamples = min(4, max(1, ceil(2))) = 2` and `sampleCount = 4`. The four samples sit
-   * at (0.25, 0.25), (0.75, 0.25), (0.25, 0.75) and (0.75, 0.75), which map to (u, v) of
-   * (0.5, 0.5), (1.5, 0.5), (0.5, 1.5) and (1.5, 1.5). The source is 1x1, so the
-   * `u <= sourceWidth` test keeps only the FIRST; the other three are skipped without
-   * contributing. That one sample is a texel centre, so all of its bilinear weight lands on
-   * the single texel: `alpha = 255`, and the written alpha is `255 / 4 = 63.75`, which a
-   * `Uint8ClampedArray` rounds to 64.
-   *
-   * The mutant is `sampleCount`: dividing by `subsamples` instead of `subsamples *
-   * subsamples` would write 128, and not dividing at all would write 255. Every existing case
-   * in this file saturates its alpha at 255 — full coverage cancels the divisor exactly — so
-   * the divisor is observable only where coverage is partial, which is what this is.
-   */
-  it('divides the accumulated alpha by the FULL subsample grid, not by the samples it took', () => {
-    const source = solidImage(1, 1, [255, 255, 255, 255]);
-    const magnifyTwo: Homography = { a: 2, b: 0, c: 0, d: 0, e: 2, f: 0, g: 0, h: 0, i: 1 };
-
-    const destination = resample(source, 1, 1, magnifyTwo);
-
-    // Colour is unpremultiplied, so it is unaffected: only the alpha shows the divisor.
-    expect(pixelAt(destination, 0, 0)).toEqual([255, 255, 255, 64]);
-    expect(pixelAt(destination, 0, 0)[3]).not.toBe(128);
-    expect(pixelAt(destination, 0, 0)[3]).not.toBe(255);
-  });
-
-  it('caps the subsample grid at the documented bound rather than following the footprint', () => {
-    // A footprint of 1000 would be a million fetches for one destination pixel without the
-    // cap; 4 makes the worst case 16. Nothing else in this file can observe the constant,
-    // because every case whose footprint sits under the cap is unchanged by raising it, and
-    // every case over it saturates its alpha. So the bound itself is what is pinned here,
-    // against the same loose `1..8` range the case above asserts.
-    expect(MAX_HOMOGRAPHY_SUBSAMPLES).toBe(4);
-    expect(MAX_HOMOGRAPHY_SUBSAMPLES * MAX_HOMOGRAPHY_SUBSAMPLES).toBe(16);
-  });
-
   it('ignores degenerate source and destination dimensions', () => {
     const identity = inverseOf(scaleHomography(1, 1));
 

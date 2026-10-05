@@ -53,10 +53,10 @@ const storeState = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   canvasRef: { current: document.createElement('canvas') },
   // Explicit element type: an inferred `never[]` makes `resetStoreState` reject
-  // any real selection, and the Deselect pin has to seed one.
+  // any real selection, and the Clear pin has to seed one.
   selections: [] as Selection[],
   // An empty timeline at cursor -1 is what a store with nothing appended yet
-  // actually looks like, and it is what puts the Deselect writer on the append
+  // actually looks like, and it is what puts the Clear writer on the append
   // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
   // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
   // diagnostic instead of throwing on `undefined`, and the writer dispatches the
@@ -112,14 +112,14 @@ function setClipboardState(overrides: Partial<typeof clipboardState> = {}) {
 
 function withActivePolygonSelection() {
   setClipboardState({ activeSelection: POLYGON_SELECTION, hasSelectionClipboard: true });
-  // The Deselect control writes through the append boundary, which reads the
+  // The Clear control writes through the append boundary, which reads the
   // selection from the store, so the store has to agree with the clipboard mock
-  // that enables the button. An empty store would make Deselect a deliberate no-op.
+  // that enables the button. An empty store would make Clear a deliberate no-op.
   resetStoreState({ selections: [POLYGON_SELECTION], activeSelectionId: POLYGON_SELECTION.id });
 }
 
 /**
- * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
  * edit that appends to history, so a deselect can be undone. The contract is one
  * `COMMIT_DOCUMENT_EDIT` carrying both the history item and the resulting
  * selection state.
@@ -309,7 +309,7 @@ describe('MagicWand toolbar', () => {
       render(<MagicWand />);
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Paste' })).toBeEnabled();
     });
 
@@ -403,7 +403,7 @@ describe('MagicWand toolbar', () => {
       withActivePolygonSelection();
       render(<MagicWand />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Deselect' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
       expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
       expect(pasteSelectionClipboardMock).not.toHaveBeenCalled();
@@ -456,7 +456,7 @@ describe('MagicWand toolbar', () => {
       const smoothingSlider = screen.getByLabelText(/Smooth/);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Deselect' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       expect(copyButton).not.toBeDisabled();
       expect(pasteButton).not.toBeDisabled();
@@ -501,7 +501,7 @@ describe('MagicWand toolbar', () => {
       const smoothingSlider = screen.getByLabelText(/Smooth/);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Deselect' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       expect(copyButton).toBeDisabled();
       expect(pasteButton).toBeDisabled();
@@ -597,13 +597,13 @@ describe('MagicWand toolbar', () => {
       expect(smoothingSlider).toHaveValue(String(initialSmoothing));
     });
 
-    it('allows enter/space to trigger copy, paste, and Deselect buttons', async () => {
+    it('allows enter/space to trigger copy, paste, and clear buttons', async () => {
       const user = userEvent.setup();
       withActivePolygonSelection();
       render(<MagicWand />);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Deselect' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       copyButton.focus();
       expect(copyButton).toHaveFocus();

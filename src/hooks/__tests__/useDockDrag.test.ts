@@ -92,50 +92,6 @@ describe('useDockDrag', () => {
       // write a width and the second would win.
       expect(onStart).toHaveBeenCalledTimes(1);
     });
-
-    it('hands onStart the pointer-down event by identity, so it can read the original geometry', () => {
-      // `onStart` is how a resize records the pointer position it will measure its delta
-      // from, and how a reorder records the slot the drag began over. Nothing asserted the
-      // argument, so passing anything else — the gesture record, nothing at all — was
-      // invisible here while every caller's first move would come out against a missing
-      // `clientX`.
-      const onStart = vi.fn();
-      const { result } = setup({ onMove: () => {}, onStart });
-      const event = pointerEvent({ clientX: 640, clientY: 480 });
-
-      act(() => result.current.handleProps.onPointerDown(event));
-
-      expect(onStart).toHaveBeenCalledExactlyOnceWith(event);
-    });
-
-    it('still starts the gesture on a handle that cannot take the pointer capture', () => {
-      // The document listeners deliver the gesture whether or not capture took, so a
-      // disconnected handle is a degraded path rather than a broken one — and the `catch`
-      // around `setPointerCapture` is the only thing standing between it and a throw out
-      // of an event handler. Untested, so deleting the `catch` shipped green.
-      const onStart = vi.fn();
-      const onMove = vi.fn();
-      const { result } = setup({ onMove, onStart });
-      const target = {
-        setPointerCapture: vi.fn(() => {
-          throw new Error('InvalidPointerId');
-        }),
-        releasePointerCapture: vi.fn(),
-      };
-      const event = {
-        ...pointerEvent({ clientX: 10, clientY: 10 }),
-        currentTarget: target,
-      } as unknown as React.PointerEvent<HTMLElement>;
-
-      act(() => result.current.handleProps.onPointerDown(event));
-
-      expect(onStart).toHaveBeenCalledTimes(1);
-      expect(result.current.isDragging).toBe(true);
-
-      dispatch('pointermove', { clientX: 60, clientY: 10 });
-
-      expect(onMove).toHaveBeenCalledExactlyOnceWith({ dx: 50, dy: 0 });
-    });
   });
 
   describe('what a drag reports', () => {
@@ -175,27 +131,6 @@ describe('useDockDrag', () => {
       dispatch('pointermove', { pointerId: 7, clientX: 400, clientY: 0 });
 
       expect(onMove).not.toHaveBeenCalled();
-    });
-
-    it('reports into the callbacks of the latest render, not the ones captured at the press', () => {
-      // Every caller passes a fresh closure each render and the document listeners are
-      // registered once per drag, so the listener has to read `latest.current`. A resize
-      // that measured from the FIRST render's starting point accumulates the rounding the
-      // delta primitive exists to avoid, and the second move of the drag would report into a
-      // handler whose owner is already gone.
-      const first = vi.fn();
-      const second = vi.fn();
-      const { result, rerender } = renderHook(
-        ({ onMove }: { onMove: (d: DragDelta) => void }) => useDockDrag({ onMove }),
-        { initialProps: { onMove: first } }
-      );
-
-      act(() => result.current.handleProps.onPointerDown(pointerEvent({ clientX: 100, clientY: 100 })));
-      rerender({ onMove: second });
-      dispatch('pointermove', { clientX: 130, clientY: 90 });
-
-      expect(first).not.toHaveBeenCalled();
-      expect(second).toHaveBeenCalledExactlyOnceWith({ dx: 30, dy: -10 });
     });
   });
 

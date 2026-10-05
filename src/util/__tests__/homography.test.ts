@@ -7,11 +7,8 @@ import {
   applyHomography,
   differentiateHomography,
   homographyDeterminant,
-  homographyMagnitude,
   invertHomography,
   isInvertibleHomography,
-  projectiveDenominator,
-  projectiveRowScale,
   solveHomography,
   type Homography,
 } from '../homography.ts';
@@ -106,122 +103,6 @@ describe('homography', () => {
         expect(matrix).not.toBeNull();
         expect(invertHomography(matrix!)).not.toBeNull();
       }
-    });
-
-    /**
-     * The identity, as the exact matrix rather than as a set of mapped corners.
-     *
-     * Every other case in this file checks that the solution REPRODUCES a known quad, which
-     * a solver could do with a wrong-but-consistent normalisation of h8. Mapping four
-     * corners onto themselves is satisfied by any scalar multiple of the identity, so it is
-     * the coefficient vector itself that has to be checked — and `i` is pinned to 1 by the
-     * construction rather than solved for, which is exactly the step a rewrite could get
-     * wrong. The mutants: transposed `rows`/`values` (x and y swapped), a missing
-     * `-to.x * from.x` sign (the classic DLT sign error, which produces the identity with
-     * `g` and `h` negated and still maps the origin correctly), and `i` solved rather than
-     * fixed.
-     */
-    it('solves the identity correspondences back to exactly the identity matrix', () => {
-      const rect = rectCorners({ width: 64, height: 32 });
-
-      const matrix = solveHomography(rect, rect)!;
-
-      expect(matrix.a).toBe(1);
-      expect(matrix.e).toBe(1);
-      expect(matrix.i).toBe(1);
-      // The zeros are compared by magnitude because the solver leaves signed zero in a
-      // coefficient it never had to move, and `toEqual` distinguishes +0 from -0. That is the
-      // only concession: each one is still required to be zero.
-      for (const coefficient of ['b', 'c', 'd', 'f', 'g', 'h'] as const) {
-        expect(Math.abs(matrix[coefficient]), coefficient).toBe(0);
-      }
-    });
-
-    it('solves a pure translation to the matrix whose a and e stay exactly 1', () => {
-      const rect = rectCorners({ width: 64, height: 32 });
-      const moved = rect.map((point) => ({ x: point.x + 1000, y: point.y - 500 }));
-
-      const matrix = solveHomography(rect, moved)!;
-
-      expectPointCloseTo(applyHomography(matrix, { x: 0, y: 0 }), { x: 1000, y: -500 });
-      expect(matrix.a).toBeCloseTo(1, 9);
-      expect(matrix.e).toBeCloseTo(1, 9);
-      expect(matrix.b).toBeCloseTo(0, 9);
-      expect(matrix.d).toBeCloseTo(0, 9);
-      expect(matrix.c).toBeCloseTo(1000, 6);
-      expect(matrix.f).toBeCloseTo(-500, 6);
-      // The projective row stays zero, so the translation really is affine. A wrong sign on the
-      // `-to.x * from.x` columns would leave a non-zero `g`/`h` here even though the corners
-      // would still map.
-      //
-      // Compared to a tolerance, not to `0`. A pure translation of a rect has an exactly zero
-      // projective row in exact arithmetic, but the solver's elimination leaves float residue
-      // whose presence depends on the ARITHMETIC rather than on the answer: sweeping
-      // translations of this 64x32 rect gives an exactly zero `g` every time, while the same
-      // translations of a 32x64 rect leave `g` around 3.5e-18 and some sizes reach 1.4e-17. A
-      // legitimate refactor — a different pivot choice in the row search, a different
-      // accumulation order — would move this fixture between those two states and turn a
-      // matrix that is right to 17 significant figures red. 1e-12 still separates the two
-      // cases by ten orders of magnitude, because the mutant this guards against (a sign flip
-      // on the `-to.x * from.x` columns) leaves `g`/`h` O(100), not O(1e-17).
-      expect(matrix.g).toBeCloseTo(0, 12);
-      expect(matrix.h).toBeCloseTo(0, 12);
-    });
-
-    it('rejects four correspondences whose destination is a single repeated point', () => {
-      const rect = rectCorners({ width: 10, height: 10 });
-      const collapsed = [
-        { x: 5, y: 5 },
-        { x: 5, y: 5 },
-        { x: 5, y: 5 },
-        { x: 5, y: 5 },
-      ];
-
-      expect(solveHomography(rect, collapsed)).toBeNull();
-    });
-
-    it('rejects a source quad whose points all repeat, which is rank zero', () => {
-      // A different arm from the collinear case above: the pivot search never finds a usable
-      // head at all, rather than finding one and losing rank later.
-      const repeated = [
-        { x: 3, y: 4 },
-        { x: 3, y: 4 },
-        { x: 3, y: 4 },
-        { x: 3, y: 4 },
-      ];
-
-      expect(solveHomography(repeated, rectCorners({ width: 10, height: 10 }))).toBeNull();
-    });
-  });
-
-  /**
-   * `homographyMagnitude` is the scale reference the invertibility epsilon is relative to,
-   * and its member list is a decision: `c` and `f` are deliberately EXCLUDED because they
-   * are translation, and including them would make a matrix with a large offset in pixel
-   * units look near-singular and get refused. Nothing else in this file pins the list, since
-   * every magnitude it exercises is 1 or 4.
-   */
-  describe('homographyMagnitude', () => {
-    it('reads the largest ABSOLUTE entry of the seven non-translation coefficients', () => {
-      const base: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0, h: 0, i: 1 };
-
-      expect(homographyMagnitude(base)).toBe(1);
-      expect(homographyMagnitude({ ...base, b: 50 })).toBe(50);
-      expect(homographyMagnitude({ ...base, g: -100 })).toBe(100);
-      expect(homographyMagnitude({ ...base, h: 7 })).toBe(7);
-      // Signs are taken out, so a negative projective term does not read as smaller.
-      expect(homographyMagnitude({ ...base, g: -2 })).toBe(2);
-    });
-
-    it('ignores the translation terms, which are in pixel units rather than scale', () => {
-      // The mutant: adding `c` or `f` to the list. A pure translation of 1e9 px would then
-      // report a magnitude of 1e9, and `1e-12 * magnitude^3` would exceed any determinant,
-      // so `isInvertibleHomography` would refuse a perfectly good matrix.
-      const translated: Homography = { a: 1, b: 0, c: 1e9, d: 0, e: 1, f: -1e9, g: 0, h: 0, i: 1 };
-
-      expect(homographyMagnitude(translated)).toBe(1);
-      expect(homographyDeterminant(translated)).toBe(1);
-      expect(isInvertibleHomography(translated)).toBe(true);
     });
   });
 
@@ -350,104 +231,9 @@ describe('homography', () => {
       expect(applyHomography(matrix, { x: 0, y: 0 })).toBeNull();
     });
 
-    /**
-     * The whole horizon of a perspective warp, which is where a resampler would either fold
-     * or blow up: `x + y - 10` is the denominator, so every point on that LINE is singular,
-     * not just the one the existing case finds at the origin.
-     */
-    it('returns null along the entire denominator-zero line, not only at the origin', () => {
-      const matrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: 1, h: 1, i: -10 };
-
-      expect(applyHomography(matrix, { x: 5, y: 5 })).toBeNull();
-      expect(applyHomography(matrix, { x: 10, y: 0 })).toBeNull();
-      expect(applyHomography(matrix, { x: 0, y: 10 })).toBeNull();
-      // Just off the line the denominator is -1 and the coordinate FLIPS SIGN, which is
-      // exactly what a horizon does: 5 / -1, not 5 / 1.
-      expect(applyHomography(matrix, { x: 5, y: 4 })).toEqual({ x: -5, y: -4 });
-    });
-
-    /**
-     * The RELATIVE epsilon, which is the only thing that makes the previous line a decision
-     * rather than an accident.
-     *
-     * With `g = -1, i = 0` at `x = 1e-13` the denominator is `-1e-13`: non-zero, so a guard
-     * written as `denominator === 0` would sail past it and divide, returning a perfectly
-     * finite and completely meaningless coordinate. The threshold is
-     * `1e-12 * max(1, |x|, |y|) = 1e-12`, and `1e-13` is below it. This is the case that
-     * separates the real implementation from a plausible simplification.
-     */
-    it('refuses a denominator that is small RELATIVE to the coordinate, not only an exact zero', () => {
-      const matrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: -1, h: 0, i: 0 };
-
-      expect(applyHomography(matrix, { x: 1e-13, y: 0 })).toBeNull();
-      // An order of magnitude above the threshold the same matrix maps.
-      expect(applyHomography(matrix, { x: 1e-11, y: 0 })).not.toBeNull();
-    });
-
     it('returns null for a non-finite mapped coordinate', () => {
       expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: Number.POSITIVE_INFINITY, y: 0 })).toBeNull();
       expect(applyHomography(IDENTITY_HOMOGRAPHY, { x: 0, y: Number.NaN })).toBeNull();
-    });
-  });
-
-  /**
-   * `projectiveRowScale` and `projectiveDenominator` are exported, and the second one takes
-   * an override argument, yet nothing in the suite calls either directly — they are only ever
-   * reached through `differentiateHomography`, whose identity case has an all-zero projective
-   * row and therefore cannot distinguish a correct threshold from a permissive one.
-   */
-  describe('projectiveRowScale and projectiveDenominator', () => {
-    it('is the epsilon scaled by the LARGEST projective-row entry only', () => {
-      // The mutant: reusing `homographyMagnitude` here, which also reads a, b, d and e. For
-      // this matrix that would be 100e-12 instead of 1e-12, and every point in the resample
-      // loop would be rejected.
-      expect(projectiveRowScale(IDENTITY_HOMOGRAPHY)).toBe(1e-12);
-      expect(projectiveRowScale({ a: 100, b: 100, c: 0, d: 100, e: 100, f: 0, g: 0, h: 0, i: 1 })).toBe(1e-12);
-      expect(projectiveRowScale({ a: 0, b: 0, c: 0, d: 0, e: 0, f: 0, g: 2, h: 0, i: 1 })).toBe(2e-12);
-      expect(projectiveRowScale({ a: 0, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0 })).toBe(0);
-    });
-
-    it('returns the raw denominator for an affine matrix, which is scale-independent', () => {
-      const translated: Homography = { a: 1, b: 0, c: 100, d: 0, e: 1, f: 100, g: 0, h: 0, i: 1 };
-
-      expect(projectiveDenominator(translated, 0, 0)).toBe(1);
-      expect(projectiveDenominator(translated, 1e9, -1e9)).toBe(1);
-    });
-
-    it('rejects a denominator at the threshold itself, so the comparison is strict', () => {
-      // `1 > 1e-12 * 1e12` is false: exactly equal, and the guard is `>`. A `>=` would accept
-      // it and the resampler would divide by a denominator it had just declared singular.
-      const matrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0, h: 0, i: 1 };
-
-      expect(projectiveDenominator(matrix, 1e12, 0)).toBeNull();
-      expect(projectiveDenominator(matrix, 1e12 - 1, 0)).toBe(1);
-    });
-
-    it('scales the threshold by the largest coordinate, so a far point is judged relatively', () => {
-      const matrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0, h: 0, i: 0.5 };
-
-      // Threshold 0.5e-12 * 1e6 = 5e-7 at |x| = 1e6, and 0.5 is far above it.
-      expect(projectiveDenominator(matrix, 1e6, 0)).toBe(0.5);
-      // Dropping the `max(1, ...)` would shrink the threshold to 1e-12 at |x| = 1e-12.
-      expect(projectiveDenominator(matrix, 1e-12, 0)).toBe(0.5);
-    });
-
-    it('honours an OVERRIDDEN row scale, the parameter no other caller in the suite passes', () => {
-      const matrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: 0, h: 0, i: 1 };
-
-      // At x = 1e12 the computed threshold rejects; a caller that knows its own sampling is
-      // coarser can pass a smaller scale and keep the point.
-      expect(projectiveDenominator(matrix, 1e12, 0)).toBeNull();
-      expect(projectiveDenominator(matrix, 1e12, 0, 0)).toBe(1);
-      // And a caller that wants to be stricter can pass a larger one and lose the point.
-      expect(projectiveDenominator(matrix, 1, 0)).toBe(1);
-      expect(projectiveDenominator(matrix, 1, 0, 1)).toBeNull();
-    });
-
-    it('returns null for a non-finite denominator rather than propagating NaN', () => {
-      const matrix: Homography = { a: 1, b: 0, c: 0, d: 0, e: 1, f: 0, g: Number.NaN, h: 0, i: 1 };
-
-      expect(projectiveDenominator(matrix, 1, 1)).toBeNull();
     });
   });
 

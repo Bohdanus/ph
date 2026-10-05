@@ -23,7 +23,6 @@ function layer(id: string, order: number, overrides: Partial<DurableLayerSnapsho
     blendMode: 'source-over',
     order,
     pos: { x: order * 10, y: 0, width: 100, height: 80 },
-    frame: { ...baselineFrame },
     source: { kind: 'blank', color: '#ffffff', opacity: 1, size: { width: 100, height: 80 } },
     ...overrides,
   };

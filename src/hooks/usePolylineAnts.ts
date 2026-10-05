@@ -19,25 +19,6 @@ export type UseMarchingPathProps = {
   speed?: number;
 };
 
-/**
- * useMarchingPath
- *
- * Hook to draw an animated dashed polyline ("marching ants") onto a canvas.
- *
- * Features:
- * - Accepts an array of `points` to build the polyline.
- * - Animates the dashed line by default. Pass `isPaused` to pause the
- *   animation; toggling `isPaused` will stop/start the animation automatically.
- * - Exposes `draw()` to (re)start the animation loop and `clear()` to stop and
- *   clear the canvas manually.
- * - Cleans up (cancels animation frame and clears canvas) when the component
- *   using the hook unmounts.
- *
- * Notes on implementation:
- * - The animation loop reads mutable refs for `points`, `isPaused`, and
- *   configuration values so the loop always uses the latest values even when
- *   props change between renders.
- */
 export function useMarchingPath({
   canvasRef,
   dashLength = DASH_LENGTH,
@@ -181,3 +162,23 @@ export function useMarchingPath({
     clear,
   };
 }
+
+/**
+ * useMarchingPath
+ *
+ * Hook to draw an animated dashed polyline ("marching ants") onto a canvas.
+ *
+ * Features:
+ * - Accepts an array of `points` to build the polyline.
+ * - Animates the dashed line by default. Pass `isPaused` to pause the
+ *   animation; toggling `isPaused` will stop/start the animation automatically.
+ * - Exposes `draw()` to (re)start the animation loop and `clear()` to stop and
+ *   clear the canvas manually.
+ * - Cleans up (cancels animation frame and clears canvas) when the component
+ *   using the hook unmounts.
+ *
+ * Notes on implementation:
+ * - The animation loop reads mutable refs for `points`, `isPaused`, and
+ *   configuration values so the loop always uses the latest values even when
+ *   props change between renders.
+ */

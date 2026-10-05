@@ -1,26 +1,12 @@
 import { clampChannel, pixelIndex } from '../util/pixels.ts';
 import type { RasterRowTarget } from '../util/homography-resample.ts';
-import { compositeStrokeFootprint } from '../util/focus-stroke-mask.ts';
-import type { Point, Pos } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type SharpenToolArgs = {
   amount: number;
   radius: number;
-  points?: Point[];
-  rasterBounds?: Pos;
   toolName: 'sharpen';
 };
-
-/**
- * The kernel floor on the STROKE path only, mirroring `blur.ts`.
- *
- * The whole-layer form rounds a sub-half-texel `radius` to 0 and returns the source untouched.
- * A stroke is different: the brush is live under the pointer, so a zero-span box would make the
- * tool look broken while the bar reads 0. One texel keeps the stroke visible, and the two forms
- * deliberately disagree at `radius` 0.
- */
-const STROKE_SPAN_FLOOR = 1;
 
 /**
  * `Amount` is a PERCENTAGE, as in Photoshop, and 0 is a legal choice: 0% is the
@@ -240,7 +226,7 @@ const sharpenRow = (
  */
 export const sharpen =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ amount, radius, points }: SharpenToolArgs): ToolResult => {
+  ({ amount, radius }: SharpenToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
@@ -260,10 +246,7 @@ export const sharpen =
     // one texel narrower than the slider reads. It also means a `radius` below 0.5 rounds
     // to 0, which is the identity filter, and that is the same contract `brushDabCenters`
     // has for a non-positive size.
-    const stroked = Boolean(points?.length);
-    const span = Math.round(
-      clampSetting(stroked ? Math.max(STROKE_SPAN_FLOOR, radius) : radius, SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX)
-    );
+    const span = Math.round(clampSetting(radius, SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX));
     if (factor === 0 || span === 0) return [canvas];
 
     const source = ctx.getImageData(0, 0, width, height);
@@ -296,5 +279,5 @@ export const sharpen =
       accumulateRow(horizontal, sums, Math.min(height - 1, row + span + 1), width, 1);
     }
 
-    return [stroked ? compositeStrokeFootprint(bitmap, canvas, size, points!) : canvas];
+    return [canvas];
   };

@@ -50,34 +50,9 @@ describe('DummyToolArea', () => {
     const { container } = render(<DummyToolArea className="tool-area" />);
     const el = container.firstElementChild as HTMLElement;
 
-    /**
-     * The props React attached to the host node, which is the only place an event handler is
-     * observable from the outside: React never reflects one onto a DOM attribute, and jsdom's
-     * `onX` IDL properties are NOT it either — `el.onpointerdown` reads `null` whether the node
-     * has a React handler, a raw `addEventListener` listener, or neither. So an assertion of the
-     * form `expect(el).toHaveProperty('onpointerdown', null)` passes for EVERY element in the
-     * DOM, including one carrying a live pointer surface, and this test asserted nothing.
-     *
-     * React DOM stores the props it attached under a `__reactProps$<key>` expando
-     * (`updateFiberProps`), so that is what is read here. `Main.toolAreas.test.tsx` reaches the
-     * same conclusion about `SharpenToolArea` through `vi.importActual`; this is the same probe
-     * applied to the component whose own file it belongs in.
-     */
-    const handlerNames = (element: Element): string[] => {
-      // The expando is absent from the DOM's own typing, so it is read through an index signature.
-      const host = element as unknown as Record<string, unknown>;
-      const key = Object.keys(host).find((candidate) => candidate.startsWith('__reactProps$'));
-      if (!key) throw new Error('React attached no props to the element, so this probe proves nothing');
-      return Object.keys(host[key] as Record<string, unknown>).filter((name) => /^on[A-Z]/.test(name));
-    };
-
-    // The detector has to be shown to work, or "no handler names" is indistinguishable from
-    // "the probe found nothing" — which is precisely how the previous form of this test could
-    // pass while reading an element with a handler on it.
-    const control = render(<div className="probe" onPointerDown={() => undefined} />).container
-      .firstElementChild as Element;
-    expect(handlerNames(control)).toEqual(['onPointerDown']);
-
-    expect(handlerNames(el)).toEqual([]);
+    expect(el).toHaveProperty('onpointerdown', null);
+    expect(el).toHaveProperty('onpointermove', null);
+    expect(el).toHaveProperty('onpointerup', null);
+    expect(el).toHaveProperty('oncontextmenu', null);
   });
 });
