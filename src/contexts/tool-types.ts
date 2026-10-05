@@ -16,6 +16,7 @@ import type { EraserToolArgs } from '../tools/eraser.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
 import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
 import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
+import type { RulerToolArgs } from '../tools/ruler.ts';
 import type { EllipticalSelectionToolArgs } from '../tools/ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from '../tools/quickSelection.ts';
 import type { GradientToolArgs } from '../tools/gradient.ts';
@@ -69,8 +70,13 @@ export type ToolArgsByName = {
    * The Ruler carries no args beyond its own name. Every number it reports is a property of the
    * gesture the user just made, not a setting they chose, so there is nothing here to persist —
    * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
+   *
+   * The shape is imported rather than written out, which is what the Eyedropper beside it does. It
+   * was declared inline here while `src/tools/settings.ts` used `satisfies RulerToolArgs` against the
+   * copy in `src/tools/ruler.ts` — two declarations of one contract, so adding a field produced a
+   * type error in a file that has nothing to do with the field.
    */
-  ruler: { toolName: 'ruler' };
+  ruler: RulerToolArgs;
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };

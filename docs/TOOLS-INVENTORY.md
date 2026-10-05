@@ -159,8 +159,8 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and the six Adobe-group tables below hold **33 rows** in total
-(Selection 4, Retouch 7, Painting 5, Type 3, Navigation and measuring 11, Path 3), which is
+`src/contexts/tool-types.ts` — and the six Adobe-group tables below hold **32 rows** in total
+(Selection 4, Retouch 7, Painting 5, Type 3, Navigation and measuring 10, Path 3), which is
 neither 29 nor the 30 this file attributes to `TOOLS-TOO-HARD.md`: the two lists are counted
 separately and are not reconciled here. **Two claims the deleted row carried were themselves
 wrong**, and they are the reason this note exists rather than a bare `git log` entry:

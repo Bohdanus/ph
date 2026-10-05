@@ -161,49 +161,49 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw' | 'ruler',
     summary:
       'Measures a distance on the canvas: drag a nonprinting line and the options bar reports X, Y, W, H, the angle and the length, with Shift snapping to 45 degrees.',
     purpose:
-      'The Ruler answers a question about the image that no other tool answers: how far apart two things are. You drag a line from one point to another and the measurement appears in the options bar and the Info panel — the starting location, the horizontal and vertical distances traveled, the angle relative to the axis, and the total length traveled. The line is a nonprinting overlay: it measures the document and is never part of it, so it creates no history state, cannot be undone, and disappears when you drag it out of the image or clear it. Holding Shift constrains the line to 45-degree increments, which is how a straight edge or a repeated offset is laid out rather than eyeballed. Alt-drag (Windows) or Option-drag (Mac OS) from one end of an existing line pulls a second leg out of it, turning the measurement into a protractor: the bar then also reports the second leg as D2 and re-reads the angle as the angle between the two legs. It shares the I key with the Eyedropper, the Color Sampler, the Note tool and the Count tool, and Shift+I cycles between them.',
+      'The Ruler answers a question about the image that no other tool answers: how far apart two things are. You drag a line from one point to another and the measurement appears in the options bar and the Info panel — the starting location, the horizontal and vertical distances traveled, the angle relative to the axis, and the total length traveled. The line is a nonprinting overlay: it measures the document and is never part of it, so it creates no history state, cannot be undone, and disappears when you drag it out of the image or clear it. A line already on the canvas is edited in place rather than replaced: drag it by its body to move it, drag either end to resize it, and a press that never moves is a click, which changes nothing. Holding Shift constrains the line to 45-degree increments, which is how a straight edge or a repeated offset is laid out rather than eyeballed. Alt-drag (Windows) or Option-drag (Mac OS) from one end of an existing line pulls a second leg out of it, turning the measurement into a protractor: the bar then also reports the second leg as D2 and re-reads the angle as the angle between the two legs. It shares the I key with the Eyedropper, the Color Sampler, the Note tool and the Count tool, and Shift+I cycles between them.',
     options: [
       {
         control: 'X, Y',
         detail:
           'The starting location of the measurement, which is where the drag began rather than either end of it. The app reads the pointer-down point directly, so a drag that ends up and to the left of where it started reports the start it was given.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:42',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:82',
       },
       {
         control: 'W, H',
         detail:
           'The horizontal and vertical distances traveled from the x and y axes. Both are magnitudes in the app, so a drag up and to the left reports the same W and H as the drag down and to the right; Adobe prints them as unsigned distances too.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:44',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:84',
       },
       {
         control: 'A',
         detail:
           'The angle measured relative to the axis, in degrees. It is the one readout Adobe exempts from the document unit: "All measurements except the angle are calculated in the unit of measure currently set in the Units & Rulers preference dialog box." With a protractor present the bar re-reads it as the angle between the two legs, which is Adobe\'s own reuse of the same letter.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:46',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:86',
       },
       {
         control: 'D1',
         detail:
           'The total length traveled. The app reports it in document pixels, which is the unit available while the app has no Units & Rulers preference; a measurement scale would rescale this number and not the geometry.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:47',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:87',
       },
       {
         control: 'D2',
         detail:
           'The second leg of a protractor, and the only readout that appears and disappears with a gesture: it is present once an Alt/Option-drag has pulled a leg out of an existing line and absent before that, rather than reported as zero.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:50',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:91',
       },
       {
         control: 'Clear',
         detail:
           'Removes the measuring line, which Adobe describes as one of two ways to remove it: "To remove the line, drag it outside the image area or press the Clear button". The app implements both, and the button is greyed while there is no line because there is nothing for it to remove.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:64',
+        appRef: 'src/components/ToolbarsRight/Ruler/Ruler.tsx:110',
       },
       {
         control: 'Use Measurement Scale',
@@ -221,7 +221,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw' | 'ruler',
       {
         keys: 'Alt',
         action:
-          'Pulls a second leg out of an existing measuring line and turns the measurement into a protractor: "To create a protractor from an existing measuring line, Alt-drag (Windows) or Option-drag (Mac OS) at an angle from one end of the measuring line". The drag has to start within eight pixels of one end of the line, which is the app\'s tolerance and not Adobe\'s: Adobe states the gesture and not the radius, and without one every Alt-drag anywhere on the canvas would be a protractor.',
+          'Pulls a second leg out of an existing measuring line and turns the measurement into a protractor: "To create a protractor from an existing measuring line, Alt-drag (Windows) or Option-drag (Mac OS) at an angle from one end of the measuring line". The drag has to start within eight pixels of one end of the line, which is the app\'s tolerance and not Adobe\'s: Adobe states the gesture and not the radius, and without one every Alt-drag anywhere on the canvas would be a protractor. Either end may be the vertex, and which one it was does not move the origin — X and Y keep reporting the point the line was drawn from, because the alternative — swapping the two endpoints to make `end` the vertex — re-reads two of the seven numbers the moment the protractor is pulled from the near end.',
       },
     ],
     shortcuts: [
@@ -237,20 +237,23 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw' | 'ruler',
     ],
     implementation: 'partial',
     implementationRefs: [
-      'src/components/Main/RulerToolArea.tsx:203',
-      'src/components/Main/RulerToolArea.tsx:237',
-      'src/components/Main/RulerToolArea.tsx:246',
-      'src/components/Main/RulerToolArea.tsx:118',
-      'src/components/ToolbarsRight/Ruler/Ruler.tsx:31',
-      'src/tools/ruler.ts:120',
-      'src/tools/ruler.ts:77',
-      'src/tools/ruler-measurement-store.ts:44',
+      'src/components/Main/RulerToolArea.tsx:313',
+      'src/components/Main/RulerToolArea.tsx:328',
+      'src/components/Main/RulerToolArea.tsx:411',
+      'src/components/Main/RulerToolArea.tsx:470',
+      'src/components/Main/RulerToolArea.tsx:158',
+      'src/components/Main/RulerToolArea.tsx:210',
+      'src/components/ToolbarsRight/Ruler/Ruler.tsx:71',
+      'src/tools/ruler.ts:165',
+      'src/tools/ruler.ts:106',
+      'src/tools/ruler.ts:232',
+      'src/tools/ruler-measurement-store.ts:74',
       'src/tools/toolProcessors.ts:103',
       'src/tools/toolsMap.ts:153',
       'toolbar-mapping.ts:79',
     ],
     appNotes:
-      'The tool is implemented as a pixel-free tool, and that classification is the reason its history behaviour is not a bug. Adobe calls the measuring line a nonprinting line and gives its removals as dragging it out of the image and pressing Clear, neither of which is an undo, so there is no history state to record and no durable operation to replay: the tool has no entry in `toolProcessors.ts` at all and is declared in `PIXEL_FREE_TOOLS` beside the Eyedropper, whose pixel-free status is established rather than assumed. Adobe never states the history rule outright for this tool, so the app-side answer is `HANDOFF.md` §74 naming the Ruler one of the measurement-band tools that commit no pixels and need no durable operation. Four behaviors diverge. The protractor has one gesture of Adobe\'s two: the Alt/Option-drag is implemented and the double-click half — "or double-click the line and drag" — is not, because Adobe does not say which end of the line the double-clicked leg pivots on and a second gesture that guessed would be worse than the first alone. The measurement scale is missing, as its own control above records, and it is missing with its `Image > Analysis` menu rather than as a checkbox without one. There is no Info panel, so the options bar is the only place the readouts exist; Adobe names both. And the endpoint tolerance for the protractor is eight document pixels, an app decision stated in `src/tools/ruler.ts` rather than presented as Adobe\'s, because a gesture with no radius at all would make every Alt-drag a protractor and leave no way to start a new measurement. What is implemented is the whole of the drag, both modifiers Adobe documents, both removals, and all seven readouts. The line survives a tool switch, which is Adobe\'s own sentence rather than an app convenience — "If your document has an existing measuring line, selecting the Ruler tool causes it to be displayed" — so it lives in a module store rather than in the tool area, and it is dropped when the document frame size changes, which is the cheapest available signal that the document under the line is a different one and also covers a crop, whose origin has moved underneath the line. The angle convention is the screen one: 0 degrees along positive x and increasing clockwise, because y grows downward on the overlay and that is how a protractor on the screen reads.',
+      "The tool is implemented as a pixel-free tool, and that classification is the reason its history behaviour is not a bug. Adobe calls the measuring line a nonprinting line and gives its removals as dragging it out of the image and pressing Clear, neither of which is an undo, so there is no history state to record and no durable operation to replay: the tool has no entry in `toolProcessors.ts` at all and is declared in `PIXEL_FREE_TOOLS` beside the Eyedropper, whose pixel-free status is established rather than assumed. Adobe never states the history rule outright for this tool, so the app-side answer is `HANDOFF.md` §74 naming the Ruler one of the measurement-band tools that commit no pixels and need no durable operation. Four behaviors diverge. The protractor has one gesture of Adobe's two: the Alt/Option-drag is implemented and the double-click half — \"or double-click the line and drag\" — is not, because Adobe does not say which end of the line the double-clicked leg pivots on and a second gesture that guessed would be worse than the first alone. The measurement scale is missing, as its own control above records, and it is missing with its `Image > Analysis` menu rather than as a checkbox without one. There is no Info panel, so the options bar is the only place the readouts exist; Adobe names both. And the endpoint tolerance for the protractor is eight document pixels, an app decision stated in `src/tools/ruler.ts` rather than presented as Adobe's, because a gesture with no radius at all would make every Alt-drag a protractor and leave no way to start a new measurement; the same radius bounds the drag that MOVES a line by its body, so the two gestures are one contiguous target and the nearer endpoint wins where they meet. What is implemented is all four of Adobe's own gestures — measure, resize, move and protractor — both modifiers, both removals, and all seven readouts. The press that starts a gesture is refused outside the document frame, because the tool area is the whole workspace and a line begun on the pasteboard would report a negative X or Y for a point the user cannot see; a press INSIDE the frame that never moves is a click and changes nothing, so a click neither destroys a line nor leaves a zero-length one that would capture the next drag. The line survives a tool switch, which is Adobe's own sentence rather than an app convenience — \"If your document has an existing measuring line, selecting the Ruler tool causes it to be displayed\" — so it lives in a module store rather than in the tool area, and it is dropped when the DOCUMENT changes or when the frame size does, the two together: size alone could not tell two documents apart, and the app's own Blank seed is a fixed size, so a line measured on one image would otherwise survive being replaced by another of the same size and be reported over it. The angle convention is the screen one: 0 degrees along positive x and increasing clockwise, because y grows downward on the overlay and that is how a protractor on the screen reads.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/positioning-ruler-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html',
