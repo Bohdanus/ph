@@ -167,8 +167,16 @@ export const useApp = (): UseAppType => {
     // `createLayerFromBitmap` awaits `immutableRaster` before it dispatches, so a decode failure
     // rejects there with nothing published — and a canvas already resized to the incoming file's
     // geometry is a document-sized canvas wrapped around the outgoing document, which then renders
-    // at the wrong extent while the tool overlays keep the old one. The PSD arm above already
-    // orders it this way: it resizes all three refs only after every `immutableRaster` has resolved.
+    // at the wrong extent until something redraws it. That FAILURE PATH is the whole reason, and
+    // it is what the tests here prove.
+    //
+    // It is deliberately NOT justified by a visible wrong-extent frame on the success path. That
+    // was measured headlessly, per frame, by comparing the canvas backing store against the
+    // published `data-fit-document-*` while opening a 4000x3000 PNG: the current order disagrees on
+    // one frame, the old order on two, and neither is sustained long enough to be worth a paint.
+    // `immutableRaster`'s `createImageBitmap` on an already-decoded `HTMLImageElement` resolves
+    // inside the same frame. The PSD arm above already orders it this way: it resizes all three
+    // refs only after every `immutableRaster` has resolved.
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
     handleImageCreate(size);
     _setFileName(fileName);

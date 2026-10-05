@@ -3445,10 +3445,10 @@ git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
 hit this trap: Node resolution walks up into the main checkout's, so the wasm URL is a
 main-checkout path that a worktree-rooted Vite will not serve. The census is deliberately
 stated as presence of `node_modules/react` rather than as how it got there, and it is a
-**census of the shape, not a universal**: two of the 133 resolve `react` through a symlinked
-`node_modules` that points somewhere else again, so `node_modules` being absent above a
-worktree does not by itself prove the 403 — it makes it the overwhelmingly likely cause,
-which is what the probe below confirms for the case that matters.
+**census of the shape, not a universal**, and deliberately counted rather than argued:
+absence of `node_modules/react` above a worktree is the overwhelmingly likely cause of
+the 403, not a proof of it, and the counts move as worktrees come and go. What the probe
+below settles is the MECHANISM, and it does not rest on the census.
 
 **A scope correction to the entry's own recipe, because it is what makes the trap
 reproducible.** Its reproduction assumes a symlinked `node_modules`. **A worktree with no
