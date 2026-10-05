@@ -101,29 +101,6 @@ severity check too.
 
 ---
 
-## 10. `DurableLayerSnapshot` carries no frame, so a frame change cannot invalidate a replay
-
-**Problem.** `DurableLayerSnapshot` carries `id`, `name`, `isBedrock`, `visible`, `opacity`,
-`locked`, `blendMode`, `order`, `pos` and `source`. There is no `frame`, which contradicts the
-consolidated handoff's own drift note: a snapshot says nothing about the document frame it was
-taken against, so a frame change cannot invalidate it.
-
-The revision token that used to carry this half of the defect is gone — `replay-coordinator.ts`,
-which declared `ReplayRevisionToken` with no `frameRevision` either, was deleted as dead code
-rather than left unimported. What it was for survives the deletion: whoever schedules the first
-durable replay needs both halves, and this is the half that still has a file.
-
-**Why it matters.** An in-flight durable replay can complete against a document whose frame has
-since changed. Latent only while nothing schedules replays (item 1), but it is a required input
-for item 1.
-
-**Fix.** Add `frame` to `DurableLayerSnapshot`, and bump `documentRevision` on every frame change
-so the existing comparison covers it. The first durable scheduler must take a token carrying a
-`frameRevision` too — re-derive that token's fields when the surface is chosen rather than
-restoring the deleted module.
-
-**Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
-
 ---
 
 ## 15. `reorder-layers` is published; a self-anchored move is a real converter defect
@@ -5946,38 +5923,6 @@ way it already refuses a missing or unreadable file, and the refusal should be t
 invariant instead of as a hope. This should land with the `generatedAt` half of §224, which is the
 same schema and the same file.
 
-## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
-
-**Problem.** `src/contexts/useSelectionHistory.ts` builds both of its `SelectionSnapshot` baselines by
-hand — `{ selections: existing, activeSelectionId }` in `clearSelections()` and again in
-`commitSelection()` — where `existing` is the store's live `selections` array, not a copy of it. The
-same object is then stored in the legacy entry's `args.previousSelectionState` and passed as
-`currentSelections` to `planHistoryAppend()`, so one aliased array reaches both the legacy timeline
-and the durable `before` baseline.
-
-This contradicts the rule the shared helper already states. `selectionSnapshot()` in
-`src/contexts/selection-baseline.ts` is documented as "the clone both replay paths use to keep a
-selection snapshot off the legacy history args", and it deep-copies `points`, `pos` and `metadata`
-and freezes the wrapper, yet neither writer calls it.
-
-Nothing writes through the alias today, so this is latent rather than a live wrong answer:
-`COMMIT_DOCUMENT_EDIT` replaces `selections` with a fresh array instead of mutating the old one,
-`history-replay.ts` copies each selection when it replays `nextSelectionState`, and
-`history-adapter.ts` copies `currentSelections` and leans on the document's later deep freeze. The
-hazard is that the invariant is currently enforced by those three call sites' restraint rather than
-by the snapshot itself, and the recorded `before` is the one value a future in-place write would
-silently rewrite.
-
-**Affected.** `src/contexts/useSelectionHistory.ts` — the `previousSelectionState` construction in
-`clearSelections()` and in `commitSelection()`; `src/contexts/selection-baseline.ts` —
-`selectionSnapshot()`, which already owns the rule.
-
-**What would close it.** Route both baselines through `selectionSnapshot(existing, activeSelectionId)`.
-Leave `nextSelectionState` alone: its own comment records that `next` is deliberately the object this
-dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
-`previousSelectionState.selections` is not the same array reference as the store's would fail before
-the change and pass after it, which is the only shape of proof this needs.
-
 ## 228. Every shape draws unfilled by default, and no entry records whether that is the ruling
 
 **Problem.** A rectangle drawn on a fresh document is stroked and never filled, because the shape
@@ -6337,33 +6282,6 @@ the producer's operation loop and `origin` bookkeeping;
 **Provenance.** Found 2026-10-05 on `main` by a review of the focus-tool stroke frame, which checked
 whether the durable path stages the same frame the live path does. The staging itself is correct and now
 tested; this is the one case where the surrounding replay disagrees with it.
-
-## 241. `isRasterStrokeArgs` names the focus family in a literal, so a fourth focus tool must be remembered in two places
-
-**Problem.** `src/util/typeGuards.ts` lists `['blur', 'sharpen', 'smudge']` as the focus family. Four
-other modules — `useLayer.ts`, `history-replay.ts`, `history-append.ts`, `history-adapter.ts` — combine
-that predicate with the registry's `commit` kind independently. `sharpen` and `smudge` are already
-`commit: 'raster'`, so only `blur` depends on the guard.
-
-Register a fourth focus tool with `commit: 'layer-operation'` and, unless the literal is also updated,
-its stroke bakes as a retained whole-layer filter in the live path, in legacy replay, in the durable
-validator (where `retainedToolOperationKind` returns `'apply-filter'`), and in the adapter — with nothing
-failing, and the stroke rendering as a whole-layer blur under a brush-shaped history entry.
-
-**Why it is not fixed here.** Deriving the family from the registry inside `isRasterStrokeArgs` makes a
-`util` module depend on the processor registry, which `StoreContext.boundary-gates.test.ts` governs, and
-no fourth focus tool is registered. The failure needs the new tool to be forgotten in one place, which is
-a narrower risk than the import-graph change to prevent it.
-
-**What would close it.** Give the registry a `stroke: true` capability flag and have the predicate read
-it, so registering the tool is the whole of the work. `toolProcessors.ts` already carries per-tool
-capabilities (`commit`, `requiresCanvasFilter`, `compositesOntoInput`), so this is the same shape.
-
-**Files.** `src/util/typeGuards.ts` — `isRasterStrokeArgs()`; `src/tools/toolProcessors.ts` —
-`ToolProcessorDefinition`; `src/contexts/useLayer.ts`, `src/contexts/history-replay.ts`,
-`src/contexts/history-append.ts`, `src/contexts/history-adapter.ts` — the four independent re-questions.
-
-**Provenance.** Found 2026-10-05 on `main` by the same review as §240.
 
 ## 242. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
 
