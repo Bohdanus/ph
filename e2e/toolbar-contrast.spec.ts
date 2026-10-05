@@ -25,7 +25,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * - **A control whose text colour is set nowhere.** The Ruler's `Clear` button carried no
  *   text-colour utility and no ancestor in the chain set one either, so it inherited the user agent's
  *   `canvastext` — `#000000` — and was drawn black on a `#1f2937` options bar: **1.43:1**. It is
- *   perfectly readable in light (10.31:1), and light is the pinned theme, so nothing ever saw it.
+ *   perfectly readable in light (19.08:1), and light is the pinned theme, so nothing ever saw it.
  *   axe did not report it either, because it declines to judge text over a surface it has to
  *   composite and a `button` with no declared colour is one of the shapes it marks `incomplete`.
  * - **A boundary rather than a pair of text colours.** The seven readout boxes were

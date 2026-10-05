@@ -32,8 +32,9 @@ const VALUE_CLASS =
  * `CLEAR_CLASS` carried no text-colour utility and no ancestor in the chain supplies one: neither
  * `ToolbarHorizontal`'s `TOOLBAR_BASE_CLASS`, nor `App`, nor `body`, nor `html` sets `color`, and
  * Tailwind's preflight only sets `color: inherit` on `button`. The button therefore inherited the
- * user agent's initial `canvastext`, which is `#000000` in BOTH themes — 10.31:1 on the light bar
- * and **1.43:1** on the dark one, where "Clear" was drawn in black on near-black and was invisible.
+ * user agent's initial `canvastext`, which is `#000000` in BOTH themes — **19.08:1** on the light bar
+ * (`#f3f4f6`) and **1.43:1** on the dark one (`#1f2937`), where "Clear" was drawn in black on
+ * near-black and was invisible.
  * It reads perfectly in light, which is exactly why it survived: the defect is only visible in one
  * theme, and the suite pins light. The replacement, `dark:text-gray-200` on `dark:bg-gray-700`, is
  * 8.33:1.
