@@ -644,6 +644,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 100, height: 100 },
+        frame: { ...baselineFrame },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId,
@@ -727,6 +728,7 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 0, height: 0 },
+        frame: { ...baselineFrame },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId,

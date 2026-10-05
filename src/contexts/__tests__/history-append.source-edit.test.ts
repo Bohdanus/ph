@@ -272,6 +272,7 @@ describe('validatePlannedDurableEntry source edit preconditions', () => {
       blendMode: 'source-over',
       order: 0,
       pos: { ...box, width: 120 },
+      frame: { x: 0, y: 0, width: 400, height: 300 },
       source: {
         kind: 'text',
         toolName: 'text',
@@ -347,6 +348,7 @@ describe('planHistoryAppend source edit', () => {
             blendMode: 'source-over',
             order: 0,
             pos: { ...box, width: 120 },
+            frame,
             source: {
               kind: 'text',
               toolName: 'text',

@@ -17,13 +17,21 @@ import {
   type DurableLayerSnapshot,
 } from '../history-model.ts';
 import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
+import type { DocumentFrame } from '../document-frame.ts';
 import type { LayerId, LayerSource } from '../layer-types.ts';
 import { MERGE_ACTION, NEW_LAYER_ACTION, REMOVE_ACTION, REORDER_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 const documentId = 'create-append-doc';
 const position = { x: 12, y: 18, width: 40, height: 30 };
+/**
+ * The frame every plan in this file is made against, and the one every expected
+ * snapshot records as its provenance. Non-default on purpose: a fixture frame equal
+ * to the zero frame would make a planner that recorded no frame at all
+ * indistinguishable from one that recorded this one.
+ */
+const documentFrame = { x: 4, y: 6, width: 200, height: 150 };
 
 function context(registry: AssetRegistry, preLayers: ReadonlyMap<LayerId, DurableLayerSnapshot> = new Map()) {
-  return { documentId, registry, preLayers } satisfies SourceBackedEntryContext;
+  return { documentId, registry, preLayers, documentFrame } satisfies SourceBackedEntryContext;
 }
 
 function createItem(layerId: string, layerSource: LayerSource, id = `create-${layerId}`): HistoryItem {
@@ -63,6 +71,7 @@ function snapshotFor(
     blendMode: 'source-over',
     order: 1,
     pos: { ...position },
+    frame: { ...documentFrame },
     source,
     ...overrides,
   };
@@ -482,7 +491,12 @@ describe('history append raster asset liveness', () => {
       const planned =
         options.replan === false
           ? lastPlan
-          : deriveCreateLayerEntry(entry, { documentId, registry: planner, preLayers: new Map() });
+          : deriveCreateLayerEntry(entry, {
+              documentId,
+              registry: planner,
+              preLayers: new Map(),
+              documentFrame,
+            });
       lastPlan = planned;
       const base = {
         documentId,
@@ -544,6 +558,113 @@ describe('history append raster asset liveness', () => {
         expect(decision.outcome).toBe('mismatch');
         if (decision.outcome !== 'mismatch') return;
         expect(decision.reason).toMatch(/which the asset registry cannot resolve$/);
+      } finally {
+        registry.shutdown();
+      }
+    });
+  });
+
+  /**
+   * The rebase gate. A plan's snapshot names the frame its geometry was measured
+   * in, so the boundary can refuse a plan whose frame the store no longer has —
+   * the durable half of a crop that happened between planning and publishing.
+   */
+  describe('a plan authored against another document frame', () => {
+    function decideAgainstFrame(input: DurableAppendInput, frame: DocumentFrame) {
+      return decideDurableAppend({ ...input, documentFrame: frame });
+    }
+
+    /** A valid create plan, plus the inputs the decision needs to get past every earlier check. */
+    function createPlan(registry: AssetRegistry) {
+      const entry: HistoryItem = {
+        id: 'create-1',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'image-layer',
+        layerSource: {
+          kind: 'image',
+          bitmap: { width: 64, height: 48, close: () => {} } as unknown as ImageBitmap,
+          name: 'Photo',
+          isBedrock: false,
+          pos: position,
+        },
+      };
+      const planned = deriveCreateLayerEntry(entry, {
+        documentId,
+        registry,
+        preLayers: new Map(),
+        documentFrame,
+      });
+      const input: DurableAppendInput = {
+        documentId,
+        base: {
+          documentId,
+          documentRevision: 0,
+          branchRevision: 0,
+          durableRevision: 0,
+          baseline: {
+            frame: { ...documentFrame },
+            layers: [],
+            selections: { selections: [], activeSelectionId: null },
+            activeLayerId: null,
+          },
+          history: [],
+          cursor: -1,
+        },
+        prior: { entries: [], cursor: -1, branchRevision: 0 },
+        next: { entries: [entry], cursor: 0, branchRevision: 0 },
+        entry,
+        planned,
+        documentRevision: 0,
+        registry,
+      };
+      return { entry, input };
+    }
+
+    it('publishes when the store frame is the one the snapshot names', () => {
+      const registry = new AssetRegistry();
+      try {
+        const { input } = createPlan(registry);
+        // A structurally equal but distinct object, so this passes on VALUES: a
+        // check that compared identity would pass this and fail the store, which
+        // clones the frame it supplies.
+        expect(decideAgainstFrame(input, { ...documentFrame }).outcome).toBe('published');
+      } finally {
+        registry.shutdown();
+      }
+    });
+
+    it('refuses a plan whose snapshot was authored against a frame the store has moved past', () => {
+      const registry = new AssetRegistry();
+      try {
+        const { input } = createPlan(registry);
+
+        // The store cropped since the plan was made, so the layer's `pos` and a
+        // source's `sourcePos` are numbers measured in the old frame. Publishing
+        // them would put geometry in the document that no longer has the frame it
+        // was measured in, and nothing downstream could detect it.
+        const decision = decideAgainstFrame(input, { ...documentFrame, x: 40, width: 120 });
+
+        expect(decision.outcome).toBe('mismatch');
+        if (decision.outcome !== 'mismatch') return;
+        expect(decision.reason).toMatch(/authored against another document frame/);
+        // No document: the refusal carries nothing to publish, so no shadow can
+        // come into existence describing a layer in a frame the document lacks.
+        expect(decision).not.toHaveProperty('document');
+      } finally {
+        registry.shutdown();
+      }
+    });
+
+    it('does not check the frame when the store does not say which frame it is on', () => {
+      const registry = new AssetRegistry();
+      try {
+        const { input } = createPlan(registry);
+
+        // Omitted is "this store cannot answer", the same contract `preLayers`
+        // and `registry` use: the boundary reports what it can prove and says
+        // nothing about what it cannot. Refusing here would report a writer
+        // defect for a store that simply withheld the comparison.
+        expect(decideDurableAppend(input).outcome).toBe('published');
       } finally {
         registry.shutdown();
       }
