@@ -256,10 +256,40 @@ status` and `git diff` before staging.
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
   conflict runs no hook at all, so an operation left open is invisible to it — which is how
   `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting
-  merge that this guard would have refused the moment anyone ran `git commit`. Nothing else
-  detects that state either: `scripts/worktree-inventory.mjs` has no notion of an operation
-  in progress, and no hook, script or CI job regenerates its output. The guard is the floor
-  under the rule, not a substitute for noticing.
+  merge that this guard would have refused the moment anyone ran `git commit`. `npm run
+repo:state` is what reports an operation in progress, and it separates the two states that
+  share one `action`: unmerged paths mean git still holds every side and nothing has been
+  decided, while **none** mean a resolution is staged in no commit, which `git merge --abort`
+  discards. Nothing else in the tree can see that state, which is why it is a command and not
+  a field.
+
+  **A hand edit to a file git merged CLEANLY, which is a shape with no conflict marker in it
+  anywhere.** Counting `remerge CONFLICT` lines does not measure hand-written merge work, and
+  the gap is not small: on the history `findHandResolutions` in
+  `scripts/merge-takeover-guard.mjs` was measured over, more paths were hand-edited on a merge
+  git had already resolved cleanly than were resolved as conflicts. That function's JSDoc
+  carries the figures and how to re-derive them; they move as `main` grows, so they are held
+  there and not here. The rules it enforces:
+
+  - every path a human changed after a **clean** merge is **reported**, with the count of lines
+    git's merged result had that the result does not. Several of those edits are correct, so
+    refusing them would train every agent to reach for `--no-verify` — which is how the three
+    whole-file shapes above were nearly lost once.
+  - a test file that **both sides carry**, that git's merge produced, and that the result does
+    not contain is **refused**. Nothing explains that absence: no conflict, no marker, no
+    takeover shape, and neither side's commit removed it.
+  - a path **a side had already deleted** is reported and never refused, and that covers every
+    `modify/delete` conflict — deleting the file there is git's own recommendation, and that
+    decision was reviewed where it was written.
+  - a path **a side reported as conflicted** is neither reported nor refused, except through the
+    rule above: it was visibly unmerged until somebody staged it, which is the boundary the three
+    whole-file shapes above already draw.
+  - a path that was **renamed** is reported as a rename. Rename detection on hides the erasure;
+    rename detection off plus no rename recognition refuses a legitimate rename. Only both.
+  - a merge run with `-X`/`-s` **cannot be detected and cannot cause the refusal**. Git records
+    the result of a merge in its reflog action, not the invocation, so there is nothing at the
+    hook to read the flag from; a strategy option resolves a hunk and never removes a path, so
+    its cost is report lines for the hunks git took wholesale.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the
@@ -488,6 +518,16 @@ Re-read `dirty` and `mergeConflict` before acting on a `land` you did not genera
 yourself — and note that a worktree with **no liveness signal at all**
 (`chats.count` 0 and `board.agents` empty) is the one most likely to have changed
 since, because nothing here can see that somebody walked away from it.
+
+**`operation` is the one field that is about git's state rather than the worktree's.**
+`null`, or `{ kind, ref, unresolved }` for a merge, rebase, cherry-pick or revert that is
+**open** in that worktree — read from that worktree's own git dir, never the root's, because
+the two checkouts share one repository and `MERGE_HEAD` is per-worktree. It changes no
+verdict: an operation open means a dirty index, and a dirty worktree is already `at-risk` and
+never a deletion candidate. It is here because nothing else can tell **"an agent has not
+committed yet"** from **"an agent stopped halfway through a merge"**, and `unresolved` is what
+tells the two apart: non-empty means git still holds every side and nothing has been decided;
+**empty means a resolution is staged in no commit**, which is the state `--abort` destroys.
 
 **`at-risk` also covers merged, clean worktrees protected by a curated finding.**
 If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's
