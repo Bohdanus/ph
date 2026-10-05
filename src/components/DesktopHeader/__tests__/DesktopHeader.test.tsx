@@ -1,3 +1,36 @@
+/**
+ * The figure routing this file used to cover is gone with the `Tools` menu, and it is
+ * worth saying where it went rather than leaving a hole.
+ *
+ * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
+ * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
+ * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
+ * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where
+ * `isShapeFamilyToolName()` in `src/components/ToolbarsRight/Figures/Shape.tsx` returned early
+ * and suppressed the store-colour publish — a red colour well committing black. Neither the trap
+ * nor the fix is affected: both live in `SidebarLeft`, which selects a figure as
+ * `goToTool('shape')` plus the `figure` value `toolbarMap` carries, and
+ * `toolbar-mapping.test.ts` pins that mapping's order and members directly. The guard was a bare
+ * `args.toolName !== 'shape'` when that trap was recorded; it is a named predicate now, which is
+ * why the shape it has to satisfy is the family and not one literal.
+ *
+ * The other thing this file proved was that the header's tool rows committed a pending
+ * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
+ * OUTGOING tool and patching first would leave that commit reading shape args. With no
+ * figure rows left that leaves exactly three tool-selecting commands, all a plain `goToTool`
+ * with nothing patched — `Edit ▸ Free Transform`, and the two `Image ▸ Adjustments` rows that
+ * carry a `toolName` at all, `Brightness/Contrast` and `Desaturate`. The other twenty rows of
+ * `ADJUSTMENTS_ITEMS` are `unbuilt` and select nothing. So there is no ordering left to get
+ * wrong here, and nothing left to assert about it.
+ *
+ * WHERE THE ORDER STILL MATTERS, so this is not read as "the rule moved to the rail":
+ * `mobile-tools.ts`'s `makeSelectTool` selects first and patches second, which is the safe
+ * order, and it is the only caller left that both patches and selects. `SidebarLeft`'s own
+ * `selectTool` patches FIRST and then selects, so a figure picked from the rail commits the
+ * outgoing tool against already-replaced args. Nothing here pins that, and this file cannot:
+ * it no longer has a surface that patches. The defect is recorded in `HANDOFF.md` §237, not
+ * enshrined by a test written to match the code.
+ */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
@@ -548,36 +581,6 @@ describe('DesktopHeader menu commands', () => {
     expect(screen.queryByTestId('header-layer-menu')).toBeNull();
   });
 });
-
-/**
- * The figure routing this describe used to cover is gone with the `Tools` menu, and it is
- * worth saying where it went rather than leaving a hole.
- *
- * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
- * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
- * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
- * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where the
- * `args.toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the store-colour publish —
- * a red colour well committing black. Neither the trap nor the fix is affected: both live in
- * `SidebarLeft`, which selects a figure as `goToTool('shape')` plus the `figure` value
- * `toolbarMap` carries, and `toolbar-mapping.test.ts` pins that mapping's order and members
- * directly.
- *
- * The other thing this describe proved was that the header's tool rows committed a pending
- * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
- * OUTGOING tool and patching first would leave that commit reading shape args. With no
- * figure rows left the header has exactly two tool commands, `Edit ▸ Free Transform` and the
- * two `Image ▸ Adjustments` rows, and both are a plain `goToTool` with nothing patched — so
- * there is no ordering left to get wrong here, and nothing left to assert about it.
- *
- * WHERE THE ORDER STILL MATTERS, so this comment is not read as "the rule moved to the rail":
- * `mobile-tools.ts`'s `makeSelectTool` selects first and patches second, which is the safe
- * order, and it is the only caller left that both patches and selects. `SidebarLeft`'s own
- * `selectTool` patches FIRST and then selects, so a figure picked from the rail commits the
- * outgoing tool against already-replaced args. Nothing here pins that, and this file cannot:
- * it no longer has a surface that patches. The defect is recorded in `HANDOFF.md`, not
- * enshrined by a test written to match the code.
- */
 
 describe('DesktopHeader File > New', () => {
   it('creates a blank image once the discard question is answered yes, and closes the menu', async () => {

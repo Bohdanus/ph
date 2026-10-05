@@ -2242,8 +2242,9 @@ describe('the curated table', () => {
     // A derived set cannot be cheaper than the facts it is derived from: this
     // reads git in every worktree in the repository, which is precisely what the
     // hand-written list was pretending not to have to do. `liveWorktreeFacts`
-    // memoises, so the suite pays for the read once, and which of the two tests
-    // asking first is not something the budget may depend on.
+    // memoises, so the suite pays for the read once, and which of the three tests
+    // asking first is not something the budget may depend on — nor is which of
+    // them is the one that runs out of it.
   }, 60_000);
 
   it('declares no key twice, because a duplicate key silently discards a curation change', () => {

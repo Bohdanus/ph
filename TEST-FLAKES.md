@@ -675,16 +675,22 @@ default it is guarding. Two properties were checked rather than assumed and are
 worth keeping: the budget is scoped to the file that declares it (a body several
 times the default in an undeclared sibling still died at the 5s default in the same
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
-budget, which is how the two tests that read git in every worktree keep their
+budget, which is how the three tests that read git in every worktree keep their
 declared `60_000`.
 
 ### The worktree-inventory suite, which is this family plus a shared store
 
-`scripts/__tests__/worktree-inventory.test.mjs` carries two cases that run the inventory
-generator over every worktree git reports, with a per-test `it(name, fn, 60_000)` argument
-that wins over the file budget. On a fleet past 150 worktrees that budget is a function of the
-operator's environment, not of the repository's content, so the knife edge moves when a sweep
-grows the fleet and when nothing is committed.
+`scripts/__tests__/worktree-inventory.test.mjs` carries **three** cases that run the inventory
+generator over every worktree git reports, each with its own per-test `it(name, fn, 60_000)`
+argument that wins over the file budget. They are `never asks the table to protect a worktree
+whose protection is derived`, `never offers a live worktree that holds uncommitted work on no
+ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
+about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
+it — but each carries its own budget, and two different ones from this list have been observed
+failing on different full-suite runs, with the file green when run alone. Which of them runs out
+first is not something the budget may depend on. On a fleet past 150 worktrees that budget is a
+function of the operator's environment, not of the repository's content, so the knife edge moves
+when a sweep grows the fleet and when nothing is committed.
 
 Two costs compound, and it is worth keeping them apart because only one was ever measured:
 
