@@ -182,8 +182,13 @@ describe('toolDescriptions', () => {
     // Where the app's naming belongs is `appNotes`, which is this record's home for divergence, and
     // it is where it now reads. `purpose` keeps Adobe's names because Adobe really does bind them.
     //
-    // Not vacuous: each of the three assertions below fails on a state this file has actually
-    // carried, and each prints the offending value rather than a boolean.
+    // Not vacuous, and not equally so. The `Done / Cancel` assertion fails on the state this
+    // record carried between `1016d9ac` and this fix. The banned-phrase assertion below bites in
+    // 10 of the 16 revisions this file has had, so the claim has a history of reaching those
+    // surfaces. The double-click ban does not: across those same 16 revisions not one carries a
+    // double-click in `summary`, `modifiers` or `shortcuts`. It is a guard for the surface the
+    // other two cannot police, not a reproduction of a shipped state, and it is kept for that
+    // reason rather than as a tripwire. Every assertion prints the offending value, not a boolean.
     expect(
       toolDescriptions.crop.options.map((option) => option.control),
       'the crop record no longer names the commit pair the way Adobe names it'

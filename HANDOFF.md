@@ -6453,17 +6453,14 @@ capabilities (`commit`, `requiresCanvasFilter`, `compositesOntoInput`), so this 
 **The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate the two
 helpers that prepare a viewport-relative clip go through, `takeLineScreenshot` and
 `waitForCanvasPixels`. Specs that call `page.screenshot({ clip })` themselves bypass it, and two
-in-repo comments say so — `e2e/layers-panel.spec.ts` records that `page.screenshot({clip})` "comes
+in-repo comments say so — `e2e/layers-panel.spec.ts` notes that `page.screenshot({clip})` "comes
 back clipped to the viewport, while the CDP helper returns the whole clipped rect", and
-`e2e/selection-tools.spec.ts` notes its clips are chosen to be in view precisely because they skip
-this gate. Two in-repo comments record that restriction from the other side:
-`e2e/layers-panel.spec.ts` notes that `page.screenshot({clip})` "comes back clipped to the viewport,
-while the CDP helper returns the whole clipped rect", and `e2e/selection-tools.spec.ts` records the
-consequence it has to work around — "the workspace canvas is taller than the viewport in the default
-Playwright window, so a clip spanning the whole canvas box would be reading outside the rendered
-page", which is why every clip there is built from a rectangle the spec chose to be in view. That
-second comment is also the closest thing to a reproduction on the tree: an over-tall clip is the
-suite's normal case, worked around by hand at the call site rather than refused by the gate.
+`e2e/selection-tools.spec.ts` records the consequence it has to work around — "the workspace canvas is
+taller than the viewport in the default Playwright window, so a clip spanning the whole canvas box
+would be reading outside the rendered page", which is why every clip there is built from a rectangle
+the spec chose to be in view. That second comment is also the closest thing to a reproduction on the
+tree: an over-tall clip is the suite's normal case, worked around by hand at the call site rather
+than refused by the gate.
 
 It decides the region is already on screen only when
 
