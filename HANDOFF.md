@@ -529,7 +529,7 @@ names in that form — and the omissions are exactly where the migration's own b
 | not in the manifest                                           | live entries whose `Files` line names it |
 | ------------------------------------------------------------- | ---------------------------------------- |
 | `src/contexts/history-model.ts`                               | 10, 56, 172, 197                         |
-| `src/contexts/presentation-evaluator.ts`                      | 1, 159, 163                              |
+| `src/contexts/presentation-evaluator.ts`                      | 1, 163                                   |
 | `src/contexts/durable-replay.ts`                              | 94                                       |
 | `src/contexts/psd-utils.ts`                                   | 45, 56, 147, 166, 169, 172               |
 | `src/contexts/layer-types.ts`                                 | 56, 172                                  |
@@ -575,8 +575,7 @@ you need it, in the place you need it.
 
 `sort -u` is what makes that command's answer a count of paths rather than of entry-path pairs. Two
 `Files` paragraphs in the file are deliberately outside the extraction and neither changes the count:
-§142 carries a second one that names no `src/` path at all. The live §159 entry is headed and its
-`Files` paragraph names the real `src/hooks/usePaintStroke.ts` path.
+§142 carries a second one that names no `src/` path at all.
 
 **Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
 re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
@@ -4053,52 +4052,6 @@ it will read it as its own.
 **Files.** `scripts/__tests__/worktree-inventory.test.mjs` (the
 `it('protects that shape in a worktree NOBODY has written anything down about')` case),
 `scripts/lib/worktree-inventory/classify.mjs` (`classify()`, its `wt.isPrimary` status arm)
----
-
-## 159. A paint stroke committed after a crop renders at the old frame coordinates
-
-**Problem.** `usePaintStroke` records brush points in document coordinates, while the runtime
-compositor renders a cropped document with `layerCoordinate - documentFrame.origin`
-(`src/contexts/presentation-evaluator.ts`, in `drawEvaluatedPresentation`:
-`x = evaluation.position.x - (target.frame?.x ?? 0)`). After a crop the stroke is therefore offset by
-the frame origin.
-
-**CONFIRMED by measurement, 2026-10-02.** A bar drawn entirely **after** a crop renders in the wrong
-band. Cropping to document `(80,270)-(720,570)` — a `640x300` document with a non-`{0,0}` origin —
-then drawing a bar across the middle of the cropped document:
-
-|                                                                  | read bands                                |
-| ---------------------------------------------------------------- | ----------------------------------------- |
-| **control**: a bar on the UNCROPPED document, at 50% height      | `[false, true, false]` — strip 1, correct |
-| **after the crop**: a bar on the CROPPED document, at 50% height | `[true, false, false]` — strip 0          |
-
-The ink exists and is committed; it is drawn **one band too high**, which is the frame origin's
-signature. The control is what makes this a finding rather than a band-reading failure — the same
-helper reads the un-cropped bar in the strip the current fit names.
-
-**`e2e/crop-history.spec.ts` does not cover this**, and its case named "crop, then a bar" reads as
-though it did. That test draws its first bar BEFORE the crop and its second AFTER it, so it asserts
-history bookkeeping across the boundary, not where the post-crop bar lands.
-
-**The neighbouring repair is NOT this defect.** `src/util/layer-space.ts` rebases document points onto
-the **layer** origin for six stroke tool areas (`documentPointsToLayerLocal`, 9 callers). That is a
-different axis: it fixes a stroke landing off a layer whose `pos` is not `{0,0}`, and does not touch
-the frame origin.
-
-**What would close it.** Convert the committed stroke points out of document space into the frame's
-coordinate space before the history item is written — the layer-local rebase in `layer-space.ts` is
-the shape to copy, applied against `documentFrame` rather than `layer.pos`. Then add the
-crop-followed-by-stroke band assertion to `e2e/crop-history.spec.ts`, carrying the un-cropped control
-above, so a fix cannot pass by making the band read uniformly empty. Do not weaken the existing crop
-history assertions or add an accepted console error.
-
-**Files.** `src/hooks/usePaintStroke.ts` (`toDocumentPoint()` — the path is under `hooks/`, not
-`tools/`, which is how an earlier version of this entry sent a reader to a file that does not
-exist), `src/contexts/presentation-evaluator.ts` (`drawEvaluatedPresentation()`, the frame
-subtraction), `src/util/layer-space.ts` (`documentPointsToLayerLocal()`, the layer-space rebase, a
-different axis), `e2e/crop-history.spec.ts` (the
-`test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back')` case —
-the one that does not cover this).
 ---
 
 ## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it

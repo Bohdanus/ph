@@ -565,24 +565,21 @@ test.describe('Crop history', () => {
       height: COMMITTED_HEIGHT,
     });
 
-    // ------------------------------------------------------------------------------------
-    // NO INK ASSERTION ON THAT BAR, AND THE OMISSION IS A DECLARED DEFECT, NOT A LOOPHOLE.
+    // THE BAR LANDS IN THE BAND THE CROPPED FRAME NAMES. This assertion used to be absent, and
+    // its absence was declared here as a known defect: a stroke committed on a CROPPED document
+    // "renders NOTHING", because `usePaintStroke` records its point in DOCUMENT space
+    // (`canvasToDocumentPoint`) and the compositor draws at `layerCoordinate - frame.origin`, so
+    // the two disagreed by the crop origin. `ea3875d6` removed the disagreement at its owner —
+    // `createLayerFromTool`'s explicit-`pos` branch stopped adding the frame origin to a position
+    // its caller had already resolved into document space — and this bar now renders where the
+    // frame says it should. The claim is re-measured here rather than taken from that commit.
     //
-    // A stroke committed on a CROPPED document writes a history entry and renders NOTHING. The
-    // dark-pixel bounds of the whole canvas are byte-identical before and after it, measured at
-    // frame heights 60, 150 and 240 and again by sweeping four heights across the raw element, so
-    // this is not a coordinate mistake in this file: the ink lands outside the layer raster the
-    // post-crop frame leaves behind. `usePaintStroke` records the point in DOCUMENT space
-    // (`canvasToDocumentPoint`), which after a crop is not the space the layer is positioned in.
-    //
-    // Asserting the missing ink would be a PIN, and a pin is a deliberate declaration that a
-    // defect exists — which belongs beside the defect, in a document this step does not own, and
-    // which the fix must remove in the same change. Shipping it inside a gate test would put a
-    // permanently red assertion into CI, which is the same move as skipping it with the polarity
-    // reversed. So the ordering property below is asserted on the FRAME and on the timeline, which
-    // is what S10 is chartered to assert and what the defect does not touch, and the pixel half is
-    // left for the fix to enable.
-    // ------------------------------------------------------------------------------------
+    // The CONTROL is the read one step ABOVE, under the same fit, which holds no ink at all. That
+    // pairing is what makes this an assertion about a bar rather than about a band reader: the
+    // canvas was empty, and now it is not, in the strip the frame names. A band reader that
+    // answered "nothing anywhere" satisfies the empty read and cannot satisfy this one, so a fix
+    // which simply stopped painting fails here instead of passing.
+    await waitForInk(page, croppedFit, inkIn(bandOfDocumentY(croppedFit, keptAfterCrop)));
 
     // ONE UNDO. This is the ordering assertion nothing else in the suite makes: the frame commit
     // and the pixel commit are two entries, and the undo must take the LATER one. A replay that
