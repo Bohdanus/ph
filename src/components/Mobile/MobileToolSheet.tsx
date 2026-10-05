@@ -49,12 +49,14 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           type="button"
           onClick={onToggle}
           aria-expanded={isOpen}
-          // Only while the panel it names exists. There are TWO ways this sheet's panel is not in
-          // the tree — this header does not render at all without a tool name or an image (the
-          // early return above), and the panel body is gated on `isOpen` below — so the gate is the
-          // shared predicate rather than `isOpen`, which names only one of the two. A closed sheet's
-          // header used to advertise a region that was not in the tree beside `aria-expanded="false"`:
-          // the dangling IDREF `PanelGroup`'s tab control had too.
+          // Only while the panel it names exists. Inside this component the predicate is provably
+          // `isOpen` — the early return above already guarantees a tool name and an image — so the
+          // extra clauses are INERT here and load-bearing only in `MobileBottomBar`, which is a
+          // sibling that stays mounted when this sheet does not. It is read from the shared source
+          // anyway so the two cannot drift, and so relaxing the early return cannot start dangling a
+          // reference: the render below is gated on the same value as this attribute. A closed
+          // sheet's header used to advertise a region that was not in the tree beside
+          // `aria-expanded="false"`: the dangling IDREF `PanelGroup`'s tab control had too.
           aria-controls={panelIsMounted ? MOBILE_TOOL_OPTIONS_ID : undefined}
           className="flex min-h-11 w-full items-center justify-between gap-2 px-4 py-2 text-left bg-gray-50 dark:bg-gray-800/60 border-b border-gray-100 dark:border-gray-800 cursor-pointer"
         >
