@@ -46,12 +46,26 @@ export function selectionSnapshot(
 /**
  * The single derivation of the selection state a legacy timeline starts from.
  *
- * The lookup is deliberately unbounded. A selection is created by a gesture that
- * writes no history entry, so the first non-disabled `SELECTION_ACTION` entry's
- * `previousSelectionState` is the only record that the selection ever existed;
- * bounding this at a replay target would make undoing a tool-switch deselect a
- * silent visual no-op. The same reasoning is why the durable baseline is seeded
- * from the same unbounded lookup, so both branches agree at every cursor.
+ * The lookup is unbounded and takes the timeline wholesale, so the durable
+ * baseline and the legacy replay start from the same snapshot at every cursor.
+ * That parity is what `0659ce92` extracted this helper to own.
+ *
+ * WHY IT IS UNBOUNDED, and the premise that used to be given for it is retired.
+ * It was: "a selection is created by a gesture that writes no history entry",
+ * which held when `0659ce92` was written and stopped holding two minutes later,
+ * in `00a170dc`, which routed every selection gesture through
+ * `useSelectionHistory` and made creation record itself. No production path can
+ * put a selection in the store that history does not record: the six raw
+ * selection actions have no dispatch site outside the reducer, and
+ * `REPLACE_DOCUMENT` seeds `selections: []`. So the counterfactual this comment
+ * used to argue from — bounding the lookup turns undoing a deselect into a
+ * silent visual no-op — describes a state the app can no longer reach.
+ *
+ * The rule is unchanged because bounding it is a separate decision, not a
+ * comment fix. Three tests pin it, all built on fixtures production cannot
+ * construct, and they must be retired in the same change as any bound:
+ * HANDOFF.md §31 names two of the three. This comment records why the argument
+ * for keeping it is weaker than it reads; it is not itself a recommendation.
  */
 export function deriveSelectionBaseline(history: readonly HistoryItem[]): SelectionSnapshot {
   const first = history.find((item) => item.actionName === SELECTION_ACTION && !item.disabled);

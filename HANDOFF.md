@@ -282,7 +282,7 @@ exists to avoid choosing between. Two tripwires, because either can fail silentl
 
 ---
 
-## 31. The selection baseline lookup must stay unbounded over the whole timeline
+## 31. The selection baseline lookup stays unbounded, and the premise that required it no longer holds
 
 **Problem.** `deriveSelectionBaseline` (`selection-baseline.ts`) is deliberately unbounded: it
 takes the **first** non-disabled `SELECTION_ACTION` on the timeline and seeds from that entry's
@@ -292,10 +292,22 @@ timeline wholesale — `replayHistory` in `history-replay.ts` and `legacyHistory
 and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
 extracted this rule to own.
 
-Bounding the lookup by replay target looks like a correctness fix, but it would reintroduce a
-data-loss bug. A selection can be created by a gesture that writes no history entry, so bounding
-the lookup at the replay target makes undoing a tool-switch deselect a silent visual no-op. Two tests
-pin the unbounded behaviour as load-bearing:
+The premise this entry argues from is retired, and the entry's own conclusion no longer follows
+from it. It says "a selection can be created by a gesture that writes no history entry". That was
+true when `0659ce9` wrote the rule and stopped being true two minutes later, in `00a170dc`, which
+routed every selection gesture through `useSelectionHistory` and made creation record itself. No
+production path can put a selection in the store that history does not record: the six raw
+selection actions — `SET_SELECTIONS`, `ADD_SELECTION`, `COMMIT_SELECTION`, `UPDATE_SELECTION`,
+`MOVE_SELECTION`, `SET_ACTIVE_SELECTION` — have reducer arms and no dispatch site outside
+`StoreContext.tsx`, and `REPLACE_DOCUMENT` seeds `selections: []`. The data-loss bug this entry
+warns of therefore describes a state the app can no longer reach.
+
+**Three** tests pin the unbounded behaviour, not the two named below; the third is
+`it('passes the whole timeline to the baseline lookup, and only the replay assertion sits at a
+cursor')` in `selection-baseline.test.ts`, whose own comment says which of its assertions a bound
+breaks. All three are built on fixtures production cannot construct — a selection seeded directly
+into a store with a history that never mentions creating it — so they pin the rule rather than a
+reachable behaviour:
 
 - The `it('restores a cleared selection when undoing the tool-switch history entry')` case in
   `useHistory.test.tsx` — "restores a cleared selection when undoing the
@@ -309,13 +321,16 @@ pin the unbounded behaviour as load-bearing:
   case expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
-**Fix.** Keep `deriveSelectionBaseline()` unbounded over the whole timeline. Any future selection
-authority migration must preserve that rule and keep the two tests above as tripwires; bounding one
-consumer but not the other would reopen the parity divergence this helper exists to close.
+**Fix.** Bounding the lookup is a decision, not a comment fix, and this entry is the record of what
+it costs. Give `deriveSelectionBaseline` a cursor argument and retire **all three** tests above in
+the same change; bounding one consumer but not the other reopens the parity divergence this helper
+exists to close, so `legacyHistoryToDurable` needs the cursor too or the two branches disagree at
+the cursors before the first selection entry. Do not leave the rule and the premise disagreeing, and
+do not weaken a pin to accommodate the bound.
 
 **Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`), `src/contexts/history-replay.ts`,
 `src/contexts/history-adapter.ts` (`legacyHistoryToDurable`), `src/contexts/__tests__/useHistory.test.tsx`,
-`src/contexts/__tests__/history-replay.test.ts`
+`src/contexts/__tests__/history-replay.test.ts`, `src/contexts/__tests__/selection-baseline.test.ts`
 
 ---
 
