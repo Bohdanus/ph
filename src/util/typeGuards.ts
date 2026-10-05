@@ -54,7 +54,12 @@ export function isRasterStrokeArgs(
   const points = candidate.points;
   const bounds = candidate.rasterBounds;
   return (
+    // `length > 0`, not merely `isArray`. An empty stroke passes a vacuous `every`, and an empty
+    // `points` takes each processor's WHOLE-FRAME branch — so an entry that reached this guard
+    // with no points would be a whole-layer blur or sharpen over the widened frame, which is
+    // precisely the retained-filter semantics this predicate exists to distinguish a stroke from.
     Array.isArray(points) &&
+    points.length > 0 &&
     points.every(
       (point) =>
         !!point &&

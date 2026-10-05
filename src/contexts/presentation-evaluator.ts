@@ -3,6 +3,8 @@ import {
   getAffineBounds,
   IDENTITY_AFFINE_TRANSFORM,
   isIdentityAffineTransform,
+  MAX_AFFINE_COORDINATE,
+  MAX_AFFINE_PIXELS,
   multiplyAffineTransforms,
   transformCorners,
 } from './affine-transform.ts';
@@ -406,6 +408,32 @@ export type ProcessorStaging = Readonly<{
 const sameBounds = (a: Pos, b: Pos): boolean =>
   a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
+/**
+ * Whether a frame is small enough to allocate a surface from.
+ *
+ * This is the caps question `getAffineBounds` asks, asked here for the one caller that sizes a
+ * canvas from a caller-supplied extent on the no-retained-operations path — the path that never
+ * calls `evaluatePresentation` and therefore inherits none of its refusals. A stroke frame is
+ * sized by the stroke's own extent, which is bounded by nothing in particular: one drag across a
+ * large document names a frame far larger than the layer it started on, and sharpen then
+ * allocates a `Float32Array` of sixteen bytes per pixel on top of it, once per pointer move.
+ */
+const frameIsAllocatable = (bounds: Pos): boolean => {
+  const width = Math.ceil(bounds.width);
+  const height = Math.ceil(bounds.height);
+  return (
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width >= 1 &&
+    height >= 1 &&
+    Math.abs(bounds.x) <= MAX_AFFINE_COORDINATE &&
+    Math.abs(bounds.y) <= MAX_AFFINE_COORDINATE &&
+    width <= MAX_AFFINE_COORDINATE &&
+    height <= MAX_AFFINE_COORDINATE &&
+    width * height <= MAX_AFFINE_PIXELS
+  );
+};
+
 const createProcessorSurface = (bounds: Pos): OffscreenCanvas | HTMLCanvasElement => {
   const width = Math.max(1, Math.ceil(bounds.width));
   const height = Math.max(1, Math.ceil(bounds.height));
@@ -450,12 +478,16 @@ export function stageProcessorInput(layer: Layer, bitmap: BitmapSource, requeste
   const operations = retainedPresentationOperations(layer);
   if (operations.length === 0) {
     const sourceBounds = { ...layer.pos };
-    const bounds =
-      requestedBounds && sameBounds(requestedBounds, sourceBounds) ? sourceBounds : (requestedBounds ?? sourceBounds);
-    if (sameBounds(bounds, sourceBounds)) return { bitmap, bounds, operations };
-    const surface = createProcessorSurface(bounds);
-    drawIntoProcessorSurface(surface, bitmap, sourceBounds, bounds);
-    return { bitmap: surface as BitmapSource, bounds, operations };
+    if (!requestedBounds || sameBounds(requestedBounds, sourceBounds))
+      return { bitmap, bounds: sourceBounds, operations };
+    // Refuse the WRITE rather than throwing. Every caller already treats a staging failure as
+    // "this tool did nothing here" — `tempUpdateLayer` catches and returns false, replay catches
+    // and records a diagnostic — so declining the oversized frame is the same answer a cap
+    // produces anywhere else, and it keeps one enormous drag from allocating per pointer move.
+    if (!frameIsAllocatable(requestedBounds)) return { bitmap, bounds: sourceBounds, operations };
+    const surface = createProcessorSurface(requestedBounds);
+    drawIntoProcessorSurface(surface, bitmap, sourceBounds, requestedBounds);
+    return { bitmap: surface as BitmapSource, bounds: requestedBounds, operations };
   }
 
   const evaluation = evaluatePresentation({
@@ -478,6 +510,9 @@ export function stageProcessorInput(layer: Layer, bitmap: BitmapSource, requeste
   }
 
   if (sameBounds(bounds, presentedBounds)) return { bitmap: surface as BitmapSource, bounds, operations };
+  if (!frameIsAllocatable(bounds)) {
+    return { bitmap: surface as BitmapSource, bounds: presentedBounds, operations };
+  }
 
   const widened = createProcessorSurface(bounds);
   drawIntoProcessorSurface(widened, surface as BitmapSource, presentedBounds, bounds);

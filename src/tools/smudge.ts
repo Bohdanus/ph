@@ -151,7 +151,7 @@ const smudgeDab = (
 
       const from = clampPointToSize({ x: Math.round(x + deltaX), y: Math.round(y + deltaY) }, raster);
       const sampled = readRgba(sourceData, from.x, from.y, width);
-      blendPixel(outputData, pixelIndex(x, y, width), sampled.a > 0 || !carried ? sampled : carried, weight);
+      blendPixel(outputData, pixelIndex(x, y, width), sampled.a > 0 || carried === null ? sampled : carried, weight);
     }
   }
 };
@@ -209,11 +209,34 @@ const smudgeStroke = (
   const sourceData = new Uint8ClampedArray(image.data);
   const outputData = image.data;
 
+  // The carry is bounded to ONE dab step, and that bound is the whole correctness of it.
+  //
+  // A widened frame puts transparent, addressable pixels around a previously tight layer, and a
+  // dab whose read lands in that new area samples nothing. Without a carry the stroke simply
+  // stops at the old edge, which is the defect widening exists to fix. But an UNBOUNDED carry is
+  // far worse than the defect: one opaque sample early in the stroke would be redeposited for
+  // every remaining dab, laying a solid trail of stale colour across arbitrarily much empty
+  // canvas. So the sample is honoured only for the dab immediately following the one that read
+  // it — enough to cross the newly added edge, and no further.
   let carried: Rgba | null = null;
+  let carriedAge = Number.POSITIVE_INFINITY;
   for (let i = 0; i + 1 < centers.length; i++) {
     const sample = readRgba(sourceData, Math.round(centers[i].x), Math.round(centers[i].y), raster.width);
-    if (sample.a > 0) carried = sample;
-    smudgeDab(sourceData, outputData, raster, centers[i], centers[i + 1], settings, carryTransparent ? carried : null);
+    if (sample.a > 0) {
+      carried = sample;
+      carriedAge = 0;
+    } else {
+      carriedAge += 1;
+    }
+    smudgeDab(
+      sourceData,
+      outputData,
+      raster,
+      centers[i],
+      centers[i + 1],
+      settings,
+      carryTransparent && carriedAge <= 1 ? carried : null
+    );
   }
   if (centers.length === 1) {
     smudgeDab(sourceData, outputData, raster, centers[0], centers[0], settings, null);
