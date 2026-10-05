@@ -470,12 +470,21 @@ describe('history writer census', () => {
     // written into a live object that the dispatcher receives.
     expect(undiscovered).toHaveLength(0);
     expect(discoveredBySuperset).toHaveLength(1);
-    // And adding that one site to the tree would break the completeness comparison,
-    // because one more superset hit exists outside the dispatcher than there are
-    // dispatch-shaped writers.
-    expect(realSuperset.length - realSuperset.filter((site) => site.file === DISPATCHER_FILE).length).toBe(
-      scanProductionWriters().length
-    );
+
+    // And that one site is exactly what would break the completeness comparison the case
+    // above makes: the superset finds one more action outside the dispatcher than there are
+    // dispatch-shaped writers. An earlier version of this comment claimed the synthetic
+    // module was "run against the real tree", but it was never written to disk —
+    // `syntheticFile` was only a path string handed to `discoverWriters` — so the
+    // completeness claim was an assertion about the REAL tree that merely restated the one
+    // above it. It is computed here instead, because materialising a module under `src/`
+    // to make an identity fail is a side effect this suite has no reason to have.
+    const supersetOutsideDispatcher = realSuperset.filter((site) => site.file !== DISPATCHER_FILE).length;
+    const dispatchShaped = scanProductionWriters().length;
+    expect(supersetOutsideDispatcher).toBe(dispatchShaped);
+    // With the synthetic module in the tree the two would differ by exactly its one site,
+    // which is the failure the completeness comparison exists to report.
+    expect(supersetOutsideDispatcher + (discoveredBySuperset?.length ?? 0)).toBe(dispatchShaped + 1);
   });
 
   it('masks comments and prose but fails closed for an active unclassified writer', () => {

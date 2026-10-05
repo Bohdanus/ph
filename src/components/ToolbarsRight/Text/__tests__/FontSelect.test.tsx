@@ -529,8 +529,8 @@ describe('FontSelect viewport fit', () => {
   });
 
   it('never positions the list further from an edge than the room available', () => {
-    // The general property, as an EXACT value per case rather than a range. `FontSelect.tsx:74-92`
-    // is `min(240, max(0, openUpwards ? top - 4 - 8 : innerHeight - bottom - 4))` where
+    // The general property, as an EXACT value per case rather than a range. The placement is
+    // `min(240, max(0, openUpwards ? top - 4 - 8 : innerHeight - bottom - 4))` where
     // `openUpwards` is `top - 12 > innerHeight - bottom - 4`. Every term in that expression is
     // observable here, and the previous form (`toBeGreaterThan(0)` plus `<= 240` plus a
     // re-derived `<= room`) left the arithmetic unpinned: any value between 1 and the cap passed,
@@ -548,8 +548,8 @@ describe('FontSelect viewport fit', () => {
       [200, 20, 60, false, 136], // below wins in a short window: 200 - 60 - 4
       // Above wins by less than the cap, so `top - 4 - 8` — and only that — decides the height.
       [400, 200, 216, true, 188], // 200 - 4 - 8 = 188 against 400 - 216 - 4 = 180 below
-      // An exact tie: 140px of room on each side. `openUpwards` is a strict `>`
-      // (FontSelect.tsx:86), so the below side is taken. Widening it to `>=` leaves the HEIGHT at
+      // An exact tie: 140px of room on each side. `openUpwards` is a strict `>`, so the
+      // below side is taken. Widening it to `>=` leaves the HEIGHT at
       // 140 either way, which is why the side is asserted before the height here.
       [300, 152, 156, false, 140], // below 300 - 156 - 4 = 140, above 152 - 4 - 8 = 140
     ] as const;

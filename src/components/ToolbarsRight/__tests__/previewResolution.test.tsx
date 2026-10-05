@@ -226,9 +226,9 @@ describe('option-bar thumbnail resolution', () => {
     //
     // All THREE bars, not `Paint` alone. An earlier version of this file covered `Paint` only,
     // justified by a comment claiming `Shape` "sizes its stroke from the figure's own settings, so
-    // there is no `args.lineWidth` for it to multiply". That was wrong: `Shape.tsx:113`
-    // destructures `lineWidth` straight out of `args`, and `Shape.tsx:143` multiplies it by `dpr`
-    // exactly as `Draw.tsx:114` and `Paint.tsx:107` do. The claim is what let two of the three
+    // there is no `args.lineWidth` for it to multiply". That was wrong: `Shape` destructures
+    // `lineWidth` straight out of `args`, and multiplies it by `dpr` in its `previewArgs`
+    // exactly as `Draw` and `Paint` do. The claim is what let two of the three
     // `* dpr` expressions go unpinned.
     await withDpr(2, async () => {
       const Bar = await load();

@@ -270,8 +270,8 @@ describe('history append retained tool translation', () => {
       transform: { a: 1, b: 0, c: 0, d: 1, e: 2, f: 3 },
     });
     // A move is absolute, and a resize carries no move: durable replay assigns
-    // `pos.x/y` from the move and spreads the resize over the whole rect
-    // (`durable-replay.ts:96-105`), so a relative move or a defaulted resize key
+    // `pos.x/y` from the move and spreads the resize over the whole rect in its
+    // `reposition-layer` arm, so a relative move or a defaulted resize key
     // would place the layer somewhere the document never put it.
     expect(plannedOperation({ toolName: 'reposition', move: { x: 12, y: 18 } })).toEqual({
       kind: 'reposition-layer',

@@ -6617,3 +6617,93 @@ be measured against a fleet before it lands.
 
 **Provenance.** Found and measured by a review of `fix/repo-state-roster` on 2026-10-05, and
 reproduced by removing one administrative directory from a fixture with a live worktree beside it.
+
+## 247. `land/audit-falsehoods-verified` cannot be merged: its only novel change deletes a true, tested feature, and the rest is superseded
+
+**Problem.** The branch carries 10 commits `main` does not have (`git cherry main
+land/audit-falsehoods-verified`), and every one of them is either already on `main` in a better
+form or would regress it. It is 604 commits behind and reports content conflicts in 6 files. This
+entry exists because `WORKTREES.json` keeps classifying it `at-risk`, so the next sweep will meet
+it again, and because the branch's own review history contains a reversal that reads like a
+pending fix.
+
+**The novel change is a falsehood, and the branch's own tree refutes it.** The branch deletes
+"Esc restores the old framing" from `src/tools/descriptions/tooltips.ts` and
+`src/tools/descriptions/type-crop.ts`, and adds a test asserting
+`expect(toolDescriptions.crop.purpose).toContain('there is no Esc cancel')`. Esc cancel is
+implemented: `handleKeyDown` in `src/components/Main/CropToolArea.tsx` binds Enter to commit and
+Escape to cancel on a `window` listener that lives for as long as `Main` mounts the component, and
+`it('clears the drawn crop on Escape without touching the document')` plus
+`test('Escape abandons a pending crop and writes no history entry')` pin it. The binding landed in
+`a12e35c9`, which is an **ancestor of this branch's own merge base** — it was in front of the
+author. The new test therefore asserts a falsehood and blocks its correction. This is the trap
+`toolbar-mapping.ts`'s own comment sets: it calls a bad badge "exactly like a tooltip that promises
+an Esc key the tool has no handler for", and that analogy was carried into source, generated docs
+and a test.
+
+**Everything else is already on `main`, in a stronger form.** `toolbar-mapping.ts` dropping
+`shortcut: 'B'` from the Draw entry landed in `bfc14900`, with all three of its tripwires. The
+`Shift+W` Adobe binding the branch existed to retract is corrected in
+`src/tools/descriptions/eyedropper-draw.ts` and in this file. The blank-export ink guard is
+superseded by `ExportVerification`, `MIN_EXPORT_INK_RATIO`, `measureVisibleInk` and
+`assertExportCarriesDrawing`. The branch's three claimed-live `HANDOFF` findings are each stale: the
+`--limit` coercion is fixed by `limitFlag` in `scripts/agent-board.mjs`, the TIFF/PSD gap is closed
+by the container verifiers, and the selection-baseline alias is fixed by `4ccc956b` — see §227,
+which still records that last one and is itself now stale. The four `docs(audit)` commits contribute
+nothing: `docs/CHAT-DAMAGE-AUDIT-2026-09-29.md` is added and deleted inside the branch and is absent
+from its tip.
+
+**What would close it.** Nothing in this branch should land, so the only action is to retire it:
+`npm run dispose -- audit-falsehoods` once its `at-risk` reason is understood. Reimplementing any of
+it on today's `main` would re-derive worse versions of things `main` already holds.
+
+**Files.** `src/components/Main/CropToolArea.tsx` — `handleKeyDown`; `src/tools/descriptions/type-crop.ts`
+— `crop.purpose`; `src/tools/descriptions/tooltips.ts` — `crop.summary`;
+`e2e/export/helpers.ts` — `exportAndVerify`, `assertExportCarriesDrawing`, `exportByteVerifiers`.
+
+**Provenance.** Triaged on 2026-10-05 by a harvest of the branch named in the title: `git cherry`,
+a two-dot diff of every touched file against `main`, and a run of `main`'s own
+`CropToolArea.test.tsx` on a clean `main` worktree (6 passed). An independent review tasked with
+refuting the verdict upheld it and added that the two-dot diff reverts the export
+container-verification layer wholesale and re-adds `color`, `levels` and `transform` to the Tools
+rail. Board issue `ph-108` carries the full evidence.
+
+---
+
+## 248. One malformed `previousSelectionState` voids the entire durable shadow, and the same shape one entry later is tolerated
+
+**Problem.** `legacyHistoryToDurable` derives the selection baseline with
+`deriveSelectionBaseline(legacyHistory)` **before** its per-entry loop and outside any
+`try`, so a single malformed argument anywhere in the timeline is not a per-entry
+diagnostic — it is the failure of the whole conversion.
+
+`deriveSelectionBaseline` (`selection-baseline.ts`) takes the first non-disabled
+`SELECTION_ACTION` and passes `previous?.selections` straight to `selectionSnapshot`.
+That function's parameter is `readonly Selection[] = []`, so the default rescues
+`undefined` and nothing else: a first entry carrying `previousSelectionState: { selections:
+null }` supplies `null`, and `null.map` throws a `TypeError`. The result is
+`status: 'unavailable'`, `document: null`, and one `conversion-failed` diagnostic with
+**no `historyId`** — the user is told the document is unavailable and is given nothing to
+blame. Undo and redo for the whole document stop working.
+
+The asymmetry is the defect. `deriveSetSelectionEntry` reads the same field **through a
+three-clause structural guard** and falls back to the tracked baseline when it fails, so a
+malformed `previousSelectionState` one entry later is merely ignored. Identical data,
+opposite blast radius, decided only by position in the timeline.
+
+Current behaviour is pinned as a tripwire by
+`it('voids the whole conversion for an unreadable previous state on the FIRST selection entry')`
+in `src/contexts/__tests__/history-adapter.safety.test.ts`, whose docblock states that a fix
+must DELETE that test rather than edit it.
+
+**Fix.** Give `deriveSelectionBaseline` the same structural tolerance
+`deriveSetSelectionEntry` already has — an unreadable `previousSelectionState` falls back to
+the empty selection snapshot — and move the derivation inside the conversion's error boundary
+so a failure is attributable rather than fatal. The type says `previousSelectionState?: SelectionSnapshot`,
+so `{ selections: null }` is already outside the contract; the defect is that nothing checks
+it before dereferencing. Do NOT fix this by bounding the baseline lookup: that is §31's rule
+and reopening it reintroduces a data-loss bug.
+
+**Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`, `selectionSnapshot`),
+`src/contexts/history-adapter.ts` (`legacyHistoryToDurable`),
+`src/contexts/__tests__/history-adapter.safety.test.ts`

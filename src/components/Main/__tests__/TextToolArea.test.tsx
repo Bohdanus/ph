@@ -197,7 +197,11 @@ describe('TextToolArea', () => {
     // toThrow()` alone passes just as well against a component that renders nothing, which is
     // the tool the user cannot click at all.
     expect(h.useRectProps.current).not.toBeNull();
-    expect(document.querySelector('.cursor-text')).toBeInTheDocument();
+    // Scoped to THIS render's container, not `document`. A document-wide query passes just as
+    // well against a node an earlier case leaked, so it would keep passing after the cursor
+    // class stopped being rendered here at all.
+    const { container } = renderArea();
+    expect(container.querySelector('.cursor-text')).not.toBeNull();
   });
 
   it('does not render an options-bar textarea when the text tool becomes active', () => {

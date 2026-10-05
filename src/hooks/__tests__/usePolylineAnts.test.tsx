@@ -218,8 +218,9 @@ describe('useMarchingPath basic behavior', () => {
     });
 
     // `clear()` cancels the handle the LOOP scheduled (the second one), not merely any
-    // handle, and the full-canvas clear it issues is distinguishable from the per-frame one
-    // only by the 42x42 size.
+    // handle. It also issues a second clear, and the COUNT is what proves that: this
+    // canvas is 42x42, so the per-frame clear and the full-canvas clear are byte-identical
+    // `clearRect(0, 0, 42, 42)` calls and the arguments cannot tell them apart.
     const loopHandle = [...rafMocks.frames.keys()].at(-1)!;
     act(() => {
       apiRef.current!.clear();
