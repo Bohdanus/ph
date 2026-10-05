@@ -21,6 +21,7 @@ import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
 import { useDockDrag } from '../../hooks/useDockDrag.ts';
+import { edgePlacement } from '../../util/edge-placement.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -260,7 +261,7 @@ const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { dockOnLeft, setDockOnLeft } = usePanelLayout();
+  const { toolsSide, setToolsSide } = usePanelLayout();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
@@ -520,9 +521,9 @@ const SidebarLeft = () => {
   // The drop target is a blue line at the edge being thrown at, drawn before the release, which
   // is the affordance Adobe documents for every panel move.
   //
-  // `overlaySide` is the same fact as `dockOnLeft` seen from the rail: a rail on the right edge
+  // `overlaySide` is the same fact as `toolsSide` seen from the rail: a rail on the right edge
   // opens its flyout to the left, because "the anchor's trailing edge" is off-screen there.
-  const overlaySide: 'left' | 'right' = dockOnLeft ? 'left' : 'right';
+  const overlaySide: 'left' | 'right' = toolsSide === 'right' ? 'left' : 'right';
   const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
   const reDockOriginXRef = useRef(0);
   const reDockTargetRef = useRef<'left' | 'right' | null>(null);
@@ -560,14 +561,13 @@ const SidebarLeft = () => {
       // the right column swapping by going LEFT. Reading either as "the low edge" is how this
       // shipped inverted once and passed a unit test written to match it: a rail dragged left
       // would have reported a drop target for the edge it was already against.
-      const wantsSwap = dockOnLeft
-        ? pointerX < viewportWidth * RE_DOCK_ZONE
-        : pointerX > viewportWidth * (1 - RE_DOCK_ZONE);
-      const target = wantsSwap ? (dockOnLeft ? 'left' : 'right') : null;
+      const wantsSwap =
+        toolsSide === 'left' ? pointerX > viewportWidth * (1 - RE_DOCK_ZONE) : pointerX < viewportWidth * RE_DOCK_ZONE;
+      const target = wantsSwap ? (toolsSide === 'left' ? 'right' : 'left') : null;
       reDockTargetRef.current = target;
       setReDockTarget(target);
     },
-    [dockOnLeft]
+    [toolsSide]
   );
 
   // Honouring the cancel is the point of having one: the rail moves to the OPPOSITE edge, and a
@@ -578,13 +578,11 @@ const SidebarLeft = () => {
       const target = reDockTargetRef.current;
       reDockTargetRef.current = null;
       setReDockTarget(null);
-      // The rail and the dock SWAP, so the flag is the rail's destination INVERTED: a rail
-      // going right puts the dock on the left, which is what `dockOnLeft` means. Mapping it
-      // straight through (`target === 'left'`) sends the rail to the edge it was thrown away
-      // from, and two inversions cancelling each other is exactly how this was wrong once.
-      if (target !== null && !cancelled) setDockOnLeft(target === 'right');
+      // The rail moves to its OWN destination — no inversion. `setToolsSide` writes the rail's
+      // edge directly, so the target IS the edge the rail was thrown at.
+      if (target !== null && !cancelled) setToolsSide(target);
     },
-    [setDockOnLeft]
+    [setToolsSide]
   );
 
   const railDrag = useDockDrag({ onStart: onRailDragStart, onMove: onRailDrag, onEnd: onRailDragEnd });
@@ -1144,6 +1142,8 @@ const SidebarLeft = () => {
     ...(overflowPlan.showOverflowTile ? [{ kind: 'overflow' as const }] : []),
   ];
 
+  const railPlacement = edgePlacement(toolsSide, 'full');
+
   return (
     <aside
       // The other `complementary` landmark. Unnamed, a screen reader announces two
@@ -1154,10 +1154,10 @@ const SidebarLeft = () => {
       // always sits outside the content box, so the border belongs on whichever side faces the
       // canvas — and the grid area follows from the same fact.
       className={`scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
-        dockOnLeft
-          ? 'border-l border-gray-300 dark:border-gray-700 [grid-area:right]'
-          : 'border-r border-gray-300 dark:border-gray-700 [grid-area:left]'
-      }`}
+        toolsSide === 'left'
+          ? 'border-r border-gray-300 dark:border-gray-700'
+          : 'border-l border-gray-300 dark:border-gray-700'
+      } ${railPlacement}`}
       data-testid="left-sidebar"
       ref={setRailElement}
       style={{ width: toolbarWidth }}
@@ -1239,7 +1239,7 @@ const SidebarLeft = () => {
                   railDragMovedRef.current = false;
                   return;
                 }
-                setDockOnLeft(!dockOnLeft);
+                setToolsSide(toolsSide === 'left' ? 'right' : 'left');
               }}
               title="Drag to the other side, or press Enter"
               type="button"
