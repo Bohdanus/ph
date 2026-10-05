@@ -43,8 +43,9 @@ import path from 'node:path';
  *
  * `pre-merge-commit` is the fourth gate, added because the rule it enforces was written
  * down in more than one place and enforced in none — see `.husky/pre-merge-commit`. Note the
- * limit that comes with it: git runs NO hook for a fast-forward, so that landing shape
- * is uncovered by design rather than by oversight.
+ * limit that comes with it: git runs no GATING hook for a fast-forward — it fires
+ * `post-merge` and nothing that can stop it — so that landing shape is uncovered by
+ * design rather than by oversight.
  */
 const HOOKS = ['pre-commit', 'pre-push', 'pre-merge-commit', 'post-merge'];
 

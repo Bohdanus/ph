@@ -150,7 +150,7 @@ the only `inert` count this pass changed on purpose. The repository-wide figure 
 against other worktrees' copies of those files, so none of it held. Re-derived here from the generated
 tables: **pen 15, paint 4** (eraser `Flow`, magic-eraser `Anti-alias`, paint-bucket `Anti-alias`, and
 color-replacement `Sampling`), **eyedropper-draw 3** (the eyedropper's one and the draw tool's two),
-**shape 8**, and **zero in selection, focus, type-crop and transform**. A hand-maintained tally in
+**shape 6**, and **zero in selection, focus, type-crop and transform**. A hand-maintained tally in
 a prose file is the one number in this directory with nothing holding it to the code beside it.
 
 **This family is what the `inert` definition is for.** It originally read "_state_ is declared and
