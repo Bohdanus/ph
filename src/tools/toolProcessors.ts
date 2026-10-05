@@ -99,8 +99,15 @@ export type ToolProcessorDefinition = {
  * §74 groups it as the measurement band "because these are `PIXEL_FREE_TOOLS` like the Eyedropper,
  * committing no pixels and needing no durable operation", and that decision is the app-side answer
  * to a question Adobe never states outright.
+ *
+ * The Color Sampler is the third, on Adobe's own one-line description: "Color Sampler tool |
+ * Displays color values for up to four areas." It displays rather than edits, so the pixels under a
+ * sampler are unchanged by its existence and a sample is not a document fact. It reads a pixel the
+ * way the Eyedropper does and writes it to a module store rather than to the foreground swatch, and
+ * neither difference gives it a `commit` kind.
+ * <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler', 'color-sampler'] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;

@@ -110,6 +110,17 @@ export const ACCEPTED_CONSOLE_ERRORS: readonly AcceptedConsoleError[] = [
     urlPattern: /^\/favicon\.ico$/,
   },
   {
+    match: 'color-sampler-cap-reached',
+    reason:
+      "The Color Sampler's own refusal at its four-sampler cap, and the refusal IS the behaviour " +
+      "under test: Adobe says 'up to four Color Samplers', no source describes Photoshop silently " +
+      'replacing or deleting the oldest marker, and the one observation of the cap being reached is ' +
+      'a message. So the tool refuses loudly and changes nothing, and e2e/color-sampler.spec.ts ' +
+      "cannot assert that without this log. The entry is scoped to the dispatcher's own prefix so a " +
+      'different component logging the same word is not waved through.',
+    urlPattern: /\/src\/components\/Main\/ColorSamplerToolArea\.tsx$/,
+  },
+  {
     match: 'Error boundary caught a throw from',
     reason:
       "The boundary's own console.error at src/components/Common/ErrorBoundary.tsx:90, " +

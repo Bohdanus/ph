@@ -71,11 +71,14 @@ export const toolbarMap = [
     //
     // The three members Photoshop cycles to that this app does not have are absent rather than
     // represented by placeholder values, per the rule the doc comment above states. Adobe prints no
-    // order for the cycle, and the pair that exists keeps the Eyedropper first because it is the
-    // tile's identity: a tile's name is its first entry, so leading with the Ruler would rename
-    // the tile and move every `tool-button-eyedropper` selector with it.
+    // order for the cycle, and the three that exist keep the Eyedropper first because it is the
+    // tile's identity: a tile's name is its first entry, so leading with anything else would rename
+    // the tile and move every `tool-button-eyedropper` selector with it. The Color Sampler sits
+    // between the two because it is the one that reads a PIXEL, which is what makes it read as
+    // belonging beside the Eyedropper rather than beside the Ruler.
     [
       { label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' },
+      { label: 'Color Sampler Tool', name: 'color-sampler' },
       { label: 'Ruler Tool', name: 'ruler' },
     ],
   ],
@@ -188,6 +191,7 @@ export const availableTools: readonly ToolName[] = [
   'magic-wand',
   'quick-selection',
   'eyedropper',
+  'color-sampler',
   'ruler',
   'eraser',
   'magic-eraser',

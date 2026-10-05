@@ -60,15 +60,16 @@ const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies rea
  *
  * Adobe cycles the family with `Shift+I` and names five members — "Eyedropper, Color Sampler,
  * Ruler, Note, and Count Tool I" (`src/tools/descriptions/eyedropper-draw.notes.md`) — of which this
- * app has two. The three it does not have are absent from the group rather than listed as members
- * it cannot select, because `cycleToolGroup` advances through whatever the array holds: a name that
- * is not a working tool would make `Shift+I` land on `DummyToolArea`.
+ * app has three. The two it does not have are absent from the group rather than listed as members it
+ * cannot select, because `cycleToolGroup` advances through whatever the array holds: a name that is
+ * not a working tool would make `Shift+I` land on `DummyToolArea`.
  *
  * The cycle ORDER is not Adobe's, because Adobe publishes no order for it: the Eyedropper leads
  * because it is the tile's first entry, and a tile's name is its first entry, so leading with
- * anything else would rename the tile and move every `tool-button-eyedropper` selector with it.
+ * anything else would rename the tile and move every `tool-button-eyedropper` selector with it. The
+ * Color Sampler sits second because it is the other member that reads a pixel.
  */
-const measurementGroup = ['eyedropper', 'ruler'] as const satisfies readonly ToolName[];
+const measurementGroup = ['eyedropper', 'color-sampler', 'ruler'] as const satisfies readonly ToolName[];
 
 /**
  * The tools whose options bar carries a tip, and the field each one spells it with.
