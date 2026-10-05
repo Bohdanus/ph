@@ -71,10 +71,13 @@ export type ToolArgsByName = {
    * gesture the user just made, not a setting they chose, so there is nothing here to persist —
    * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
    *
-   * The shape is imported rather than written out, which is what the Eyedropper beside it does. It
-   * was declared inline here while `src/tools/settings.ts` used `satisfies RulerToolArgs` against the
-   * copy in `src/tools/ruler.ts` — two declarations of one contract, so adding a field produced a
-   * type error in a file that has nothing to do with the field.
+   * The NAMED type rather than the inline `{ toolName: 'ruler' }` the placeholder entries below
+   * use, and it is the one difference from those entries that is not about being unimplemented:
+   * `RulerToolArgs` already exists, `src/tools/settings.ts` seeds the default with
+   * `satisfies RulerToolArgs`, and two spellings of one contract is how a tool that grows an arg
+   * ends up with a settings default the registry cannot see. Every implemented tool in this record
+   * names its type.
+
    */
   ruler: RulerToolArgs;
   pen: { toolName: 'pen' };

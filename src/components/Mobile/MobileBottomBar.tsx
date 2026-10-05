@@ -74,7 +74,11 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
         data-testid="mobile-tool-options-toggle"
         aria-label="Tool options"
         aria-expanded={isToolSheetOpen}
-        aria-controls="mobile-tool-options"
+        // Gated for the same reason as the three triggers already fixed. The panel this names lives
+        // in `MobileToolSheet`, which `MobileShell` renders as a SIBLING and which renders its body
+        // only under `isOpen` — so a closed toggle advertised an id that was not in the tree beside
+        // `aria-expanded="false"`.
+        aria-controls={isToolSheetOpen ? 'mobile-tool-options' : undefined}
         className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
           isToolSheetOpen
             ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'

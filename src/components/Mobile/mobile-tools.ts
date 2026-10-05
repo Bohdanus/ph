@@ -69,10 +69,11 @@ export const mobileToolGroups: MobileToolGroup[] = toolbarMap.flatMap((section, 
  * two disagreed for a revision: the sheet patched the figure and the bar did not, so the
  * "Rectangle" tile selected plain `shape`.
  *
- * The order is the one `DesktopHeader.handleToolSelection` uses, and deliberately not the
- * one `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
- * OUTGOING tool (`useApp.ts`), which reads the outgoing args, so patching the incoming
- * tool's args first would clobber the values the commit needs.
+ * The order is select-then-patch, and deliberately not the one `SidebarLeft.selectTool`
+ * uses. `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, which reads the
+ * outgoing args, so patching the incoming tool's args first would clobber the values the
+ * commit needs. The header used to carry a second copy of this ordering for its figure rows
+ * and no longer does: with the `Tools` menu gone it selects no figure tool at all.
  */
 export const makeSelectTool =
   (

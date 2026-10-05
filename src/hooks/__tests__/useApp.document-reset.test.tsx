@@ -5,14 +5,15 @@ import { StoreProvider, useStore } from '../../contexts/StoreContext.tsx';
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../useApp.ts';
 import { createHistoryItem } from '../../contexts/history-utils.ts';
-import { documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { documentFrameFromSize, documentFrameSize } from '../../contexts/document-frame.ts';
 import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
+import { resizeCanvas } from '../../util/canvas.ts';
 import { selectionSnapshot } from '../../contexts/selection-baseline.ts';
 import { legacyHistoryToDurable } from '../../contexts/history-adapter.ts';
 import { getAssetRegistry } from '../../contexts/asset-registry.ts';
 import type { DurableDocument } from '../../contexts/history-model.ts';
 import type { Layer, LayersRecord } from '../../contexts/layer-types.ts';
-import type { Selection, SelectionClipboard } from '../../contexts/general-types.ts';
+import type { Selection, SelectionClipboard, Size } from '../../contexts/general-types.ts';
 import type { NewDocumentBlankParams } from '../../contexts/tool-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
 
@@ -266,6 +267,16 @@ async function seedOutgoingDocument(result: Result) {
         selectionClipboard: OUTGOING_CLIPBOARD,
       },
     });
+  });
+
+  // The seeded document's own composition. `drawLayersToCanvas` sizes the workspace canvas to
+  // the document frame's extent, and this harness never runs it — so without this the canvas
+  // stays at jsdom's default 300x150 whatever the document is, and every canvas assertion in
+  // `expectOutgoingDocumentIntact` is red for EVERY implementation, correct or defective.
+  // Verified by deleting this line: both cases that call the helper then fail on
+  // `{ width: 300, height: 150 }` against the seeded `{ width: 800, height: 600 }`.
+  act(() => {
+    resizeCanvas(result.current.store.canvasRef.current!, PREVIOUS_SIZE.width, PREVIOUS_SIZE.height);
   });
 
   const { store, history: nav } = result.current;
@@ -618,6 +629,28 @@ describe('creating a new image kills the outgoing document history and layers', 
     expect(result.current.store.activeLayerId).not.toBe(firstLayerId);
     expect(result.current.store.totalSize).toEqual({ width: 100, height: 100 });
   });
+
+  /**
+   * The blank arm's half of the ordering `opening an image kills the outgoing document history and
+   * layers` pins for the raster arm. Both calls in `setBlankImage` are synchronous, so a resize
+   * placed before the layer build is invisible to any event-order assertion — and there is no
+   * forward tripwire to write either, because this harness never renders `Main`, so the store's
+   * own render never runs and the canvas has exactly one writer. The failure path is therefore the
+   * tripwire: `createLayerSource` refuses an extent that is not positive, and it throws from
+   * INSIDE `createBlankLayer`. With the resize placed first, `expectOutgoingDocumentIntact`'s canvas
+   * assertion sees the incoming extent; with it after, it sees the outgoing one.
+   */
+  it('leaves the canvas at the outgoing extent when the blank layer cannot be built', async () => {
+    const result = setup();
+    await seedOutgoingDocument(result);
+    const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+
+    expect(() => result.current.app.setBlankImage({ ...BLANK, size: { width: 0, height: 0 } })).toThrow(
+      /width and height must be greater than 0/i
+    );
+
+    expectOutgoingDocumentIntact(result, intact);
+  });
 });
 
 describe('opening an image kills the outgoing document history and layers', () => {
@@ -712,10 +745,12 @@ describe('opening an image kills the outgoing document history and layers', () =
   });
 
   /**
-   * The other negative control: a failure inside the import must also leave the
-   * document alone. The raster arm resizes the canvas BEFORE it builds the layer
-   * (`useApp.ts:162`), so this pins the store half of that sequence — the canvas half
-   * is a separate defect, recorded in `HANDOFF.md` §102.
+   * The other negative control: a failure inside the import must also leave the document alone.
+   * The raster arm used to resize the canvas BEFORE it built the layer, so this used to pin only
+   * the store half of that sequence and name the canvas half as a separate defect. The canvas is
+   * now sized after the replacement is published, and `expectOutgoingDocumentIntact` reads its
+   * backing store, so this is the assertion that fails if the resize moves back ahead of the
+   * layer build.
    */
   it('kills nothing when the import fails before the document is replaced', async () => {
     const result = setup();
@@ -760,4 +795,17 @@ function expectOutgoingDocumentIntact(result: Result, snapshot: { history: unkno
   // future defensive clone in production would fail an identity check spuriously.
   expect(store.selectionClipboard).toEqual(OUTGOING_CLIPBOARD);
   expect(store.totalSize).toEqual(PREVIOUS_SIZE);
+  // The canvas is a DOCUMENT surface: its backing store is the document frame's extent, and it
+  // is what `drawLayersToCanvas` composes into. An import that fails partway must leave it at the
+  // outgoing document's extent — a canvas resized to the incoming file's size is sized for a
+  // document that was never adopted, so the retained one renders at the wrong scale while the
+  // tool overlays keep the geometry they had. `handleImageCreate` sizes it from `params.size` on
+  // the success path and nowhere else.
+  expect(canvasExtent(result)).toEqual(documentFrameSize(documentFrameFromSize(PREVIOUS_SIZE)));
+}
+
+/** The workspace canvas's own backing-store extent, or `null` when no canvas is mounted. */
+function canvasExtent(result: Result): Size | null {
+  const canvas = result.current.store.canvasRef.current;
+  return canvas ? { width: canvas.width, height: canvas.height } : null;
 }

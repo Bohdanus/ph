@@ -203,7 +203,7 @@ the list is restricted". See `## Unverified` 13.
 (`src/components/ToolbarsRight/Blur/Blur.tsx` — `throttledOnChange()`), the only writer of
 `previewLayersRef`, and the history entry is written later by `commitDirtyTool()`
 (`src/contexts/useLayer.ts`) on tool switch (`src/hooks/useApp.ts` — `goToTool()`), on export
-(`src/components/DesktopHeader/DesktopHeader.tsx` — `handleToolSelection()`) and in
+(`src/components/Mobile/mobile-tools.ts` — `makeSelectTool`) and in
 `mergeAllLayers()` (`src/contexts/useLayer.ts`). "Blurred as soon as the slider moves" overstates it:
 the layer is blurred in a preview, and the undoable edit lands at the commit.
 

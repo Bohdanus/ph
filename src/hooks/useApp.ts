@@ -3,7 +3,7 @@ import { useStore, type StoreMetadataUpdates } from '../contexts/StoreContext.ts
 import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
 import type { NewDocumentBlankParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
-import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
+import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/file-types.ts';
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
@@ -76,8 +76,14 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: NewDocumentBlankParams) {
-    handleImageCreate(params.size);
+    // Same ordering as `setImageFromUpload`'s raster arm, and for the same reason. A blank document's
+    // layer is built synchronously, so there is no microtask boundary here — but
+    // `createBlankLayer` throws from `createLayerSource` when the extent is not positive, and a
+    // canvas already resized to that extent is a document-sized canvas around a document that was
+    // never adopted. Sizing the canvas after the layer exists cannot be wrong in the other
+    // direction: nothing between the two reads it.
     createBlankLayer({ ...params }, true);
+    handleImageCreate(params.size);
   }
 
   async function setImageFromUpload(data: ImageUploadResponse) {
@@ -157,8 +163,22 @@ export const useApp = (): UseAppType => {
     }
     const { image } = data;
     const size = { width: image.width, height: image.height };
-    handleImageCreate(size);
+    // The canvas takes the image's size only AFTER the replacement has been published.
+    // `createLayerFromBitmap` awaits `immutableRaster` before it dispatches, so a decode failure
+    // rejects there with nothing published — and a canvas already resized to the incoming file's
+    // geometry is a document-sized canvas wrapped around the outgoing document, which then renders
+    // at the wrong extent until something redraws it. That FAILURE PATH is the whole reason, and
+    // it is what the tests here prove.
+    //
+    // It is deliberately NOT justified by a visible wrong-extent frame on the success path. That
+    // was measured headlessly, per frame, by comparing the canvas backing store against the
+    // published `data-fit-document-*` while opening a 4000x3000 PNG: the current order disagrees on
+    // one frame, the old order on two, and neither is sustained long enough to be worth a paint.
+    // `immutableRaster`'s `createImageBitmap` on an already-decoded `HTMLImageElement` resolves
+    // inside the same frame. The PSD arm above already orders it this way: it resizes all three
+    // refs only after every `immutableRaster` has resolved.
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    handleImageCreate(size);
     _setFileName(fileName);
   }
 

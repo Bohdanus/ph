@@ -18,9 +18,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * ## What is observable, and why it is the ants
  *
- * A freehand selection has no blue outline of its own anywhere. `drawSelectionOutline` and
- * `drawSelectionAnchors` both skip `sourceTool` 'freehand-lasso' and 'magic-wand'
- * (`src/util/selection.ts:198`, `:235`), so the tool overlay never carries the selection border
+ * A freehand selection has no blue outline of its own anywhere. `drawSelectionAnchors` and
+ * `findSelectionAnchorAtPoint` both skip `sourceTool` 'freehand-lasso' and 'magic-wand'
+ * (`src/util/selection.ts`), so the tool overlay never carries the selection border
  * and `getSelectionBounds` cannot see it. The committed selection is the animated black/white ants
  * on `[data-testid="selection-ants-canvas"]`, and nothing else.
  *
@@ -192,7 +192,7 @@ test.describe('Freehand Lasso', () => {
    *
    * Escape mid-drag cancels the DRAFT and must leave nothing committed
    * (`PolygonClickToolArea.cancelSelectionDraft:880-888`, and unlike `removeLastAnchor` it carries
-   * no `isFreehand` guard). A committed selection then goes away through `Clear`, which is gated on
+   * no `isFreehand` guard). A committed selection then goes away through `Deselect`, which is gated on
    * the same predicate as Copy — so pairing the two buttons with the border is what makes "the
    * selection went away" a claim about the canvas rather than about a button's disabled attribute.
    *
@@ -200,7 +200,7 @@ test.describe('Freehand Lasso', () => {
    * the difference between "the selection was cleared" and "the selection is somewhere I did not
    * look".
    */
-  test('Escape cancels an in-progress drag and Clear removes a committed one', async ({ page }) => {
+  test('Escape cancels an in-progress drag and Deselect removes a committed one', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     const box = await canvasBox(page);
@@ -217,19 +217,19 @@ test.describe('Freehand Lasso', () => {
     expect(await hasNoCommittedAnts(page), 'Escape mid-drag must leave no committed selection').toBe(true);
     await expect(page.getByRole('button', { name: 'Copy', exact: true })).toBeDisabled();
 
-    // --- The same drag, released rather than cancelled, so the Clear step has something to remove.
+    // --- The same drag, released rather than cancelled, so the Deselect step has something to remove.
     await page.mouse.move(region.x, region.y);
     await page.mouse.down();
     await page.mouse.move(region.x + region.width, region.y + region.height, { steps: DRAG_STEPS });
     await page.mouse.move(region.x, region.y, { steps: DRAG_STEPS });
     await page.mouse.up();
 
-    await waitForCommittedAnts(page, 'the committed selection border before Clear');
-    await expect(page.getByRole('button', { name: 'Clear', exact: true })).toBeEnabled();
+    await waitForCommittedAnts(page, 'the committed selection border before Deselect');
+    await expect(page.getByRole('button', { name: 'Deselect', exact: true })).toBeEnabled();
 
-    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    await page.getByRole('button', { name: 'Deselect', exact: true }).click();
     await expect
-      .poll(() => hasNoCommittedAnts(page), { message: 'Clear must take the border off the canvas' })
+      .poll(() => hasNoCommittedAnts(page), { message: 'Deselect must take the border off the canvas' })
       .toBe(true);
     await expect(page.getByRole('button', { name: 'Copy', exact: true })).toBeDisabled();
   });
@@ -237,8 +237,8 @@ test.describe('Freehand Lasso', () => {
   /**
    * The freehand bar's one control, which has no counterpart on the polygonal lasso's bar.
    *
-   * `PolygonalLasso.tsx` renders a Mode toggle and two hints and NOTHING else — no Copy, no Clear.
-   * `FreehandLasso.tsx` adds Copy/Paste/Clear because a freehand selection is commit-on-release
+   * `PolygonalLasso.tsx` renders a Mode toggle and two hints and NOTHING else — no Copy, no Deselect.
+   * `FreehandLasso.tsx` adds Copy/Paste/Deselect because a freehand selection is commit-on-release
    * with no explicit finish step, so the bar is where its lifetime is controlled. Asserting the
    * toggle's own label text is the check: it reads `isFill ? 'Fill' : 'Outline'`
    * (`FreehandLasso.tsx:59`), so the label states the mode and the assertion is a round trip
@@ -255,7 +255,7 @@ test.describe('Freehand Lasso', () => {
 
     // And the two sibling controls exist only here, which is what distinguishes this bar from the
     // polygonal one the eye is really being compared against.
-    await expect(page.getByRole('button', { name: 'Clear', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Deselect', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Paste', exact: true })).toBeVisible();
   });
 
