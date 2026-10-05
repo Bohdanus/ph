@@ -1003,8 +1003,7 @@ building the target list — the list as written ships a rail that is still not 
 | Adjustment Brush has "zero Adobe pages" — exclude it                          | Two Adobe pages, "Select Adjustment Brush Tool **from the toolbar**". Include it; it is a large _feature_, which is a different decision from membership.                                                                                                                                                                                                                              |
 | —                                                                             | **Remove tool** and **Content-Aware Tracing tool** are absent from the list entirely. Both are Adobe-documented, and the Remove tool's page says "In the Tools panel, select Remove tool." A sweep of Adobe's _overview tables_ misses both, because each has its own page instead. Content-Aware Tracing's own page confirms its **group**: "from the Pen tool group in the toolbar". |
 | —                                                                             | **Artboard, Frame, Perspective Crop, Slice, Slice Select** are also absent. All are in Adobe's own shortcut PDF. **The Ruler was in this list and is built** — `src/tools/ruler.ts`, `src/components/Main/RulerToolArea.tsx`, `src/components/ToolbarsRight/Ruler/Ruler.tsx` — so it is named here rather than left in a row that would read as a gap.                                 |
-
-| §68 below points at this section | The `AGENTS.md` pointer named a section that did not exist. It exists now. |
+| §68 below points at this section                                              | The `AGENTS.md` pointer named a section that did not exist. It exists now.                                                                                                                                                                                                                                                                                                             |
 
 Two that must **not** be added despite appearing in the shortcut PDF: **3D Material Eyedropper** and
 **3D Material Drop** (the removed 3D feature), and **Rounded Rectangle** (CC-era, in neither 2026
@@ -1114,9 +1113,10 @@ that defect class.
 closure check must be given the commit the fix was supposed to start from, and must assert against
 that, or every value that a _concurrent_ session fixed in the same window is silently credited to
 the fixer. Here `main` moved several times while the work was in flight; the audit read a moving
-target and reported the motion as work. The concrete form of the rule: **`git show <fix-parent>:<path>`
-is the only honest baseline**, and when the pass cannot name that commit its "already fixed"
-verdicts are unattributable and must be reported as unknown rather than as a win.
+target and reported the motion as work. The concrete form of the rule is mechanical, and
+[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md#citations) carries it; what matters here is
+that a pass which cannot name the commit its fix started from has "already fixed" verdicts
+that are unattributable, and those must be reported as unknown rather than as a win.
 
 This is the same shape as the one this file used to open with — a citation that moves and still reads
 plausibly, or a verdict that moves and is credited to the wrong commit. A plausible reading is not

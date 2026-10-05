@@ -45,8 +45,10 @@ const VALUE_CLASS =
  * The vocabulary — fill, border, text, hover, disabled — is `SECONDARY_BUTTON`'s, at this bar's own
  * `h-7` rather than the shared `h-9`, because the bar is 50px tall and a 36px button in it would be
  * the tallest thing on the strip. It is given a FILL as well as a border so it cannot be mistaken
- * for a seventh readout, which is what it looked like: a bare "Clear" in a box the same size and
- * shape as the six value boxes beside it, in a bar whose every other control is a readout.
+ * for another readout, which is what it looked like: a bare "Clear" in a box the same size and
+ * shape as the value boxes beside it, in a bar whose every other control is a readout. There are SEVEN
+ * of those — `ruler-d2` is rendered whether or not a protractor has given it a value — so Clear is the
+ * eighth box, not the seventh.
  */
 const CLEAR_CLASS =
   'h-7 self-end rounded border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';

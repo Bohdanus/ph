@@ -687,12 +687,14 @@ whose protection is derived`, `never offers a live worktree that holds uncommitt
 ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
 about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
 it — but each carries its own budget, so which of them runs out first is not something the budget
-may depend on. On a fleet past 150 worktrees that budget is a function of the operator's
-environment, not of the repository's content, so the knife edge moves when a sweep grows the
-fleet and when nothing is committed.
+may depend on. That budget is only a few times the real cost, so what decides it is the operator's
+environment rather than the repository's content: the whole file runs in about fifteen seconds on
+an idle machine and a single case has been observed past a minute while the swarm was busy. The
+knife edge moves when a sweep grows the fleet and when nothing is committed.
 
-Observed 2026-10-05 on `main` at `3abe6ce0`, fleet past 150 worktrees: two different cases from
-that list timed out on different `npm run test` runs while the file passed alone. Note that the
+Observed 2026-10-05 on `main` at `3abe6ce0` with a 96-worktree fleet — not the 150 this entry
+previously claimed for the observation: two different cases from that list timed out on different
+`npm run test` runs while the file passed alone. Note that the
 same file also fails, differently, when the SHARED main checkout is dirty — that is the
 `classify` defect `HANDOFF.md` §142 records, it reports a `keep` verdict rather than timing out,
 and no amount of budget fixes it.
@@ -709,6 +711,18 @@ Two costs compound, and it is worth keeping them apart because only one was ever
 Measured on `main` with 56 worktrees: the same test passed alone unloaded at 53180ms, and
 failed inside a full suite at 76957ms with `Error: Test timed out in 60000ms`; a third
 measurement showed 147s of wall clock against 24.85s of CPU, about 17% utilisation.
+
+Re-measured 2026-10-05 at 96 worktrees, and the 53180ms figure does not reproduce here: the
+whole file, all 160 cases vitest reported, passed in 14.71s with a load average near 6, and the
+`never asks the table to protect a worktree whose protection is derived` case passed alone in
+12.63s. The same case then exceeded 60s with a load average near 20, so the spread is load rather
+than fleet size — under five times, and the busy figure is a harness kill rather than a
+measurement, so it is a floor and not a ratio. That is why the 60s value was left alone rather
+than raised: it is not the defect, it is the instrument reading a cost `liveWorktreeFacts()`
+spends as four git reads per worktree plus three `git worktree list` spawns, and it will keep
+reading high until that walk gets cheaper. Raising the number would have drifted eight sites,
+five of them prose naming the value in this file, in `e2e-run.test.mjs`, in
+`worktree-inventory.test.mjs` and in `suite-budgets.test.mjs`.
 
 **Low CPU utilisation does not exonerate the fleet.** That measurement rules out a CPU- or
 process-bound cost, and running `git` per worktree is itself I/O, so the fleet term survives it.

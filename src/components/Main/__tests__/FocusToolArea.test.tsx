@@ -473,4 +473,53 @@ describe('FocusToolArea', () => {
     // constant is asserted rather than left to two literals agreeing.
     expect(FOCUS_STROKE_BRUSH_SIZE / 2).toBe(20);
   });
+
+  describe('the surfaces Main actually mounts', () => {
+    /**
+     * `Main` mounts these two wrappers, not `FocusToolArea` directly, so the wrappers are what a
+     * regression would have to break. `Main.toolAreas.test.tsx` cannot check that part: its markers
+     * are inert stand-ins, so it proves routing and nothing about handlers.
+     *
+     * This matters because the surface is mounted over the whole document. The previous defect was
+     * an INERT surface, and the failure mode now is its opposite and just as silent — one that
+     * swallowed every pointer event over the canvas without painting anything.
+     */
+    const handlerNames = (element: Element): string[] => {
+      const host = element as unknown as Record<string, unknown>;
+      const key = Object.keys(host).find((candidate) => candidate.startsWith('__reactProps$'));
+      if (!key) throw new Error('React attached no props to the element, so this probe proves nothing');
+      return Object.keys(host[key] as Record<string, unknown>).filter((name) => /^on[A-Z]/.test(name));
+    };
+
+    it.each([
+      ['blur', () => import('../BlurToolArea.tsx').then((module) => module.BlurToolArea)],
+      ['sharpen', () => import('../SharpenToolArea.tsx').then((module) => module.SharpenToolArea)],
+    ] as const)('binds the four gesture handlers on the real %s wrapper', async (toolName, load) => {
+      toolState.toolName = toolName;
+      toolState.toolArgs = toolName === 'blur' ? blurArgs() : sharpenArgs();
+      const Area = await load();
+
+      const control = render(<div className="probe" onPointerDown={() => undefined} />).container
+        .firstElementChild as Element;
+      // The detector must be shown to work, or "no handler names" is indistinguishable from "the
+      // probe found nothing".
+      expect(handlerNames(control)).toEqual(['onPointerDown']);
+
+      const { container, unmount } = render(<Area className="probe" overlayCtxRef={{ current: null }} />);
+      const surface = container.firstElementChild as HTMLDivElement;
+
+      expect(surface).toBeTruthy();
+      // Not `display: none` either: an invisible surface cannot be painted through, which is
+      // precisely what Sharpen used to be.
+      expect(surface.style.display).not.toBe('none');
+      expect(handlerNames(surface).sort()).toEqual(['onPointerDown', 'onPointerLeave', 'onPointerMove', 'onPointerUp']);
+
+      // And the surface is live: a real gesture through it reaches both writers.
+      stroke(surface, [20, 20], [100, 60]);
+      expect(tempUpdateLayerMock).toHaveBeenCalled();
+      expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+
+      unmount();
+    });
+  });
 });
