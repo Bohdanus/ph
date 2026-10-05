@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { configDefaults } from 'vitest/config';
 import e2eProjectConfig from '../../vitest.e2e.config.ts';
 import rootProjectConfig from '../../vitest.config.ts';
+import viteProjectConfig from '../../vite.config.ts';
 import { createMockCanvasContext as createGlobalMockCanvasContext } from '../test/setup.ts';
 import { makeMockCanvas, makeMockCtx, makeMockOffscreenCanvas } from './canvas-mock.ts';
 import {
@@ -845,6 +846,89 @@ const readPlaywrightForbidOnly = async (ci: string | undefined) => {
 describe('harness configuration guards (the AGENTS.md test traps)', () => {
   const rootTest = rootProjectConfig.test;
   const e2eTest = e2eProjectConfig.test;
+
+  /**
+   * The dev server must not watch `.kilo/`, and the pattern must be the ABSOLUTE one.
+   *
+   * `AGENTS.md` puts every worktree under `$MAIN/.kilo/worktrees/`, so the swarm writes a
+   * second checkout into the directory the app is served from. The watcher does not read
+   * `.gitignore`, and the four defaults `resolveChokidarOptions` starts from do not cover
+   * `.kilo`, so without this key a `tsconfig.json` written by any agent takes
+   * `reloadOnTsconfigChange` and sends `full-reload` to every page a suite has open. The
+   * document is blank for the reload, so a helper probing with a non-waiting `count()` fails
+   * on a tool that was there a moment ago — which is what `e2e/layers.spec.ts` "a layer keeps
+   * its hidden state across a reorder" reported on `main`, as a pure-white failure
+   * screenshot, no console error, and a passing isolated run. `vite.config.ts` records what
+   * was reproduced and what was not; nothing here re-derives it.
+   *
+   * **THE ANCHORING HALF IS THE POINT.** The watcher matches `ignored` against ABSOLUTE
+   * paths, and a worktree's own absolute path contains `/.kilo/`, so the obvious
+   * leading-`**` glob (two stars, a slash, then `.kilo/**`) matches EVERY file in a served
+   * root that is a worktree: `src/`, `index.html` and `tsconfig.json` included. A dev server
+   * in that state logs no `hmr update` and no `changed tsconfig file detected` line for any
+   * edit, which is a watcher switched off and not a narrower one.
+   *
+   * That defect is INVISIBLE to a guard that only reasons about files of THIS checkout,
+   * because from a main checkout the broken glob and the anchored one agree on all of them:
+   * the paths a `**`-prefixed pattern wrongly swallows are the files of a checkout at a
+   * `.kilo` path, and from a main checkout that is a DIFFERENT checkout, served by a
+   * different server with a different config. So the last block below judges the pattern
+   * against such a path — a checkout whose absolute form contains `.kilo` and which is not
+   * under this checkout's own `.kilo` — and requires its sources to stay watched. The
+   * anchored pattern satisfies that from either kind of root, which is what makes the block
+   * a guard rather than a fact about one machine.
+   *
+   * Nothing is claimed about that checkout's OWN `.kilo`: a checkout's config is what runs
+   * when it is the one served, and the pattern under test is this checkout's.
+   *
+   * What this cannot see, and no guard in this repository can: the glob semantics belong to
+   * the watcher Vite BUNDLES, which is not the `chokidar` in `node_modules`. `vite.config.ts`
+   * states that dependency and when to re-measure it.
+   */
+  it('excludes the .kilo of this checkout from the dev server watch, and only .kilo', () => {
+    const ignored = viteProjectConfig.server?.watch?.ignored;
+    expect(Array.isArray(ignored), '`server.watch.ignored` must be an array the watcher accepts').toBe(true);
+    const patterns = ignored as string[];
+    expect(patterns.length, 'one pattern, so the ignore set cannot accumulate a stale entry').toBe(1);
+    expect(
+      patterns.every((pattern) => typeof pattern === 'string'),
+      'a function matcher is accepted by the watcher but is not a glob, and would throw here instead of failing'
+    ).toBe(true);
+    const isIgnored = (absolutePath: string) => patterns.some((pattern) => matchesGlob(pattern, absolutePath));
+
+    // Everything this checkout actually serves stays watched.
+    for (const served of ['src/main.tsx', 'index.html', 'tsconfig.json', 'vite.config.ts', 'src/index.scss']) {
+      expect(isIgnored(resolve(REPO_ROOT, served)), `${served} is served by the app and must stay watched`).toBe(false);
+    }
+
+    // And everything under its own `.kilo` does not, which is the whole fix. These are other
+    // checkouts and other swarm state, none of which this server serves.
+    for (const swarm of ['.kilo/worktrees/x/tsconfig.json', '.kilo/agent-manager.json', '.kilo/plans/p.md']) {
+      expect(isIgnored(resolve(REPO_ROOT, swarm)), `${swarm} is swarm state and must not be watched`).toBe(true);
+    }
+
+    // THE ANCHOR. A checkout rooted at a path that contains a `.kilo` segment, which is what
+    // `AGENTS.md` makes of every worktree, and NOT under this checkout's own `.kilo`. A
+    // pattern that keys on any `.kilo` segment rather than on this checkout's own directory
+    // ignores its sources, and a dev server rooted there then has no watcher at all.
+    const checkoutAtAKiloPath = resolve(REPO_ROOT, '..', '.kilo', 'worktrees', 'a-sibling');
+    const ownKilo = resolve(REPO_ROOT, '.kilo');
+    expect(
+      checkoutAtAKiloPath.startsWith(ownKilo),
+      'the probe must lie outside the .kilo of this checkout, or this block proves only what the one above proves'
+    ).toBe(false);
+    expect(
+      checkoutAtAKiloPath,
+      'the probe must contain a .kilo segment, or a `**`-prefixed pattern cannot match it and the block cannot fail'
+    ).toContain(`${sep}.kilo${sep}`);
+    for (const served of ['src/main.tsx', 'index.html', 'tsconfig.json']) {
+      expect(
+        isIgnored(resolve(checkoutAtAKiloPath, served)),
+        `${served} of a checkout whose own absolute path contains .kilo must stay watched — ` +
+          'a pattern matching on any .kilo segment disables that watcher entirely'
+      ).toBe(false);
+    }
+  });
 
   /**
    * `include` and `exclude` are BOTH read by every collection guard below, and
