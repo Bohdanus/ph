@@ -13,6 +13,18 @@ import type { Size } from './general-types.ts';
 
 export type DurableReplayLayer = Readonly<{
   snapshot: DurableLayerSnapshot;
+  /**
+   * The layer's pixel-changing edits, in timeline order, interleaved with the
+   * reposition markers {@link isDurableFoldOrigin} and
+   * {@link isDurablePixelOperation} classify.
+   *
+   * A reposition that PRECEDES the first pixel operation is not here: it is
+   * already folded into `snapshot.pos`, which is the box the producer starts
+   * from. One that FOLLOWS a pixel operation has to be, because after a raster
+   * operation the snapshot's box is no longer the box the timeline was in — the
+   * fold in `materialization.ts` is — and a move the fold never saw leaves the
+   * stroke's frame published where the layer no longer is.
+   */
   operations: readonly DurableOperation[];
 }>;
 
@@ -40,6 +52,60 @@ function layerWithSnapshot(layer: DurableReplayLayer, snapshot: DurableLayerSnap
 
 function addOperation(layer: DurableReplayLayer, operation: DurableOperation): DurableReplayLayer {
   return Object.freeze({ snapshot: layer.snapshot, operations: Object.freeze([...layer.operations, operation]) });
+}
+
+/**
+ * Whether an operation changes a layer's PIXELS, and so moves the box its
+ * presentation is evaluated against.
+ *
+ * Shared with `materialization.ts` rather than restated there, because the rule
+ * is a CONTRACT between the two: this module emits a reposition marker only
+ * where a pixel operation says the snapshot's box stopped being the box, and
+ * the producer's fold refuses a list whose markers and pixel operations are not
+ * in the order this classification implies. Two definitions would drift, and the
+ * drift would be a layer published at a box the timeline never held.
+ */
+export function isDurablePixelOperation(operation: DurableOperation): boolean {
+  return (
+    operation.kind === 'apply-affine-transform' ||
+    operation.kind === 'apply-filter' ||
+    operation.kind === 'apply-raster-processor'
+  );
+}
+
+/**
+ * A `reposition-layer` that states a whole box and nothing else, which is what a
+ * fold origin is: `move` alone would be an origin with no size, and a marker
+ * that carried both would be a `resize` by `reposition`'s own `resize ?? move`.
+ */
+export type DurableFoldOrigin = Extract<DurableOperation, { kind: 'reposition-layer' }> &
+  Readonly<{ resize: Readonly<{ x: number; y: number; width: number; height: number }> }>;
+
+/**
+ * The box a layer held when its first pixel operation was recorded, stated as a
+ * `reposition-layer` box patch and placed at the HEAD of the retained list.
+ *
+ * DERIVED, not recorded: no entry in the document says it, and none can, because
+ * a reposition is recorded as the box the layer moved TO and every earlier box
+ * is overwritten by the next one. The reducer holds the answer for exactly one
+ * moment — while it appends the layer's first pixel operation, where its own
+ * snapshot is still the box the timeline was in — so it is written down there.
+ *
+ * The producer's fold cannot start without it, and a layer carrying a stroke's
+ * frame cannot be placed from the snapshot alone: the frame is absolute, the
+ * box the source is padded into it from is not, and the difference is the whole
+ * offset of the published layer.
+ */
+export function isDurableFoldOrigin(operation: DurableOperation | undefined): operation is DurableFoldOrigin {
+  return operation?.kind === 'reposition-layer' && operation.resize !== undefined && operation.move === undefined;
+}
+
+function foldOriginMarker(snapshot: DurableLayerSnapshot): DurableOperation {
+  return Object.freeze({
+    kind: 'reposition-layer' as const,
+    layerId: snapshot.id,
+    resize: Object.freeze({ ...snapshot.pos }),
+  });
 }
 
 /** Pure logical reducer. It never resolves an asset and never creates a canvas. */
@@ -101,7 +167,25 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
           ...(operation.move ? { x: operation.move.x, y: operation.move.y } : {}),
           ...(operation.resize ? { ...operation.resize } : {}),
         };
-        layers.set(operation.layerId, layerWithSnapshot(layer, cloneLayerSnapshot({ ...layer.snapshot, pos })));
+        const snapshot = cloneLayerSnapshot({ ...layer.snapshot, pos });
+        // The fold, not the snapshot, owns the box from the layer's first pixel
+        // operation onward: a stroke republishes the layer at a frame the
+        // snapshot never learns. So a reposition that comes after one is
+        // retained as an ordered marker, and the box the fold started from is
+        // written at the head of the list for it to start at. A reposition
+        // before the first pixel operation is already in the snapshot, and
+        // emitting a marker for it would ask the fold to re-assert the box it
+        // was handed.
+        const hasPixelOperation = layer.operations.some(isDurablePixelOperation);
+        const operations = hasPixelOperation
+          ? Object.freeze([
+              ...(isDurableFoldOrigin(layer.operations[0])
+                ? layer.operations
+                : [foldOriginMarker(layer.snapshot), ...layer.operations]),
+              operation,
+            ])
+          : layer.operations;
+        layers.set(operation.layerId, Object.freeze({ snapshot, operations }));
         break;
       }
       case 'reorder-layers': {

@@ -307,6 +307,36 @@ ownership ledger and a memoizing LRU of derived materializations —
 are registered with `ownership: 'borrow'` — by `registerRaster()` — so the
 shadow can never close a bitmap the legacy path still owns.
 
+**The layer's box is the FOLD's, not the snapshot's, from its first pixel
+operation on.** `DurableReplayLayer.snapshot.pos` is the fold of every position
+assignment the timeline made to the layer, and it is the authoritative box only
+until the layer's first pixel operation: a stroke republishes the layer at the
+`rasterBounds` frame it padded the source into, and the snapshot never learns
+that. So `DurableReplayLayer.operations` is an ORDERED list in which a
+`reposition-layer` marker may appear, carrying two facts a snapshot cannot:
+
+- a reposition recorded AFTER a pixel operation moves a box the snapshot is not
+  holding, so the marker has to reach `materializeLayer()`'s fold in timeline
+  order. It is applied there as the legacy `resize ?? move` box patch — a resize
+  states the whole box, a move states the origin and inherits the size the fold
+  reached. A reposition recorded BEFORE the first pixel operation is in the
+  snapshot already and is not retained, so a layer with no pixel operation
+  carries no marker and its `operations` is exactly the pixel operations.
+- the head of the list, when there are pixel operations at all, is a **derived**
+  box patch — `isDurableFoldOrigin()` — stating the box the layer held when its
+  first pixel operation was recorded. No entry in the document states it and
+  none can: a reposition states the box moved TO and overwrites the one before
+  it. It is written by the reducer at the one moment it holds the answer, and it
+  is what the source is padded from, so the stroke's absolute frame is filled
+  with the layer's own pixels at the offset legacy replay puts them at.
+
+`materializeLayer()` refuses a retained list that carries a reposition after a
+pixel operation and no fold origin: the fold cannot start, and the only other
+answer is to pad from the box the layer moved to and publish a frame right and
+content wrong by the whole move. `isDurablePixelOperation()` and
+`isDurableFoldOrigin()` are shared by the two modules because the rule is a
+contract between them — the emitter and the reader of the same ordering.
+
 **Production callers, exhaustively:** `convertLegacyHistorySafely` from
 `StoreContext.tsx`'s `buildDurableDocument()`; `decideDurableAppend` from
 `dispatchAction()`'s `REORDER_LAYERS` and `COMMIT_DOCUMENT_EDIT` branches;

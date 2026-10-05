@@ -2,7 +2,12 @@ import type { BitmapSource, Pos, Size } from './general-types.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import type { DurableOperation } from './history-model.ts';
 import { AssetRegistry, type MaterializationLease } from './asset-registry.ts';
-import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.ts';
+import {
+  isDurableFoldOrigin,
+  isDurablePixelOperation,
+  type DurableReplayLayer,
+  type DurableReplayResult,
+} from './durable-replay.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
@@ -72,11 +77,46 @@ function context2d(
   return context as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }
 
-function layerSize(layer: DurableReplayLayer): Size {
-  return {
-    width: layer.snapshot.pos.width,
-    height: layer.snapshot.pos.height,
-  };
+/**
+ * The box the ordered fold starts from, and the one precondition on a retained
+ * list that the fold cannot do without.
+ *
+ * A stroke's `rasterBounds` is ABSOLUTE — the frame the layer was padded into —
+ * while the box the source is padded FROM is not: it is the layer's own box at
+ * the moment the stroke was recorded, and a reposition recorded afterwards names
+ * only the box the layer moved TO. So the box the fold starts at is the one
+ * number a reposition cannot restate, and `replayDurableDocument` writes it at
+ * the head of the retained list as it folds, for exactly this purpose.
+ *
+ * Without it, a layer carrying a reposition after a pixel operation is padded
+ * from the snapshot's box and the stroke's frame is published with its content
+ * offset by the whole move — the frame right, the pixels in it wrong, by the size
+ * of the stroke's footprint. A list in that state cannot arrive from the reducer,
+ * so it is refused rather than published: this is the loud answer for a retained
+ * list assembled outside it, and the two halves of the rule live together here
+ * because they are the same rule.
+ */
+function foldStart(layer: DurableReplayLayer): { origin: { x: number; y: number }; size: Size } {
+  const head = layer.operations[0];
+  if (isDurableFoldOrigin(head)) {
+    const { x, y, width, height } = head.resize;
+    return { origin: { x, y }, size: { width, height } };
+  }
+  let sawPixelOperation = false;
+  for (const operation of layer.operations) {
+    if (isDurablePixelOperation(operation)) {
+      sawPixelOperation = true;
+      continue;
+    }
+    if (sawPixelOperation && operation.kind === 'reposition-layer') {
+      throw new Error(
+        `Layer ${layer.snapshot.id} retained a reposition after a pixel operation with no fold origin; ` +
+          'the box its first pixel operation ran against is unrecoverable, so it is refused rather than published at the wrong origin'
+      );
+    }
+  }
+  const { x, y, width, height } = layer.snapshot.pos;
+  return { origin: { x, y }, size: { width, height } };
 }
 
 function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
@@ -113,33 +153,38 @@ function presentationOperations(operations: readonly DurableOperation[]): Presen
  */
 async function sourceBitmap(
   layer: DurableReplayLayer,
+  size: Size,
   request: MaterializationRequest
 ): Promise<{ bitmap: BitmapSource; release: () => void; size: Size; borrowed: boolean }> {
   const { source } = layer.snapshot;
   if (source.kind === 'raster') {
     const lease = await request.assetRegistry.resolve(source.assetId, request.signal);
-    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer), borrowed: true };
+    return { bitmap: lease.bitmap, release: lease.release, size, borrowed: true };
   }
   if (source.kind === 'legacy-tool') throw new Error(`Legacy source ${source.toolName} requires an explicit adapter`);
-  const renderSize = layerSize(layer);
+  // The size the fold starts at, which is the size the source was rendered at and
+  // the size the first pixel operation was recorded against. It differs from the
+  // snapshot's once a reposition has followed a pixel operation, and padding a
+  // source of one size into a frame sized for the other is the placement this
+  // whole fold exists to keep right.
   if (source.kind === 'blank') {
-    const canvas = createCanvas(renderSize.width, renderSize.height);
+    const canvas = createCanvas(size.width, size.height);
     const ctx = context2d(canvas);
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
-    ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    return { bitmap: canvas, release: () => undefined, size: renderSize, borrowed: false };
+    ctx.fillRect(0, 0, size.width, size.height);
+    return { bitmap: canvas, release: () => undefined, size, borrowed: false };
   } else {
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
     if (!processor?.creator) throw new Error(`Source tool ${toolName} is not a deterministic creator`);
-    const sourceRenderSize = source.kind === 'vector' ? renderSize : source.size;
+    const sourceRenderSize = source.kind === 'vector' ? size : source.size;
     const args =
       source.kind === 'vector' && source.sourcePos.width > 0 && source.sourcePos.height > 0
         ? (scaleVectorArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
             x: 0,
             y: 0,
-            ...renderSize,
+            ...size,
           }) as unknown as ToolArgs)
         : (source.args as ToolArgs);
     const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
@@ -210,13 +255,14 @@ export async function materializeLayer(
     key,
     documentId: request.documentId,
     producer: async () => {
-      const source = await sourceBitmap(layer, request);
+      const start = foldStart(layer);
+      const source = await sourceBitmap(layer, start.size, request);
       let bitmap = source.bitmap;
       // Layer.pos is the current logical presentation size. The source size
       // remains intrinsic, while processors and final placement use the
       // current geometry, matching the runtime layer renderer.
-      let size = layerSize(layer);
-      let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
+      let size = start.size;
+      let origin = { x: start.origin.x, y: start.origin.y };
       let ownsBitmap = false;
 
       const replaceOwnedBitmap = (next: BitmapSource) => {
@@ -310,6 +356,21 @@ export async function materializeLayer(
         for (const operation of layer.operations) {
           if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
 
+          if (operation.kind === 'reposition-layer') {
+            // A box patch, at the point in the timeline the timeline recorded it, with
+            // legacy replay's own precedence (`reposition` commits `resize ?? move`): a
+            // resize states the whole box, a move states the origin and leaves the size
+            // the fold has reached. It changes no pixel, so nothing is re-rendered — the
+            // operations around it read the box at the point they ran, which is the
+            // whole reason they are folded here rather than read off the snapshot.
+            if (operation.resize) {
+              origin = { x: operation.resize.x, y: operation.resize.y };
+              size = { width: operation.resize.width, height: operation.resize.height };
+            } else if (operation.move) {
+              origin = { x: operation.move.x, y: operation.move.y };
+            }
+            continue;
+          }
           if (operation.kind === 'apply-affine-transform' || operation.kind === 'apply-filter') {
             retainedOperations.push(operation);
             continue;
