@@ -1242,57 +1242,6 @@ groups", not "no letter repeats".
 **These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
 doing them here would land the deletion without the replacement rail.
 
-## 79. A move drag that goes out and back releases the selection where it was never taken
-
-`src/components/Main/EllipticalSelectionToolArea.tsx` — `handlePointerMove()`, and the two
-accumulators
-disagree about which frame of the drag they are tracking. `delta` is measured from `drag.origin`,
-which the same arm then **advances** to the current pointer position, and it is applied to
-`drag.baseline`, which **never** advances. The running displacement is therefore the last frame's
-delta alone, and every earlier frame is discarded. Take a selection 60px right and 40px down,
-retract the pointer to the point you pressed from, and release: the commit lands the selection at
-`(-60, -40)` on a document that starts at the origin. One frame's worth of history, applied twice,
-in opposite directions — and the preview overlay shows the same wrong position for the whole
-gesture, because `drag.preview` feeds the same arm's `redrawOverlay({ selectionOverride: … })`.
-
-The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx` — its
-`handlePointerMove()` move branch —
-applies the same delta to `selectionDrag.selection` and advances **both** accumulators into the
-next ref record in one statement; that is the correct shape and it is what
-`EllipticalSelectionToolArea.tsx` — `handlePointerMove()` should be.
-`moveSelectionByDelta(drag.preview, delta)` puts this arm on the same footing, and the first
-frame needs no special case because `drag.preview` is already seeded with `activeSelection` in
-`EllipticalSelectionToolArea.tsx` — `handlePointerDown()`'s `mode: 'move'` seed. The release gate in
-`EllipticalSelectionToolArea.tsx` — `handlePointerUp()` then does the rest for free: a net
-displacement of zero lands
-the preview back on the baseline's own geometry, `hasSameSelectionGeometry` reports them equal,
-and the gesture commits nothing.
-
-**Why nothing saw it, and why that is a gap rather than a blessing.** Every move-drag case in
-`EllipticalSelectionToolArea.test.tsx` issued exactly one `pointerMove`, and with a single frame
-the last delta _is_ the whole delta — so `moveSelectionByDelta(baseline, delta)` and
-`moveSelectionByDelta(preview, delta)` return the same selection. The suite was blind to the
-difference by construction rather than by accident. Verified by mutation: changing
-`handlePointerMove()`'s `moveSelectionByDelta(drag.baseline, delta)` to `drag.preview` leaves every
-pre-existing case green, including the zero-delta single move the file has since gained as the
-`it('commits nothing for a selection drag whose last move had no delta')` title — which agrees under
-both accumulators, exactly as the one-frame
-argument predicts.
-
-The half of that which was sound: no assertion in the file pins the drifted position, so nothing
-enshrines the bug. It was uncovered, not endorsed.
-
-Pinned as `it.fails` in `EllipticalSelectionToolArea.test.tsx` — the `it('commits nothing for a move
-drag that went out and came back to the press point')` title. A zero net displacement is observed
-through the
-absence of a commit rather than through a committed position, which is the same observable the
-neighbouring zero-delta case pins for the one-frame shape of the same gesture; the case carries
-its own control — a second, single-frame drag on the same mount, which is independent of the
-defect — so the empty assertion cannot pass by the arm never having run. **Delete the `it.fails`
-in the same change that fixes `handlePointerMove()`'s accumulator choice**, per `AGENTS.md`: it is a
-tripwire for broken behaviour,
-and left behind it turns the fix into a red suite.
-
 ## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
 
 A correction, because a wrong claim in this repository's own history is read by every future agent
