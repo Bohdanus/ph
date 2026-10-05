@@ -62,6 +62,28 @@ describe('history append retained tool translation', () => {
     });
   });
 
+  it('retains a stroked blur as a raster processor instead of a whole-layer filter', () => {
+    const args = {
+      toolName: 'blur' as const,
+      radius: 8,
+      points: [
+        { x: 4, y: 4 },
+        { x: 12, y: 4 },
+      ],
+      rasterBounds: { x: -16, y: -16, width: 64, height: 64 },
+    };
+    const result = plan(args);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toMatchObject({
+      kind: 'apply-raster-processor',
+      layerId: 'layer-1',
+      processorId: 'blur',
+      version: 1,
+      args,
+    });
+  });
+
   it('retains an affine transform using the live layer position for validation', () => {
     const result = plan({
       toolName: 'transform',

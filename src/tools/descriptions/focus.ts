@@ -43,8 +43,9 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/tools/settings.ts:54',
       'src/components/ToolbarsRight/Blur/Blur.tsx:101',
       'src/components/ToolbarsRight/Blur/Blur.tsx:121',
-      'src/components/Main/Main.tsx:250',
-      'src/components/Main/SharpenToolArea.tsx:33',
+      'src/components/Main/Main.tsx:301',
+      'src/components/Main/BlurToolArea.tsx:9',
+      'src/components/Main/FocusToolArea.tsx:35',
       'src/tools/toolProcessors.ts:120',
     ],
     appNotes:
@@ -113,7 +114,7 @@ export const focusDescriptions: Record<FocusToolName, ToolDescription> = {
       'src/tools/settings.ts:254',
       'src/components/ToolbarsRight/Sharpen/Sharpen.tsx:125',
       'src/components/ToolbarsRight/Sharpen/Sharpen.tsx:143',
-      'src/components/Main/SharpenToolArea.tsx:46',
+      'src/components/Main/SharpenToolArea.tsx:9',
       'src/tools/toolProcessors.ts:246',
     ],
     appNotes:

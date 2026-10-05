@@ -8,6 +8,7 @@ import type { ShapeToolArgs } from '../tools/shape.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
+import type { Point, Pos } from '../contexts/general-types.ts';
 
 export function isTextToolArgs(args: ToolArgs | null | undefined): args is TextToolArgs & { toolName: 'text' } {
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'text';
@@ -41,6 +42,32 @@ export function isColorsToolArgs(args: ToolArgs | null | undefined): args is Col
 
 export function isBlurToolArgs(args: ToolArgs | null | undefined): args is BlurToolArgs & { toolName: 'blur' } {
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'blur';
+}
+
+/** A focus-family stroke carries local points and the document-space frame they address. */
+export function isRasterStrokeArgs(
+  args: ToolArgs | null | undefined
+): args is ToolArgs & { points: Point[]; rasterBounds: Pos } {
+  if (!args || typeof args !== 'object' || !('toolName' in args)) return false;
+  if (!['blur', 'sharpen', 'smudge'].includes(args.toolName as string)) return false;
+  const candidate = args as unknown as { points?: unknown; rasterBounds?: unknown };
+  const points = candidate.points;
+  const bounds = candidate.rasterBounds;
+  return (
+    Array.isArray(points) &&
+    points.every(
+      (point) =>
+        !!point &&
+        typeof point === 'object' &&
+        Number.isFinite((point as Point).x) &&
+        Number.isFinite((point as Point).y)
+    ) &&
+    !!bounds &&
+    typeof bounds === 'object' &&
+    ['x', 'y', 'width', 'height'].every((key) => Number.isFinite((bounds as Pos)[key as keyof Pos])) &&
+    (bounds as Pos).width > 0 &&
+    (bounds as Pos).height > 0
+  );
 }
 
 export function isLevelsToolArgs(args: ToolArgs | null | undefined): args is LevelsToolArgs & { toolName: 'levels' } {

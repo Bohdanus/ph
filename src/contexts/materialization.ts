@@ -7,6 +7,7 @@ import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
+import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentation,
@@ -274,7 +275,26 @@ export async function materializeLayer(
           if (processor.replay.version !== operation.version) {
             throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
           }
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          const toolArgs = operation.args as ToolArgs;
+          // A tight legacy layer is widened only for this raster operation. The frame is part of
+          // the stroke args, so durable materialization uses the same origin and transparent
+          // padding as runtime replay instead of silently clipping an outward stroke.
+          if (isRasterStrokeArgs(toolArgs)) {
+            const requested = toolArgs.rasterBounds;
+            if (
+              requested.x !== origin.x ||
+              requested.y !== origin.y ||
+              requested.width !== size.width ||
+              requested.height !== size.height
+            ) {
+              const widened = createCanvas(requested.width, requested.height);
+              context2d(widened).drawImage(bitmap, origin.x - requested.x, origin.y - requested.y);
+              replaceOwnedBitmap(await toOwnedBitmap(widened));
+              origin = { x: requested.x, y: requested.y };
+              size = { width: requested.width, height: requested.height };
+            }
+          }
+          const [processed, patch] = processor.imageProcessor({ bitmap, size })(toolArgs);
           if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
           replaceOwnedBitmap(processed);
           origin = {

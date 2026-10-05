@@ -120,6 +120,7 @@ vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedro
 vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
 vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
 vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') }));
+vi.mock('../BlurToolArea.tsx', () => ({ BlurToolArea: marker('blur') }));
 vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
 vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
 vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
@@ -149,6 +150,7 @@ const TOOL_AREA_IDS = [
   'eraser',
   'clone-stamp',
   'sharpen',
+  'blur',
   'smudge',
   'dodge',
   'burn',
@@ -239,6 +241,7 @@ describe('Main tool-area routing', () => {
     ['eraser', 'eraser'],
     ['clone-stamp', 'clone-stamp'],
     ['sharpen', 'sharpen'],
+    ['blur', 'blur'],
     ['smudge', 'smudge'],
     ['dodge', 'dodge'],
     ['burn', 'burn'],
@@ -290,6 +293,7 @@ describe('Main tool-area routing', () => {
       'eraser',
       'clone-stamp',
       'sharpen',
+      'blur',
       'smudge',
       'dodge',
       'burn',
@@ -363,66 +367,18 @@ describe('Main tool-area routing', () => {
     // that mounted SOME area rather than none would still be caught — which is the half of the
     // old assertion below that was load-bearing. The other half was not: the produced
     // `div[style*="display: none"]` is byte-identical for `SharpenToolArea` and `DummyToolArea`,
-    // so it could not tell a hidden area from the hidden one, and would have passed identically
-    // if the router had sent some other tool to `SharpenToolArea`. `SharpenToolArea`'s rendered
-    // surface is pinned directly in the describe below.
+    // so it can detect any accidental routing into a real tool area rather than only checking the
+    // hidden dummy's implementation details.
     expect(toolAreaTestId()).toBe(-1);
   });
 
-  /**
-   * The two components this file could not tell apart, compared directly.
-   *
-   * `SharpenToolArea` (`../SharpenToolArea.tsx:46`) renders
-   * `<div className={className} style={{ display: 'none' }} />` and `DummyToolArea`
-   * (`../DummyToolArea.tsx:11-18`) renders the same element, so the DOM is byte-identical and
-   * every `style`-shaped query matched both. The identity is the DESIGN — Sharpen is a one-shot
-   * filter with no gesture, and its area is "the documented ABSENCE of one" — so this asserts the
-   * identity rather than reporting it as a duplication.
-   *
-   * The inertness is the load-bearing half, and the reason is spelled out in `SharpenToolArea`'s
-   * own JSDoc: `Main` mounts the area with `className="absolute inset-0 h-full w-full"`, i.e. over
-   * the whole document. A pointer handler there would swallow every pointer event over the canvas
-   * without doing anything with any of them, and a drag would select text or scrub the layers
-   * panel instead of being inert. `toBeInTheDocument`-style assertions cannot see that, so the
-   * props React attached to the DOM node are read instead.
-   */
-  it('mounts SharpenToolArea as the same inert surface as DummyToolArea, with no pointer handler at all', async () => {
-    // This file mocks every tool area, so the real `SharpenToolArea` is unreachable through a
-    // normal import; `importActual` is the route that bypasses the mock without lifting it for
-    // the routing table, which needs the marker.
-    const { SharpenToolArea: ActualSharpenToolArea } =
-      await vi.importActual<typeof import('../SharpenToolArea.tsx')>('../SharpenToolArea.tsx');
-
-    const { container: dummyContainer } = render(<DummyToolArea className="probe" />);
-    const { container: sharpenContainer } = render(
-      <ActualSharpenToolArea className="probe" overlayCtxRef={{ current: null }} />
-    );
-
-    expect(sharpenContainer.innerHTML).toBe(dummyContainer.innerHTML);
-    expect(sharpenContainer.innerHTML).not.toBe('');
-
-    // The detector has to be shown to work, or "no handler names" is indistinguishable from
-    // "the probe found nothing". React DOM stores the props it attached to every host node under
-    // a `__reactProps$<key>` property (`updateFiberProps`), which is the only place an event
-    // handler is observable from the outside — React never reflects one onto a DOM attribute.
-    const reactProps = (element: Element): Record<string, unknown> => {
-      // React's internal prop key is an expando, so it is absent from the DOM's own typing and
-      // has to be read through an index signature.
-      const host = element as unknown as Record<string, unknown>;
-      const key = Object.keys(host).find((candidate) => candidate.startsWith('__reactProps$'));
-      if (!key) throw new Error('React attached no props to the element, so this probe proves nothing');
-
-      return host[key] as Record<string, unknown>;
-    };
-    const handlerNames = (element: Element): string[] =>
-      Object.keys(reactProps(element)).filter((name) => /^on[A-Z]/.test(name));
-
-    const control = render(<div className="probe" onPointerDown={() => undefined} />).container
-      .firstElementChild as Element;
-    expect(handlerNames(control)).toEqual(['onPointerDown']);
-
-    const sharpen = sharpenContainer.firstElementChild as Element;
-    expect(handlerNames(sharpen)).toEqual([]);
+  it('routes focus tools to interactive areas', () => {
+    for (const toolName of ['blur', 'sharpen'] as const) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<GuardedMain />);
+      expect(container.querySelector(`[data-testid="tool-area-${toolName}"]`)).toBeTruthy();
+      unmount();
+    }
   });
 
   it('never mounts any tool area while no image is open', () => {
