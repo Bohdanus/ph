@@ -4596,9 +4596,9 @@ writing, and the behind figure grows every time anything lands) and carries the 
 
 ## 179. `fix/migration-review-sweep` cannot merge, and one of its hunks reopens a blank-canvas defect
 
-**Problem.** `5d388e02` is 1 commit ahead and ~180 behind, and 16 of its 24 changed files are also
-changed on `main` since the merge base. **Both figures move every time anything lands**, so take
-them from the commands rather than from this sentence:
+**Problem.** `5d388e02` is an old, overlapping migration attempt. Its ahead/behind counts and
+changed-path overlap move whenever `main` advances, so take them from these commands rather than
+copying them into this entry:
 `git rev-list --left-right --count main...5d388e02` (behind, then ahead), and
 
 ```bash
@@ -4634,35 +4634,22 @@ reader-throwing case vacuous. One case in the refusal file does not test what it
 builds its abort with `new AbortController().abort()`, which
 in jsdom is a real `DOMException`, so it stays green on the defect `isAbortError` exists to catch.
 
-**Three decisions this branch takes and cannot.** `.kilo/plans/history-migration-finalisation.md` §8
+**Decisions this branch takes and cannot.** `.kilo/plans/history-migration-finalisation.md` §8
 `SD-8` records "per-layer refusal vs whole-document rejection in materialization" as
-_"taken in code, recorded nowhere… the ruling is still the operator's"_; this branch narrows the
-refusal and then hard-codes the narrowed taxonomy into ~10 test cases, which settles SD-8 by test
-rather than by ruling, and `docs/OVERRIDES.md` has no entry. Second, `presentation-evaluator.ts`'s
-`validateBounds: false` opt-out is guarded only by convention where `main` makes it a
-compiler-enforced rule. Third, grading `opacity` against the live record decides part of §56, whose
-own text says the decision comes before the edit.
-
-**Triaged 2026-10-05; the verdict holds and the arithmetic has moved.** Measured then: `5d388e02` is
-1 ahead and 630 behind, and **19 conflict lines across 19 paths** (`git merge-tree --write-tree
---name-only main fix/migration-review-sweep` reports 19 CONFLICT lines; only
-`history-append.tool.test.ts`, `materialization.assets.test.ts`,
-`materialization.ordering.test.ts`, `history-model.ts` and `canvas-filter.ts` merge clean). §179's own
-instruction to take those two figures from the commands rather than from its prose is what made this
-check possible. Five attempts to land it have now failed — a `--no-commit` merge left `sweep-land`
-with 5 `UU` for 27h, a merge _in_ `main` produced 12 conflicts and was aborted rather than resolved
-where `AGENTS.md` forbids it, a rebase stalled at 12 `UU` and was abandoned then `rebase --abort`ed,
-and two scratch merges were aborted. Nothing was lost: `refs/keep/salvage/migration-review-sweep-partial`
-carries the **empty tree**, so it preserves the _existence_ of the conflicted state and none of its
-content, and no resolution was ever started.
-
-**Three claims in this entry are wrong and are corrected here, not by editing its verdict.**
+_"taken in code, recorded nowhere… the ruling is still the operator's"_. This branch narrows the
+refusal and hard-codes that taxonomy into its tests, but no operator ruling is recorded in
+`docs/HISTORY-MIGRATION.md` under **Operator rulings**. Do not port that taxonomy until the ruling
+is recorded there. The branch's `validateBounds: false` opt-out also does not exist in `main`'s
+current `evaluatePresentationForDraw` / `PresentationDrawTarget` contract; adapt it to that runtime
+contract rather than treating it as a compiler-enforced option. Finally, grading `opacity` against
+the live record changes the unresolved writer semantics documented by §56; preserve that decision
+when reapplying the check instead of resolving it by merge.
 
 `hasAsset` and `registryResolvesAsset` are **not** the same predicate. The branch's `hasAsset` is an
 optional probe; **omitting it does not skip the check** — a raster plan without `hasAsset` returns a
 `preconditions` refusal. Only direct low-level validation can skip it. Conversely, `main`'s
 `registryResolvesAsset` is required and **omitting it falls back to the process registry** via
-`getAssetRegistry()` in `history-append.ts:1524`. A merge would pick one by hunk
+`getAssetRegistry()` in `history-append.ts`. A merge would pick one by hunk
 context and leave the other arm reading a field that is no longer sent.
 
 `validateBounds` is **not** compiler-enforced on `main` — `git grep validateBounds main -- src` returns
@@ -4689,14 +4676,14 @@ expectedRemoved)` compares two independent orderings (`Object.keys(liveLayers)` 
 order against `preLayers.keys()` in durable `Map` order), so a divergence degrades a correct merge to
 reconversion _and_ files a `durable-append-mismatch` — a writer defect — against a writer that did
 nothing wrong. Duplicates are already refused, so equal size plus membership is set equality. Third,
-`materialization.ts` keys materialization on `opacity`, `blendMode` and `visible`, none of which the
-producer reads (`durable-compositor.ts` applies `globalAlpha` and `globalCompositeOperation` at draw
-and skips invisible layers), so every visibility toggle re-rasterizes the document for a
-byte-identical bitmap. Fourth, `materialization.ts`'s abort check is
+`materialization.ts` keys materialization on `opacity`, `blendMode` and `visible`, while the producer
+applies `globalAlpha` and `globalCompositeOperation` at draw and skips invisible layers. The cache
+therefore invalidates for presentation-only changes, including visibility changes that may not alter
+the composed bitmap. Fourth, `materialization.ts`'s abort check is
 `error instanceof DOMException && error.name === 'AbortError'`, class-identity; a name-tolerant check
 is hardening, not a fix, because all three producers throw a same-realm `DOMException` — and `main` has
 no abort case at all in `durable-compositor.refusal.test.ts`, so the test must arrive with the change.
-Fifth and test-only, `history-append.create.test.ts` carries three `if (…) return;` exits that make
+Fifth and test-only, `history-append.create.test.ts` carries four `if (…) return;` exits that make
 every assertion below them unreachable whenever the derived plan is already wrong; main's own comment
 names the trap.
 
@@ -4710,12 +4697,10 @@ which asserts the opposite of main's own
 `durable-compositor.ts`: `main` **throws** on a missing visible layer, so the branch's `omittedLayerIds`
 is unreachable without reversing that fail-closed contract from `87c8d469`.
 
-**What would close it.** Port the five items above in dependency order onto current `main`, each as its
-own change with the test that proves it, and never the branch as a merge or a cherry-pick. SD-8 needs an
-operator ruling in `docs/OVERRIDES.md` before any refusal taxonomy is ported, because the branch's
-twelve taxonomy-hardcoding cases settle it by test instead. Then `npm run dispose --
-migration-review-sweep`; the worktree is clean at the tip, so only the `at-risk` classification of an
-unmerged branch stands in the way.
+**What would close it.** Port the five genuinely unique items above in dependency order onto current
+`main`, each with a test that proves the behavior, and never merge or cherry-pick this branch whole.
+Record the SD-8 ruling in `docs/HISTORY-MIGRATION.md` under **Operator rulings** before porting any
+refusal taxonomy. Keep the fail-closed snapshot and missing-layer behavior from current `main`.
 
 ## 181. A branch sweep under-reports unmerged work, and two hardening branches are unmerged because of it
 
