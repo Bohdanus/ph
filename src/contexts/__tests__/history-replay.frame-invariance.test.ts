@@ -101,7 +101,7 @@ describe('replayHistory document frame invariance', () => {
         // `COMMIT_DOCUMENT_EDIT` branch (`useLayer.ts:219-225`) with the bedrock blank
         // source as its `layerSource` (`useLayer.ts:237-241`). That is the only
         // production writer that appends a bedrock source at an index above 0 — the
-        // other `createBlankLayer` caller passes `true` (`useApp.ts:79`).
+        // other `createBlankLayer` caller, `setBlankImage()`, passes `true`.
         layerSource: {
           kind: 'blank',
           color: '#ffffff',
@@ -125,7 +125,7 @@ describe('replayHistory document frame invariance', () => {
 
   it('keeps a cropped document when the crop is followed by a bedrock add, as on mobile', () => {
     // The same rule as the case above with the crop in the position production puts
-    // it. `useApp.ts:124` writes the opening `documentSource` frame as
+    // it. `setImageFromUpload()`'s PSD arm writes the opening `documentSource` frame as
     // `documentFrameFromSize(size)`, so a real timeline reaches the moved origin
     // through a `SET_DOCUMENT_FRAME` entry, not through the baseline — which is why
     // this ordering is the one a user can actually hit.
@@ -286,7 +286,7 @@ describe('replayHistory document frame invariance', () => {
   });
 
   it('lets only the initial entry override the current frame, not an identical bedrock entry at index 1', () => {
-    // `File > New` calls `createBlankLayer(params, true)` (`useApp.ts:79`), so
+    // `File > New` calls `createBlankLayer(params, true)` (`setBlankImage()`), so
     // `_addLayer` replaces the document and writes a SINGLE history entry whose only
     // entry is a bedrock `NEW_LAYER` at index 0 (`useLayer.ts:192-214`). Legacy replay
     // overrides the store's current frame there on purpose, so undoing back to the
@@ -334,7 +334,7 @@ describe('replayHistory document frame invariance', () => {
   it('refuses a document source carried mid-history', () => {
     // Unreachable in production today, and deliberately pinned as a parity repair: the
     // only writer of a `documentSource` is `REPLACE_DOCUMENT` with `history: [entry]`
-    // (`useApp.ts:116-144`, `useLayer.ts:192-214`), so an entry always lands at index
+    // (`setImageFromUpload()`'s PSD arm, `useLayer.ts:192-214`), so an entry always lands at index
     // 0. Carried mid-history it would replace the layer record and resize the canvas
     // from anywhere in the timeline, the same class of defect as the mid-history
     // bedrock source, and the durable converter already refuses it as

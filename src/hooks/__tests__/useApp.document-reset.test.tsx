@@ -129,7 +129,7 @@ function makeOutgoingLayers(): LayersRecord {
 
 /**
  * Three history entries, of which the first carries the `documentSource` shape the
- * PSD import writes (`useApp.ts:120-125`) so the seeded document has a real durable
+ * PSD import writes (`setImageFromUpload()`'s PSD arm) so the seeded document has a real durable
  * baseline rather than an empty one. The `previousSelectionState` below is NOT what
  * carries the seeded selection: `deriveSelectionBaseline` reads it only from
  * `SELECTION_ACTION` entries (`selection-baseline.ts:57`), and this entry is an
@@ -273,8 +273,8 @@ async function seedOutgoingDocument(result: Result) {
   // the document frame's extent, and this harness never runs it — so without this the canvas
   // stays at jsdom's default 300x150 whatever the document is, and every canvas assertion in
   // `expectOutgoingDocumentIntact` is red for EVERY implementation, correct or defective.
-  // Verified by deleting this line: both cases that call the helper then fail on
-  // `{ width: 300, height: 150 }` against the seeded `{ width: 800, height: 600 }`.
+  // Verified by deleting this line: all three cases that call `expectOutgoingDocumentIntact` then
+  // fail on `{ width: 300, height: 150 }` against the seeded `{ width: 800, height: 600 }`.
   act(() => {
     resizeCanvas(result.current.store.canvasRef.current!, PREVIOUS_SIZE.width, PREVIOUS_SIZE.height);
   });
@@ -407,13 +407,23 @@ const createImage = (width: number, height: number) =>
  * single-layer raster open never exercises. `psd-vector`'s source geometry matches
  * its own `pos`, which `makeLayer`'s default would not.
  */
-function createPsdDocument(warnings: string[] = []): PsdDocument {
+function createPsdDocument(warnings: string[] = [], rasterKind: 'immutable' | 'mutable' = 'immutable'): PsdDocument {
   const raster = makeLayer('psd-raster', 0, {
-    bitmap: { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+    // `rasterKind: 'mutable'` omits `close`, which is what `immutableRaster` early-returns on, so
+    // the same function forwards to `createImageBitmap` and the decode becomes a real failure site.
+    bitmap:
+      rasterKind === 'immutable'
+        ? ({ width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap)
+        : ({ width: 20, height: 30 } as unknown as ImageBitmap),
     pos: { x: 0, y: 0, width: 20, height: 30 },
     source: {
       kind: 'image',
-      bitmap: { width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap,
+      // `rasterKind: 'mutable'` omits `close`, which is what `immutableRaster` early-returns on, so
+      // the same function forwards to `createImageBitmap` and the decode becomes a real failure site.
+      bitmap:
+        rasterKind === 'immutable'
+          ? ({ width: 20, height: 30, close: vi.fn() } as unknown as ImageBitmap)
+          : ({ width: 20, height: 30 } as unknown as ImageBitmap),
       pos: { x: 0, y: 0, width: 20, height: 30 },
     },
   });
@@ -620,6 +630,13 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
     const firstLayerId = result.current.store.activeLayerId as string;
     expect(result.current.store.totalSize).toEqual({ width: 320, height: 240 });
+    // The SUCCESS path's own pin, and the only one. `drawLayersToCanvas` is mocked to a no-op in
+    // this file, so `handleImageCreate` is the sole writer of this canvas and the assertion cannot
+    // be satisfied by the renderer. Without it the call is deletable: `npm run test` stayed green
+    // with it removed, and so did all four New Image dialog e2e cases, because the renderer
+    // resizes the same element from the same `size` in a real browser
+    // (`e2e/document-dialogs.spec.ts` records that measurement).
+    expect(canvasExtent(result)).toEqual(documentFrameSize(documentFrameFromSize(BLANK.size)));
 
     await act(async () => {
       result.current.app.setBlankImage({ ...BLANK, size: { width: 100, height: 100 } });
@@ -628,6 +645,9 @@ describe('creating a new image kills the outgoing document history and layers', 
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.activeLayerId).not.toBe(firstLayerId);
     expect(result.current.store.totalSize).toEqual({ width: 100, height: 100 });
+    // And the canvas followed the second document down, not merely the first one up: an assertion
+    // on the first extent alone passes if the resize only ever happens on creation.
+    expect(canvasExtent(result)).toEqual(documentFrameSize(documentFrameFromSize({ width: 100, height: 100 })));
   });
 
   /**
@@ -724,7 +744,7 @@ describe('opening an image kills the outgoing document history and layers', () =
   /**
    * The negative control, and the reason the positive cases are worth anything: a
    * declined import must kill NOTHING. Without it, a `setImageFromUpload` that cleared
-   * the document up front — before the `window.confirm` at `useApp.ts:86` — would pass
+   * the document up front — before `setImageFromUpload()`'s `window.confirm` — would pass
    * every test above while destroying the user's work on a cancellation.
    */
   it('kills nothing when the import limitations are declined', async () => {
@@ -738,6 +758,45 @@ describe('opening an image kills the outgoing document history and layers', () =
         fileName: 'design.psd',
         document: createPsdDocument(['Masks are unsupported']),
       });
+    });
+
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    expectOutgoingDocumentIntact(result, intact);
+  });
+
+  /**
+   * The PSD arm's failure path, which had no control at all until now: the only PSD negative case
+   * above is the DECLINED one, and that returns before any work happens. This one reaches the decode.
+   *
+   * `rasterKind: 'mutable'` is what makes it reachable — with the default already-immutable bitmaps
+   * `immutableRaster` early-returns on `close` and `createImageBitmap` is never called, so a stubbed
+   * `createImageBitmap` alone yields a resolve rather than a rejection. It is also what discriminates
+   * the ordering: the resize now runs after every `immutableRaster` has resolved, so a rejection here
+   * leaves the canvas at the OUTGOING extent, where a resize ahead of the `await` would already have
+   * put it at the incoming one.
+   */
+  it('leaves the canvas at the outgoing extent when a PSD raster fails to decode', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const result = setup();
+    await seedOutgoingDocument(result);
+    const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => {
+        throw new Error('psd decode failed');
+      })
+    );
+
+    await act(async () => {
+      await expect(
+        result.current.app.setImageFromUpload({
+          fileName: 'broken.psd',
+          // One warning so the arm's own `window.confirm` gate is exercised on the way in; with
+          // none it returns before touching anything, which is the declined case above.
+          document: createPsdDocument(['Masks are unsupported'], 'mutable'),
+        })
+      ).rejects.toThrow('psd decode failed');
     });
 
     expect(confirmSpy).toHaveBeenCalledOnce();
