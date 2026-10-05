@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236, 240 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -6264,39 +6264,6 @@ dangling-IDREF fixes, which checked the writer count and the reachability of the
 instead of against a grep. An earlier draft of this entry claimed `restoreVisibleCanvas` had no test and
 that a throwing layer processor was a way to reach it; both were false — it is module-private, so no test can
 name it, but three drive it, and `createLayerSource` appears nowhere in `layer-renderer.ts`.
-
-## 240. Durable materialization never sees a `reposition` that follows a raster operation, so a moved layer's pixels land at the wrong origin
-
-**Problem.** `durable-replay.ts` folds a move into `layer.snapshot.pos` and leaves `layer.operations`
-untouched. The producer loop in `materialization.ts` pushes only `apply-affine-transform` and
-`apply-filter` into its retained segment and `continue`s past everything else, so it cannot observe a
-move that was recorded after a raster operation. It starts from the post-move origin and then applies
-each raster op's own frame from there.
-
-Concrete: a layer at `pos` `{0,0,100,100}`; a Blur stroke dragged outside it commits
-`rasterBounds` `{-20,-20,140,140}`; the user then moves the layer `+50,+50`. Legacy replay publishes
-the layer at `{30,30,140,140}`. Durable materialization starts `origin` at `{50,50}`, widens it to
-`{-20,-20}`, blits the source at `+70,+70` rather than `+50,+50`, and publishes `{-20,-20,140,140}` —
-every pixel of the stroke, including the transparent padding the widening added, is 50px off.
-
-**Why it is not fixed here.** Pre-existing in kind for any raster operation followed by a move, but the
-focus-stroke frame turns a placement slip into a wrong _frame_: the padding is real published area, so
-the error is the size of the stroke footprint rather than a few pixels. Closing it needs the reposition
-to reach the producer loop as an ordered operation, which is a durable-schema question (a new
-`apply-position` marker, and what it means for an entry published before it existed), not a local fix.
-
-**What would close it.** Carry the reposition into `layer.operations` in `durable-replay.ts` so the
-producer loop can accumulate the delta into `origin` at the point each raster op occurs. Failing that,
-refuse materialization of a layer whose operation list contains a raster op recorded before a
-reposition, so the failure is loud rather than a misplaced layer.
-
-**Files.** `src/contexts/durable-replay.ts` — the `reposition-layer` arm; `src/contexts/materialization.ts` —
-the producer's operation loop and `origin` bookkeeping;
-`src/contexts/__tests__/materialization.ordering.test.ts` — the only suite that observes `origin`.
-
-**Provenance.** Found 2026-10-05 on `main` by a review of the focus-tool stroke frame, which checked
-whether the durable path stages the same frame the live path does. The staging itself is correct and now
-tested; this is the one case where the surrounding replay disagrees with it.
 
 ## 242. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
 
