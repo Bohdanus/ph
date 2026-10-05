@@ -47,6 +47,10 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 - `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
 - Findings need evidence. The formatted board message cap is 4096 bytes; its body has about 3840 bytes: 3800 ASCII characters or 1200 characters when non-ASCII may occur. Put longer findings in a file or swarm issue.
 
+### Free-model Git restriction
+
+Nemotron and every other free model can misbehave when handling Git. Never assign free-model agents Git operations, branch or worktree creation/deletion, rebases, merges, commits, resets, or conflict resolution. Deny free-model agents Git work; perform Git operations in the coordinator or a trusted non-free agent.
+
 ## Browser rule
 
 Never open a browser window. E2E runs are headless; read [`docs/TESTING.md#never-open-a-browser-window`](docs/TESTING.md#never-open-a-browser-window)
