@@ -1,8 +1,8 @@
-Photoshop clone production-grade photo editor
+Photoshop clone, production-grade photo editor
 
-## Worktree FIRST
+## Work on WORKTREE
 
-Every tracked-file change happens in its own worktree and branch. `main` is for reading
+Every tracked-file change happens in worktree and branch. `main` is for reading
 and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
 
 ```bash
@@ -14,11 +14,11 @@ git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
 
 `main-worktree-guard.mjs` refuses commits made from `main`, but only after the edit;
 create the worktree before writing. Every commit carries a `Chat: ses_<id>` trailer.
-Every merge into `main` also carries `Branch: <source-branch>`; keep the subject unchanged.
-No gate supplies these values, so resolve the chat id before the first commit. It is also
+Every merge into `main` also carries `Branch: <source-branch>`.
+No gate supplies these values, so resolve chat id before the first commit. It is also
 the swarm identity used by `npm run swarm -- --agent ses_…`.
 
-There is no `kilo` CLI. Find the id in the session store with a phrase you typed, matching
+Find the id in the session store with a phrase you typed, matching
 words rather than a multi-line literal:
 
 ```bash
@@ -160,10 +160,10 @@ designing across this legacy/durable boundary.
 
 ## Free subagent models
 
-| Model | Provider | Variant | Notes |
-|-------|----------|----------|-------|
-| Nemotron 3 Ultra | kilo | high | Best quality; thorough |
-| Dots3-Note Preview | kilo | thinking | Consistent, fast |
-| Step 3.7 Flash | kilo | high | Fast, accurate |
+| Model                   | Provider | Variant  | Notes                                            |
+| ----------------------- | -------- | -------- | ------------------------------------------------ |
+| Nemotron 3 Ultra (free) | kilo     | high     | Best quality; thorough                           |
+| Dots3-Note Preview      | kilo     | thinking | Alternative, good for review and summaries, fast |
+| Step 3.7 Flash          | kilo     | high     | Fast, accurate                                   |
 
 Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.
