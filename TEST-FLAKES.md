@@ -680,11 +680,22 @@ declared `60_000`.
 
 ### The worktree-inventory suite, which is this family plus a shared store
 
-`scripts/__tests__/worktree-inventory.test.mjs` carries three cases that run the inventory
-generator over every worktree git reports, with a per-test `it(name, fn, 60_000)` argument
-that wins over the file budget. On a fleet past 150 worktrees that budget is a function of the
-operator's environment, not of the repository's content, so the knife edge moves when a sweep
-grows the fleet and when nothing is committed.
+`scripts/__tests__/worktree-inventory.test.mjs` carries **three** cases that run the inventory
+generator over every worktree git reports, each with its own per-test `it(name, fn, 60_000)`
+argument that wins over the file budget. They are `never asks the table to protect a worktree
+whose protection is derived`, `never offers a live worktree that holds uncommitted work on no
+ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
+about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
+it — but each carries its own budget, so which of them runs out first is not something the budget
+may depend on. On a fleet past 150 worktrees that budget is a function of the operator's
+environment, not of the repository's content, so the knife edge moves when a sweep grows the
+fleet and when nothing is committed.
+
+Observed 2026-10-05 on `main` at `3abe6ce0`, fleet past 150 worktrees: two different cases from
+that list timed out on different `npm run test` runs while the file passed alone. Note that the
+same file also fails, differently, when the SHARED main checkout is dirty — that is the
+`classify` defect `HANDOFF.md` §142 records, it reports a `keep` verdict rather than timing out,
+and no amount of budget fixes it.
 
 Two costs compound, and it is worth keeping them apart because only one was ever measured:
 

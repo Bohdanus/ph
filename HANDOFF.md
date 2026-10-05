@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2363,11 +2363,13 @@ equivalent in `Mobile/mobile-tools.ts` and the keyboard map in `AppKeyboardShort
 in `src`, so the enumeration is complete. A fourth surface existed until 2026-10-02: the header's
 `Tools` menu, the one menu this app carried that Adobe does not have, and the menu bar's rebuild
 against Adobe's own list removed it. What that menu recorded about dispatching the key directly is
-still true of the three that remain, and it is why they dispatch `shape` plus the figure rather
-than the figure key: `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed** — it
-mounted the Shape panel where the
-`toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
-red and the shape committed black.
+still true of the three that remain. The reason it gave for dispatching `shape` plus the figure
+rather than the figure key — `DesktopHeader.tsx` recorded the dispatch as a **bug they fixed**, on
+the ground that the key mounted the Shape panel where a `toolName !== 'shape'` guard suppressed
+the colour publish, so the well said red and the shape committed black — **no longer holds.**
+`aef65eff` replaced that guard with `isShapeFamilyToolName()`, which admits all six shape-family
+names, so the colour publish reaches a figure dispatched under its own key; `Shape.test.tsx` pins
+that for every family member. The entry that recorded the colour half is deleted.
 
 So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
 (its `rectangle`, `ellipse`, `triangle`, `polygon` and `line` variants in `tool-types.ts`), a
@@ -2913,46 +2915,6 @@ size only across dialogs (`e2e/document-dialogs.spec.ts` — `documentSize()`). 
 tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
-
-## 126. The five figure tools never see the foreground colour, because of one guard in the swatch
-
-**Problem.** `rectangle`, `ellipse`/`oval`, `triangle`, `polygon` and `line` all take their colour from
-a hardcoded literal rather than the foreground swatch:
-
-- `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`, in the `args.toolName !== 'shape'`
-  guard — mirrors the swatch behind that guard, and one options-bar component serves all six of
-  `toolsMap.ts`
-- `src/tools/settings.ts` — the five figure entries in `defaultSettings`, which give each of those
-  five a hardcoded `color: '#000000'`
-- `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
-  `args.color` and nothing sets it
-
-So moving the foreground swatch does nothing for five of the six figure tools.
-
-**Fix.** In `ShapeToolArea.tsx`, read `color` and `backgroundColor` off the store AT GESTURE TIME —
-the same shape `FillToolArea.tsx` already ships — and inject them into the committed args and the
-live preview. Do **not** route through `setToolArgs`: `saveLastSettings` persists those five names as
-a bare `{ toolName }`, so a tool-args write would leave `args.points` and `lineWidth` undefined after a
-tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard in
-`Figures/Shape.tsx`'s `Shape()` — writes through the args context, so that persistence hazard has to
-be closed first.
-
-Baked-in args rather than replay-time reads are what keep undo/redo re-rasterising in the painted
-colour with no migration, because the durable `legacy-tool` conversion already serialises the whole
-args object. Add BOTH colours: `hasFill` and the fill swatch are store-owned for the same reason, and
-a half-fixed shape tool strokes in the swatch while still filling in the default.
-
-**Where this came from.** The abandoned branch `fix/paint-overlay`. Its other two commits are dead:
-`139cc432` (clear the tool overlay on unmount) is on `main` verbatim in `useRect.ts`'s unmount
-cleanup `useEffect`, and
-`37132d95`'s primary claim about `brush`/`pencil`/`color-replacement` being wired to a placeholder is
-false on main, which built a real options panel in
-`src/components/ToolbarsRight/Paint/Paint.tsx` — `createPaintToolbar()`'s `PaintToolbar`. Only this
-rider survives.
-
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`;
-`src/tools/settings.ts` — the five figure entries in `defaultSettings`;
-`src/components/Main/ShapeToolArea.tsx`
 
 ## 132. The shape's three document-frame conversions are correct, and no test pins that
 
@@ -6287,19 +6249,28 @@ picked from the rail commits the outgoing tool against the incoming tool's args.
 commit takes its drop branch: `useLayer`'s text branch reads `args.text` and `args.rect`, finds
 neither on a shape args object, early-returns, and an unapplied text layer is dropped with nothing to
 undo. The inverse order is what `mobile-tools.ts`'s `makeSelectTool` already does, and what the
-header's figure rows used to do before the `Tools` menu was removed; the rail is the one caller left
-that does it the other way. Nothing pins either order: the header's own test for it was deleted with
-its surface, and no rail test asserts the sequence.
+header's figure rows used to do before the `Tools` menu was removed. Nothing pins either order:
+the header's own test for it was deleted with its surface, and neither the rail nor the keyboard
+has a test asserting the sequence.
 
-**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; the surviving safe order is in
-`src/components/Mobile/mobile-tools.ts`.
+**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; `src/components/Common/AppKeyboardShortcuts.tsx`;
+the surviving safe order is in `src/components/Mobile/mobile-tools.ts`.
 
-**What would close it.** Select first, then patch, in `SidebarLeft`, plus a test that asserts the
-order the way the header's asserted it: have `commitDirtyTool` record the args it sees and fail if
-they are the incoming figure's. Ordering it against `makeSelectTool` also removes the last place the
-two surfaces can disagree, which is how the sheet and the bar came to differ once already.
+**What would close it.** Select first, then patch, in `SidebarLeft` **and** in
+`AppKeyboardShortcuts`'s `selectShapeTool`, plus a test that asserts the order the way the header's
+asserted it: have `commitDirtyTool` record the args it sees and fail if they are the incoming
+figure's.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`
+**This entry's scope was wrong and is corrected here.** It used to claim the rail was "the one
+caller left that does it the other way" and that reordering it "removes the last place the two
+surfaces can disagree". Both are false. `selectShapeTool` in `AppKeyboardShortcuts.tsx` patches and
+then selects at two sites, reachable from plain `U` and from `Shift+U`, so three call sites carry
+the hazard and only `mobile-tools.ts`'s `makeSelectTool` gets the order right. Reordering the rail
+alone would leave the keyboard surface able to commit an outgoing tool against a replaced figure,
+while this entry read as satisfied.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Common/AppKeyboardShortcuts.tsx`,
+`src/components/Mobile/mobile-tools.ts`
 
 ## 238. Nothing can detect a dangling `aria-controls` or `aria-describedby`, and a static scan cannot either
 
@@ -6308,7 +6279,6 @@ dock's panel tab, the mobile tool sheet's header, the mobile header's menu and l
 bottom bar's options toggle, `FontSelect`'s trigger, and `FeatherMagneticLasso`'s settings button — and the
 last two were found only by a review pass, after the first five were already landed and merged. There is
 still no gate that would find a seventh.
-
 **Why the accessibility gates cannot, structurally.** `node_modules/axe-core/axe.js`'s pre-check for
 `aria-controls` in the `aria-valid-attr-value` rule returns early — skipping the check — when
 `aria-expanded="false"`, when `aria-selected="false"`, or when `aria-haspopup` is present. A collapsed
@@ -6343,7 +6313,6 @@ describes the hidden instance on a phone. `MobileShell` and `App` already docume
 and close both flags when the viewport leaves the mobile band; the mobile-band direction — two live copies,
 one relationship resolving to the wrong one — has no test and no comment. It needs the same real-document
 harness as the entry above, so it is recorded here rather than split out.
-
 **What would close it.** One rendered-tree invariant: render the shell in each state a trigger can be in and
 assert that every `aria-controls`, `aria-describedby`, `aria-labelledby` and `aria-owns` in the document
 resolves through `document.getElementById`. That is a property of the TREE rather than of any component, so
@@ -6356,7 +6325,6 @@ harness has to be the real store. Two conditions have to be driven explicitly, b
 `FontSelect`'s window is closed inside the same commit by its `useLayoutEffect`, so it is never painted, and
 `FeatherMagneticLasso`'s is closed after one painted frame by a passive effect. Until that harness exists, the
 only gate is a test beside each trigger, which is what let this run twice.
-
 **Files.** `src/components/ToolbarsRight/Text/FontSelect.tsx`, `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
 `src/components/SidebarRight/PanelGroup.tsx`, `src/components/Mobile/MobileHeader.tsx`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileToolSheet.tsx`,

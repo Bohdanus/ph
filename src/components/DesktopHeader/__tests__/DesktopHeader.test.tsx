@@ -1,3 +1,52 @@
+/**
+ * The figure routing this file used to cover is gone with the `Tools` menu, and it is
+ * worth saying where it went rather than leaving a hole.
+ *
+ * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
+ * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
+ * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
+ * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where a bare
+ * `args.toolName !== 'shape'` guard returned early and suppressed the store-colour publish —
+ * a red colour well committing black.
+ *
+ * **That trap is closed, and it was the colour publish that closed it.** The guard is now
+ * `isShapeFamilyToolName()` in `src/components/ToolbarsRight/Figures/Shape.tsx`, and
+ * `SHAPE_FAMILY_TOOL_NAMES` admits all six names including `ellipse`, so the early return no
+ * longer fires for a figure and the publish proceeds. `aef65eff` replaced the literal because of
+ * that. `Main.tsx`'s interaction-mode arm lists the same six, so all of them mount
+ * `ShapeToolArea`. So the colour argument above no longer forces the routing, and the `HANDOFF.md`
+ * entry that recorded it is deleted rather than marked fixed.
+ *
+ * What still forces it is not one literal, and the honest count is three sites. `ShapeToolArea`'s
+ * `editsActiveLayer` tests `activeLayer.source.args.toolName === 'shape'` — the committed source's
+ * tool name, not the live args — and, with `source.kind === 'tool'` and an exact `pos` match, it
+ * decides whether a commit REPLACES the active layer's source instead of creating a new one, so a
+ * figure arriving as `ellipse` would mount the same panel and still commit a second layer rather
+ * than edit the first. `saveLastSettings` in `src/util/settings.ts` splits the family across three
+ * buckets — `shape` alone, `triangle`/`polygon`, and `rectangle`/`ellipse`/`line` — so a figure
+ * arriving under its own key also persists somewhere else. Both are why the routing stands, and
+ * neither is the colour publish. `toolbar-mapping.test.ts` pins the shape flyout slice of
+ * `toolbarMap`, its order and members.
+ *
+ * The other thing this file proved was that the header's tool rows committed a pending
+ * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
+ * OUTGOING tool and patching first would leave that commit reading shape args. With no
+ * figure rows left that leaves exactly three tool-selecting commands, all a plain `goToTool`
+ * with nothing patched — `Edit ▸ Free Transform`, and the two `Image ▸ Adjustments` rows that
+ * carry a `toolName` at all, `Brightness/Contrast` and `Desaturate`. The other twenty rows of
+ * `ADJUSTMENTS_ITEMS` are `unbuilt` and select nothing. So there is no ordering left to get
+ * wrong here, and nothing left to assert about it.
+ *
+ * WHERE THE ORDER STILL MATTERS, so this is not read as "the rule moved to the rail":
+ * `mobile-tools.ts`'s `makeSelectTool` selects first and patches second, which is the safe
+ * order. Three call sites patch FIRST and then select, and all three carry the same hazard
+ * `HANDOFF.md` §237 describes — the outgoing tool commits against already-replaced args:
+ * `SidebarLeft`'s own `selectTool`, and `AppKeyboardShortcuts`'s `selectShapeTool` at both of
+ * its patch sites, reachable from plain `U` and from `Shift+U`. Nothing here pins any of them,
+ * and this file cannot: it no longer has a surface that patches. `HANDOFF.md` §237 covers all three
+ * sites, and its own earlier claim that the rail was the only one has been corrected there. The
+ * defect is recorded in `HANDOFF.md`, not enshrined by a test written to match the code.
+ */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
@@ -548,36 +597,6 @@ describe('DesktopHeader menu commands', () => {
     expect(screen.queryByTestId('header-layer-menu')).toBeNull();
   });
 });
-
-/**
- * The figure routing this describe used to cover is gone with the `Tools` menu, and it is
- * worth saying where it went rather than leaving a hole.
- *
- * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
- * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
- * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
- * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where the
- * `args.toolName !== 'shape'` guard at `Shape.tsx:32` suppressed the store-colour publish —
- * a red colour well committing black. Neither the trap nor the fix is affected: both live in
- * `SidebarLeft`, which selects a figure as `goToTool('shape')` plus the `figure` value
- * `toolbarMap` carries, and `toolbar-mapping.test.ts` pins that mapping's order and members
- * directly.
- *
- * The other thing this describe proved was that the header's tool rows committed a pending
- * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
- * OUTGOING tool and patching first would leave that commit reading shape args. With no
- * figure rows left the header has exactly two tool commands, `Edit ▸ Free Transform` and the
- * two `Image ▸ Adjustments` rows, and both are a plain `goToTool` with nothing patched — so
- * there is no ordering left to get wrong here, and nothing left to assert about it.
- *
- * WHERE THE ORDER STILL MATTERS, so this comment is not read as "the rule moved to the rail":
- * `mobile-tools.ts`'s `makeSelectTool` selects first and patches second, which is the safe
- * order, and it is the only caller left that both patches and selects. `SidebarLeft`'s own
- * `selectTool` patches FIRST and then selects, so a figure picked from the rail commits the
- * outgoing tool against already-replaced args. Nothing here pins that, and this file cannot:
- * it no longer has a surface that patches. The defect is recorded in `HANDOFF.md`, not
- * enshrined by a test written to match the code.
- */
 
 describe('DesktopHeader File > New', () => {
   it('creates a blank image once the discard question is answered yes, and closes the menu', async () => {
