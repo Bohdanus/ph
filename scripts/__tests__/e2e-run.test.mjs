@@ -58,7 +58,7 @@ import {
  * that are allowed to spawn processes.
  *
  * A per-test `it(name, fn, timeout)` argument still wins over this, which is how
- * the two tests in `worktree-inventory.test.mjs` that read git in every worktree
+ * the three tests in `worktree-inventory.test.mjs` that read git in every worktree
  * keep their declared `60_000`. This file declares none of its own, so 30s is
  * what every test in it gets; a test that ever needs longer should say so on
  * itself rather than by raising this.
