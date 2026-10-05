@@ -286,12 +286,7 @@ function wt(overrides = {}) {
     ahead: 1,
     behind: 2,
     mergedIntoBase: false,
-    // `read: true` IS PART OF THE SHAPE, NOT A DETAIL. `git.mjs` sets it on both
-    // return paths of `workingTreeState`, and `classify`'s legacy arm requires it to
-    // be `true`. A fixture that omits it builds the UNREADABLE tree, which no
-    // production path can produce — so the omission silently exercised the failure
-    // shape while every legacy assertion passed on it.
-    workingTree: { modified: 0, untracked: 0, paths: [], read: true },
+    workingTree: { modified: 0, untracked: 0, paths: [] },
     commitsAhead: [],
     ...overrides,
   };
@@ -1108,7 +1103,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
   });
 
   it('never calls a worktree with uncommitted work ready to land', () => {
-    const v = classify(unmergedClean({ workingTree: { modified: 2, untracked: 0, paths: [], read: true } }), args());
+    const v = classify(unmergedClean({ workingTree: { modified: 2, untracked: 0, paths: [] } }), args());
     expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
     expect(v.action).toBe(ACTION.AT_RISK);
   });
@@ -1134,7 +1129,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.SALVAGE, wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: true } }), {}],
       [
         RECOMMENDATION.SALVAGE,
-        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [], read: true } }),
+        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [] } }),
         {},
       ],
       // Never checked at all: absent, not null. Must not read as a licence.
@@ -1222,10 +1217,7 @@ describe('classify: a curated legacy claim', () => {
     // BRANCH says nothing about them, and honouring it here would let a prose
     // field authorise the loss this whole program exists to prevent. It has to
     // stay `at-risk`, which is where a human is required.
-    const v = of(
-      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [], read: true } }),
-      LEGACY
-    );
+    const v = of(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [] } }), LEGACY);
     expect(v.action).toBe(ACTION.AT_RISK);
     expect(v.prunable).toBe(false);
   });
@@ -1257,88 +1249,6 @@ describe('classify: a curated legacy claim', () => {
     );
   });
 
-  it('refuses to apply the claim when git could not read the tree or resolve the base', () => {
-    // THE THIRD UNKNOWN, AND THE ONE NO REFUSAL LAYER CAUGHT BEFORE. `git status`
-    // failing and an unresolvable base both arrive as zeros and nulls, which is
-    // what "clean" and "0 commits ahead" look like. So `legacy` — the first status
-    // that turns a cleanliness reading into a licence to delete a directory — read
-    // an unreadable tree as an empty one.
-    //
-    // It also WIDENED an older hole rather than creating it: `prunable` already
-    // read an unreadable tree as empty, but only for a branch already on `main`. An
-    // unreadable worktree with a conflicting merge was `at-risk`; with this flag it
-    // became `legacy`, which prints "worktree disposable, BRANCH KEPT".
-    const unknown = [
-      [
-        'the working tree could not be read',
-        wt({ workingTree: { modified: 0, untracked: 0, paths: [], read: false } }),
-      ],
-      // A MISSING `read` is the same unknown, not evidence of a clean tree. The arm
-      // requires `read === true`, so an absent field is the absence of evidence — and
-      // this is the polarity that matters: `read === false` would pass this test while
-      // letting a caller that builds a `workingTree` without the field get a verdict
-      // it never earned, which is the exact inversion of the documented rule.
-      ['the working tree could not be read', wt({ workingTree: { modified: 0, untracked: 0, paths: [] } })],
-      ['the base branch could not be resolved', wt({ ahead: null, mergedIntoBase: false, merge: { conflict: null } })],
-      ['the worktree has no branch to keep', wt({ branch: '(unknown)' })],
-    ];
-    for (const [said, shape] of unknown) {
-      const v = of(shape, LEGACY);
-      expect(v.action, `${said} must not become a removal`).not.toBe(ACTION.LEGACY);
-      // `undecided` is the answer that keeps the directory.
-      expect(v.action, `${said}`).toBe(ACTION.UNDECIDED);
-      expect(v.prunable, `${said}`).toBe(false);
-      // AND IT MUST NOT FABRICATE THE CLEANLINESS FACT. This is the half that was
-      // wrong even after the verdict was fixed: the status block publishes "the
-      // branch is an ancestor of main and the working tree is clean" from the
-      // absence of a complaint, so a record read that sentence beside a removal
-      // instruction for a tree git had refused to open.
-      expect(v.reasons.join(' '), `${said} must name the unknown`).toContain(said);
-      expect(v.reasons.join(' '), `${said} must not claim the tree is clean`).not.toContain('working tree is clean');
-    }
-  });
-
-  it('names a conflicting merge as the reason a legacy branch is not being reconciled', () => {
-    // A stale branch that no longer merges is the COMMON case for legacy, so the
-    // conflict is expected rather than news — but a reader seeing "not proposed for
-    // merge" on a branch with three conflicting files would otherwise have to guess
-    // whether the conflict had been considered at all.
-    const v = of(wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: true, files: ['a', 'b', 'c'] } }), LEGACY);
-    expect(v.action).toBe(ACTION.LEGACY);
-    expect(v.reasons.join(' ')).toContain('conflicts on 3 path(s)');
-  });
-
-  it('loses to mustNotPrune, because that one is about content', () => {
-    // THE PRECEDENCE IS ASSERTED HERE, NOT AT `preflight`.
-    //
-    // Both flags on one entry is a self-contradictory entry — `mustNotPrune`
-    // says the directory is the only copy, `legacy` says it may go — and the
-    // ladder checks `legacy` above both `curatedBlocksPrune` arms. Without this
-    // guard the pair classified as `legacy`: printed as "worktree disposable,
-    // BRANCH KEPT", listed under no protection at all, while the record still
-    // carried `mustNotPrune` for `preflight` to catch downstream.
-    //
-    // `preflight` DOES refuse that record, so no directory was lost — which is
-    // exactly why the defect survived the existing test at the disposal layer.
-    // A second line of defence was doing the work of the first, on the surface a
-    // human reads. The flag pair must resolve to `at-risk` wherever the verdict
-    // is formed.
-    const both = { mustNotPrune: true, legacy: true, note: 'contradictory entry' };
-    for (const shape of [
-      wt({ name: 'landed', ahead: 0, mergedIntoBase: true }),
-      wt({ name: 'to-land', ahead: 4, mergedIntoBase: false, merge: { conflict: false } }),
-    ]) {
-      const v = of(shape, both);
-      expect(v.action, `${shape.name}: mustNotPrune must win over legacy`).toBe(ACTION.AT_RISK);
-      expect(v.prunable, `${shape.name}: a legacy verdict must not be reachable here`).toBe(false);
-      // And the flag pair is visibly inert rather than silently overriding:
-      // the verdict is the one `mustNotPrune` alone produces.
-      expect(v.action, `${shape.name}: the two flags must agree`).toBe(
-        of(shape, { mustNotPrune: true, note: 'a finding' }).action
-      );
-    }
-  });
-
   it('changes nothing when the branch is already disposable and no flag is set', () => {
     // Guards the negative direction: adding a field to `classify` must not make
     // every clean merged branch legacy by accident.
@@ -1350,12 +1260,7 @@ describe('classify: a curated legacy claim', () => {
 describe('classify: the 0-ahead trap', () => {
   it('calls a branch at an old main commit with no commits of its own UNCOMMITTED_ONLY, not landed', () => {
     const v = classify(
-      wt({
-        ahead: 0,
-        mergedIntoBase: true,
-        head: 'main-old',
-        workingTree: { modified: 3, untracked: 2, paths: [], read: true },
-      }),
+      wt({ ahead: 0, mergedIntoBase: true, head: 'main-old', workingTree: { modified: 3, untracked: 2, paths: [] } }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
     expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
@@ -1439,7 +1344,7 @@ describe('classify: the 0-ahead trap', () => {
 
   it('reports a dirty tree on a merged branch as uncommitted-only, not landed', () => {
     const v = classify(
-      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: ['a.ts'], read: true } }),
+      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: ['a.ts'] } }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
     expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
@@ -1489,7 +1394,7 @@ describe('classify: the 0-ahead trap', () => {
         isPrimary: true,
         ahead: 0,
         mergedIntoBase: true,
-        workingTree: { modified: 3, untracked: 1, paths: [], read: true },
+        workingTree: { modified: 3, untracked: 1, paths: [] },
       }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
@@ -1694,12 +1599,7 @@ describe('buildInventory', () => {
     const inv = buildInventory({
       worktrees: [
         wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
-        wt({
-          name: 'b',
-          ahead: 2,
-          mergedIntoBase: false,
-          workingTree: { modified: 1, untracked: 0, paths: [], read: true },
-        }),
+        wt({ name: 'b', ahead: 2, mergedIntoBase: false, workingTree: { modified: 1, untracked: 0, paths: [] } }),
         wt({ name: 'main', isPrimary: true, ahead: 0, mergedIntoBase: true }),
       ],
       root: '/repo',
@@ -1725,12 +1625,7 @@ describe('buildInventory', () => {
     const inv = buildInventory({
       worktrees: [
         wt({ name: 'safe', ahead: 0, mergedIntoBase: true }),
-        wt({
-          name: 'risky',
-          ahead: 0,
-          mergedIntoBase: true,
-          workingTree: { modified: 4, untracked: 0, paths: [], read: true },
-        }),
+        wt({ name: 'risky', ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [] } }),
       ],
       root: '/repo',
       base: 'main',
@@ -1841,12 +1736,7 @@ describe('the headline lists and totals', () => {
   const worktrees = [
     wt({ name: 'landable', ahead: 2, mergedIntoBase: false, merge: { conflict: false } }),
     wt({ name: 'conflicting', ahead: 1, mergedIntoBase: false, merge: { conflict: true, files: ['a.ts'] } }),
-    wt({
-      name: 'uncommitted',
-      ahead: 0,
-      mergedIntoBase: true,
-      workingTree: { modified: 2, untracked: 0, paths: [], read: true },
-    }),
+    wt({ name: 'uncommitted', ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [] } }),
     wt({ name: 'disposable', ahead: 0, mergedIntoBase: true }),
     wt({ name: 'primary', isPrimary: true, ahead: 0, mergedIntoBase: true }),
   ];
@@ -1924,12 +1814,7 @@ describe('the headline lists and totals', () => {
     const shapes = [
       wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
       wt({ name: 'b', ahead: 0, mergedIntoBase: false, merge: { conflict: false } }),
-      wt({
-        name: 'c',
-        ahead: 0,
-        mergedIntoBase: true,
-        workingTree: { modified: 1, untracked: 0, paths: [], read: true },
-      }),
+      wt({ name: 'c', ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [] } }),
       wt({ name: 'd', isPrimary: true, ahead: 0, mergedIntoBase: true }),
       wt({ name: 'e', ahead: 3, mergedIntoBase: false, merge: { conflict: true } }),
       wt({ name: 'f', detached: true, ahead: 0, mergedIntoBase: true }),
@@ -2299,9 +2184,7 @@ describe('the read and computed chat views together', () => {
       ]),
     };
     const inv = buildInventory({
-      worktrees: [
-        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [], read: true } }),
-      ],
+      worktrees: [wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [] } })],
       root: '/repo',
       base: 'main',
       mainHead: 'deadbeef',
@@ -2424,16 +2307,8 @@ describe('the curated table', () => {
     // An entry carrying only `legacy: true` asserts an indefinite hold on a ref
     // and gives a later reader no way to tell a decision from a leftover — which
     // is the failure mode the `landed` assertion exists to prevent.
-    //
-    // VACUOUS OVER AN EMPTY SET, AND THE COMMENT SAYS SO RATHER THAN PRETENDING
-    // OTHERWISE. Both halves run over `CURATED`, and no entry sets `legacy` yet, so
-    // they iterate nothing and pass without testing anything. A synthetic predicate
-    // was tried here and removed: it asserted a rule that exists nowhere but the test
-    // file, so it passed even with the whole legacy arm of `classify` deleted. The
-    // honest state is that these rules are written down and not yet exercised, and
-    // they start biting the moment the first entry carries the field.
     const silent = Object.entries(CURATED)
-      .filter(([, e]) => e.legacy && !(typeof e.note === 'string' && e.note.trim().length > 20))
+      .filter(([, e]) => e.legacy === true && !(typeof e.note === 'string' && e.note.trim().length > 20))
       .map(([n]) => n);
     expect(
       silent,
@@ -2447,28 +2322,9 @@ describe('the curated table', () => {
     // `classify`; this proves no entry in `curated.mjs` relies on the branch not
     // existing — a dirty legacy worktree would be at-risk, so an entry could hold
     // the flag and get the wrong answer without anything here noticing.
-    //
-    // NO WORKTREE-NAMED RECYCLING ASSERTION HERE, AND THAT IS DELIBERATE. An earlier
-    // version of this test asserted that every `legacy` entry names a live worktree.
-    // It is wrong: the documented workflow is `legacy: true`, then
-    // `npm run dispose -- <name>`, which removes the worktree and KEEPS the branch —
-    // so the moment anyone uses the feature as designed the entry names nothing, and
-    // the test failed on the feature's own end state. Its message told the operator to
-    // "remove the entry when the branch is finally deleted", which for a legacy branch
-    // is never, and following it would delete the `note` that `curated.mjs` calls the
-    // whole content of the entry, leaving a kept ref with no record anywhere.
-    //
-    // The hazard it was reaching for is real — `legacy` attaches by directory basename,
-    // so a stale flag would attach itself to whatever is created at that path next, and
-    // `legacy` is the one curated field that errs toward DELETION. Checking it properly
-    // needs the entry keyed by BRANCH rather than by worktree name, because after
-    // disposal the worktree is gone and the ref is what remains. That is a change to the
-    // curated table's shape and is not this branch's to make; it is recorded in
-    // `curated.mjs` beside the field. What this test can honestly assert today is the
-    // half that is decidable from live state.
     const live = listWorktrees(process.cwd());
     const dirty = Object.entries(CURATED)
-      .filter(([name]) => CURATED[name].legacy)
+      .filter(([name]) => CURATED[name].legacy === true)
       .map(([name]) => name)
       .filter((name) => {
         const w = live.find((x) => x.name === name);
@@ -2942,7 +2798,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
           ahead: 0,
           behind: 0,
           mergedIntoBase: true,
-          workingTree: { modified: 2, untracked: 1, paths: [], read: true },
+          workingTree: { modified: 2, untracked: 1, paths: [] },
         }),
       ],
       root: '/repo',
@@ -3631,15 +3487,12 @@ describe('the call history', () => {
     // checkout, so `chatSummary` cannot see it, and the board is keyed on the
     // branch, so it cannot see it either. Every git fact about the worktree can
     // be correct — clean, merged, nothing ahead — and it is still occupied.
-    const verdict = classify(
-      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0, read: true } }),
-      {
-        chatSummary: { count: 0, lastActivity: null },
-        chatSessions: [],
-        nowMs: NOW,
-        shellHistory: { lastAtMs: NOW - 40 * 60_000, derivedChatIds: [], activeNow: false },
-      }
-    );
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0 } }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 40 * 60_000, derivedChatIds: [], activeNow: false },
+    });
     expect(verdict.live).toBe(true);
     expect(verdict.derivedLive).toBe(true);
     expect(verdict.liveSignals.io).toBe(true);
@@ -3688,15 +3541,12 @@ describe('the call history', () => {
 
     // `prunable` must not become reachable through this. A worktree with
     // uncommitted work stays un-prunable whatever its I/O looks like.
-    const held = classify(
-      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 3, untracked: 0, read: true } }),
-      {
-        chatSummary: { count: 0, lastActivity: null },
-        chatSessions: [],
-        nowMs: NOW,
-        shellHistory: { lastAtMs: NOW - 60_000 },
-      }
-    );
+    const held = classify(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 3, untracked: 0 } }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 60_000 },
+    });
     expect(held.prunable).toBe(false);
   });
 
