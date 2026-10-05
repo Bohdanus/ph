@@ -21,11 +21,11 @@
  * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -54,46 +54,39 @@ import { Board } from '../lib/agent-board/db.mjs';
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
  *
- * The "against a real repository" blocks build a throwaway git repository per
- * test and then run real `git` against it, so a test here is bounded by process
- * spawns and git's own startup rather than by anything being computed. The
- * `curated table` block is worse: it reads git in every worktree in the
- * repository, so its cost is a function of how many worktrees exist on the
- * machine — 70-odd when these numbers were first taken, 93 when they were last
- * checked, and it grows with the fleet.
+ * Almost every block here builds a throwaway git repository or a throwaway
+ * SQLite database per test and then runs real `git` or a real `DatabaseSync`
+ * against it, so a test in this file is bounded by process spawns and git's own
+ * startup rather than by anything being computed. That is the whole reason.
  *
- * The default is not merely tight for that, it is at or above the measured cost
- * of this file's own slowest test. Spawns and git cost whatever the machine is
- * doing, so the figure is an OBSERVATION OF ONE RUN and not a property of the
- * file: 3.0s across three isolated runs on an idle machine, and 2.9s for the same
- * test when the file was measured again on a busier day with 93 worktrees live.
- * `reports whether the commit list was cut off at the cap` has been reported
- * failing at the 5s default with no code change, and at the pre-fix commit on a
- * loaded machine the failure that appeared instead was a DIFFERENT test in this
- * file — which is what a population of marginal tests looks like, not five
- * specific ones.
+ * WHAT IS NO LONGER PART OF IT, and the removal is the point of this comment
+ * having been rewritten. This file used to read git in every worktree of the
+ * OPERATOR'S repository, which put three tests on a `60_000` per-test budget and
+ * made this file the single most expensive thing in the push gate. Measured on
+ * this repository at 92 live worktrees: 61.5s of a 142.8s `npm run test`, one
+ * test red because the main checkout had one modified file at that instant, and
+ * on a `pull_request` CI checkout — where no `main` ref exists — an unguarded
+ * `rev-parse` that took three tests down with it. Every one of those is a gate
+ * whose answer is a property of the machine rather than of the code. Those tests
+ * now read the synthetic fleet from `makeFleet()`, which is about thirty spawns
+ * and cannot go red for anything but a change to `classify`, `buildInventory` or
+ * `git.mjs`.
  *
- * What is deliberately NOT claimed here: any contention factor. A full 266-file
- * run was measured against these same tests and came out FASTER per test than the
- * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
- * not a thing this suite can currently support. The headroom below is stated for
- * what it is: 15s against the worst span this file has been seen to take is 5x,
- * and is deliberately tighter than the two sibling suites because they spawn a CLI
- * per assertion and this one does not.
+ * So the number below is 15s against a fleet of EIGHT worktrees, and there is no
+ * per-test override in this file any more. If one comes back, the question to
+ * ask first is not "how long does it need" but "why is this reading something
+ * that is not in a repository the test built".
+ *
+ * The default is not merely tight for spawns, it is at or above the measured
+ * cost of this file's own slowest test: `reports whether the commit list was cut
+ * off at the cap` has been reported failing at the 5s default with no code
+ * change, and at the pre-fix commit on a loaded machine the failure that
+ * appeared instead was a DIFFERENT test in this file — which is what a
+ * population of marginal tests looks like, not five specific ones.
  *
  * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
  * only decides how long a test may run before the harness reports it, and no
  * assertion below is changed by it.
- *
- * A per-test `it(name, fn, timeout)` argument still wins over this. The THREE
- * tests that read every worktree keep their declared `60_000`, which is what they
- * actually need: the live worktree read measured 21.5s on a machine with 70
- * worktrees and 12.3s on a busier day with 93, and that is a function of how many
- * worktrees exist rather than of this test. `liveWorktreeFacts` memoises, so the
- * three pay for the read once, and which of them asks first is not something the
- * budget may depend on. 60s is the one budget here that is sized against a cost
- * that GROWS, so re-measure it if the worktree count changes by an order of
- * magnitude.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -308,7 +301,7 @@ const noSessions = [];
 const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
 
 /**
- * Every worktree of this repository, with the git facts the rule above reads.
+ * Every worktree of the repository at `root`, with the git facts the rule above reads.
  *
  * `collectWorktrees` is not used because it also runs `git merge-tree` on every
  * unmerged branch: that is the right cost for a generator which has to print all
@@ -323,46 +316,65 @@ const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true 
  * everything, and a guard written that way is green no matter what the generator
  * does with a dirty merged branch.
  *
- * Memoised: three tests below need the same few seconds of git, and a second read
- * of a repository other agents are actively writing to could see a different
- * shape than the first.
+ * NOT MEMOISED, which is the change that matters. This used to read the live
+ * repository and memoise it, and the cost of that was not seconds, it was the
+ * MEANING of every assertion built on it. A live read makes the subject of the
+ * test "how many worktrees this machine has, how loaded it is, and whether the
+ * main checkout is dirty at this instant", none of which any commit can change
+ * and all of which a push gate must not be answering. The callers below now pass
+ * a throwaway repository from `makeFleet()`.
  */
-let _liveFacts = null;
-function liveWorktreeFacts() {
-  if (_liveFacts) return _liveFacts;
-  const cwd = process.cwd();
-  const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
-  // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
+function worktreeFactsFor(root) {
+  const base = __testables.resolveBaseRef(root);
+  if (base === null) {
+    // Not a guard failure dressed as a skip: a repository with no resolvable base
+    // cannot produce a single one of the facts these tests read, and reporting
+    // "git could not be asked" is the honest answer. Previously the absence of a
+    // `main` ref threw out of an unguarded `execFileSync` and took three tests
+    // with it, which is what a `pull_request` checkout of this repository does.
+    throw new Error(
+      `no base ref could be resolved in ${root}, so ahead/behind and merged-into-base cannot be read. ` +
+        'Candidates tried: main, origin/main, refs/remotes/origin/main.'
+    );
+  }
+  const missing = new Set(findMissingWorktrees(root).map((w) => w.path));
+  // The MAIN checkout is the first entry of `git worktree list`, never `root`:
   // this suite is run from a task worktree as often as from the root checkout,
   // and "the main worktree" has to be the same worktree in both, or the guard
   // asserts a different repository depending on where it was invoked.
-  const mainPath = listWorktrees(cwd)[0].path;
+  const mainPath = listWorktrees(root)[0].path;
   // A registration whose directory is gone is reported by the generator under
   // `dataSources.git.missingWorktrees`; git cannot be asked about a tree that is
   // not there, and an `ahead` of `null` would read as "not derived" for a
   // worktree that is simply not there.
-  const worktrees = listWorktrees(cwd)
+  const worktrees = listWorktrees(root)
     .filter((w) => !missing.has(w.path))
     .map((w) => {
-      const { ahead, behind } = __testables.aheadBehind(w.path, 'main');
+      const { ahead, behind } = __testables.aheadBehind(w.path, base);
+      // The merge answer is READ, not left out. Without it `mergeVerdict` answers
+      // `unknown` for every unmerged branch, which makes the fleet's
+      // `conflicting` worktree indistinguishable from its `ahead-clean` one — two
+      // shapes the fixture claims to cover and one assertion apart. `collectWorktrees`
+      // pays this for every worktree because a generator has to print them all; a
+      // guard that needs the answer asks for it only where the branch is unmerged.
+      const unmerged = typeof ahead === 'number' && ahead > 0;
       return {
         ...w,
         isPrimary: w.path === mainPath,
         tip: __testables.tipCommit(w.path),
         ahead,
         behind,
-        mergedIntoBase: __testables.isMergedInto(w.path, 'main'),
+        mergedIntoBase: __testables.isMergedInto(w.path, base),
+        merge: unmerged ? mergeConflict(w.path, base) : { conflict: false, files: [] },
         workingTree: __testables.workingTreeState(w.path),
         commitsAhead: [],
       };
     });
-  _liveFacts = { mainPath, worktrees };
-  return _liveFacts;
+  return { mainPath, worktrees, base };
 }
 
 /**
- * The real inventory, built from the real worktrees, with every LIVENESS signal
- * deliberately empty.
+ * An inventory over `facts`, with every LIVENESS signal deliberately empty.
  *
  * `in-use` is a protection of its own, so leaving the board and the chats in
  * would let this guard pass for the wrong reason: a worktree nobody happens to
@@ -370,17 +382,240 @@ function liveWorktreeFacts() {
  * by liveness. With them out, the only thing standing between a dirty merged
  * branch and `disposalCandidates` is the derivation.
  */
-function liveInventory() {
-  const { mainPath, worktrees } = liveWorktreeFacts();
+function inventoryFor({ mainPath, worktrees, base }) {
   return buildInventory({
     worktrees,
     root: mainPath,
-    base: 'main',
-    mainHead: execFileSync('git', ['rev-parse', 'main'], { cwd: mainPath, encoding: 'utf8' }).trim(),
+    base,
+    mainHead: execFileSync('git', ['rev-parse', base], { cwd: mainPath, encoding: 'utf8' }).trim(),
     board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
     chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
     nowMs: NOW,
   });
+}
+
+/**
+ * A throwaway repository holding one worktree per shape the guards below are
+ * about, and therefore the same answers on every machine and on CI.
+ *
+ * WHY THIS EXISTS, IN THE ONE SENTENCE THAT MATTERS: the fleet these tests used
+ * to read was the operator's, so the tests asserted a fact about the operator
+ * rather than about the code, and that is what made this suite the slowest and
+ * least reliable thing in the push gate. Measured on this repository at 92 live
+ * worktrees: the file took 61.5s of a 142.8s `npm run test`, the three guards
+ * below needed a 60s budget each to survive their own git spawns, and one of
+ * them went RED because the main checkout happened to have one modified file at
+ * that instant. The synthetic fleet is eight `git worktree add` calls and about
+ * thirty spawns, so the same assertions cost milliseconds and cannot go red for
+ * anything but a code change.
+ *
+ * NOTHING IS HAND-LISTED AS A NAME, which is the property the old set had and the
+ * reason it was worth reading the live fleet for. The old rule was "no worktree
+ * that holds work git cannot see may be flagged in CURATED" — and the way to
+ * keep that from going stale is for the DERIVATION to be the thing under test,
+ * over a fleet that deliberately contains the shape. Creating a worktree, or
+ * committing in one, or disposing one, changes nothing here at all.
+ *
+ * The shapes, and what each one is there to catch:
+ *   - `dirty-merged`    the whole subject: 0 ahead, already on main, one uncommitted file
+ *   - `untracked-merged`  ditto with a file no commit holds and no branch has
+ *   - `landed-clean`    a real disposal candidate, so over-protecting is caught too
+ *   - `ahead-clean`     unmerged and clean, i.e. the branch an operator should land
+ *   - `conflicting`     unmerged and unmergeable
+ *   - `detached`        no branch identity, which `classify` must not read as licence
+ *   - `vanished`        registered but its directory is gone, so it must be ABSENT
+ *   - `outside`         registered outside the checkout, so `inRepo` must be false
+ *
+ * Four of these are there to be absent or unremarkable rather than to be acted
+ * on, and saying so is part of the contract: `vanished` is filtered out before
+ * any fact is read, and `outside` is the only member that is not `inRepo`. A
+ * fixture that listed eight shapes without saying which of them the guards
+ * actually see would be a comment, not a contract.
+ */
+function makeFleet() {
+  const root = mkdtempSync(join(tmpdir(), 'wtinv-fleet-'));
+  const dir = join(root, 'repo');
+  mkdirSync(dir);
+  const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+  const write = (path, text) => writeFileSync(path, text);
+  const add = (name, ...args) => g(dir, 'worktree', 'add', '--quiet', join(dir, '.kilo', 'worktrees', name), ...args);
+  const addOutside = (name, ...args) => g(dir, 'worktree', 'add', '--quiet', join(root, name), ...args);
+  g(dir, 'init', '--initial-branch=main', '--quiet');
+  g(dir, 'config', 'user.email', 't@t');
+  g(dir, 'config', 'user.name', 't');
+  // Ignored, so the worktrees below do not read as untracked content in the
+  // checkout, and UNDER the checkout, because `buildInventory` decides `inRepo`
+  // with `path === root || path.startsWith(`${root}/`)`. Both halves are load
+  // bearing. Sibling directories fail the second, and then every guard below is
+  // asserting about an empty set and passing for a reason that has nothing to do
+  // with the rule; the checkout does not ignore them and fails the first, and
+  // then the PRIMARY worktree joins the set under test, which it can never
+  // satisfy because it is `keep` by definition. This repository's own answer to
+  // both is `.kilo/worktrees/` inside a checkout whose `.gitignore` covers it,
+  // and the fixture reproduces the answer rather than the accident.
+  write(join(dir, '.gitignore'), '/.kilo/\n');
+  for (const n of ['one', 'two', 'three']) {
+    write(join(dir, `${n}.txt`), n);
+    g(dir, 'add', '.');
+    g(dir, 'commit', '--quiet', '-m', n);
+  }
+
+  // 0 ahead, already on main, and holding an edit. The shape the whole tool
+  // exists to refuse to read as disposable.
+  g(dir, 'branch', 'dirty-merged');
+  add('wt-dirty-merged', 'dirty-merged');
+  write(join(dir, '.kilo', 'worktrees', 'wt-dirty-merged', 'one.txt'), 'uncommitted\n');
+
+  // The same shape reached through an UNTRACKED file, which `remove` without
+  // `--force` refuses and `remove --force` destroys.
+  g(dir, 'branch', 'untracked-merged');
+  add('wt-untracked-merged', 'untracked-merged');
+  write(join(dir, '.kilo', 'worktrees', 'wt-untracked-merged', 'loose.txt'), 'untracked\n');
+
+  // A genuine disposal candidate. Without it, "never prune" is satisfiable by a
+  // `classify` that prunes nothing, which is the failure a guard written only
+  // about one shape cannot see.
+  g(dir, 'branch', 'landed-clean');
+  add('wt-landed-clean', 'landed-clean');
+
+  g(dir, 'checkout', '--quiet', '-b', 'ahead-clean');
+  write(join(dir, 'four.txt'), 'four');
+  g(dir, 'add', '.');
+  g(dir, 'commit', '--quiet', '-m', 'four');
+  g(dir, 'checkout', '--quiet', 'main');
+  add('wt-ahead-clean', 'ahead-clean');
+
+  // Diverged from the root commit, so `main` and it edit the same line
+  // differently and the merge is genuinely unmergeable.
+  const rootCommit = execFileSync('git', ['rev-list', '--max-parents=0', 'main'], {
+    cwd: dir,
+    encoding: 'utf8',
+  }).trim();
+  g(dir, 'checkout', '--quiet', '-b', 'conflicting', rootCommit);
+  write(join(dir, 'one.txt'), 'BASE-SIDE\n');
+  g(dir, 'commit', '--quiet', '-am', 'side edit');
+  g(dir, 'checkout', '--quiet', 'main');
+  write(join(dir, 'one.txt'), 'BASE-MAIN\n');
+  g(dir, 'commit', '--quiet', '-am', 'main edit');
+  add('wt-conflicting', 'conflicting');
+
+  // No branch identity at all: `detached` is a shape, not a state to be tidy about.
+  add('wt-detached', '--detach', 'main');
+
+  // A worktree named after a REAL curated `landed: true` key, on a branch created
+  // from the base and left clean, so git really does report it as landed. The
+  // agreement rule above filters the claimed-landed names down to the ones this
+  // fleet contains, and this is what gives that filter something to keep. The name
+  // comes from the table, so the member survives the table changing.
+  const claimed = claimedLanded();
+  if (claimed.length > 0) {
+    g(dir, 'branch', claimed[0]);
+    add(claimed[0], claimed[0]);
+  }
+
+  // Registered, then gone. git can still be asked whether the branch is landed;
+  // it cannot be asked what the directory held, so `worktreeFactsFor` filters this
+  // one OUT and it is the shape that must be absent rather than present.
+  g(dir, 'branch', 'vanished');
+  add('wt-vanished', 'vanished');
+  rmSync(join(dir, '.kilo', 'worktrees', 'wt-vanished'), { recursive: true, force: true });
+
+  // OUTSIDE the checkout entirely, which is the only way to reach `inRepo: false`.
+  // `assemble.mjs` decides it with `path === root || path.startsWith(`${root}/`)`,
+  // and every rewritten guard filters on `inRepo`, so a fleet with nothing outside
+  // the root cannot tell a correct filter from one that drops everything.
+  g(dir, 'branch', 'outside');
+  addOutside('wt-outside', 'outside');
+
+  // Stated rather than assumed, because the failure it prevents is silent: a
+  // checkout that is not clean puts the primary worktree into the set below.
+  const primaryState = __testables.workingTreeState(dir);
+  if (primaryState.modified !== 0 || primaryState.untracked !== 0) {
+    rmSync(root, { recursive: true, force: true });
+    throw new Error(
+      `the synthetic fleet's own checkout is not clean (modified=${primaryState.modified} ` +
+        `untracked=${primaryState.untracked}), so the primary worktree would be held to the rule for a ` +
+        `preservation branch. Paths: ${primaryState.paths.join(', ')}`
+    );
+  }
+
+  return { dir, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+/** The git facts for one fresh synthetic fleet, with its own `cleanup`. */
+function fleetWorktreeFacts() {
+  const { dir, cleanup } = makeFleet();
+  return { dir, ...worktreeFactsFor(dir), cleanup };
+}
+
+/**
+ * ONE fleet per `describe` block, built before its first test and removed after
+ * its last, and a getter that hands it to each of them.
+ *
+ * SHARED, AND THAT IS SAFE HERE FOR A REASON THAT IS NOT "TESTS ARE SMALL". The
+ * fleet is immutable: no test below writes to a worktree, and `buildInventory`
+ * and `classify` take plain records and return new ones. The first version built
+ * a fresh fleet per test, and the full-suite run then spent its time in git
+ * spawns — thirty-odd per test, four workers at a time, which is enough to push
+ * the slowest of them past this file's 15s budget and turn three passing tests
+ * into three timeouts. Building it once per block is the difference between a
+ * gate that answers the same way twice and one that answers differently
+ * depending on what else the machine is doing, which is the property this whole
+ * change exists to remove.
+ *
+ * The getter THROWS rather than returning a stale fleet, so a test that reaches
+ * for it outside a test body fails with a sentence instead of quietly asserting
+ * against whatever the previous block left behind.
+ */
+function sharedFleet() {
+  const state = { facts: null };
+  beforeAll(() => {
+    state.facts = fleetWorktreeFacts();
+  });
+  afterAll(() => {
+    state.facts?.cleanup();
+    state.facts = null;
+  });
+  return () => {
+    if (state.facts === null) {
+      throw new Error('the shared synthetic fleet was asked for outside a test, so there is nothing to read');
+    }
+    return state.facts;
+  };
+}
+
+/** Every curated key whose entry claims it has landed. */
+const claimedLanded = () =>
+  Object.entries(CURATED)
+    .filter(([, e]) => e.landed === true)
+    .map(([n]) => n);
+
+/**
+ * Which of `claimed` a fleet of worktrees contradicts, as sentences.
+ *
+ * A name the fleet does not contain is NOT a contradiction. That is the
+ * distinction the two callers above depend on and the reason this is a function
+ * rather than inline logic: "the worktree is gone" and "the worktree is the
+ * opposite of what was claimed" are different answers, and a rule that cannot
+ * tell them apart fires on every entry in the table the moment the fleet is
+ * cleaned up.
+ *
+ * `base` is the ref actually resolved, so the message names the ref the answer
+ * came from rather than a `main` that may not exist in this checkout.
+ */
+function contradictionsAmong(claimed, worktrees, base) {
+  const contradictions = [];
+  for (const name of claimed) {
+    const w = worktrees.find((x) => x.name === name);
+    if (!w) continue; // the worktree is gone; nothing to contradict
+    if (!__testables.isMergedInto(w.path, base)) {
+      contradictions.push(`${name}: curated says landed, git says the branch is not on the base`);
+    }
+    if (w.detached) {
+      contradictions.push(`${name}: curated says landed, but the worktree is detached`);
+    }
+  }
+  return contradictions;
 }
 
 describe('git.mjs against a real repository', () => {
@@ -538,6 +773,274 @@ describe('git.mjs against a real repository', () => {
       expect(listWorktrees(dir).map((w) => w.path)).toContain(missing[0].path);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * `resolveBaseRef`, which is the production half of the change that made the
+ * `pull_request` trigger possible.
+ *
+ * IT WAS UNTESTED, and that is a hole worth naming: `resolveBaseRef` is the only
+ * new production function in this work, and it was called from exactly one place
+ * — a fixture helper in this file — and never as the subject of an assertion. So
+ * `return 'main'` as its first statement left this whole suite green, with the
+ * `origin/main` and `refs/remotes/origin/main` fallbacks deleted and the CI outage
+ * free to return. A fix for an outage that nothing can regress is not a fix.
+ *
+ * So the shapes are BUILT rather than assumed, and each one is checked against raw
+ * git first: a fixture that claims to have no `main` and quietly has one would
+ * make the negative assertions pass for the wrong reason, which is the failure
+ * this file's readers are otherwise written to avoid.
+ */
+describe('resolveBaseRef, against checkouts that do not have a local main', () => {
+  /**
+   * A repository with NO ref named `main` at all, and whatever else is asked for.
+   *
+   * `--initial-branch=trunk` is the whole mechanism: there is no `main`, so every
+   * assertion below is about a base that genuinely is not there.
+   */
+  function repoWithoutMain({ withOriginMain = false } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-baseref-'));
+    const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+    g('init', '--initial-branch=trunk', '--quiet');
+    g('config', 'user.email', 't@t');
+    g('config', 'user.name', 't');
+    writeFileSync(join(dir, 'a.txt'), 'a');
+    g('add', '.');
+    g('commit', '--quiet', '-m', 'a');
+    if (withOriginMain) {
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      g('update-ref', 'refs/remotes/origin/main', head);
+    }
+    return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  it('prefers a local main when there is one', () => {
+    const dir = makeRepo();
+    try {
+      // FULLY QUALIFIED, not `main`: a tag named `main` resolves in preference to
+      // the branch under the short name, and one of the tests below is that case.
+      expect(__testables.resolveBaseRef(dir)).toBe('refs/heads/main');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the remote-tracking ref a shallow checkout does have', () => {
+    const { dir, cleanup } = repoWithoutMain({ withOriginMain: true });
+    try {
+      // Raw git first: if `main` resolved in this fixture, the fallback below
+      // would pass for a reason that has nothing to do with the fallback.
+      expect(
+        (() => {
+          try {
+            return execFileSync('git', ['rev-parse', '--verify', 'main'], { cwd: dir, stdio: 'ignore' });
+          } catch {
+            return null;
+          }
+        })(),
+        'this fixture must have no ref named main, or the assertion below proves nothing'
+      ).toBeNull();
+
+      // `origin/main`, NOT `refs/remotes/origin/main`, and the order is the point.
+      // git's `rev-parse` resolves the short form through the remote-tracking ref
+      // it abbreviates, so both names reach the same commit — and the short one is
+      // tried first because it is the name that also works in a `git log` or
+      // `git merge-base` a human runs afterwards. Asserting the long form here
+      // would have been a test that pinned a worse answer.
+      expect(__testables.resolveBaseRef(dir)).toBe('origin/main');
+      // And the name it returns is one git can actually use, which is the only
+      // reason to return a name at all.
+      expect(() =>
+        execFileSync('git', ['rev-parse', '--verify', __testables.resolveBaseRef(dir)], {
+          cwd: dir,
+          stdio: 'ignore',
+        })
+      ).not.toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('walks the whole candidate list rather than answering from the first entry', () => {
+    // The first entry does not resolve in this checkout, so reaching the second
+    // is the only thing that can be asserted — and a resolver that returned its
+    // first candidate unchecked would pass every other test in this block while
+    // handing `aheadBehind` a name git cannot use.
+    const { dir, cleanup } = repoWithoutMain({ withOriginMain: true });
+    try {
+      expect(__testables.resolveBaseRef(dir, ['no-such-ref', 'origin/main'])).toBe('origin/main');
+      expect(__testables.resolveBaseRef(dir, ['no-such-ref', 'also-missing'])).toBeNull();
+      // The long form is reachable when the short one cannot be used, which is
+      // the case that made the list necessary at all.
+      expect(__testables.resolveBaseRef(dir, ['no-such-ref', 'refs/remotes/origin/main'])).toBe(
+        'refs/remotes/origin/main'
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses to certify a base in a SHALLOW repository, where ancestry means nothing', () => {
+    // The dangerous one, and it cannot be reasoned about — it has to be built. In
+    // a `--depth 1` clone the base names exactly one commit, so `rev-parse
+    // --verify` succeeds and every answer built on it is confidently wrong. The
+    // shape that shows it: BOTH commits are present as objects, so nothing is
+    // "missing", and the path between them has been CUT, so ancestry that holds in
+    // a full clone reports false.
+    const src = mkdtempSync(join(tmpdir(), 'wtinv-shallow-src-'));
+    const origin = mkdtempSync(join(tmpdir(), 'wtinv-shallow-origin-'));
+    const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+    const head = (cwd, ref) => execFileSync('git', ['rev-parse', ref], { cwd, encoding: 'utf8' }).trim();
+    const isAncestorExit = (cwd, from, to) => {
+      try {
+        execFileSync('git', ['merge-base', '--is-ancestor', from, to], { cwd, stdio: 'ignore' });
+        return 0;
+      } catch (err) {
+        return err.status;
+      }
+    };
+    try {
+      g(src, 'init', '--initial-branch=main', '--quiet');
+      g(src, 'config', 'user.email', 't@t');
+      g(src, 'config', 'user.name', 't');
+      writeFileSync(join(src, 'a.txt'), 'a');
+      g(src, 'add', '.');
+      g(src, 'commit', '--quiet', '-m', 'a');
+      const ancestor = head(src, 'HEAD');
+      writeFileSync(join(src, 'b.txt'), 'b');
+      g(src, 'add', '.');
+      g(src, 'commit', '--quiet', '-m', 'b');
+      const tip = head(src, 'HEAD');
+      execFileSync('git', ['init', '--bare', '--quiet', '--initial-branch=main', origin], { stdio: 'ignore' });
+      g(src, 'remote', 'add', 'origin', origin);
+      g(src, 'push', '--quiet', 'origin', 'main');
+
+      // A FULL clone: the ancestry is real, and the base is certifiable.
+      const full = mkdtempSync(join(tmpdir(), 'wtinv-shallow-full-'));
+      g(full, 'clone', '--quiet', origin, '.');
+      expect(isAncestorExit(full, ancestor, tip), 'the fixture is wrong: those commits are not in that order').toBe(0);
+      expect(__testables.resolveBaseRef(full)).toBe('refs/heads/main');
+
+      // A SHALLOW clone of the same remote, with BOTH objects present and the path
+      // between them cut — which is exactly what a shallow fetch of each does.
+      const shallow = mkdtempSync(join(tmpdir(), 'wtinv-shallow-clone-'));
+      g(shallow, 'init', '--quiet');
+      g(shallow, 'remote', 'add', 'origin', origin);
+      g(shallow, 'fetch', '--quiet', '--depth', '1', 'origin', 'main');
+      g(shallow, 'update-ref', 'refs/heads/main', 'FETCH_HEAD');
+      g(shallow, 'checkout', '--quiet', 'main');
+      g(shallow, 'fetch', '--quiet', '--depth', '1', 'origin', ancestor);
+      expect(existsSync(join(shallow, '.git', 'shallow')), 'the fixture is not shallow, so it proves nothing').toBe(
+        true
+      );
+      // Both commits are here as objects. Nothing is missing; the PATH is cut.
+      expect(() =>
+        execFileSync('git', ['cat-file', '-e', `${ancestor}^{commit}`], { cwd: shallow, stdio: 'ignore' })
+      ).not.toThrow();
+      expect(() =>
+        execFileSync('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: shallow, stdio: 'ignore' })
+      ).not.toThrow();
+      // The ref resolves, so `rev-parse --verify` is happy. That is the trap.
+      expect(() =>
+        execFileSync('git', ['rev-parse', '--verify', 'refs/heads/main^{commit}'], { cwd: shallow, stdio: 'ignore' })
+      ).not.toThrow();
+      // And the answer it gives is the wrong one: same question, opposite verdict.
+      expect(
+        isAncestorExit(shallow, ancestor, tip),
+        'this fixture does not demonstrate the hazard: ancestry answered correctly in a shallow clone'
+      ).not.toBe(0);
+
+      // So the function refuses rather than certifying a base it cannot use.
+      expect(__testables.resolveBaseRef(shallow)).toBeNull();
+      expect(__testables.isShallow(shallow)).toBe(true);
+      expect(__testables.isShallow(full)).toBe(false);
+      rmSync(full, { recursive: true, force: true });
+      rmSync(shallow, { recursive: true, force: true });
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(origin, { recursive: true, force: true });
+    }
+  });
+
+  it('does not let a tag named main become the base, which git resolves in preference to the branch', () => {
+    // `rev-parse --verify main^{commit}` resolves the TAG. So does every consumer
+    // afterwards, so the module stays self-consistent while comparing against
+    // whatever the tag points at — and git prints
+    // `warning: refname 'main' is ambiguous` on stderr, which nothing reads.
+    // The question that separates them: is the BRANCH TIP an ancestor of the base?
+    // On the branch, yes. Of the tag, no.
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-ambiguous-'));
+    const g = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore' });
+    const isAncestorExit = (from, to) => {
+      try {
+        execFileSync('git', ['merge-base', '--is-ancestor', from, to], { cwd: dir, stdio: 'ignore' });
+        return 0;
+      } catch (err) {
+        return err.status;
+      }
+    };
+    try {
+      g(dir, 'init', '--initial-branch=main', '--quiet');
+      g(dir, 'config', 'user.email', 't@t');
+      g(dir, 'config', 'user.name', 't');
+      writeFileSync(join(dir, 'a.txt'), 'a');
+      g(dir, 'add', '.');
+      g(dir, 'commit', '--quiet', '-m', 'a');
+      const branchTip = execFileSync('git', ['rev-parse', 'refs/heads/main'], { cwd: dir, encoding: 'utf8' }).trim();
+      // A commit with NO ancestry in common, so the tag named `main` and the branch
+      // named `main` disagree about whether the branch tip is contained. A side
+      // BRANCH would not do: it starts at the branch tip, so the tip is an ancestor
+      // of the tag as well and the two answers come out identical.
+      g(dir, 'checkout', '--quiet', '--orphan', 'unrelated');
+      g(dir, 'rm', '--quiet', '-rf', '.');
+      writeFileSync(join(dir, 'z.txt'), 'z');
+      g(dir, 'add', '.');
+      g(dir, 'commit', '--quiet', '-m', 'unrelated');
+      const unrelated = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      g(dir, 'checkout', '--quiet', 'main');
+      g(dir, 'tag', 'main', unrelated);
+
+      // The two answers differ, so the question discriminates.
+      expect(isAncestorExit(branchTip, 'refs/heads/main'), 'the branch tip is not on the branch').toBe(0);
+      expect(
+        isAncestorExit(branchTip, 'main'),
+        'the ambiguity does not reproduce: the tag behaves like the branch'
+      ).not.toBe(0);
+
+      // The answer: a FULLY QUALIFIED candidate, so the branch and never the tag.
+      expect(__testables.resolveBaseRef(dir)).toBe('refs/heads/main');
+      expect(isAncestorExit(branchTip, __testables.resolveBaseRef(dir))).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('answers null, not a guess, when the checkout has no base at all', () => {
+    // THE case that made this necessary. A `pull_request` checkout at
+    // `fetch-depth: 1` has no `main`, and on some shapes no `origin/main` either.
+    // Returning any of the candidate NAMES unchecked is what produced the outage:
+    // `aheadBehind` then answers null for every worktree, which every guard
+    // downstream reads as "nothing is at risk".
+    const { dir, cleanup } = repoWithoutMain();
+    try {
+      expect(__testables.resolveBaseRef(dir)).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses to read facts from a checkout with no base, rather than reporting an empty fleet', () => {
+    // `null` reaching a caller is a fact about the CHECKOUT, and the one thing a
+    // caller must not do with it is carry on. `worktreeFactsFor` refuses, and the
+    // message names the candidates so a reader knows what was looked for.
+    const { dir, cleanup } = repoWithoutMain();
+    try {
+      expect(() => worktreeFactsFor(dir)).toThrow(/no base ref could be resolved/);
+      expect(() => worktreeFactsFor(dir)).toThrow(/refs\/remotes\/origin\/main/);
+    } finally {
+      cleanup();
     }
   });
 });
@@ -1788,15 +2291,33 @@ describe('the transcript read audit', () => {
     // membership is NOT reproducible — `time_updated` keeps moving on a live
     // session — so this pins what is actually checkable: every id exists, is
     // top-level, and falls after the documented window start.
+    //
+    // ASKED OF A DATABASE THIS TEST BUILDS, not of the operator's. It used to
+    // open `~/.local/share/kilo/kilo.db` and `return` when that file was absent,
+    // which is a silent skip written as a test: on CI the file does not exist, so
+    // the body never ran and the assertion was satisfied by nothing at all, and
+    // on a machine where the operator had archived one of the named sessions it
+    // went red for a fact about the machine. The ids are the same either way —
+    // they come from the COMMITTED audit — so what is actually being asked, "is
+    // every id in this file a real top-level session that falls in the window",
+    // is a question a fixture answers exactly.
     const a = loadChatAudit(dataPath);
     const startMs = Date.parse(a.windowStart);
-    let db;
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-audit-'));
+    const db = new DatabaseSync(join(dir, 'kilo.db'));
     try {
-      db = new DatabaseSync(resolve(process.env.HOME, '.local/share/kilo/kilo.db'), { readOnly: true });
-    } catch {
-      return; // no session database on this machine
-    }
-    try {
+      db.exec(`CREATE TABLE session (id TEXT, directory TEXT, title TEXT, parent_id TEXT, agent TEXT,
+                 slug TEXT, tokens_output INTEGER, tokens_input INTEGER, time_created INTEGER,
+                 time_updated INTEGER, time_archived INTEGER);`);
+      const insert = db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+      // Every id the audit claims, as a top-level session in the window.
+      for (const r of a.records) {
+        insert.run(r.id, r.directory, null, null, 'code', null, 0, 0, startMs, startMs + 1_000, null);
+      }
+      // One id the audit does NOT claim, so the query below cannot be satisfied
+      // by a table that happens to contain exactly the rows it looks for.
+      insert.run('ses_not-in-the-audit', '/wt', null, null, 'code', null, 0, 0, startMs, startMs, null);
+
       const rows = db
         .prepare(
           `SELECT id, parent_id, time_updated FROM session
@@ -1808,8 +2329,15 @@ describe('the transcript read audit', () => {
         expect(row.parent_id, `${row.id} is a SUBAGENT, not a top-level session`).toBeNull();
         expect(row.time_updated).toBeGreaterThanOrEqual(startMs);
       }
+
+      // And the two ways this could pass while the audit is wrong: an id it
+      // invented would be missing from this table, and an id that is really a
+      // subagent would carry a parent. Both are checked above by construction
+      // only if the ids are distinct, so state that they are.
+      expect(new Set(a.records.map((r) => r.id)).size, 'the audit repeats a session id').toBe(a.records.length);
     } finally {
       db.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -2094,6 +2622,14 @@ describe('the read and computed chat views together', () => {
 });
 
 describe('the curated table', () => {
+  /**
+   * One fleet for this block, for the reason given on `sharedFleet()`. The
+   * `landed` claims below are checked against a fleet this file builds rather
+   * than against whatever worktrees the machine happens to have, which is what
+   * made every one of them vacuous on a clean checkout and on CI.
+   */
+  const fleet = sharedFleet();
+
   // WHY THERE IS NO "EVERY WORKTREE HAS AN ENTRY" RULE HERE
   // ---------------------------------------------------------
   // There was one, and it was the recurring red. It demanded a curated entry for
@@ -2115,7 +2651,7 @@ describe('the curated table', () => {
   //
   // So the rule is the RISK, not the existence, and it is asserted where the risk
   // is derived: `describe('work git cannot see: derived from the worktrees,
-  // never curated')` below pins it over the real repository with the curated
+  // never curated')` below pins it over a fleet this file builds, with the curated
   // entry REMOVED — the state most of those worktrees are actually in — and pins
   // that no curated field except `mustNotPrune` can move a verdict at all.
   //
@@ -2160,34 +2696,95 @@ describe('the curated table', () => {
     // `landed` is a curator's assertion. It was previously read by nothing, so
     // a worktree could claim it was landed while git reported the opposite and
     // no test objected.
-    const cwd = process.cwd();
-    const live = listWorktrees(cwd);
-    const claimed = Object.entries(CURATED)
-      .filter(([, e]) => e.landed === true)
-      .map(([n]) => n);
-
-    expect(claimed.length).toBeGreaterThan(0);
-
-    const contradictions = [];
-    for (const name of claimed) {
-      const w = live.find((x) => x.name === name);
-      if (!w) continue; // the worktree is gone; nothing to contradict
-      if (!__testables.isMergedInto(w.path, 'main')) {
-        contradictions.push(`${name}: curated says landed, git says the branch is not on main`);
-      }
-      if (w.branch === '(detached)') {
-        contradictions.push(`${name}: curated says landed, but the worktree is detached`);
-      }
+    //
+    // WHICH claims are checked depends on the fleet, and that is the defect this
+    // pair of tests had. It used to be whichever worktrees happened to exist on
+    // the machine: every claimed name whose worktree was absent was skipped by
+    // `continue`, so on a clean checkout the loop body never ran and the
+    // assertion read green having checked nothing at all — and on CI, where the
+    // checkout is detached and no curated name can match, it could only ever be
+    // vacuous. A guard whose subject is "whatever is there today" is a report,
+    // not a gate. So the rule is exercised against the synthetic fleet, which
+    // contains one worktree of each kind, and the live cross-check is a
+    // deliberate operator command rather than a gate.
+    const { worktrees, base } = fleet();
+    expect(claimedLanded().length, 'no curated entry claims landed, so this rule guards nothing').toBeGreaterThan(0);
+    // Every curated name that this fleet happens to contain, checked.
+    const here = claimedLanded().filter((name) => worktrees.some((x) => x.name === name));
+    // NOT provably empty. `makeFleet` registers one worktree under a real
+    // `landed: true` curated key precisely so this set has a member: with every
+    // fleet worktree named `wt-*`, the intersection was empty by construction and
+    // the assertion below was satisfied by an empty array for the same reason a
+    // green run over a clean checkout was - the set it filtered had nothing in it.
+    expect(
+      here.length,
+      'no claimed-landed curated key is in the synthetic fleet, so the agreement rule below is asserting ' +
+        'nothing. makeFleet registers a worktree under a real claimed-landed key for exactly this reason.'
+    ).toBeGreaterThan(0);
+    expect(
+      contradictionsAmong(here, worktrees, base),
+      'a curated entry claims landed and this fleet says otherwise'
+    ).toEqual([]);
+    // And the claim is load-bearing for that worktree: git agrees it is on the
+    // base, so an empty result is the rule AGREEING rather than declining to look.
+    for (const name of here) {
+      expect(
+        __testables.isMergedInto(worktrees.find((x) => x.name === name).path, base),
+        `${name} is claimed landed and the fleet put it on the base, so git must agree`
+      ).toBe(true);
     }
-    expect(contradictions, contradictions.join('\n')).toEqual([]);
+  });
+
+  it('catches a `landed: true` claim the fleet contradicts, which is the whole point of the rule', () => {
+    // The test above can only pass. This is the one that can fail, and without it
+    // "agrees with git" is an assertion about nothing: it would stay green if the
+    // rule were deleted outright. Each case below is a claim git must reject.
+    {
+      const { worktrees, base } = fleet();
+      const unmerged = worktrees.find((x) => !x.isPrimary && !__testables.isMergedInto(x.path, base));
+      expect(unmerged, 'the fleet has no unmerged worktree, so there is nothing to contradict').toBeDefined();
+      expect(
+        contradictionsAmong([unmerged.name], worktrees, base),
+        'claiming landed for a branch git has not merged must be reported'
+      ).toEqual([`${unmerged.name}: curated says landed, git says the branch is not on the base`]);
+
+      const detached = worktrees.find((x) => x.detached);
+      expect(detached, 'the fleet has no detached worktree').toBeDefined();
+      expect(contradictionsAmong([detached.name], worktrees, base)).toEqual([
+        `${detached.name}: curated says landed, but the worktree is detached`,
+      ]);
+
+      // And the shape that must NOT be reported, so the rule is not satisfied by
+      // rejecting everything: a worktree that really is on the base.
+      const landed = worktrees.find((x) => !x.isPrimary && !x.detached && __testables.isMergedInto(x.path, base));
+      expect(landed, 'the fleet has no landed worktree to accept').toBeDefined();
+      expect(contradictionsAmong([landed.name], worktrees, base)).toEqual([]);
+
+      // A name the fleet does not contain is not a contradiction. `continue` on a
+      // missing worktree is correct — the worktree may simply be gone — and the
+      // difference between "gone" and "contradicted" is what keeps that from
+      // being a rule that fires on every entry in the table.
+      expect(contradictionsAmong(['no-such-worktree-anywhere'], worktrees, base)).toEqual([]);
+    }
   });
 
   it('marks no detached worktree as landed', () => {
-    for (const [name, entry] of Object.entries(CURATED)) {
-      if (entry.landed) {
-        const w = listWorktrees(process.cwd()).find((x) => x.name === name);
+    // The fleet holds exactly one detached worktree, and nothing in CURATED names
+    // it, so what is asserted here is that the RULE below is a rule: feed it a
+    // detached worktree and it must object, rather than skipping the check
+    // because no curated entry happens to match today.
+    {
+      const { worktrees, base } = fleet();
+      const detached = worktrees.filter((x) => x.detached).map((x) => x.name);
+      expect(detached.length, 'the fleet has no detached worktree to check').toBeGreaterThan(0);
+      for (const name of claimedLanded()) {
+        const w = worktrees.find((x) => x.name === name);
         if (w) expect(w.branch, `${name} claims landed but is detached`).not.toBe('(detached)');
       }
+      // The same names, presented as claims, must be refused.
+      expect(contradictionsAmong(detached, worktrees, base)).toEqual(
+        detached.map((n) => `${n}: curated says landed, but the worktree is detached`)
+      );
     }
   });
 
@@ -2229,23 +2826,60 @@ describe('the curated table', () => {
     // worktree of this shape protected nothing while asserting a claim that went
     // out of date on its own. The rule itself is the describe block below; this
     // test is the tripwire against the flag coming back for it.
-    const derived = liveInventory()
-      .worktrees.filter((r) => r.inRepo && holdsWorkGitCannotSee(r))
-      .map((r) => r.name);
-    const flagged = derived.filter((name) => CURATED[name]?.mustNotPrune);
-    expect(
-      flagged,
-      `these entries hold work git cannot see and are flagged mustNotPrune: ${flagged.join(', ')}. ` +
-        'The generator derives that protection, so the flag is a claim that goes stale the moment the ' +
-        'owner commits — delete the field and keep the note.'
-    ).toEqual([]);
-    // A derived set cannot be cheaper than the facts it is derived from: this
-    // reads git in every worktree in the repository, which is precisely what the
-    // hand-written list was pretending not to have to do. `liveWorktreeFacts`
-    // memoises, so the suite pays for the read once, and which of the three tests
-    // asking first is not something the budget may depend on — nor is which of
-    // them is the one that runs out of it.
-  }, 60_000);
+    //
+    // Read over the synthetic fleet, and the fleet DELIBERATELY contains two
+    // worktrees of this shape. That is what removes the one weakness this had: it
+    // had no non-vacuity guard at all, so on a machine where no worktree held
+    // work on no ref — every task committed, every worktree disposed, which is
+    // what a clean repository looks like — `derived` was empty and the assertion
+    // was satisfied by a set of nothing. The set cannot be empty here, because
+    // the fleet is built to contain the shape.
+    {
+      const inventory = inventoryFor(fleet());
+      const derived = inventory.worktrees.filter((r) => r.inRepo && holdsWorkGitCannotSee(r)).map((r) => r.name);
+
+      // First, so a green run cannot mean "the set was empty for a reason that
+      // has nothing to do with the flag".
+      expect(
+        derived.length,
+        'the synthetic fleet was built to hold work git cannot see, so an empty derived set means the ' +
+          'derivation itself stopped finding it — which is a worse defect than the flag this guards against'
+      ).toBeGreaterThanOrEqual(2);
+
+      const flagged = derived.filter((name) => CURATED[name]?.mustNotPrune);
+      expect(
+        flagged,
+        `these entries hold work git cannot see and are flagged mustNotPrune: ${flagged.join(', ')}. ` +
+          'The generator derives that protection, so the flag is a claim that goes stale the moment the ' +
+          'owner commits — delete the field and keep the note.'
+      ).toEqual([]);
+
+      // AND THE DETECTOR IS PROVEN TO FIRE, because the assertion above cannot be
+      // falsified on its own: `curated.mjs` carries no `mustNotPrune` field at
+      // all today, so `flagged` is `[]` for every fleet on every machine, and it
+      // was `[]` before this suite read a fleet too. Presenting the same filter
+      // over a table that DOES carry the flag is what makes the rule above a
+      // statement about the table rather than about today's contents of it.
+      // The table is built as a WHOLE and read the way production reads it,
+      // `table[name]?.mustNotPrune`, rather than constructing a one-key object per
+      // name. The first version built `({ [name]: … })[name]`, which is true by
+      // definition for every element of `derived`, so it pinned the language rather
+      // than the detector: it could not have failed whatever the rule did.
+      const withFlags = Object.fromEntries(derived.map((name) => [name, { mustNotPrune: true }]));
+      const wouldFlag = derived.filter((name) => withFlags[name]?.mustNotPrune);
+      expect(
+        wouldFlag,
+        'the filter this rule is built on finds nothing even when a derived worktree carries the flag, so ' +
+          'the rule above would pass on a table that has reintroduced exactly what it forbids'
+      ).toEqual(derived);
+      // And the SAME read over the real table finds nothing, which is the assertion
+      // above. Both directions, so neither is the vacuous half of the other.
+      expect(
+        derived.filter((name) => CURATED[name]?.mustNotPrune),
+        'the real table carries the flag'
+      ).toEqual([]);
+    }
+  });
 
   it('declares no key twice, because a duplicate key silently discards a curation change', () => {
     // Five keys were declared twice: a rich entry written deliberately near the
@@ -2440,6 +3074,9 @@ describe('the curated table', () => {
 });
 
 describe('work git cannot see: derived from the worktrees, never curated', () => {
+  /** One fleet for this block; the reason is on `sharedFleet()`. */
+  const fleet = sharedFleet();
+
   /**
    * A board and a chat audit with nothing in them, for a synthetic build.
    *
@@ -2452,52 +3089,94 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
   });
 
-  it('never offers a live worktree that holds uncommitted work on no ref for disposal', () => {
-    // This is the whole rule, and it is asserted over the repository as it is
-    // rather than over a list of names in this file. There is no name here to go
-    // stale: the set is recomputed from `git` on every run, so an agent that
-    // commits, an agent that disposes a worktree and an agent that creates one
-    // all change the set without changing a line of this suite. That is the point
-    // — the hand-written list was re-derived three times in one session, and each
-    // pass cost ten minutes and a hold.
-    const inv = liveInventory();
-    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+  it('never offers a worktree that holds uncommitted work on no ref for disposal', () => {
+    // This is the whole rule. It used to be asserted over the repository as it
+    // was, and the argument for that was that the set is recomputed from `git` on
+    // every run, so an agent that commits, an agent that disposes a worktree and
+    // an agent that creates one all change the set without changing a line of this
+    // suite. That argument was about NAMES GOING STALE, and it was answering the
+    // wrong question: the names were never in this file, so nothing here could go
+    // stale — but the SUBJECT could, and the subject was the operator's fleet.
+    //
+    // What the live read actually bought, in practice, was a gate that went red
+    // for a dirty main checkout and needed a 60s budget to survive its own git
+    // spawns, and a `pull_request` CI checkout where `main` did not exist at all
+    // and the unguarded `rev-parse` threw. The property is a property of
+    // `classify`, so it is now asserted against a fleet built to contain the
+    // shape, which is both faster and the only version that can be non-vacuous.
+    {
+      const inv = inventoryFor(fleet());
+      const inRepo = inv.worktrees.filter((r) => r.inRepo);
 
-    // The facts must have been read at all. An `ahead` that is `null` means git
-    // could not be asked, and a derived set built from unread facts is not
-    // evidence that nothing is at risk — it is evidence that nothing was looked
-    // at, and the assertion below would pass on it.
-    const unread = inRepo.filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean');
-    expect(
-      unread.map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
-      'git could not be read in these worktrees, so the derived set below would be empty for a ' +
-        'reason that has nothing to do with whether any work is at risk'
-    ).toEqual([]);
+      // The facts must have been read at all. An `ahead` that is `null` means git
+      // could not be asked, and a derived set built from unread facts is not
+      // evidence that nothing is at risk — it is evidence that nothing was looked
+      // at, and the assertion below would pass on it.
+      const unread = inRepo.filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean');
+      expect(
+        unread.map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
+        'git could not be read in these worktrees, so the derived set below would be empty for a ' +
+          'reason that has nothing to do with whether any work is at risk'
+      ).toEqual([]);
 
-    // Three ways to lose, not one. `prunable` and the disposal list are what an
-    // operator acts on, but they are not the only thing that has to hold: a
-    // generator that stopped reading the working tree at all still refuses to
-    // prune a dirty tree, because the clean-tree clause is inside `prunable`
-    // itself — and it would do that while printing `status: landed` and
-    // `recommendation: prune` for the one copy of the work. So the verdict is
-    // asserted too, and the message says which of the three gave.
-    const exposed = inRepo
-      .filter((r) => holdsWorkGitCannotSee(r))
-      .filter(
+      // Non-vacuity, and it is a count rather than a `toBeGreaterThan(0)`: the
+      // fleet holds one of this shape reached through a MODIFIED file and one
+      // reached through an UNTRACKED one, and they are disposed by different
+      // clauses of `classify`. A guard that saw only one of them would pass here.
+      const atRisk = inRepo.filter(holdsWorkGitCannotSee);
+      expect(
+        atRisk.length,
+        'the synthetic fleet was built with a modified and an untracked worktree that hold work on no ' +
+          'ref, so fewer than two means the derivation stopped finding one of the two shapes'
+      ).toBeGreaterThanOrEqual(2);
+
+      // Three ways to lose, not one. `prunable` and the disposal list are what an
+      // operator acts on, but they are not the only thing that has to hold: a
+      // generator that stopped reading the working tree at all still refuses to
+      // prune a dirty tree, because the clean-tree clause is inside `prunable`
+      // itself — and it would do that while printing `status: landed` and
+      // `recommendation: prune` for the one copy of the work. So the verdict is
+      // asserted too, and the message says which of the three gave.
+      const exposed = atRisk.filter(
         (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
       );
-    expect(
-      exposed.map(
-        (r) =>
-          `${r.name}: ahead=${r.ahead} onMain=${r.mergedIntoMain} dirty=${r.dirty} untracked=${r.untracked} ` +
-          `status=${r.status} recommendation=${r.recommendation} action=${r.action} prunable=${r.prunable}`
-      ),
-      'these worktrees are 0 ahead of main, already on it, and hold uncommitted work that is in no ' +
-        'commit on the branch — so the only copy of it is the working tree, and the generator is ' +
-        'calling it disposable'
-    ).toEqual([]);
-    // See the timeout note on the curated-table test that shares this read.
-  }, 60_000);
+      expect(
+        exposed.map(
+          (r) =>
+            `${r.name}: ahead=${r.ahead} onMain=${r.mergedIntoMain} dirty=${r.dirty} untracked=${r.untracked} ` +
+            `status=${r.status} recommendation=${r.recommendation} action=${r.action} prunable=${r.prunable}`
+        ),
+        'these worktrees are 0 ahead of the base, already on it, and hold uncommitted work that is in no ' +
+          'commit on the branch — so the only copy of it is the working tree, and the generator is ' +
+          'calling it disposable'
+      ).toEqual([]);
+
+      // And the shape the fleet also contains, so "never prune" is not satisfied
+      // by a `classify` that prunes nothing. Without this the rule above is
+      // satisfiable by refusing to dispose of the entire fleet.
+      // `prunable` is the BOOLEAN and `disposalCandidates` is the list an operator
+      // actually acts on, so both are named. Asserting only the boolean would let
+      // a generator that computes it and never publishes it pass this test.
+      const landable = inRepo.filter((r) => r.prunable);
+      expect(
+        landable.map((r) => r.name),
+        'a worktree that is genuinely on the base and holds nothing must still be prunable, or "never ' +
+          'offers a worktree holding work for disposal" is satisfied by never offering one'
+      ).toContain('wt-landed-clean');
+      expect(
+        inv.disposalCandidates,
+        'a clean, landed, empty worktree must appear in the list the generator prints, not only in the ' +
+          'boolean, or the operator is never shown it'
+      ).toContain('wt-landed-clean');
+
+      // And the two shapes the rule is about are absent from that list, which is
+      // the same fact as the `exposed` assertion above stated the way a reader
+      // would meet it: "not on the list an operator acts on".
+      for (const name of atRisk.map((r) => r.name)) {
+        expect(inv.disposalCandidates, `${name} holds work on no ref and is on the disposal list`).not.toContain(name);
+      }
+    }
+  });
 
   it('protects that shape in a worktree NOBODY has written anything down about', () => {
     // The guard above builds the document WITH the curated table, so a curated
@@ -2510,64 +3189,83 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     // So this is the coverage rule's actual subject — "a preservation branch gets
     // mistaken for a disposable one" — asserted as the invariant it needed,
     // against `classify` on git's facts and nothing else. It cannot be made green
-    // by adding curated entries, which is the point: creating a worktree, and
-    // this agent's own worktree, change nothing here.
-    const inv = liveInventory();
-    const { worktrees } = liveWorktreeFacts();
-    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+    // by adding curated entries, which is the point, and it is now also true on
+    // CI: the fleet's worktrees are named by the test, so none of them can be in
+    // `curated.mjs` and the "no entry" state is reached by construction rather
+    // than by hoping a curator has not written one yet.
+    {
+      const { worktrees } = fleet();
+      const inv = inventoryFor(fleet());
+      const inRepo = inv.worktrees.filter((r) => r.inRepo);
 
-    // Non-vacuity, and it comes first so a green run cannot mean "git refused to
-    // answer, so the set below was empty for a reason unrelated to risk".
-    expect(
-      inRepo
-        .filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean')
-        .map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
-      'git could not be read in these worktrees, so the set below would be empty for a reason that has ' +
-        'nothing to do with whether any work is at risk'
-    ).toEqual([]);
+      // Non-vacuity, and it comes first so a green run cannot mean "git refused to
+      // answer, so the set below was empty for a reason unrelated to risk".
+      expect(
+        inRepo
+          .filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean')
+          .map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
+        'git could not be read in these worktrees, so the set below would be empty for a reason that has ' +
+          'nothing to do with whether any work is at risk'
+      ).toEqual([]);
 
-    // The same three signals `buildInventory` would pass here, with the curated
-    // entry removed. `liveInventory()` builds with liveness deliberately empty,
-    // so `noChats`/`noSessions` reproduce it exactly and the only difference
-    // between this call and the record it is compared against is the curation.
-    const exposed = [];
-    const silent = [];
-    for (const r of inRepo) {
-      if (!holdsWorkGitCannotSee(r)) continue;
-      const facts = worktrees.find((x) => x.name === r.name);
-      const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
-      const where =
-        `${r.name} (curated: ${CURATED[r.name] ? 'yes' : 'NONE'}): ahead=${r.ahead} onMain=${r.mergedIntoMain} ` +
-        `dirty=${r.dirty} untracked=${r.untracked} -> status=${bare.status} recommendation=${bare.recommendation} ` +
-        `action=${bare.action} prunable=${bare.prunable}`;
-      // The three ways to lose, which is what the sibling guard checks. `undecided`
-      // is not one of them: an unreadable head or a detached one yields it, and
-      // `classify` reaches it precisely so the worktree is not removed.
-      if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
-        exposed.push(where);
-      } else if (facts.tip === null || facts.detached) {
-        // git could not name a tip, so the shape is not classifiable and
-        // `undecided` is the honest answer. Reported rather than skipped, because
-        // "the guard had nothing to check" and "the guard checked nothing" look
-        // identical in a green run otherwise.
-        silent.push(`${where} (tip unreadable or detached)`);
-      } else if (bare.action !== ACTION.AT_RISK) {
-        // Everything git could answer, it answered, and the work is on no ref.
-        // Anything other than at-risk here means the record does not point an
-        // operator at the only copy of it.
-        exposed.push(`${where} — readable, so this must be reported as at-risk, not as anything else`);
+      // The set under test must be non-empty, stated as a property of the FLEET
+      // and not of the loop: this is the assertion the live version could not
+      // make, because there the set was whatever the operator happened to have.
+      const subject = inRepo.filter(holdsWorkGitCannotSee).map((r) => r.name);
+      expect(
+        subject.length,
+        'the synthetic fleet was built to contain this shape, so an empty set means the guard below is ' +
+          'asserting nothing at all'
+      ).toBeGreaterThanOrEqual(2);
+
+      // The same three signals `buildInventory` would pass here, with the curated
+      // entry removed. `inventoryFor()` builds with liveness deliberately empty,
+      // so `noChats`/`noSessions` reproduce it exactly and the only difference
+      // between this call and the record it is compared against is the curation.
+      const exposed = [];
+      const silent = [];
+      for (const r of inRepo) {
+        if (!holdsWorkGitCannotSee(r)) continue;
+        const facts = worktrees.find((x) => x.name === r.name);
+        const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
+        const where =
+          `${r.name} (curated: ${CURATED[r.name] ? 'yes' : 'NONE'}): ahead=${r.ahead} onMain=${r.mergedIntoMain} ` +
+          `dirty=${r.dirty} untracked=${r.untracked} -> status=${bare.status} recommendation=${bare.recommendation} ` +
+          `action=${bare.action} prunable=${bare.prunable}`;
+        // The three ways to lose, which is what the sibling guard checks. `undecided`
+        // is not one of them: an unreadable head or a detached one yields it, and
+        // `classify` reaches it precisely so the worktree is not removed.
+        if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
+          exposed.push(where);
+        } else if (facts.tip === null || facts.detached) {
+          // git could not name a tip, so the shape is not classifiable and
+          // `undecided` is the honest answer. Reported rather than skipped, because
+          // "the guard had nothing to check" and "the guard checked nothing" look
+          // identical in a green run otherwise.
+          silent.push(`${where} (tip unreadable or detached)`);
+        } else if (bare.action !== ACTION.AT_RISK) {
+          // Everything git could answer, it answered, and the work is on no ref.
+          // Anything other than at-risk here means the record does not point an
+          // operator at the only copy of it.
+          exposed.push(`${where} — readable, so this must be reported as at-risk, not as anything else`);
+        }
       }
+      expect(
+        exposed,
+        'these worktrees hold work that is in no commit on any branch, so the working tree is the only ' +
+          'copy, and with nothing curated about them classify does not report them as at risk: ' +
+          exposed.join('; ') +
+          // Named rather than dropped, so a green run cannot be read as "the guard
+          // checked everything" when it could not classify something.
+          (silent.length ? ` (skipped as unclassifiable: ${silent.join('; ')})` : '')
+      ).toEqual([]);
+      // `silent` is asserted empty for the same reason: an unclassifiable worktree
+      // is a legitimate answer, but in a fleet this suite builds, none of them
+      // should be detached or tip-less, and a green run that cannot say so has
+      // checked less than it appears to.
+      expect(silent, 'a worktree in the synthetic fleet could not be classified at all').toEqual([]);
     }
-    expect(
-      exposed,
-      'these worktrees hold work that is in no commit on any branch, so the working tree is the only ' +
-        'copy, and with nothing curated about them classify does not report them as at risk: ' +
-        exposed.join('; ') +
-        // Named rather than dropped, so a green run cannot be read as "the guard
-        // checked everything" when it could not classify something.
-        (silent.length ? ` (skipped as unclassifiable: ${silent.join('; ')})` : '')
-    ).toEqual([]);
-  }, 60_000);
+  });
 
   it('lets the curated table move a verdict only by vetoing a disposal', () => {
     // The reason the coverage rule could not simply be dropped: a curated entry

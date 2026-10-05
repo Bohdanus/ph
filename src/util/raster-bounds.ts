@@ -8,13 +8,21 @@ import type { Point, Pos } from '../contexts/general-types.ts';
  * layer plus the brush footprint, without changing the document frame or sampling another
  * layer.  The returned frame is stable for replay because it is plain data that can travel
  * with the tool args.
+ *
+ * The frame only ever GROWS along one stroke, and that comes from `points` alone: every
+ * caller passes `usePaintStroke`'s append-only live array, which carries every earlier point,
+ * so the union it returns covers the earlier frames without being told about them. A fourth
+ * parameter carrying the previously staged frame was removed as dead — both production call
+ * sites read it out of the TOOL SETTINGS, which nothing ever writes a frame back into, so it
+ * was always `undefined`. Cross-stroke growth is the committed `pos` instead, which is what
+ * the next stroke is given as its `base`.
  */
-export const rasterBoundsForStroke = (base: Pos, points: readonly Point[], radius: number, previous?: Pos): Pos => {
+export const rasterBoundsForStroke = (base: Pos, points: readonly Point[], radius: number): Pos => {
   const safeRadius = Number.isFinite(radius) ? Math.max(0, radius) : 0;
-  let left = Math.min(base.x, previous?.x ?? base.x);
-  let top = Math.min(base.y, previous?.y ?? base.y);
-  let right = Math.max(base.x + base.width, (previous?.x ?? base.x) + (previous?.width ?? 0));
-  let bottom = Math.max(base.y + base.height, (previous?.y ?? base.y) + (previous?.height ?? 0));
+  let left = base.x;
+  let top = base.y;
+  let right = base.x + base.width;
+  let bottom = base.y + base.height;
 
   for (const point of points) {
     left = Math.min(left, point.x - safeRadius);

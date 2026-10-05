@@ -105,9 +105,7 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
          */
         const baseBounds = rasterBounds ?? activeLayer!.pos;
         const widens = strokeExitsRasterBounds(baseBounds, points);
-        const bounds = widens
-          ? rasterBoundsForStroke(baseBounds, points, args.size / 2, args.rasterBounds)
-          : baseBounds;
+        const bounds = widens ? rasterBoundsForStroke(baseBounds, points, args.size / 2) : baseBounds;
         tempUpdateLayer({
           id: activeLayerId!,
           toolArgs: {
@@ -124,9 +122,7 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
         // (`src/contexts/useHistory.ts` — `applyRasterTool`).
         const baseBounds = rasterBounds ?? activeLayer!.pos;
         const widens = strokeExitsRasterBounds(baseBounds, points);
-        const bounds = widens
-          ? rasterBoundsForStroke(baseBounds, points, args.size / 2, args.rasterBounds)
-          : baseBounds;
+        const bounds = widens ? rasterBoundsForStroke(baseBounds, points, args.size / 2) : baseBounds;
         await updateLayerByTool({
           id: activeLayerId!,
           toolArgs: {

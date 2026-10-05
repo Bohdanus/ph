@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 126, 127-128, 129, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 208-211, 230, 236, 240, 248 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -67,62 +67,13 @@ are mounted.
 the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
 reconciling these changes pixel-tool results.
 
-**Fix.** Close the divergence the pixel differential found (§205) and the export axis it cannot see
-(§206), add the history-panel state axis (§207), then make the presentation authority explicit and
-rehydrate the options bar from durable sources. Keep legacy logical state as the authority until those
-projections are staged, lease-safe, and failure-contained; do not mount all remaining consumers at
-once.
+**Fix.** Close the export axis the pixel differential cannot see (§206), add the history-panel state
+axis (§207), then make the presentation authority explicit and rehydrate the options bar from durable
+sources. Keep legacy logical state as the authority until those projections are staged, lease-safe, and
+failure-contained; do not mount all remaining consumers at once.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
-
----
-
-## 4. P0 — one error diagnostic voids the entire durable shadow
-
-**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts`) checks
-`converted.diagnostics.some((d) => d.severity === 'error')` and, if any one entry
-produced an error, rolls back the asset transaction and returns `status: 'unavailable'` with
-`document: null`.
-
-Fail-closed is the right instinct, but this is fail-closed far too coarsely to be usable: a single
-unsupported pen or curve history entry discards a correctly-computed document _and_ a correct
-cursor map for the whole timeline. The cursor map in particular is the part that is hard to
-recompute, and it is thrown away for a problem local to one entry.
-
-**Fix.** Partition diagnostics. Entries that convert cleanly should produce a document with those
-entries omitted and a per-entry `error` diagnostic naming the `historyId`; only a failure that makes
-the document structurally invalid (frame mismatch, branch/cursor inconsistency, thrown conversion)
-should return `unavailable`. `b027de3` already establishes the vocabulary for this — it skips the
-offending entry rather than failing the conversion — so the pattern exists; apply it to the
-severity check too.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/StoreContext.tsx`
-
----
-
-## 10. `DurableLayerSnapshot` carries no frame, so a frame change cannot invalidate a replay
-
-**Problem.** `DurableLayerSnapshot` carries `id`, `name`, `isBedrock`, `visible`, `opacity`,
-`locked`, `blendMode`, `order`, `pos` and `source`. There is no `frame`, which contradicts the
-consolidated handoff's own drift note: a snapshot says nothing about the document frame it was
-taken against, so a frame change cannot invalidate it.
-
-The revision token that used to carry this half of the defect is gone — `replay-coordinator.ts`,
-which declared `ReplayRevisionToken` with no `frameRevision` either, was deleted as dead code
-rather than left unimported. What it was for survives the deletion: whoever schedules the first
-durable replay needs both halves, and this is the half that still has a file.
-
-**Why it matters.** An in-flight durable replay can complete against a document whose frame has
-since changed. Latent only while nothing schedules replays (item 1), but it is a required input
-for item 1.
-
-**Fix.** Add `frame` to `DurableLayerSnapshot`, and bump `documentRevision` on every frame change
-so the existing comparison covers it. The first durable scheduler must take a token carrying a
-`frameRevision` too — re-derive that token's fields when the surface is chosen rather than
-restoring the deleted module.
-
-**Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
 
 ---
 
@@ -544,7 +495,7 @@ names in that form — and the omissions are exactly where the migration's own b
 | not in the manifest                                           | live entries whose `Files` line names it |
 | ------------------------------------------------------------- | ---------------------------------------- |
 | `src/contexts/history-model.ts`                               | 10, 56, 172, 197                         |
-| `src/contexts/presentation-evaluator.ts`                      | 1, 159, 163                              |
+| `src/contexts/presentation-evaluator.ts`                      | 1, 163                                   |
 | `src/contexts/durable-replay.ts`                              | 94                                       |
 | `src/contexts/psd-utils.ts`                                   | 45, 56, 147, 166, 169, 172               |
 | `src/contexts/layer-types.ts`                                 | 56, 172                                  |
@@ -590,8 +541,7 @@ you need it, in the place you need it.
 
 `sort -u` is what makes that command's answer a count of paths rather than of entry-path pairs. Two
 `Files` paragraphs in the file are deliberately outside the extraction and neither changes the count:
-§142 carries a second one that names no `src/` path at all. The live §159 entry is headed and its
-`Files` paragraph names the real `src/hooks/usePaintStroke.ts` path.
+§142 carries a second one that names no `src/` path at all.
 
 **Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
 re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
@@ -1256,57 +1206,6 @@ groups", not "no letter repeats".
 
 **These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
 doing them here would land the deletion without the replacement rail.
-
-## 79. A move drag that goes out and back releases the selection where it was never taken
-
-`src/components/Main/EllipticalSelectionToolArea.tsx` — `handlePointerMove()`, and the two
-accumulators
-disagree about which frame of the drag they are tracking. `delta` is measured from `drag.origin`,
-which the same arm then **advances** to the current pointer position, and it is applied to
-`drag.baseline`, which **never** advances. The running displacement is therefore the last frame's
-delta alone, and every earlier frame is discarded. Take a selection 60px right and 40px down,
-retract the pointer to the point you pressed from, and release: the commit lands the selection at
-`(-60, -40)` on a document that starts at the origin. One frame's worth of history, applied twice,
-in opposite directions — and the preview overlay shows the same wrong position for the whole
-gesture, because `drag.preview` feeds the same arm's `redrawOverlay({ selectionOverride: … })`.
-
-The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx` — its
-`handlePointerMove()` move branch —
-applies the same delta to `selectionDrag.selection` and advances **both** accumulators into the
-next ref record in one statement; that is the correct shape and it is what
-`EllipticalSelectionToolArea.tsx` — `handlePointerMove()` should be.
-`moveSelectionByDelta(drag.preview, delta)` puts this arm on the same footing, and the first
-frame needs no special case because `drag.preview` is already seeded with `activeSelection` in
-`EllipticalSelectionToolArea.tsx` — `handlePointerDown()`'s `mode: 'move'` seed. The release gate in
-`EllipticalSelectionToolArea.tsx` — `handlePointerUp()` then does the rest for free: a net
-displacement of zero lands
-the preview back on the baseline's own geometry, `hasSameSelectionGeometry` reports them equal,
-and the gesture commits nothing.
-
-**Why nothing saw it, and why that is a gap rather than a blessing.** Every move-drag case in
-`EllipticalSelectionToolArea.test.tsx` issued exactly one `pointerMove`, and with a single frame
-the last delta _is_ the whole delta — so `moveSelectionByDelta(baseline, delta)` and
-`moveSelectionByDelta(preview, delta)` return the same selection. The suite was blind to the
-difference by construction rather than by accident. Verified by mutation: changing
-`handlePointerMove()`'s `moveSelectionByDelta(drag.baseline, delta)` to `drag.preview` leaves every
-pre-existing case green, including the zero-delta single move the file has since gained as the
-`it('commits nothing for a selection drag whose last move had no delta')` title — which agrees under
-both accumulators, exactly as the one-frame
-argument predicts.
-
-The half of that which was sound: no assertion in the file pins the drifted position, so nothing
-enshrines the bug. It was uncovered, not endorsed.
-
-Pinned as `it.fails` in `EllipticalSelectionToolArea.test.tsx` — the `it('commits nothing for a move
-drag that went out and came back to the press point')` title. A zero net displacement is observed
-through the
-absence of a commit rather than through a committed position, which is the same observable the
-neighbouring zero-delta case pins for the one-frame shape of the same gesture; the case carries
-its own control — a second, single-frame drag on the same mount, which is independent of the
-defect — so the empty assertion cannot pass by the arm never having run. **Delete the `it.fails`
-in the same change that fixes `handlePointerMove()`'s accumulator choice**, per `AGENTS.md`: it is a
-tripwire for broken behaviour,
-and left behind it turns the fix into a red suite.
 
 ## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
 
@@ -4070,52 +3969,6 @@ it will read it as its own.
 `scripts/lib/worktree-inventory/classify.mjs` (`classify()`, its `wt.isPrimary` status arm)
 ---
 
-## 159. A paint stroke committed after a crop renders at the old frame coordinates
-
-**Problem.** `usePaintStroke` records brush points in document coordinates, while the runtime
-compositor renders a cropped document with `layerCoordinate - documentFrame.origin`
-(`src/contexts/presentation-evaluator.ts`, in `drawEvaluatedPresentation`:
-`x = evaluation.position.x - (target.frame?.x ?? 0)`). After a crop the stroke is therefore offset by
-the frame origin.
-
-**CONFIRMED by measurement, 2026-10-02.** A bar drawn entirely **after** a crop renders in the wrong
-band. Cropping to document `(80,270)-(720,570)` — a `640x300` document with a non-`{0,0}` origin —
-then drawing a bar across the middle of the cropped document:
-
-|                                                                  | read bands                                |
-| ---------------------------------------------------------------- | ----------------------------------------- |
-| **control**: a bar on the UNCROPPED document, at 50% height      | `[false, true, false]` — strip 1, correct |
-| **after the crop**: a bar on the CROPPED document, at 50% height | `[true, false, false]` — strip 0          |
-
-The ink exists and is committed; it is drawn **one band too high**, which is the frame origin's
-signature. The control is what makes this a finding rather than a band-reading failure — the same
-helper reads the un-cropped bar in the strip the current fit names.
-
-**`e2e/crop-history.spec.ts` does not cover this**, and its case named "crop, then a bar" reads as
-though it did. That test draws its first bar BEFORE the crop and its second AFTER it, so it asserts
-history bookkeeping across the boundary, not where the post-crop bar lands.
-
-**The neighbouring repair is NOT this defect.** `src/util/layer-space.ts` rebases document points onto
-the **layer** origin for six stroke tool areas (`documentPointsToLayerLocal`, 9 callers). That is a
-different axis: it fixes a stroke landing off a layer whose `pos` is not `{0,0}`, and does not touch
-the frame origin.
-
-**What would close it.** Convert the committed stroke points out of document space into the frame's
-coordinate space before the history item is written — the layer-local rebase in `layer-space.ts` is
-the shape to copy, applied against `documentFrame` rather than `layer.pos`. Then add the
-crop-followed-by-stroke band assertion to `e2e/crop-history.spec.ts`, carrying the un-cropped control
-above, so a fix cannot pass by making the band read uniformly empty. Do not weaken the existing crop
-history assertions or add an accepted console error.
-
-**Files.** `src/hooks/usePaintStroke.ts` (`toDocumentPoint()` — the path is under `hooks/`, not
-`tools/`, which is how an earlier version of this entry sent a reader to a file that does not
-exist), `src/contexts/presentation-evaluator.ts` (`drawEvaluatedPresentation()`, the frame
-subtraction), `src/util/layer-space.ts` (`documentPointsToLayerLocal()`, the layer-space rebase, a
-different axis), `e2e/crop-history.spec.ts` (the
-`test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back')` case —
-the one that does not cover this).
----
-
 ## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
 
 `ThemeContext.tsx` hard-codes `DEFAULT_THEME = 'dark'` and the
@@ -5284,9 +5137,24 @@ rather than a bug fix:
 - Report the overflow against the box the user DRAGGED rather than the grown one, so the icon
   survives a growing box. `renderText` is handed only the final rect and has no knowledge of the
   drag, so `calculateNewRect`'s return type would have to carry it.
+- Keep the height the user dragged and CLIP the type that outgrows it, reporting the overflow with
+  the corner indicator. This keeps the icon reachable and closes the crop, and it is the fourth
+  option because no current run trips the clamp. An implementation of exactly this survives only
+  in the uncommitted residue of worktree `text-tool-ux-2026-10-04` (branch
+  `fix/text-tool-ux-2026-10-04`, tip `a115ee05`) — in `src/util/rect.ts`, `src/util/rect.test.ts`
+  and `src/components/Main/TextEditOverlay.tsx` — and in NO commit, tag or stash. It is not a merge
+  candidate: its own tests contradict each other (one asserts a dragged box keeps `height === 60`,
+  another asserts the same box is `0`), and it weakens an unrelated assertion in
+  `e2e/text-tool.spec.ts`. Reimplement it against today's `src/util/rect.test.ts` rather than
+  porting it, and settle first whether Adobe clips leading that extends above the box when the
+  leading is shorter than the font's ascent — the question that residue left open.
 
 **Provenance.** Found by review of the Type tool against its own requirements document, not by a
-failing test: no current run trips it, which is exactly why the clamp was allowed to stand.
+failing test: no current run trips it, which is exactly why the clamp was allowed to stand. The
+fourth option was recovered from the abandoned residue described in it by the harvest of
+`ses_ef4468057ffeCvhwUIlFFCVb2G`, which also established that the other 16 staged files in that
+residue are superseded: main holds the corrected text-layer re-entry from `609ac270`, and taking
+the residue's copies would have reintroduced five measured defects `main`'s own comments record.
 
 ## 194. Every button built on `buttonStyles.ts` has no keyboard focus indicator
 
@@ -5517,43 +5385,6 @@ fallback. Assert the seam values, not pixel colours — the pixel claim belongs 
 
 **Files.** `src/components/DevStatusStrip/DevStatusStrip.tsx`, `src/contexts/StoreContext.tsx`,
 `e2e/error-boundary.spec.ts`, and the history navigation specs
-
----
-
-## 205. The durable composition resamples a retained affine twice, and the two authorities disagree on the pixels
-
-**Problem.** `materializeLayer()` — `renderRetainedSegment()` draws a layer's retained affine into
-an intermediate surface sized `Math.ceil(localBounds)`, and `composeDurableDocument()` then stamps
-that surface at `bounds.width`/`bounds.height` — the un-rounded `getAffineBounds()` numbers. So the
-durable side runs the affine through two resamples at a fractional scale. `drawLayerSource()`
-(`layer-renderer.ts`) applies the same affine in ONE `drawImage` straight into the document surface.
-The legacy side resamples once; the durable side resamples twice.
-
-**Measured, not inferred.** `history-migration.pixel-parity.test.ts` — the
-`diverges today: reposition and affine transform at cursor 2 …` `it.fails` title: **764 of 480000
-bytes differ**, first at (45, 41), where the legacy presentation is opaque white
-(`rgba 255,255,255,255`) and the durable one is transparent (`rgba 0,0,0,0`). Removing that row from
-`DECLARED_DIVERGENCES` puts the same failure on the hard matrix, so the harness detects it rather
-than merely recording it.
-
-**Consequence.** Any layer carrying a retained affine reaches the screen through a different
-resample chain than the legacy authority, so the two paint measurably different edges on the same
-history. This is the divergence the pixel differential was built to find, and it is latent for every
-durable presentation that carries a transform.
-
-**Fix — a ruling, then an edit.** Decide which side is correct: either the durable composition must
-not round its intermediate bounds, or `composeDurableDocument()` must stamp at the surface's actual
-size, or the legacy renderer must adopt the same two-step. The two-step arrangement is the durable
-model's own, so the un-rounded bounds are its own output and the cheapest fix is to make the stamp
-use the surface it was handed. Whichever is chosen, re-derive the answer with the harness as the
-oracle and remove the `it.fails` pin **in the same change** — a pin that outlives its fix stops being
-a tripwire and starts being a lie.
-
-**Files.** `src/contexts/materialization.ts` — `renderRetainedSegment()`,
-`src/contexts/durable-compositor.ts` — `composeDurableDocument()`,
-`src/contexts/presentation-evaluator.ts` — `getAffineBounds()`,
-`src/contexts/layer-renderer.ts` — `drawLayerSource()`,
-`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — `DECLARED_DIVERGENCES`
 
 ---
 
@@ -6116,38 +5947,6 @@ way it already refuses a missing or unreadable file, and the refusal should be t
 invariant instead of as a hope. This should land with the `generatedAt` half of §224, which is the
 same schema and the same file.
 
-## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
-
-**Problem.** `src/contexts/useSelectionHistory.ts` builds both of its `SelectionSnapshot` baselines by
-hand — `{ selections: existing, activeSelectionId }` in `clearSelections()` and again in
-`commitSelection()` — where `existing` is the store's live `selections` array, not a copy of it. The
-same object is then stored in the legacy entry's `args.previousSelectionState` and passed as
-`currentSelections` to `planHistoryAppend()`, so one aliased array reaches both the legacy timeline
-and the durable `before` baseline.
-
-This contradicts the rule the shared helper already states. `selectionSnapshot()` in
-`src/contexts/selection-baseline.ts` is documented as "the clone both replay paths use to keep a
-selection snapshot off the legacy history args", and it deep-copies `points`, `pos` and `metadata`
-and freezes the wrapper, yet neither writer calls it.
-
-Nothing writes through the alias today, so this is latent rather than a live wrong answer:
-`COMMIT_DOCUMENT_EDIT` replaces `selections` with a fresh array instead of mutating the old one,
-`history-replay.ts` copies each selection when it replays `nextSelectionState`, and
-`history-adapter.ts` copies `currentSelections` and leans on the document's later deep freeze. The
-hazard is that the invariant is currently enforced by those three call sites' restraint rather than
-by the snapshot itself, and the recorded `before` is the one value a future in-place write would
-silently rewrite.
-
-**Affected.** `src/contexts/useSelectionHistory.ts` — the `previousSelectionState` construction in
-`clearSelections()` and in `commitSelection()`; `src/contexts/selection-baseline.ts` —
-`selectionSnapshot()`, which already owns the rule.
-
-**What would close it.** Route both baselines through `selectionSnapshot(existing, activeSelectionId)`.
-Leave `nextSelectionState` alone: its own comment records that `next` is deliberately the object this
-dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
-`previousSelectionState.selections` is not the same array reference as the store's would fail before
-the change and pass after it, which is the only shape of proof this needs.
-
 ## 228. Every shape draws unfilled by default, and no entry records whether that is the ruling
 
 **Problem.** A rectangle drawn on a fresh document is stroked and never filled, because the shape
@@ -6475,66 +6274,6 @@ instead of against a grep. An earlier draft of this entry claimed `restoreVisibl
 that a throwing layer processor was a way to reach it; both were false — it is module-private, so no test can
 name it, but three drive it, and `createLayerSource` appears nowhere in `layer-renderer.ts`.
 
-## 240. Durable materialization never sees a `reposition` that follows a raster operation, so a moved layer's pixels land at the wrong origin
-
-**Problem.** `durable-replay.ts` folds a move into `layer.snapshot.pos` and leaves `layer.operations`
-untouched. The producer loop in `materialization.ts` pushes only `apply-affine-transform` and
-`apply-filter` into its retained segment and `continue`s past everything else, so it cannot observe a
-move that was recorded after a raster operation. It starts from the post-move origin and then applies
-each raster op's own frame from there.
-
-Concrete: a layer at `pos` `{0,0,100,100}`; a Blur stroke dragged outside it commits
-`rasterBounds` `{-20,-20,140,140}`; the user then moves the layer `+50,+50`. Legacy replay publishes
-the layer at `{30,30,140,140}`. Durable materialization starts `origin` at `{50,50}`, widens it to
-`{-20,-20}`, blits the source at `+70,+70` rather than `+50,+50`, and publishes `{-20,-20,140,140}` —
-every pixel of the stroke, including the transparent padding the widening added, is 50px off.
-
-**Why it is not fixed here.** Pre-existing in kind for any raster operation followed by a move, but the
-focus-stroke frame turns a placement slip into a wrong _frame_: the padding is real published area, so
-the error is the size of the stroke footprint rather than a few pixels. Closing it needs the reposition
-to reach the producer loop as an ordered operation, which is a durable-schema question (a new
-`apply-position` marker, and what it means for an entry published before it existed), not a local fix.
-
-**What would close it.** Carry the reposition into `layer.operations` in `durable-replay.ts` so the
-producer loop can accumulate the delta into `origin` at the point each raster op occurs. Failing that,
-refuse materialization of a layer whose operation list contains a raster op recorded before a
-reposition, so the failure is loud rather than a misplaced layer.
-
-**Files.** `src/contexts/durable-replay.ts` — the `reposition-layer` arm; `src/contexts/materialization.ts` —
-the producer's operation loop and `origin` bookkeeping;
-`src/contexts/__tests__/materialization.ordering.test.ts` — the only suite that observes `origin`.
-
-**Provenance.** Found 2026-10-05 on `main` by a review of the focus-tool stroke frame, which checked
-whether the durable path stages the same frame the live path does. The staging itself is correct and now
-tested; this is the one case where the surrounding replay disagrees with it.
-
-## 241. `isRasterStrokeArgs` names the focus family in a literal, so a fourth focus tool must be remembered in two places
-
-**Problem.** `src/util/typeGuards.ts` lists `['blur', 'sharpen', 'smudge']` as the focus family. Four
-other modules — `useLayer.ts`, `history-replay.ts`, `history-append.ts`, `history-adapter.ts` — combine
-that predicate with the registry's `commit` kind independently. `sharpen` and `smudge` are already
-`commit: 'raster'`, so only `blur` depends on the guard.
-
-Register a fourth focus tool with `commit: 'layer-operation'` and, unless the literal is also updated,
-its stroke bakes as a retained whole-layer filter in the live path, in legacy replay, in the durable
-validator (where `retainedToolOperationKind` returns `'apply-filter'`), and in the adapter — with nothing
-failing, and the stroke rendering as a whole-layer blur under a brush-shaped history entry.
-
-**Why it is not fixed here.** Deriving the family from the registry inside `isRasterStrokeArgs` makes a
-`util` module depend on the processor registry, which `StoreContext.boundary-gates.test.ts` governs, and
-no fourth focus tool is registered. The failure needs the new tool to be forgotten in one place, which is
-a narrower risk than the import-graph change to prevent it.
-
-**What would close it.** Give the registry a `stroke: true` capability flag and have the predicate read
-it, so registering the tool is the whole of the work. `toolProcessors.ts` already carries per-tool
-capabilities (`commit`, `requiresCanvasFilter`, `compositesOntoInput`), so this is the same shape.
-
-**Files.** `src/util/typeGuards.ts` — `isRasterStrokeArgs()`; `src/tools/toolProcessors.ts` —
-`ToolProcessorDefinition`; `src/contexts/useLayer.ts`, `src/contexts/history-replay.ts`,
-`src/contexts/history-append.ts`, `src/contexts/history-adapter.ts` — the four independent re-questions.
-
-**Provenance.** Found 2026-10-05 on `main` by the same review as §240.
-
 ## 242. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
 
 **The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate the two
@@ -6792,41 +6531,3 @@ container-verification layer wholesale and re-adds `color`, `levels` and `transf
 rail. Board issue `ph-108` carries the full evidence.
 
 ---
-
-## 248. One malformed `previousSelectionState` voids the entire durable shadow, and the same shape one entry later is tolerated
-
-**Problem.** `legacyHistoryToDurable` derives the selection baseline with
-`deriveSelectionBaseline(legacyHistory)` **before** its per-entry loop and outside any
-`try`, so a single malformed argument anywhere in the timeline is not a per-entry
-diagnostic — it is the failure of the whole conversion.
-
-`deriveSelectionBaseline` (`selection-baseline.ts`) takes the first non-disabled
-`SELECTION_ACTION` and passes `previous?.selections` straight to `selectionSnapshot`.
-That function's parameter is `readonly Selection[] = []`, so the default rescues
-`undefined` and nothing else: a first entry carrying `previousSelectionState: { selections:
-null }` supplies `null`, and `null.map` throws a `TypeError`. The result is
-`status: 'unavailable'`, `document: null`, and one `conversion-failed` diagnostic with
-**no `historyId`** — the user is told the document is unavailable and is given nothing to
-blame. Undo and redo for the whole document stop working.
-
-The asymmetry is the defect. `deriveSetSelectionEntry` reads the same field **through a
-three-clause structural guard** and falls back to the tracked baseline when it fails, so a
-malformed `previousSelectionState` one entry later is merely ignored. Identical data,
-opposite blast radius, decided only by position in the timeline.
-
-Current behaviour is pinned as a tripwire by
-`it('voids the whole conversion for an unreadable previous state on the FIRST selection entry')`
-in `src/contexts/__tests__/history-adapter.safety.test.ts`, whose docblock states that a fix
-must DELETE that test rather than edit it.
-
-**Fix.** Give `deriveSelectionBaseline` the same structural tolerance
-`deriveSetSelectionEntry` already has — an unreadable `previousSelectionState` falls back to
-the empty selection snapshot — and move the derivation inside the conversion's error boundary
-so a failure is attributable rather than fatal. The type says `previousSelectionState?: SelectionSnapshot`,
-so `{ selections: null }` is already outside the contract; the defect is that nothing checks
-it before dereferencing. Do NOT fix this by bounding the baseline lookup: that is §31's rule
-and reopening it reintroduces a data-loss bug.
-
-**Files.** `src/contexts/selection-baseline.ts` (`deriveSelectionBaseline`, `selectionSnapshot`),
-`src/contexts/history-adapter.ts` (`legacyHistoryToDurable`),
-`src/contexts/__tests__/history-adapter.safety.test.ts`

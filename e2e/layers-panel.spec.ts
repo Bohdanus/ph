@@ -408,16 +408,19 @@ test.describe('Layers panel', () => {
     expect(isGreen(await colorAt(merged, GREEN_SAMPLE, STROKE_SAMPLE_RADIUS))).toBe(true);
 
     // WHOSE artwork is that? Everything above is a read of pixels that were already on the
-    // canvas before the merge ran, and that is the trap: `mergeAllLayers` derives its raster
-    // FROM the canvas it is about to replace (`createImageBitmap(canvasRef.current)`,
-    // `useLayer.ts:732`), and `drawLayersToCanvas` is built to leave the last visible canvas
-    // intact when a source or processor fails (`layer-renderer.ts:130-137,160-163`). So a
-    // merge that publishes one row named `Merged Layer` whose layer never composites leaves
-    // the pre-merge composite on the glass, and this test stays green — the assertions above
-    // are read against the very pixels the flatten was supposed to replace.
+    // canvas before the merge ran, and that is the trap: a merge publishes a record and the
+    // glass is repainted in a separate step, and `drawLayersToCanvas` is built to leave the last
+    // visible canvas intact when a source or processor fails (it restores the previous extent and
+    // pixels rather than publishing a broken one). So a merge that published one row named
+    // `Merged Layer` whose layer never composited leaves the pre-merge composite on the glass and
+    // this test stays green — the assertions above are read against the very pixels the flatten
+    // was supposed to replace. The merge no longer derives its raster from the display canvas at
+    // all (`mergeLayers` renders the composite from the layer record through `renderExportCanvas`),
+    // which closes the stale-snapshot half of that trap; the read below is what still separates
+    // the two, and it keeps doing so for a composite that publishes but never draws.
     //
-    // Hiding the merged layer is the only read that separates the two: if the merged layer
-    // owns the artwork, hiding it takes the artwork with it.
+    // Hiding the merged layer is the only read that ties the artwork to the published layer: if
+    // the merged layer owns it, hiding it takes the artwork with it.
     //
     // Read as "these colours are gone" rather than through `isBare`, because the bare
     // reading has a floor this document sits below: with the merged layer hidden the canvas

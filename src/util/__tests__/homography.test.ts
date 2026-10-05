@@ -153,8 +153,19 @@ describe('homography', () => {
       // The projective row stays zero, so the translation really is affine. A wrong sign on the
       // `-to.x * from.x` columns would leave a non-zero `g`/`h` here even though the corners
       // would still map.
-      expect(Math.abs(matrix.g)).toBe(0);
-      expect(Math.abs(matrix.h)).toBe(0);
+      //
+      // Compared to a tolerance, not to `0`. A pure translation of a rect has an exactly zero
+      // projective row in exact arithmetic, but the solver's elimination leaves float residue
+      // whose presence depends on the ARITHMETIC rather than on the answer: sweeping
+      // translations of this 64x32 rect gives an exactly zero `g` every time, while the same
+      // translations of a 32x64 rect leave `g` around 3.5e-18 and some sizes reach 1.4e-17. A
+      // legitimate refactor — a different pivot choice in the row search, a different
+      // accumulation order — would move this fixture between those two states and turn a
+      // matrix that is right to 17 significant figures red. 1e-12 still separates the two
+      // cases by ten orders of magnitude, because the mutant this guards against (a sign flip
+      // on the `-to.x * from.x` columns) leaves `g`/`h` O(100), not O(1e-17).
+      expect(matrix.g).toBeCloseTo(0, 12);
+      expect(matrix.h).toBeCloseTo(0, 12);
     });
 
     it('rejects four correspondences whose destination is a single repeated point', () => {

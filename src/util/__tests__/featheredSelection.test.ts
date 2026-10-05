@@ -96,11 +96,6 @@ describe('feathered selection masks', () => {
     // -2 * SQRT2 = -2.8284271, t = (3 - 2.8284271) / 6 = 0.0285955, smoothStep =
     // 0.000817705 * 2.9428090 = 0.0024064, * 255 = 0.61364 -> 1.
     expect(twoSteps[0]).toBe(1);
-
-    // The same pixel under a Manhattan metric would be -4, clamped to t = 0, and alpha 0.
-    const manhattanDistance = -4;
-    const manhattanT = Math.max(0, Math.min(1, (manhattanDistance + 3) / 6));
-    expect(manhattanT).toBe(0);
   });
 });
 

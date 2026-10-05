@@ -77,7 +77,9 @@
  *   sees it. That path is structurally safe anyway — the branch tip contains main as an
  *   ancestor, so the result IS the branch tree and every difference from main is a change
  *   the branch made on purpose. Verified, not assumed.
- * - `--no-verify`, which bypasses every hook in the repository, this one included.
+ * - `--no-verify`, which bypasses every GATING hook in the repository — `pre-commit`,
+ *   `pre-push` and `pre-merge-commit`, this one included. It does not bypass `post-merge`,
+ *   which still fires on the merge and still reports; nothing here can refuse either.
  * - a merge whose result equals HEAD's file where the INCOMING side had nothing of its
  *   own there to lose — `-X ours` against a branch whose only change was a deletion, or
  *   against a file main already holds as a superset. Measured and asserted: those stay

@@ -62,6 +62,7 @@ function makeSnapshot(
     blendMode: 'source-over' as GlobalCompositeOperation,
     order: 0,
     pos,
+    frame: { ...defaultFrame },
     source,
   });
 }
@@ -839,7 +840,19 @@ describe('materialization operation ordering (P1.10)', () => {
       expect(callsOf('filter')).toEqual([{ op: 'filter', args: ['blur(3px)'] }]);
 
       // The composed bounds, as the renderer offsets the source back into them.
-      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-20, -40] }]);
+      //
+      // The affine product of `translate(10,20)` and `scale(2,2)` maps the 100x80 source into
+      // (20, 40, 200, 160): scale doubles the rectangle and translate then shifts it 10,20 of
+      // SOURCE pixels, which is 20,40 once doubled. The renderer negates that origin, because it
+      // has already allocated a surface exactly the size of the composed extent and is placing the
+      // source inside it.
+      //
+      // The blur's own spread is in those numbers: the surface has to HOLD the halo, so the extent
+      // is the composed affine extent grown by three sigmas of the radius-3 kernel — nine pixels on
+      // every edge — and the source is offset back by the GROWN origin, landing 9,9 inside the
+      // surface rather than at its corner. A translate of (-20, -40) here would be a surface that
+      // starts nine pixels before the content it was allocated for, with the halo cut at its edge.
+      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-11, -31] }]);
       expect(callsOf('drawImage')).toEqual([{ op: 'drawImage', args: [expect.anything(), 0, 0, 100, 80] }]);
 
       // ORDER, and only the two orders that change pixels. `transform` post-
@@ -885,6 +898,141 @@ describe('materialization operation ordering (P1.10)', () => {
     materialized.lease.release();
 
     void close;
+    registry.shutdown();
+  });
+});
+
+/**
+ * # A stroke's frame, and a move recorded after it
+ *
+ * The one ordering the fold above cannot get right on its own. A stroke's
+ * `rasterBounds` is ABSOLUTE — the frame the layer was padded into, in document
+ * space — and from that commit the layer's box is the frame, which the durable
+ * snapshot never learns: it keeps folding position assignments into the box the
+ * layer had BEFORE the stroke. So a move after a stroke moves a box the fold is
+ * not holding, and the two numbers that go wrong are different ones.
+ *
+ * - The box the source is padded FROM is the layer's box at the moment the
+ *   stroke was recorded. Nothing in the record restates it, because a
+ *   reposition states the box moved TO and overwrites the one before it. It
+ *   arrives as the fold origin at the head of the retained list.
+ * - The box the frame is PUBLISHED at is the move, applied when the fold reaches
+ *   the marker, which is the legacy `resize ?? move` patch.
+ *
+ * The two are asserted apart on purpose, because a fold that fixed only the
+ * second would publish the right frame with the padding still offset by the
+ * whole move, and the bounds would read correct.
+ */
+describe('ordered fold across a reposition that follows a raster operation', () => {
+  const strokeFrame = Object.freeze({ x: -20, y: -20, width: 140, height: 140 });
+  const strokeArgs = Object.freeze({
+    toolName: 'blur' as const,
+    radius: 3,
+    points: Object.freeze([{ x: 60, y: 60 }]),
+    rasterBounds: strokeFrame,
+  });
+
+  /** The layer as `replayDurableDocument` leaves it: moved, and still sized by the box before the stroke. */
+  const movedLayer = (operations: DurableOperation[]): DurableReplayLayer =>
+    Object.freeze({
+      snapshot: makeSnapshot('layer-1', blankSource({ width: 100, height: 100 }), {
+        x: 30,
+        y: 30,
+        width: 100,
+        height: 100,
+      }),
+      operations: Object.freeze([...operations]),
+    });
+
+  const foldOrigin = Object.freeze({
+    kind: 'reposition-layer' as const,
+    layerId: 'layer-1',
+    resize: Object.freeze({ x: 0, y: 0, width: 100, height: 100 }),
+  });
+  const stroke = Object.freeze({
+    kind: 'apply-raster-processor' as const,
+    layerId: 'layer-1',
+    processorId: 'blur',
+    version: 1,
+    args: strokeArgs,
+  });
+  const move = Object.freeze({
+    kind: 'reposition-layer' as const,
+    layerId: 'layer-1',
+    move: Object.freeze({ x: 30, y: 30 }),
+  });
+
+  it('pads the stroke from the box the fold started at, and publishes it at the moved box', async () => {
+    const registry = new AssetRegistry();
+    const layer = movedLayer([foldOrigin, stroke, move]);
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      // The padding blit is the only three-argument `drawImage` the materializer
+      // makes itself: `drawEvaluatedPresentation` and the processor both draw
+      // WITH a destination size, so the offset is the one number here that says
+      // which box the source was placed from. Read from the recorded contexts
+      // rather than from `materialized.bounds`, which the move can satisfy on its
+      // own.
+      const paddings = recordedRenderCalls.flat().filter((call) => call.op === 'drawImage' && call.args.length === 3);
+      expect(paddings[0]).toEqual({ op: 'drawImage', args: [expect.anything(), 20, 20] });
+
+      // The source is 100x100 at the origin, inside a frame that starts 20px
+      // before it. Padded from the snapshot's moved box instead, the same blit
+      // reads 50,50 — the frame right, every pixel of it 30px off.
+      //
+      // And the published box is the frame MOVED: 140x140, not the snapshot's
+      // 100x100, because a move states the origin and inherits the size the fold
+      // had reached, which is the stroke frame's.
+      expect(materialized.bounds).toEqual({ x: 30, y: 30, width: 140, height: 140 });
+
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('publishes a resize recorded after a stroke as the whole box, and pads from the box before the stroke', async () => {
+    const registry = new AssetRegistry();
+    const resize = Object.freeze({
+      kind: 'reposition-layer' as const,
+      layerId: 'layer-1',
+      resize: Object.freeze({ x: 5, y: 6, width: 200, height: 150 }),
+    });
+    const layer = movedLayer([foldOrigin, stroke, resize]);
+    recordedRenderCalls = [];
+
+    try {
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      const paddings = recordedRenderCalls.flat().filter((call) => call.op === 'drawImage' && call.args.length === 3);
+      expect(paddings[0]).toEqual({ op: 'drawImage', args: [expect.anything(), 20, 20] });
+      // `resize ?? move`, so a resize states the origin AND the size, and the
+      // frame the stroke widened to is not inherited.
+      expect(materialized.bounds).toEqual({ x: 5, y: 6, width: 200, height: 150 });
+
+      materialized.lease.release();
+    } finally {
+      vi.unstubAllGlobals();
+      registry.shutdown();
+    }
+  });
+
+  it('refuses a retained list that carries a reposition after a raster operation and no fold origin', async () => {
+    // Unreachable from `replayDurableDocument`, which writes the origin as it
+    // folds. Reachable by a caller that assembles the list itself, and the answer
+    // has to be loud: the only other answer available is to pad from the box the
+    // layer moved to and publish the stroke's frame with its content offset by
+    // the whole move.
+    const registry = new AssetRegistry();
+    const layer = movedLayer([stroke, move]);
+
+    await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/no fold origin/);
     registry.shutdown();
   });
 });

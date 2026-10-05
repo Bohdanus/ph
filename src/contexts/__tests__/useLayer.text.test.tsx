@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolArgs } from '../tool-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
-import type { Layer, ToolLayerSource } from '../layer-types.ts';
+import type { Layer, ToolLayerSource, FilterLayerOperation } from '../layer-types.ts';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { useLayers } from '../useLayer.ts';
@@ -587,6 +587,55 @@ describe('useLayers text commit publishes the cleared draft', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
+  });
+});
+
+describe('useLayers retypes a text layer that carries a retained operation', () => {
+  beforeEach(() => {
+    drawLayersToCanvas.mockClear();
+  });
+
+  it('replaces the source in place and keeps the operation the layer already had', () => {
+    // The commit half of re-entering a filtered type layer. `textLayerEditTarget` now hands the
+    // editor a target for this layer, so the commit that follows is the one this file has to
+    // answer for: the source is replaced IN PLACE and the retained operation survives, which is
+    // what both replay authorities do (`replayHistory`'s replace arm and `replayDurableDocument`)
+    // and what both renderers assume when they re-apply it to the new source.
+    //
+    // A `nextLayer` built from the REPLACEMENT rather than spread over the existing layer drops the
+    // operation, and the failure is silent in the worst way: the layer still draws, the history
+    // still replays, and the user's blur is simply gone from the next render onward.
+    const blur: FilterLayerOperation = { id: 'op-blur', args: { toolName: 'blur', radius: 4 }, enabled: true };
+    const args = makeTextArgs() as TextToolArgs;
+    const { result } = setupCommittedLayers([
+      committedTextLayer('committed', { operations: [blur], tmpCanvas: new OffscreenCanvas(100, 50) }, args),
+    ]);
+    act(() => {
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
+    });
+
+    act(() => {
+      result.current.store.currentArgs.current = {
+        ...makeTextArgs({ text: 'Retyped' }),
+        editingLayerId: 'committed',
+      } as ToolArgs;
+    });
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+
+    // ONE layer, and it is the entered one: a create arm would stack a second over the first.
+    expect(Object.keys(result.current.store.layers)).toEqual(['committed']);
+    const replaced = result.current.store.layers.committed;
+    expect(replaced?.source).toMatchObject({ kind: 'tool', args: { text: 'Retyped' } });
+    // The stored rect is LAYER-LOCAL, reduced by the pos the commit derived from the measured box,
+    // which is the coordinate the creator renders from. The extent is the box's own, so only the
+    // pair of zeros reads the origin.
+    expect(replaced?.source).toMatchObject({ pos: { x: 0, y: 0 } });
+    expect(replaced?.operations).toEqual([blur]);
+    // And the commit is recorded, so the retyped source survives a replay rather than living only
+    // in the store's layer record.
+    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 });
 

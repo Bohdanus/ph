@@ -332,6 +332,13 @@ describe('StoreContext layer action table', () => {
    * The witness column is what keeps each row honest: `commitSelection`-style arms
    * that never write the status would satisfy a status assertion on their own, so
    * every row proves its own transition still ran.
+   *
+   * The route into `unavailable` is `SET_DURABLE_STATUS` rather than a pen edit.
+   * A conversion that reports a per-entry `error` no longer withholds the document
+   * at all, so this matrix could no longer reach the state it exists to pin; the
+   * writers that still produce this verdict are a legacy-replay failure and a
+   * boundary diagnostic, and `SET_DURABLE_STATUS` is the store's own record of
+   * either.
    */
   it.each([
     ['BATCH_UPDATES', { fileName: 'still-broken.psd' }, (store: StoreData) => store.fileName, 'still-broken.psd'],
@@ -348,10 +355,21 @@ describe('StoreContext layer action table', () => {
     (actionType, payload, readWitness, expectedWitness) => {
       const { store, dispatch } = renderWithProbe();
 
-      // A pen edit has no durable equivalent, so the commit's whole-timeline
-      // conversion fails: `unavailable`, no shadow, one error diagnostic.
       act(() => {
-        dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('pen-edit', 'pen') } });
+        dispatch()({
+          type: 'SET_DURABLE_STATUS',
+          payload: {
+            status: 'unavailable',
+            diagnostics: [
+              {
+                historyId: 'pen-edit',
+                severity: 'error',
+                code: 'conversion-failed',
+                message: 'History replay is unavailable',
+              },
+            ],
+          },
+        });
       });
       expect(store().durableStatus).toBe('unavailable');
       expect(store().durableDocument).toBeNull();

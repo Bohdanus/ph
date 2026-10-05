@@ -15,28 +15,28 @@ inside a file is gone, the unit it sat in is not. The third column is how far ea
 when the map was built, **and those distances are history in the same way the map is**: they describe
 the pass that re-derived it, not the tree today, which has moved again:
 
-| What the previous revision cited              | The unit, and what is actually there                                                                            | What moved                                               |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `Mode`                                        | `Figures/Shape.tsx` — `Shape()`: `<select aria-label="Tool mode">`                                              | 8 lines lower                                            |
-| `Fill`, `Stroke`                              | `Figures/Shape.tsx` — `Shape()`: `id="filled-toggle"`                                                           | 8 lines lower                                            |
-| `Stroke width`                                | `Figures/Shape.tsx` — `Shape()`: `id="thickness-slider"`                                                        | 8 lines lower                                            |
-| `Stroke type`                                 | `Figures/Shape.tsx` — `Shape()`: `id="dash-toggle"`                                                             | 8 lines lower                                            |
-| `Opacity`                                     | `Figures/Shape.tsx` — `Shape()`: `id="alpha-slider"`                                                            | 8 lines lower                                            |
-| `Radius`                                      | `Figures/Shape.tsx` — `Shape()`'s `figure === 'rectangle'` gate: `aria-label="Radius"`                          | 17 — the furthest that file moved                        |
-| `Cap`                                         | `Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate: `aria-label="Line cap"`                             | 11                                                       |
-| `cornerRadius` read by the renderer           | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch: `const radius = args.cornerRadius ?? 0` | 24 — `drawShape()` grew above it                         |
-| `hasFill` derived from `toolMode`             | `src/tools/shape.ts` — `drawShape()`: `const hasFill = args.toolMode !== 'path' && args.hasFill`                | 24                                                       |
-| the shared triangle/polygon branch            | `src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' \|\| figure === 'polygon'` branch                 | 24                                                       |
-| the side count                                | `src/tools/shape.ts` — that same branch: `const sides = figure === 'triangle' ? 3 : 5`                          | 24                                                       |
-| the rectangle branch                          | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch                                          | 24                                                       |
-| the oval branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'oval'` branch                                               | 24                                                       |
-| the line branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'line'` branch                                               | 24                                                       |
-| Shift geometry                                | `src/tools/shape.ts` — `normalizeShapeGeometry()` and its `if (shiftKey)` arm                                   | 22 and 24                                                |
-| the six figure blocks                         | `src/tools/settings.ts` — `defaultSettings`                                                                     | 7 each                                                   |
-| the canvas dispatch                           | `src/components/Main/Main.tsx` — `Main()`: `toolName === 'shape' \|\|`, first arm of the dispatch               | 8                                                        |
-| the six fly-out entries                       | `toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out                                                            | **6 higher** — the only one here that went the other way |
-| `orderedFigures` and the index arithmetic     | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                | 40 — the furthest in the family                          |
-| the `U` handler: keep, else force `rectangle` | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                | 40, the same move                                        |
+| What the previous revision cited                                   | The unit, and what is actually there                                                                                         | What moved                                               |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `Mode`                                                             | `Figures/Shape.tsx` — `Shape()`: `<select aria-label="Tool mode">`                                                           | 8 lines lower                                            |
+| `Fill`, `Stroke`                                                   | `Figures/Shape.tsx` — `Shape()`: `id="filled-toggle"`                                                                        | 8 lines lower                                            |
+| `Stroke width`                                                     | `Figures/Shape.tsx` — `Shape()`: `id="thickness-slider"`                                                                     | 8 lines lower                                            |
+| `Stroke type`                                                      | `Figures/Shape.tsx` — `Shape()`: `id="dash-toggle"`                                                                          | 8 lines lower                                            |
+| `Opacity`                                                          | `Figures/Shape.tsx` — `Shape()`: `id="alpha-slider"`                                                                         | 8 lines lower                                            |
+| `Radius`                                                           | `Figures/Shape.tsx` — `Shape()`'s `figure === 'rectangle'` gate: `aria-label="Radius"`                                       | 17 — the furthest that file moved                        |
+| `Cap`                                                              | `Figures/Shape.tsx` — `Shape()`'s `figure === 'line'` gate: `aria-label="Line cap"`                                          | 11                                                       |
+| `cornerRadius` read by the renderer                                | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch: `const radius = args.cornerRadius ?? 0`              | 24 — `drawShape()` grew above it                         |
+| `hasFill` derived from `toolMode`, `hasFill` and `backgroundColor` | `src/tools/shape.ts` — `drawShape()`: `const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor` | 24                                                       |
+| the shared triangle/polygon branch                                 | `src/tools/shape.ts` — `drawShape()`'s `figure === 'triangle' \|\| figure === 'polygon'` branch                              | 24                                                       |
+| the side count                                                     | `src/tools/shape.ts` — that same branch: `const sides = figure === 'triangle' ? 3 : 5`                                       | 24                                                       |
+| the rectangle branch                                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'rectangle'` branch                                                       | 24                                                       |
+| the oval branch                                                    | `src/tools/shape.ts` — `drawShape()`'s `figure === 'oval'` branch                                                            | 24                                                       |
+| the line branch                                                    | `src/tools/shape.ts` — `drawShape()`'s `figure === 'line'` branch                                                            | 24                                                       |
+| Shift geometry                                                     | `src/tools/shape.ts` — `normalizeShapeGeometry()` and its `if (shiftKey)` arm                                                | 22 and 24                                                |
+| the six figure blocks                                              | `src/tools/settings.ts` — `defaultSettings`                                                                                  | 7 each                                                   |
+| the canvas dispatch                                                | `src/components/Main/Main.tsx` — `Main()`: `toolName === 'shape' \|\|`, first arm of the dispatch                            | 8                                                        |
+| the six fly-out entries                                            | `toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out                                                                         | **6 higher** — the only one here that went the other way |
+| `orderedFigures` and the index arithmetic                          | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                             | 40 — the furthest in the family                          |
+| the `U` handler: keep, else force `rectangle`                      | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                             | 40, the same move                                        |
 
 Two of those were not drift but **a real position in the wrong unit**: the two citations that named
 `Figures/Shape.tsx` landed on `figureLabel` — its closing brace and its declaration — so the entries
@@ -353,9 +353,9 @@ Photoshop does not have at that level, and it is rendered for the line figure on
   `docs/TOOLS-TOO-HARD.md` — "Per-shape Fill and Stroke swatches with Gradient and Pattern". The bar
   offers **one `Filled` checkbox**
   (`Figures/Shape.tsx` — `Shape()`'s `Filled` checkbox) over the app's single foreground/background
-  pair: `setShapeCtx` writes
-  `ctx.strokeStyle = color` and `ctx.fillStyle = backgroundColor` (`src/tools/shape.ts` —
-  `setShapeCtx()`),
+  pair: `setShapeCtx` writes `ctx.strokeStyle = color` unconditionally and
+  `ctx.fillStyle = backgroundColor` only under `if (hasFill && backgroundColor) {`
+  (`src/tools/shape.ts` — `setShapeCtx()`),
   so there is no second paint source to configure, let alone four choices per swatch. `partial` on
   both rows is therefore the right reading, and the _detail_ is the Photoshop side — "a swatch
   offering None, Solid Color, Gradient or Pattern" — which is exactly the control the policy file
@@ -365,7 +365,7 @@ Photoshop does not have at that level, and it is rendered for the line figure on
   the three-button **Mode** group — `Figures/Shape.tsx` — `Shape()`'s "Tool mode" `<select>`, with
   `shape` / `path`
   / `pixels` — and nothing else that could be a path type. What Path mode does in this app is the
-  single line `src/tools/shape.ts` — `drawShape()` — `const hasFill = args.toolMode !== 'path' && args.hasFill`,
+  single line `src/tools/shape.ts` — `drawShape()` — `const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor`,
   so the same rasterized outline is committed with the fill suppressed. Adobe's own name for the
   setting that _would_ create a work path is the Path-mode `Operation` row on the same page — "Select
   how new paths interact with existing paths (Add, Subtract, Intersect, or Exclude)" — and there is
@@ -378,7 +378,7 @@ Photoshop does not have at that level, and it is rendered for the line figure on
 Shape creates a filled shape layer; Path creates a vector path with no pixels; Pixels rasterizes
 into the selected layer and is the only mode that carries a blend mode, an Opacity slider and an
 anti-alias control. The app's `toolMode` is read in exactly one place,
-`src/tools/shape.ts` — `drawShape()` — `const hasFill = args.toolMode !== 'path' && args.hasFill` — so
+`src/tools/shape.ts` — `drawShape()` — `const hasFill = args.toolMode !== 'path' && !!args.hasFill && !!args.backgroundColor` — so
 Path mode
 suppresses the fill and nothing else. All three modes still commit a rasterized layer.
 

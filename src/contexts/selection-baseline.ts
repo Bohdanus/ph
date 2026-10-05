@@ -14,6 +14,31 @@ export type SelectionHistoryArgs = {
   nextSelectionState?: SelectionSnapshot;
 };
 
+/**
+ * Structural guard for a durable selection snapshot, and the only definition of
+ * what "readable" means for one.
+ *
+ * It sits beside {@link selectionSnapshot} — its own writer — so the read rule
+ * and the write rule cannot drift, and it is shared rather than restated because
+ * a `previousSelectionState` and a `nextSelectionState` are the same shape read
+ * at two different places: one tolerance for the field, not a position-dependent
+ * one.
+ *
+ * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts`): a snapshot that
+ * omits the id still retains its selections and only loses the active id.
+ * Rejecting that shape here would make the shadow clear selections that legacy
+ * replay keeps. The guard only asks whether the value can be read as a snapshot
+ * at all; normalizing the id to `null` is the caller's job.
+ */
+export function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as { selections?: unknown; activeSelectionId?: unknown };
+  if (!Array.isArray(candidate.selections)) return false;
+  const { activeSelectionId } = candidate;
+  return activeSelectionId === undefined || activeSelectionId === null || typeof activeSelectionId === 'string';
+}
+
 function cloneSelection(selection: Selection): Selection {
   return {
     ...selection,
@@ -44,6 +69,19 @@ export function selectionSnapshot(
 }
 
 /**
+ * The entry {@link deriveSelectionBaseline} seeds from: the FIRST non-disabled
+ * `SELECTION_ACTION` on the timeline, or `null` when there is none.
+ *
+ * Published so a caller that has to REPORT something about the derivation —
+ * which entry supplied the state, which one carried a state it could not read —
+ * names the same entry the derivation read, instead of searching for it again
+ * and reaching a second answer.
+ */
+export function selectionBaselineEntry(history: readonly HistoryItem[]): HistoryItem | null {
+  return history.find((item) => item.actionName === SELECTION_ACTION && !item.disabled) ?? null;
+}
+
+/**
  * The single derivation of the selection state a legacy timeline starts from.
  *
  * The lookup is unbounded and takes the timeline wholesale, so the durable
@@ -66,9 +104,24 @@ export function selectionSnapshot(
  * construct, and they must be retired in the same change as any bound:
  * HANDOFF.md §31 names two of the three. This comment records why the argument
  * for keeping it is weaker than it reads; it is not itself a recommendation.
+ *
+ * An UNREADABLE `previousSelectionState` falls back to the empty snapshot
+ * rather than throwing, through the same {@link isValidSelectionSnapshot} guard
+ * the per-entry derivation in `history-adapter.ts` reads `nextSelectionState`
+ * through. The asymmetry that guard used to hide is closed: this entry is a
+ * field read exactly like any other, and a `TypeError` out of it took the whole
+ * conversion down — `document: null`, one `conversion-failed` diagnostic with no
+ * `historyId`, and no undo for the document — while the identical value one
+ * entry later was silently tolerated. Both callers read the state through this
+ * function, so the fallback is not a divergence to be reported: legacy replay
+ * seeds empty for the same reason the durable conversion does, which is the
+ * parity this helper exists to keep. `SelectionSnapshot` types the field, so a
+ * `{ selections: null }` here is already outside the contract; the tolerance is
+ * the consequence, not an admission that the shape is valid.
  */
 export function deriveSelectionBaseline(history: readonly HistoryItem[]): SelectionSnapshot {
-  const first = history.find((item) => item.actionName === SELECTION_ACTION && !item.disabled);
-  const previous = (first?.args as SelectionHistoryArgs | undefined)?.previousSelectionState;
-  return selectionSnapshot(previous?.selections, previous?.activeSelectionId ?? null);
+  const previous = (selectionBaselineEntry(history)?.args as SelectionHistoryArgs | undefined)?.previousSelectionState;
+  return isValidSelectionSnapshot(previous)
+    ? selectionSnapshot(previous.selections, previous.activeSelectionId)
+    : selectionSnapshot();
 }

@@ -44,6 +44,7 @@ const expectedResult = (id: string, order: number): DurableLayerSnapshot => ({
   blendMode: 'source-over',
   order,
   pos: { x: 0, y: 0, width: 100, height: 80 },
+  frame: { ...frame },
   source: { kind: 'blank', color: '#ffffff', opacity: 1, size: { width: 100, height: 80 }, isBedrock: false },
 });
 
@@ -95,7 +96,13 @@ function mergeContext(
   layers: ReturnType<typeof preLayers>,
   liveLayers?: LayersRecord
 ): SourceBackedEntryContext {
-  return { documentId, registry, preLayers: layers, ...(liveLayers ? { liveLayers } : {}) };
+  return {
+    documentId,
+    registry,
+    preLayers: layers,
+    documentFrame: { ...frame },
+    ...(liveLayers ? { liveLayers } : {}),
+  };
 }
 
 /** The pair the store supplies: a converted baseline plus one new layer on top. */

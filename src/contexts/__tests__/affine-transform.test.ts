@@ -1,18 +1,18 @@
 /**
  * Fallback coverage for `src/contexts/affine-transform.ts`:
- * `getLayerPresentationCorners` (`:221`) and `getTransformFromHistoryArgs`
- * (`:259`). Both are pure geometry helpers that every layer command depends on,
- * and both have fallback branches that silently widen a result instead of
- * throwing, so the fallbacks are pinned here rather than left to whatever the
- * runtime layer happens to look like.
+ * `getLayerPresentationCorners` and `getTransformFromHistoryArgs`. Both are pure
+ * geometry helpers that every layer command depends on, and both have fallback
+ * branches that silently widen a result instead of throwing, so the fallbacks are
+ * pinned here rather than left to whatever the runtime layer happens to look like.
+ *
+ * The layer-level EXTENT is not covered here, because it is not this module's: it is
+ * `layerPresentationBounds()` in `src/contexts/presentation-evaluator.ts`, and one test below reads
+ * it only to pin the one case in which the corners and the extent are the same box.
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  getLayerPresentationBounds,
-  getLayerPresentationCorners,
-  getTransformFromHistoryArgs,
-} from '../affine-transform.ts';
+import { getLayerPresentationCorners, getTransformFromHistoryArgs } from '../affine-transform.ts';
+import { layerPresentationBounds } from '../presentation-evaluator.ts';
 import type { Layer } from '../layer-types.ts';
 
 const pos = { x: 100, y: 50, width: 200, height: 100 };
@@ -91,12 +91,16 @@ describe('getLayerPresentationCorners', () => {
     expect(getLayerPresentationCorners(layer)).toEqual(getLayerPresentationCorners(makeLayer()));
   });
 
-  it('agrees with getLayerPresentationBounds on the axis-aligned case', () => {
+  it('agrees with the presentation extent on the axis-aligned case, where the filters add nothing', () => {
+    // The corners are matrix-only and the extent carries the retained filters' spread, so they are
+    // the same box only when no filter contributes a margin — which is what this layer is. The
+    // fixture is the point: the agreement asserted here is the one that can be had, and a layer
+    // with a filter is covered where the margin is the subject.
     const layer = makeLayer();
 
     const xs = getLayerPresentationCorners(layer).map((point) => point.x);
     const ys = getLayerPresentationCorners(layer).map((point) => point.y);
-    const bounds = getLayerPresentationBounds(layer);
+    const bounds = layerPresentationBounds(layer);
 
     expect(bounds).toEqual({
       x: Math.min(...xs),
