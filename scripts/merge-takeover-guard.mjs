@@ -122,7 +122,7 @@
  *   and suspect blobs past the batch buffer, which answered `clean` because an unread blob
  *   measures as no loss. That last one was fail-OPEN and is now a refusal.
  *
- * Replayed over the 407 merges on `main` before and after: the same 36 merges refused, the
+ * Replayed over EVERY merge on `main` before and after: the same merges refused, the
  * same kinds, the same paths. Every fix above is a shape that was invisible, not a verdict
  * that changed.
  */
@@ -439,50 +439,38 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
  * side's blob, and a hand edit is by definition neither. The fix is to ask git what IT would
  * have produced and compare.
  *
- * THE MEASUREMENT, and how to re-derive it. Every number below comes from running THIS
- * function over every merge reachable from a ref — not from a re-implementation, and not from a
- * regex over `CONFLICT (...)` lines. At `main` a05bbb9e, over 539 merges:
+ * THE MEASUREMENT. At `main` 7c32cd76, over 544 merges, every figure below produced by running
+ * THIS function over every merge reachable from that ref — except the two counts it cannot see
+ * from the outside, the hand-written resolutions as a whole and the conflicted paths, which need
+ * `merge-tree`'s own `--name-only` list. A re-implementation of this measurement produced a
+ * different answer three times, so the figures belong to the function and not to a script.
  *
  *   - 122 merges contain a hand-written resolution of some kind.
- *   - 293 paths were CONFLICTED and resolved by a human in the open, which is the boundary the
+ *   - 297 paths were CONFLICTED and resolved by a human in the open, which is the boundary the
  *     three whole-file shapes above already draw and this one keeps.
- *   - 141 paths were hand-edited on a merge git had already resolved cleanly, across 41 merges.
- *     136 of those 141 drop at least one line git's own merge had produced.
- *   - 10 paths git's merge produced are absent from their recorded result, and every one of the
- *     ten is `erased-by-a-side`: that branch, or `main`, had already deleted the file in its own
- *     commit, so the merge is recording a reviewed decision. Four of the ten are test files —
+ *   - 141 paths were hand-edited on a merge git had already resolved cleanly, across 39 merges;
+ *     41 merges carry some reported finding of any kind. 136 of the 141 drop at least one line
+ *     git's own merge had produced.
+ *   - 10 paths git's merge produced are absent from their recorded result. EIGHT of the ten are
+ *     `erased-after-clean-merge`: nothing but the resolution explains them, because the base did
+ *     not have the file and one side ADDED it. Four of the eight are test files —
  *     `src/contexts/__tests__/history-model.rebind.test.ts`,
  *     `src/components/SidebarRight/__tests__/LayersTab.flatten.test.tsx`,
  *     `src/components/ToolbarsRight/PaintBucket/__tests__/PaintBucket.test.tsx` and
- *     `src/tools/__tests__/paint-bucket.test.ts` — and all four are `modify/delete`
- *     resolutions, which is git's own recommendation for that conflict. They are reported.
- *   - ZERO are `erased-after-clean-merge`: no commit on this history has both sides carrying a
- *     test file and the resolution dropping it. That is the honest reason the refusal below is a
- *     forward guard rather than a repair, and it is why an earlier version of this comment's
- *     justification was wrong.
- *
- * WHY THE NUMBERS MOVED WHEN THE CONFLICT PARSING DID. A regex over `CONFLICT (...)` matches
- * git's first phrasing and not its second: a `modify/delete` conflict prints
- * `CONFLICT (modify/delete): <path> deleted in <branch> and modified in HEAD.  Version HEAD of
- * <path> left in tree.`, which never says "Merge conflict in". Those paths were therefore
- * counted as CLEAN hand edits, which is how four legitimate test-file deletions came to be
- * described here as damage a gate had failed to catch — and a gate refusing them would have
- * blocked merges that were right. Git prints the names; this parses the names.
+ *     `src/tools/__tests__/paint-bucket.test.ts` — and those four are merges that reached `main`.
+ *   - The other two are `erased-by-a-side`: a reviewed commit removed the path, which includes
+ *     every `modify/delete` conflict and is git's own recommendation there.
  *
  * WHAT IS REPORTED AND WHAT IS REFUSED, and why the line falls there.
- * - Every path a human changed after a CLEAN merge is REPORTED — 41 merges in 539 on this
+ * - Every path a human changed after a CLEAN merge is REPORTED — 39 merges in 544 on this
  *   history — and several of those edits are correct: a hand-tidied import, a comment fixed
  *   during the merge. Refusing them would train every agent to reach for `--no-verify`, which is
  *   how the three shapes above were nearly lost once already.
- * - A path BOTH sides still carry, which git's merge produced, and which the result does not
- *   contain, is REFUSED when it is a test. Nothing explains its absence: no conflict, no marker,
- *   no takeover shape, and neither side's commit removed it. The shape has no occurrence on this
- *   history, which is why it needs a guard rather than a repair — and a bulk `git rm -r`, or
- *   `git checkout --ours .` over a directory after resolving something else, produces it without
- *   anybody deciding to.
- * - A path a side had ALREADY deleted is reported and never refused, and that includes every
- *   `modify/delete` conflict: deleting the file there is git's own recommendation, and the
- *   deletion was reviewed where it was written.
+ * - A path the resolution erased, that no side's commit removed, is REFUSED when it is a test.
+ *   No conflict, no marker, no takeover shape, and no commit explains it. Four test files meet
+ *   that description on this history and all four reached `main`, which is what makes this a gate
+ *   rather than a report.
+ * - A path a side's own commit had already deleted is reported and never refused.
  * - A path that was RENAMED is reported as a rename. With rename detection on, the erasure is
  *   invisible; with it off and no rename recognition, a legitimate rename is a false refusal.
  *   Both halves are needed and only both are correct.
@@ -490,13 +478,12 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
  *   fire on 136 paths, and refusing a reworded hunk is how a gate teaches `--no-verify`.
  *
  * WHAT IT STILL CANNOT SEE, stated here so nobody relies on it.
- * - A strategy flag. `git merge -X ours` makes git take this side's hunk on a path it would
- *   otherwise have reported as conflicted, so the path looks hand-edited here. The reflog
- *   action names the flag and the census is skipped rather than guessed at — but only where
- *   git still knows it. A conflicted merge completed by an ordinary `git commit` has lost
- *   that information by then, because no ref update happened at merge time, so at THAT hook
- *   a `-X ours` merge reports its own hunks as hand edits. It cannot erase a path, so it
- *   cannot cause the refusal; it can only add lines to the report.
+ * - A strategy flag, and it is undetectable. `git merge -X ours` makes git take this side's
+ *   hunk on a path it would otherwise have reported as conflicted, so that path looks
+ *   hand-edited here. Measured with a hook installed, `GIT_REFLOG_ACTION` for `git merge -X
+ *   ours feat` is plain `merge feat`: git records a merge's RESULT, not its invocation, so no
+ *   hook can read the flag. The cost is report lines only — a strategy option resolves a hunk
+ *   and never removes a path, so it cannot cause the refusal.
  * - `rerere`. A recorded preimage can resolve a conflict without a human, and this counts
  *   that as a hand edit for the same reason. It is off in this repository
  *   (`git config rerere.enabled` is unset) and the limit is stated rather than assumed.
@@ -541,11 +528,14 @@ export function findHandResolutions({ cwd = process.cwd(), head, incoming, resul
    * coverage removal this gate exists for. Only ONE span is examined — which side, if any, had
    * already deleted it — and that span is what separates the two.
    */
+  // The merge base is the only commit that can have DELETED anything, and it is what
+  // tells a side that removed a path apart from a side that never carried one.
+  const base = mergeBase(headRef, incomingRef, cwd);
   const erasures = new Map();
   for (const path of differing) {
     if (!autoEntries.get(path) || resultEntries.get(path)) continue;
     erasures.set(path, {
-      deletedBy: sideThatDeleted(path, { headRef, incomingRef, cwd }),
+      deletedBy: erasedByAReviewedCommit(path, { base, headRef, incomingRef, cwd }),
       renamedTo: renamedFrom.get(path) ?? null,
       auto: autoEntries.get(path),
     });
@@ -582,7 +572,7 @@ export function findHandResolutions({ cwd = process.cwd(), head, incoming, resul
       path,
       kind: deletedBy ? 'erased-by-a-side' : 'erased-after-clean-merge',
       lost: lostOrOne(contents.get(auto.oid), auto.gitlink),
-      detail: deletedBy ? ` — the ${deletedBy} side had already deleted it` : '',
+      detail: deletedBy ? `the ${deletedBy} side had already deleted it` : '',
     });
   }
 
@@ -620,37 +610,48 @@ export function findHandResolutions({ cwd = process.cwd(), head, incoming, resul
 }
 
 /**
- * Which side, if either, had already deleted this path before the merge.
+ * Did a SIDE's own commit remove this path, or did the resolution?
  *
- * `'the incoming'` or `'the merged-into'` when a side's own commit removed it, `null` when both
- * sides still carry it — which is the case where the ERASURE is the resolution's own decision
- * and nothing else explains it.
+ * The BASE decides, and nothing else can. Asking "which side lacks the path?" cannot tell a side
+ * that DELETED it from a side that NEVER HAD it, and every one of the four erased test files on
+ * this history is the second case: the base does not have the file, one side ADDED it, and the
+ * merge kept the addition until the resolution dropped it. The naive question labelled that "a
+ * side had already deleted it", which is false, and would have reported — and never refused —
+ * precisely the shape this gate exists for.
  *
- * One `cat-file -e <ref>:<path>` per erased path, and an erased path is rare. Measured on this
- * repository's history, ten of them.
+ * So: the base HAD the path and exactly one side does not, means that side removed it in a commit
+ * somebody reviewed, which includes every `modify/delete` conflict and is git's own
+ * recommendation there. The base LACKS it, or both sides still carry it, and nothing explains the
+ * erasure except the resolution.
  */
-function sideThatDeleted(path, { headRef, incomingRef, cwd }) {
-  if (!refHasPath(incomingRef, path, cwd)) return 'incoming';
-  if (!refHasPath(headRef, path, cwd)) return 'merged-into';
-  return null;
+function erasedByAReviewedCommit(path, { base, headRef, incomingRef, cwd }) {
+  if (!base || !refHasPath(base, path, cwd)) return null;
+  const inHead = refHasPath(headRef, path, cwd);
+  const inIncoming = refHasPath(incomingRef, path, cwd);
+  if (inHead === inIncoming) return null;
+  return inHead ? 'incoming' : 'merged-into';
+}
+
+/** The commits both sides share, which is the only commit that can have DELETED anything. */
+function mergeBase(headRef, incomingRef, cwd) {
+  return tryGit(['merge-base', headRef, incomingRef], { cwd });
 }
 
 /**
  * Does this ref carry this path?
  *
- * `cat-file -e` answers with its EXIT STATUS and prints nothing at all when the object exists,
- * so reading it as output reports every existing path as absent — which is how the first
- * version of `sideThatDeleted` called every clean merge's erasure a side's own deletion and
- * refused nothing. Existence is a status, and it is read as one.
+ * `ls-tree`, and the answer is its OUTPUT. `cat-file -e <ref>:<path>` answers about the object,
+ * prints nothing when the object exists, and fails for a submodule whose commit is not in this
+ * store — so it reports every existing path as absent and every erased submodule as a side's
+ * own deletion. `ls-tree` lists the ENTRY, which is the question, and `--` before the path
+ * keeps a name carrying glob characters a path rather than a pathspec.
  */
 function refHasPath(ref, path, cwd) {
-  try {
-    execFileSync('git', ['cat-file', '-e', `${ref}:${path}`], { cwd, stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+  return (tryGit(['ls-tree', '--full-tree', ref, '--', path], { cwd }) ?? '').length > 0;
 }
+
+/** A `--name-status` status field: one letter, optionally a similarity score. */
+const RENAME_STATUS = /^[RC]\d*$/;
 
 /**
  * Old paths that this result RENAMED, as `old -> new`.
@@ -665,7 +666,11 @@ function renameSources(autoTree, result, cwd) {
   if (!raw) return map;
   const fields = raw.split('\0').filter(Boolean);
   for (let i = 0; i < fields.length - 1; i += 1) {
-    if (!fields[i].startsWith('R')) continue;
+    // A status, matched AS a status. `startsWith('R')` reads a path called `README.md` as
+    // a rename status, swallows the real triple behind it, and turns the rename this function
+    // exists to recognise into a false refusal — a resolution that renames a test file AND
+    // adds a README is not a merge to block, and it is not an exotic one.
+    if (!RENAME_STATUS.test(fields[i])) continue;
     map.set(fields[i + 1], fields[i + 2]);
     i += 2;
   }
@@ -1046,8 +1051,7 @@ function editDetail({ kind, lost, detail }) {
       ? ' — the file is gone from the result, and it is binary'
       : ` — the file is gone from the result (${lost} line(s))`;
   }
-  if (kind === 'erased-by-a-side')
-    return ` — the file is gone from the result, and the ${detail.replace(/.*the | had.*/, '')} side had already deleted it`;
+  if (kind === 'erased-by-a-side') return ` — the file is gone from the result; ${detail}`;
   if (kind === 'renamed-after-clean-merge') return ' — the file moved to a new name';
   return ' — added by the resolution';
 }
@@ -1104,6 +1108,13 @@ export function main(argv, { cwd = process.cwd() } = {}) {
       return 1;
     }
     const census = findHandResolutions({ cwd });
+    if (census.skipped) {
+      // Exit 2, which is what the whole-file layer already returns for "I could not look". A
+      // census that could not run and a merge nobody touched would otherwise print one line and
+      // exit 0, and the second of those is a lie this repository has already been bitten by.
+      process.stderr.write(`merge-takeover-guard: ${census.skipped}.\n`);
+      return 2;
+    }
     const erasedTests = census.edits.filter((e) => e.kind === 'erased-after-clean-merge' && isTestPath(e.path));
     if (erasedTests.length > 0) {
       process.stderr.write(`${reportResolutions(census, { refused: true })}\n`);

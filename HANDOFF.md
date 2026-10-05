@@ -5785,7 +5785,7 @@ exists here already.
 
 **Problem.** `merge-takeover-guard.mjs` compares a merge result against one whole side's content, and
 it is now good at that — the seven shapes an adversarial review measured as silent passes are closed,
-and it reports correctly on all 407 merges on `main` with no verdict changed. What it still cannot
+and it reports correctly on every merge on `main` with no verdict changed. What it still cannot
 see is the defect **upstream** of it: a branch that _committed_ a stale copy of a tracked file, from
 a checkout sitting at another HEAD. The merge inherits it. That is the shape `git add -A` in a
 worktree at another HEAD produces, and it is the one that cost this repository 17 files and 1,835

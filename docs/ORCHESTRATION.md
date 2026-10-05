@@ -224,8 +224,8 @@ status` and `git diff` before staging.
   **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
   about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
   repository, driven through `findTakeovers` with the real index. All seven destroyed
-  committed work and reported success. **Replayed over the 407 merges on `main` before and
-  after the fixes, the same 36 merges are refused, with the same kinds and the same paths** —
+  committed work and reported success. **Replayed over every merge on `main` before and after
+  the fixes, the same merges are refused, with the same kinds and the same paths** —
   every change was a shape that was _invisible_, never a verdict that moved:
 
   | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
@@ -267,29 +267,21 @@ repo:state` is what reports an operation in progress, and it separates the two s
   anywhere.** Counting `remerge CONFLICT` lines does not measure hand-written merge work, and
   the gap is not small: on the history `findHandResolutions` in
   `scripts/merge-takeover-guard.mjs` was measured over, more paths were hand-edited on a merge
-  git had already resolved cleanly than were resolved as conflicts. That function's JSDoc
-  carries the figures and how to re-derive them; they move as `main` grows, so they are held
-  there and not here. The rules it enforces:
+  git had already resolved cleanly than were resolved as conflicts. That function's JSDoc holds
+  the rules, the figures, and how to re-derive them; the figures move as `main` grows, so they
+  are not held here. What it enforces, in three lines:
 
-  - every path a human changed after a **clean** merge is **reported**, with the count of lines
-    git's merged result had that the result does not. Several of those edits are correct, so
-    refusing them would train every agent to reach for `--no-verify` — which is how the three
-    whole-file shapes above were nearly lost once.
-  - a test file that **both sides carry**, that git's merge produced, and that the result does
-    not contain is **refused**. Nothing explains that absence: no conflict, no marker, no
-    takeover shape, and neither side's commit removed it.
-  - a path **a side had already deleted** is reported and never refused, and that covers every
-    `modify/delete` conflict — deleting the file there is git's own recommendation, and that
-    decision was reviewed where it was written.
-  - a path **a side reported as conflicted** is neither reported nor refused, except through the
-    rule above: it was visibly unmerged until somebody staged it, which is the boundary the three
-    whole-file shapes above already draw.
-  - a path that was **renamed** is reported as a rename. Rename detection on hides the erasure;
-    rename detection off plus no rename recognition refuses a legitimate rename. Only both.
-  - a merge run with `-X`/`-s` **cannot be detected and cannot cause the refusal**. Git records
-    the result of a merge in its reflog action, not the invocation, so there is nothing at the
-    hook to read the flag from; a strategy option resolves a hunk and never removes a path, so
-    its cost is report lines for the hunks git took wholesale.
+  - a path changed after a **clean** merge is **reported** with the count of lines git's merged
+    result had and the staged result does not. Refusing those would train every agent to reach
+    for `--no-verify`, which is how the three whole-file shapes above were nearly lost once.
+  - a **test** file that git's merge produced and the result does not contain is **refused**,
+    UNLESS a side's own commit had already deleted it, which includes every `modify/delete`
+    conflict — deleting the file there is git's own recommendation and was reviewed where it was
+    written. A path that was renamed is reported as a rename, because rename detection on hides
+    the erasure and rename detection off refuses a legitimate rename.
+  - a merge run with `-X`/`-s` **cannot be detected and cannot cause the refusal**: git records
+    a merge's result in its reflog action, not the invocation, so no hook can read the flag; a
+    strategy option resolves a hunk and never removes a path, so its cost is report lines.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the
@@ -518,16 +510,6 @@ Re-read `dirty` and `mergeConflict` before acting on a `land` you did not genera
 yourself — and note that a worktree with **no liveness signal at all**
 (`chats.count` 0 and `board.agents` empty) is the one most likely to have changed
 since, because nothing here can see that somebody walked away from it.
-
-**`operation` is the one field that is about git's state rather than the worktree's.**
-`null`, or `{ kind, ref, unresolved }` for a merge, rebase, cherry-pick or revert that is
-**open** in that worktree — read from that worktree's own git dir, never the root's, because
-the two checkouts share one repository and `MERGE_HEAD` is per-worktree. It changes no
-verdict: an operation open means a dirty index, and a dirty worktree is already `at-risk` and
-never a deletion candidate. It is here because nothing else can tell **"an agent has not
-committed yet"** from **"an agent stopped halfway through a merge"**, and `unresolved` is what
-tells the two apart: non-empty means git still holds every side and nothing has been decided;
-**empty means a resolution is staged in no commit**, which is the state `--abort` destroys.
 
 **`at-risk` also covers merged, clean worktrees protected by a curated finding.**
 If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's
