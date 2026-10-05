@@ -637,7 +637,7 @@ alpha, baked into that blank's pixels — and never reads the snapshot's opacity
 materialization that applied the snapshot's opacity on top would double-apply an alpha the pixels
 already carry. `sourceToRuntimeLayer()` (`history-adapter.ts`) keeps the two models out of the
 argument by binding `opacity: 1`, so a converted layer's snapshot carries no layer-level alpha to
-double-apply; §92 states the remaining disagreements between the two rules. Nothing in the app ever
+double-apply; §56 states the remaining disagreements between the two rules. Nothing in the app ever
 writes it. There is no opacity control in the desktop shell, and the mobile layers
 drawer had one that was removed rather than shipped broken.
 
@@ -4787,8 +4787,80 @@ _"taken in code, recorded nowhere… the ruling is still the operator's"_; this 
 refusal and then hard-codes the narrowed taxonomy into ~10 test cases, which settles SD-8 by test
 rather than by ruling, and `docs/OVERRIDES.md` has no entry. Second, `presentation-evaluator.ts`'s
 `validateBounds: false` opt-out is guarded only by convention where `main` makes it a
-compiler-enforced rule. Third, grading `opacity` against the live record decides part of §92, whose
+compiler-enforced rule. Third, grading `opacity` against the live record decides part of §56, whose
 own text says the decision comes before the edit.
+
+**Triaged 2026-10-05; the verdict holds and the arithmetic has moved.** Measured then: `5d388e02` is
+1 ahead and 589 behind, and **24 of its 24 paths** now conflict (`git merge-tree --write-tree
+--name-only main fix/migration-review-sweep` reports 19 CONFLICT lines; only
+`history-append.tool.test.ts`, `materialization.assets.test.ts`,
+`materialization.ordering.test.ts`, `history-model.ts` and `canvas-filter.ts` merge clean). §179's own
+instruction to take those two figures from the commands rather than from its prose is what made this
+check possible. Five attempts to land it have now failed — a `--no-commit` merge left `sweep-land`
+with 5 `UU` for 27h, a merge _in_ `main` produced 12 conflicts and was aborted rather than resolved
+where `AGENTS.md` forbids it, a rebase stalled at 12 `UU` and was abandoned then `rebase --abort`ed,
+and two scratch merges were aborted. Nothing was lost: `refs/keep/salvage/migration-review-sweep-partial`
+carries the **empty tree**, so it preserves the _existence_ of the conflicted state and none of its
+content, and no resolution was ever started.
+
+**Three claims in this entry are wrong and are corrected here, not by editing its verdict.**
+
+`hasAsset` and `registryResolvesAsset` are **not** the same predicate. The branch's `hasAsset` is an
+optional probe and **omitting it skips the check silently**; `main`'s `registryResolvesAsset` is
+required and **omitting it falls back to the process registry**. A merge would pick one by hunk
+context and leave the other arm reading a field that is no longer sent.
+
+`validateBounds` is **not** compiler-enforced on `main` — `git grep validateBounds main -- src` returns
+nothing. `main` has no such option; it was replaced by a separate entry point,
+`evaluatePresentationForDraw`, whose `PresentationDrawTarget` union carries the rule and is checked at
+runtime. Neither ref enforces it at compile time, so this is not the asymmetry §179 claims.
+
+The parity test is **+702/−81, not +783**, and it **cannot compile against `main`** — it imports
+`PresentationFilterRefusal`, `isPresentationFilterRefusal` and `asPresentationFilterRefusal`, none of
+which exist there. Its core cross-check has already landed as the `presentation evaluator parity`
+describe block. The abort case is **worse than vacuous**: the branch's own comment claims it builds
+"a plain `Error` … not a `DOMException`" and then constructs a real `AbortController().abort()`, and
+`materialization.ts` ignores `signal.reason` entirely, so no reason shape could reach a catch.
+
+**What is genuinely unique, in dependency order.** `main`'s `compareRuntimeLayerToSnapshot` grades a
+planned snapshot against a layer **re-derived from the same source by the same adapter**
+(`sourceToRuntimeLayer(entry.layerId, source, new Map(preLayers ?? []))`), so several fields are
+compared with themselves. The branch grades it against the live store record instead. Two changes, and
+the second is the first's prerequisite: pass `action.payload.updates?.layers ?? currentState.layers` as
+`liveLayers` where `main` passes `state.layers`, then compare against that record. Port the second
+without the first and the check is unrunnable — a source-backed create's own layer is absent from the
+pre-append record. Second, compare the merge removal set as a **set**: `sameJsonValue(removedLayerIds,
+expectedRemoved)` compares two independent orderings (`Object.keys(liveLayers)` in record insertion
+order against `preLayers.keys()` in durable `Map` order), so a divergence degrades a correct merge to
+reconversion _and_ files a `durable-append-mismatch` — a writer defect — against a writer that did
+nothing wrong. Duplicates are already refused, so equal size plus membership is set equality. Third,
+`materialization.ts` keys materialization on `opacity`, `blendMode` and `visible`, none of which the
+producer reads (`durable-compositor.ts` applies `globalAlpha` and `globalCompositeOperation` at draw
+and skips invisible layers), so every visibility toggle re-rasterizes the document for a
+byte-identical bitmap. Fourth, `materialization.ts`'s abort check is
+`error instanceof DOMException && error.name === 'AbortError'`, class-identity; a name-tolerant check
+is hardening, not a fix, because all three producers throw a same-realm `DOMException` — and `main` has
+no abort case at all in `durable-compositor.refusal.test.ts`, so the test must arrive with the change.
+Fifth and test-only, `history-append.create.test.ts` carries three `if (…) return;` exits that make
+every assertion below them unreachable whenever the derived plan is already wrong; main's own comment
+names the trap.
+
+**Do not port the snapshot narrowing.** `main`'s `drawLayersToCanvas` snapshots in **every** case and
+says why — `resizeCanvas` resets a resized canvas to transparent and `clearRect` empties one whose
+dimensions already matched, so a `drawImage` throwing between them left the document blank. The branch
+narrows it to resize-only, reversing `d5d8db65`, and adds
+`it('copies nothing when the target already has the frame size, because nothing will be wiped')`,
+which asserts the opposite of main's own
+`it('leaves the visible canvas intact when the publish blit throws with no resize to undo')`. Likewise
+`durable-compositor.ts`: `main` **throws** on a missing visible layer, so the branch's `omittedLayerIds`
+is unreachable without reversing that fail-closed contract from `87c8d469`.
+
+**What would close it.** Port the five items above in dependency order onto current `main`, each as its
+own change with the test that proves it, and never the branch as a merge or a cherry-pick. SD-8 needs an
+operator ruling in `docs/OVERRIDES.md` before any refusal taxonomy is ported, because the branch's
+twelve taxonomy-hardcoding cases settle it by test instead. Then `npm run dispose --
+migration-review-sweep`; the worktree is clean at the tip, so only the `at-risk` classification of an
+unmerged branch stands in the way.
 
 ## 181. A branch sweep under-reports unmerged work, and two hardening branches are unmerged because of it
 
