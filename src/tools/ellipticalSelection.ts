@@ -1,5 +1,4 @@
 import type { Point, RectXYSorted, Size } from '../contexts/general-types.ts';
-import { trimRect2 } from '../util/rect.ts';
 import type { ProcessorToolParams } from './toolProcessors.ts';
 
 /**
@@ -106,6 +105,13 @@ export type EllipticalMarqueeDrag = {
    * clamps to. Required rather than optional because a drag with no bound is the defect:
    * the tool area's surface is `absolute inset-0` over the letterboxed CONTAINER, so a
    * pointer can leave the document without leaving the element that receives the gesture.
+   *
+   * It bounds the committed ring by CLIPPING it. For the rectangular marquee a bound and a
+   * clip are the same operation reached one way — intersecting an axis-aligned rectangle
+   * with the document IS trimming its box, so `normalizeRectangleSelectionRect` can trim and
+   * commit the same pixels either rule names. An ellipse is not an axis-aligned rectangle, so
+   * trimming its box and inscribing the ring again RESIZES the shape; see
+   * `ellipsePointsFromDrag` for why that is not this tool's answer.
    */
   imageSize: Size;
   /** Shift: hold the drag to a circle, whatever the Style says. */
@@ -153,8 +159,13 @@ function marqueeRatio({
 
 /**
  * The bounding box the ellipse is inscribed in, BEFORE the document bound, or `null` for a
- * drag that encloses nothing. `resolveEllipseRect` below is the bounded form and the one a
+ * drag that encloses nothing. `ellipsePointsFromDrag` below is the bounded form and the one a
  * caller wants; this is the drag's own arithmetic with nothing outside the document in it.
+ *
+ * Exported because the ORDER is part of the tool's behaviour and only this half can state it:
+ * the Style and the modifiers shape the box here, and the document bound is applied to the
+ * RESULT. A Shift drag on a 260x40 document 200 wide therefore squares to 260x260 first and is
+ * clipped second, rather than being clipped to 200x40 first and squared to 200x200 afterwards.
  *
  * `null` is the whole degenerate contract, and it is a real state rather than a failure:
  * a click has no extent on either axis, and a drag can return to its press point. Both
@@ -167,7 +178,7 @@ function marqueeRatio({
  * supplies the centre, and the box is `fixedWidth` x `fixedHeight` whatever the pointer
  * does. It is the one style where a click is a complete gesture.
  */
-function resolveUnclampedEllipseRect({
+export function resolveUnclampedEllipseRect({
   start,
   end,
   style,
@@ -219,32 +230,100 @@ function resolveUnclampedEllipseRect({
 }
 
 /**
- * `resolveUnclampedEllipseRect` BOUNDED BY THE DOCUMENT, or `null` for a drag that encloses
- * nothing inside it.
+ * Below this the clipped ring is not a polygon, and `normalizeSelectionPoints` refuses it.
  *
- * The bound is `trimRect2`, all four edges, which CROP rather than shift: a drag past the right
- * edge commits a smaller ellipse. That is what the rectangular marquee does through
- * `normalizeRectangleSelectionRect` and what Photoshop does, because there are no pixels outside
- * the canvas for the rest of the ellipse to select. `trimRect` would round the four edges to whole
- * pixels on the way, which is a quantisation the rectangle marquee's own `pos` wants and float
- * ellipse radii do not.
- *
- * A box lying wholly outside the document trims to a POINT, and a point is the same degenerate
- * answer a zero-extent drag already gets, rather than a ring of `ellipseVertexCount` identical
- * vertices — which `normalizeSelectionPoints` would otherwise commit as a real selection.
- *
- * `imageSize` is the size of the canvas these drag points are already in, and not the document
- * frame: `RectangularSelectionToolArea` passes the same `totalSize` to
- * `createCommittedRectangleSelection`, so on a cropped document the two marquees agree, and
- * tightening either to the frame is one shared change rather than this one.
+ * Three vertices is the only requirement, and there is deliberately no area floor under it: a
+ * ring that grazes one document corner commits a sliver the size of the corner, which is the
+ * faithful answer — Photoshop commits an empty selection rather than nothing at all for a
+ * marquee drawn off the canvas, and a positive-area rule here would silently turn "selected no
+ * pixels" into "no selection exists".
  */
-export function resolveEllipseRect(drag: EllipticalMarqueeDrag): RectXYSorted | null {
-  const rect = resolveUnclampedEllipseRect(drag);
-  if (!rect) return null;
+const MIN_CLIPPED_RING_VERTICES = 3;
 
-  const trimmed = trimRect2(rect, drag.imageSize);
+/**
+ * Where the segment `from`->`to` crosses the line `axis === boundary`.
+ *
+ * The clipped axis is ASSIGNED rather than interpolated. `t` is a ratio of rounded quantities, so
+ * computing the boundary back out of it lands `boundary ± ε`, which would leave every committed
+ * extreme the clip placed on a document edge a float coin-flip away from the edge it is exactly
+ * on — and `clipPolygonToDocument`'s bound below is stated in terms of that exactness.
+ *
+ * The `span === 0` arm is unreachable: `clipToEdge` calls this only across a straddling segment,
+ * and for finite inputs a straddling pair cannot share an axis value. It stays because the
+ * alternative is a silent `NaN` in the ring rather than a stated answer, and `ellipsePointsFromDrag`
+ * has already refused the one input that could make `span` non-finite.
+ */
+function crossingPoint(axis: 'x' | 'y', boundary: number, from: Point, to: Point): Point {
+  const span = to[axis] - from[axis];
+  const t = span === 0 ? 0 : (boundary - from[axis]) / span;
+  const other = axis === 'x' ? 'y' : 'x';
+  const interpolated = from[other] + (to[other] - from[other]) * t;
 
-  return trimmed.x2 > trimmed.x1 && trimmed.y2 > trimmed.y1 ? trimmed : null;
+  return axis === 'x' ? { x: boundary, y: interpolated } : { x: interpolated, y: boundary };
+}
+
+/**
+ * One edge of Sutherland–Hodgman: the part of `polygon` on the `isInside` side of a line.
+ *
+ * The ring is closed by wrapping rather than by a repeated first vertex — the convention
+ * `Selection.points` uses, and the one `ellipsePointsInRect` already keeps — so the wrapped
+ * pair is the closing edge this needs.
+ */
+function clipToEdge(
+  polygon: Point[],
+  isInside: (point: Point) => boolean,
+  at: (from: Point, to: Point) => Point
+): Point[] {
+  const output: Point[] = [];
+
+  for (let index = 0; index < polygon.length; index++) {
+    const current = polygon[index];
+    const previous = polygon[(index + polygon.length - 1) % polygon.length];
+
+    if (isInside(current)) {
+      if (!isInside(previous)) output.push(at(previous, current));
+      output.push(current);
+    } else if (isInside(previous)) {
+      output.push(at(previous, current));
+    }
+  }
+
+  return output;
+}
+
+/**
+ * The ring's part inside the document, still a closed path with no repeated closing vertex.
+ *
+ * The document is convex and so is the ring, which makes Sutherland–Hodgman exact here rather
+ * than an approximation of something: the result is itself convex, cannot self-intersect, and
+ * every vertex satisfies `0 <= x <= imageSize.width` and `0 <= y <= imageSize.height`. The edges
+ * hold exactly rather than to within a rounding error because `crossingPoint` assigns the
+ * boundary onto the axis it is clipping, so a vertex the clip placed on an edge IS that edge.
+ *
+ * The chord error across a hard-clipped arc stays inside `ELLIPSE_MAX_SAGITTA_PX` and is not a
+ * new bound. `ellipseVertexCount` is a function of the FULL radii, so a ring clipped hard keeps
+ * the vertex density of the shape it was cut from — the largest ring this tool can commit is a
+ * fixed-size 2000x2000 ellipse, whose surviving arc across any document is still spanned by
+ * chords of a few tens of pixels at a radius of 1000.
+ */
+function clipPolygonToDocument(points: Point[], imageSize: Size): Point[] {
+  const { width, height } = imageSize;
+
+  const atLeft = (from: Point, to: Point) => crossingPoint('x', 0, from, to);
+  const atRight = (from: Point, to: Point) => crossingPoint('x', width, from, to);
+  const atTop = (from: Point, to: Point) => crossingPoint('y', 0, from, to);
+  const atBottom = (from: Point, to: Point) => crossingPoint('y', height, from, to);
+
+  const afterLeft = clipToEdge(points, (point) => point.x >= 0, atLeft);
+  if (afterLeft.length === 0) return afterLeft;
+
+  const afterRight = clipToEdge(afterLeft, (point) => point.x <= width, atRight);
+  if (afterRight.length === 0) return afterRight;
+
+  const afterTop = clipToEdge(afterRight, (point) => point.y >= 0, atTop);
+  if (afterTop.length === 0) return afterTop;
+
+  return clipToEdge(afterTop, (point) => point.y <= height, atBottom);
 }
 
 /**
@@ -297,14 +376,54 @@ export function ellipsePointsInRect(rect: RectXYSorted): Point[] {
 }
 
 /**
- * The committed path for a finished drag, or `null` for a drag that encloses nothing.
+ * The committed path for a finished drag, or `null` for a drag that encloses nothing inside
+ * the document.
  *
- * This is the one call the tool area makes: preview and commit both go through it with
- * the same arguments, so the outline the user watched being drawn and the polygon that
- * lands in the store are the same points by construction rather than by agreement.
+ * This is the one call the tool area makes: preview and commit both go through it with the
+ * same arguments, so the outline the user watched being drawn and the polygon that lands in
+ * the store are the same points by construction rather than by agreement.
+ *
+ * The document bound CLIPS the ring rather than trimming the box the ring was inscribed in,
+ * and that distinction is the fidelity question this tool has. Trimming RESIZES the shape: a
+ * 260x40 Shift drag squares to 260x260, is trimmed to a 200x120 document, and inscribes a new
+ * 200x120 ellipse — so the marquee the user drew and the shape they selected are two different
+ * ellipses. Clipping cuts the ring where the document ends and leaves its centre and radii
+ * alone, so a circle dragged 40px past the top commits a circle with a flat chord at the canvas
+ * edge, which is the outline Photoshop draws.
+ *
+ * Photoshop's evidence is its own scripting reference, which `selection.ts` already cites for
+ * this tool: `Selection.bounds` "can exceed the bounds of the canvas", and it is `Select >
+ * Inverse` that is documented as cropping to them. `Select > Modify > Border` is "not limited by
+ * canvas bounds", and Contract, Expand and Smooth each carry an `applyEffectAtCanvasBounds` flag
+ * whose default leaves geometry past the edge — controls that would govern nothing if a marquee
+ * resized the shape at the canvas. This app already agrees from the other side:
+ * `normalizeSelectionPoints` deliberately keeps negative coordinates, which is what lets the
+ * lasso family commit selections that hang off the canvas.
+ *
+ * The reading this replaces — that "there are no pixels outside the canvas for the rest of the
+ * ellipse to select" — describes which pixels are selectable, not how large the selection is.
+ * It is true of the rectangular marquee, where intersecting an axis-aligned box with the
+ * document and trimming that box are the same operation, and false of an ellipse.
  */
 export function ellipsePointsFromDrag(drag: EllipticalMarqueeDrag): Point[] | null {
-  const rect = resolveEllipseRect(drag);
+  const rect = resolveUnclampedEllipseRect(drag);
+  if (!rect) return null;
 
-  return rect ? ellipsePointsInRect(rect) : null;
+  // A non-finite edge is not a shape, and this says so rather than leaving it to the clip. The
+  // crop rule this replaced was accidentally immune — `trimRect2`'s `clampEdge` mapped `±Infinity`
+  // onto the document edges — and `getLocalCoords` divides by the contain scale, which is zero
+  // while a container is collapsed, so a pointer still arriving through the capture can carry a
+  // non-finite coordinate into the box.
+  //
+  // The clip rejects this on its own as well, and that is measured rather than assumed: an
+  // infinite radius makes every ring vertex `±Infinity` or `NaN`, the left edge keeps only the
+  // positive ones, and the right edge then leaves the two crossings at `x = 0` and nothing else,
+  // which is below `MIN_CLIPPED_RING_VERTICES`. So the test beside this pins the BEHAVIOUR and
+  // survives deleting this line — the guard is here so the contract is stated at the boundary
+  // rather than resting on that arithmetic staying the way it is.
+  if (![rect.x1, rect.y1, rect.x2, rect.y2].every((edge) => Number.isFinite(edge))) return null;
+
+  const clipped = clipPolygonToDocument(ellipsePointsInRect(rect), drag.imageSize);
+
+  return clipped.length >= MIN_CLIPPED_RING_VERTICES ? clipped : null;
 }

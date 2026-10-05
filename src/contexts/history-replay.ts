@@ -104,7 +104,7 @@ export function replayHistory(
       // A document replacement means to be a WHOLE new document, so it is honoured
       // only as the first entry, which is how one is ever written: the single
       // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
-      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
+      // (`setImageFromUpload()`'s PSD arm, `useLayer.ts:195`). Carried mid-history it would replace
       // the layer record and resize the canvas from anywhere in the timeline, which
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
