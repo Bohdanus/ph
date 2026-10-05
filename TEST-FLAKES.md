@@ -687,10 +687,10 @@ whose protection is derived`, `never offers a live worktree that holds uncommitt
 ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
 about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
 it — but each carries its own budget, so which of them runs out first is not something the budget
-may depend on. That budget is only a few times the real cost, so what decides it is the operator's
-environment rather than the repository's content: the whole file runs in about fifteen seconds on
-an idle machine and a single case has been observed past a minute while the swarm was busy. The
-knife edge moves when a sweep grows the fleet and when nothing is committed.
+may depend on. That budget is a small multiple of what the walk costs, and the two drivers this
+section separates below both move it: more worktrees means more git reads, and a busier machine
+means slower ones. Neither measurement settles the other. The knife edge moves when a sweep grows
+the fleet and when nothing is committed.
 
 Observed 2026-10-05 on `main` at `3abe6ce0` with a 96-worktree fleet — not the 150 this entry
 previously claimed for the observation: two different cases from that list timed out on different
@@ -712,17 +712,19 @@ Measured on `main` with 56 worktrees: the same test passed alone unloaded at 531
 failed inside a full suite at 76957ms with `Error: Test timed out in 60000ms`; a third
 measurement showed 147s of wall clock against 24.85s of CPU, about 17% utilisation.
 
-Re-measured 2026-10-05 at 96 worktrees, and the 53180ms figure does not reproduce here: the
-whole file, all 160 cases vitest reported, passed in 14.71s with a load average near 6, and the
-`never asks the table to protect a worktree whose protection is derived` case passed alone in
-12.63s. The same case then exceeded 60s with a load average near 20, so the spread is load rather
-than fleet size — under five times, and the busy figure is a harness kill rather than a
-measurement, so it is a floor and not a ratio. That is why the 60s value was left alone rather
-than raised: it is not the defect, it is the instrument reading a cost `liveWorktreeFacts()`
-spends as four git reads per worktree plus three `git worktree list` spawns, and it will keep
-reading high until that walk gets cheaper. Raising the number would have drifted eight sites,
-five of them prose naming the value in this file, in `e2e-run.test.mjs`, in
-`worktree-inventory.test.mjs` and in `suite-budgets.test.mjs`.
+Re-measured 2026-10-05 at 96 worktrees, and the 53180ms figure does not reproduce here. The whole
+file, all 160 cases vitest reported, passed in 14.71s at a load average near 6, and that one case
+passed alone in runs between 6.7s and 16.4s — so a single figure for it would be a guess wearing a
+measurement's clothes. It then exceeded 60s at a load average near 20. Read that as a floor and not
+a ratio: 60s is about five times the unloaded cost, and the busy figure is a harness kill rather
+than a measurement, so the spread is bounded below and not above.
+
+That is also why the value was left alone rather than raised. It is not the defect; it is the
+instrument reading a cost `liveWorktreeFacts()` spends as four git reads per worktree plus three
+`git worktree list` spawns, and it will keep reading high until that walk gets cheaper. Raising it
+would have drifted every prose mention of the value — eight of them, two in this paragraph — plus
+the three `it(name, fn, 60_000)` arguments, which is the failure mode this repository keeps paying
+for.
 
 **Low CPU utilisation does not exonerate the fleet.** That measurement rules out a CPU- or
 process-bound cost, and running `git` per worktree is itself I/O, so the fleet term survives it.
