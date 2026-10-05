@@ -6,10 +6,10 @@ import {
   freezeDurableDocument,
   refreezeDurableDocument,
   type DurableDocument,
+  type DurableDocumentRefreeze,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
   type DurableLayerSource,
-  type DurableDocumentRefreeze,
 } from '../history-model.ts';
 import { appendDurableEntry, createDurableDocument, setDurableCursor, toggleDurableEntry } from '../history-adapter.ts';
 
@@ -236,8 +236,9 @@ describe('refreezeDurableDocument reuse', () => {
     //
     // So the pin is `@ts-expect-error` itself. An unused directive is TS2578, which means
     // `npm run tsc` FAILS if the field is ever relaxed — the tripwire cannot rot into a
-    // no-op the way an assertion can. It is written against the type rather than a call so
-    // nothing here mutates a document, and `void` discharges `noUnusedLocals`.
+    // no-op the way an assertion can. It is written against the type rather than a call,
+    // so nothing here mutates a document, and the two `expect`s below are what consume
+    // the locals rather than a `void`, because they also pin the values the type allows.
     //
     // The mirror case is the reason `cursor` is required while `history` is not: a cursor
     // move passes no history and must stay allocation-free, so only the history-carrying
