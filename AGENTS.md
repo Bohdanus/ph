@@ -157,3 +157,13 @@ as a **navigation presentation cache**; it remains subordinate to legacy replay,
 export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
+
+## Free subagent models
+
+| Model | Provider | Variant | Notes |
+|-------|----------|----------|-------|
+| Nemotron 3 Ultra | kilo | high | Best quality; thorough |
+| Dots3-Note Preview | kilo | thinking | Consistent, fast |
+| Step 3.7 Flash | kilo | high | Fast, accurate |
+
+Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.

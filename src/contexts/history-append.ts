@@ -1304,6 +1304,13 @@ export function validatePlannedDurableEntry(
         return patch.visible === (entry.actionName === SHOW_LAYER_ACTION)
           ? null
           : 'the durable layer visibility does not match the legacy entry';
+      case 'opacity': {
+        const opacity = (entry.args as { opacity?: unknown } | undefined)?.opacity;
+        if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
+          return 'the layer-property value is invalid';
+        }
+        return patch.opacity === opacity ? null : 'the durable layer opacity does not match the legacy entry';
+      }
       default:
         return 'the action does not own a durable layer property';
     }

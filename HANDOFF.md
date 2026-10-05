@@ -605,32 +605,25 @@ a `TOOL_ACTION`, which is `undefined` here, so the history panel grows an untitl
 per step. A slider drag writes one of each per step: dragging the handle to 50% would
 leave ~100 untitled, unreplayable entries in the timeline.
 
-**Fix — a real action, added to the existing layer-property path.** The rename /
-show / hide writer already reaches the append boundary, and it does so through a
-single canonical derivation that both conversion and the live writer share. Opacity
-belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
+**Remaining fix.** Add a Photoshop-like opacity control to the Layers panel. It must
+call `updateLayer(id, { opacity }, SET_LAYER_OPACITY_ACTION)` rather than
+`TOOL_ACTION`; the action, append derivation, and legacy replay path below now
+provide the canonical history behavior. Keep source opacity separate from layer
+opacity: blank-source alpha is baked into the source bitmap, while the layer value
+is applied by the renderer as presentation state.
 
-- `src/util/constants.ts` — a `SET_LAYER_OPACITY_ACTION` next to
+- `src/util/constants.ts` — `SET_LAYER_OPACITY_ACTION` sits next to
   `SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION`/`RENAME_LAYER_ACTION`.
-- `src/contexts/history-model.ts` — add `opacity` to
-  `DurableLayerPropertyPatch`. The type is `Readonly<…>`, which is deliberate: it is
-  what stops a writer smuggling an arbitrary `Partial<Layer>` through the append
-  boundary as a patch the validator then has to re-derive.
-- `src/contexts/history-adapter.ts` — add the action to
-  `isSetLayerPropertiesAction()` and give `deriveSetLayerPropertiesEntry()` its branch.
-  Adding it to the first without the second makes `updateLayer` plan an append that
-  resolves to no durable entry, and it silently falls back to the raw patch.
-- `src/contexts/history-replay.ts` — the legacy arm in `replayHistory()` beside the
-  show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
-  `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
-  without it undo/redo leaves the document inconsistent.
-- `src/contexts/useHistory.ts` — `getHistoryItemTitle()` gets a real title. Not a
-  correctness fix: its
-  `return actionName` fallback already yields a non-empty string for a
-  purpose-built action, so the `undefined` above is specific to `TOOL_ACTION`. It
-  matters because `SHOW_LAYER_ACTION` and friends already render their raw constant
-  name in the History panel, and a fourth raw constant is a worse answer than a
-  fifth proper title.
+- `src/contexts/history-model.ts` — `DurableLayerPropertyPatch` already admits
+  `opacity`; keep it narrow and readonly so a writer cannot smuggle an arbitrary
+  `Partial<Layer>` through the append boundary.
+- `src/contexts/history-adapter.ts` — `isSetLayerPropertiesAction()` and
+  `deriveSetLayerPropertiesEntry()` map and validate the opacity action. A future
+  writer must use that action rather than inventing another `TOOL_ACTION` patch.
+- `src/contexts/history-replay.ts` — the legacy arm in `replayHistory()` applies
+  the opacity action beside show/hide and rename, preserving it through undo/redo.
+- `src/contexts/useHistory.ts` — `getHistoryItemTitle()` names the purpose-built
+  action; a `TOOL_ACTION` patch remains unsupported and must not be revived.
 
 `updateLayer` itself needs no change: given a whitelisted action it already replaces
 the caller's patch with the canonical one from the planned durable entry.
@@ -647,6 +640,11 @@ layer property.
 `src/contexts/history-replay.ts` — `replayHistory()`, `src/contexts/useHistory.ts` —
 `getHistoryItemTitle()`,
 `src/contexts/psd-utils.ts`
+
+Add the Layers panel component and focused UI/headless interaction tests when
+the user-facing control is implemented. The replay and append contracts are
+already covered by their history tests; do not replace `HistoryItem[]` as the
+navigation authority.
 
 ## 57. The mobile shell has no colour control at all
 
