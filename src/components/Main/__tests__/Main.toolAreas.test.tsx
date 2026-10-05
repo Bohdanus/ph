@@ -372,14 +372,12 @@ describe('Main tool-area routing', () => {
     expect(toolAreaTestId()).toBe(-1);
   });
 
-  it('routes focus tools to interactive areas', () => {
-    for (const toolName of ['blur', 'sharpen'] as const) {
-      storeState.toolName = toolName;
-      const { container, unmount } = render(<GuardedMain />);
-      expect(container.querySelector(`[data-testid="tool-area-${toolName}"]`)).toBeTruthy();
-      unmount();
-    }
-  });
+  // NOTE: there is deliberately no focus-tool case of its own here. The `it.each` routing table
+  // above already carries a `blur` and a `sharpen` row, and each asserts strictly more than a
+  // presence check — that exactly one area from `TOOL_AREA_IDS` mounted AND that it is the expected
+  // one. What the markers cannot show is that the REAL surfaces bind pointer handlers, because the
+  // markers are inert stand-ins; that claim is pinned against the real components in
+  // `FocusToolArea.test.tsx`, which has the store and tool contexts they need.
 
   it('never mounts any tool area while no image is open', () => {
     storeState.hasImage = false;
