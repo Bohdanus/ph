@@ -290,6 +290,13 @@ export function classify(
     );
   }
 
+  let legacyUnknown = null;
+  if (curated?.legacy) {
+    if (wt.workingTree?.read === false) legacyUnknown = 'the working tree could not be read';
+    else if (typeof wt.ahead !== 'number') legacyUnknown = 'the base branch could not be resolved';
+    else if (wt.branch === '(unknown)') legacyUnknown = 'the worktree has no branch to keep';
+  }
+
   let status;
   if (wt.detached) {
     // A detached HEAD is named here because the inventory cannot record WHICH
@@ -304,6 +311,15 @@ export function classify(
   } else if (wt.isPrimary) {
     status = STATUS.LANDED;
     reasons.push('this is the main worktree');
+  } else if (legacyUnknown !== null) {
+    // BEFORE THE CLEANLINESS ARMS, BECAUSE THEY STATE FACTS THEY DO NOT HAVE.
+    // An unreadable tree and an unresolvable base both arrive as zeros and nulls,
+    // which is what "clean" and "0 ahead" look like, so the arms below would
+    // publish "the branch is an ancestor of main and the working tree is clean"
+    // for a tree and a base git refused to read. The claim is about the branch
+    // being worth keeping, and it cannot be applied on evidence that is missing.
+    status = STATUS.UNREADABLE;
+    reasons.push(`a curated finding marks this branch legacy, but ${legacyUnknown}`);
   } else if (uncommitted && wt.ahead === 0) {
     status = STATUS.UNCOMMITTED_ONLY;
     reasons.push('the branch reports 0 commits ahead of main and is an ancestor of it');
@@ -328,6 +344,17 @@ export function classify(
   const curatedBlocksPrune = Boolean(curated?.mustNotPrune);
   const curatedLegacy = Boolean(curated?.legacy);
   const mergeState = mergeVerdict(wt);
+  // AFFIRMATIVE EVIDENCE, NOT THE ABSENCE OF A COMPLAINT, IS THE RULE ENCODED
+  // IN `legacyUnknown` ABOVE: a `legacy` verdict is built on a tree that was
+  // actually read as clean and a base comparison that actually produced a count.
+  // Both facts arrive as innocuous zeros and nulls when the command behind them
+  // failed, and zeros and nulls are exactly what "clean" and "no commits ahead"
+  // look like. `git.mjs` reports `read: false` rather than returning an empty
+  // tree for the same reason. Both guards were survivable while the only
+  // consequence was a wrong `prunable`; `legacy` makes them a licence to delete
+  // a directory, and it widens the reach — an unreadable worktree with a
+  // conflicting merge used to be `at-risk`, and with this flag it became
+  // `legacy`.
   let recommendation;
   if (wt.isPrimary) {
     // The main checkout is never a prune candidate, whatever git says about
@@ -351,7 +378,14 @@ export function classify(
               ).toISOString()}`
             : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
-  } else if (curatedLegacy && !curatedBlocksPrune && !uncommitted && !wt.detached && wt.tip !== null) {
+  } else if (
+    curatedLegacy &&
+    legacyUnknown === null &&
+    !curatedBlocksPrune &&
+    !uncommitted &&
+    !wt.detached &&
+    wt.tip !== null
+  ) {
     // CHECKED HERE, NOT AT THE BOTTOM, AND ONLY FOR A CLEAN TREE.
     //
     // `uncommitted` is the load-bearing condition. `legacy` authorises removing
@@ -391,6 +425,23 @@ export function classify(
     reasons.push('a curated finding marks this branch legacy: keep the ref, drop the worktree');
     if (wt.ahead > 0)
       reasons.push(`${wt.ahead} commit(s) ahead of main are kept on the branch and not proposed for merge`);
+    // A legacy branch that no longer merges is the common case, not an exception,
+    // so the conflict is expected rather than news. It is still named, because a
+    // reader who sees "not proposed for merge" on a branch with three conflicting
+    // files would otherwise have to guess whether the conflict was considered.
+    if (mergeState === 'conflict') {
+      reasons.push(
+        `the merge conflicts on ${wt.merge?.files?.length ?? 'some'} path(s), and keeping the ref is why that is not being reconciled`
+      );
+    }
+  } else if (legacyUnknown !== null) {
+    // SAYS WHAT GIT COULD NOT ANSWER, INSTEAD OF THE ANSWER IT DID NOT GET.
+    // Reaching the ordinary arms here would publish a fabricated cleanliness fact
+    // — "the branch is an ancestor of main and the working tree is clean" — for a
+    // tree or a base that was never read. `undecided` is the honest verdict, and
+    // it is the one that keeps the directory.
+    recommendation = RECOMMENDATION.UNKNOWN;
+    reasons.push('the legacy claim cannot be applied on evidence git did not give, so the worktree is left alone');
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
     reasons.push('work here is not reachable from any commit on this branch');

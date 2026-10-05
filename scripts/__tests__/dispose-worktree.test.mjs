@@ -643,6 +643,63 @@ describe('dispose execution', () => {
       expect(result.steps.join('\n')).toContain('legacy');
     });
 
+    it('says the no-anchor step, because it is the whole difference between the two modes', () => {
+      // Unpinned before this test: deleting the line that reports the skipped anchor
+      // left every other assertion green, which is how a step that exists to explain
+      // a missing ref can be removed without anything noticing.
+      const { run, fs } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.steps.join('\n')).toContain('no anchor ref');
+      // And an ordinary disposal says nothing of the kind, because it anchors.
+      const ordinary = harness();
+      const plain = dispose('/repo', greenState(), { run: ordinary.run, fs: ordinary.fs });
+      expect(plain.steps.join('\n')).not.toContain('no anchor ref');
+      expect(plain.anchorRef).not.toBeNull();
+    });
+
+    it('does not send a failed legacy disposal to an anchor that was never written', () => {
+      // `ref ?? 'no anchor'` was unreachable while `ref` was null only on a refusal
+      // path. `keepBranch` makes a null ref the NORMAL state, so the fallback turned
+      // a routine legacy failure into "its branch is still anchored at no anchor" —
+      // self-contradicting, and pointing at a ref this module documents as the only
+      // recovery point for a DISPOSED branch. It is the last line printed before exit 2.
+      const { run, fs } = harness({
+        'worktree remove /repo/.kilo/worktrees/task': new Error('use `remove -f -f` to override'),
+      });
+      const legacy = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(legacy.worktreeRemoved).toBe(false);
+      const said = legacy.steps.join('\n');
+      expect(said).toContain('is untouched');
+      expect(said, 'must not point at an anchor a legacy disposal never writes').not.toContain('anchored at no anchor');
+      // An ordinary disposal still names the anchor it actually wrote.
+      const ordinary = harness({
+        'worktree remove /repo/.kilo/worktrees/task': new Error('use `remove -f -f` to override'),
+      });
+      const plain = dispose('/repo', greenState(), { run: ordinary.run, fs: ordinary.fs });
+      expect(plain.steps.join('\n')).toContain(`anchored at refs/keep/disposed/fix-task`);
+    });
+
+    it('reports the same result shape whichever refusal ended the preflight', () => {
+      // The early return for an unknown target had a different key set from the
+      // final one, so a caller destructuring the result got `undefined` here and a
+      // boolean there — and this is the return a new caller hits first.
+      const unknown = preflight({ target: 'nope', gitState: { found: false } });
+      const refused = green({ inventory: legacyInventory() });
+      expect(Object.keys(unknown).sort()).toEqual(Object.keys(refused).sort());
+      expect(unknown.keepBranch).toBe(false);
+    });
+
+    it('reports keepBranch even when the verdict refuses the record it came from', () => {
+      // It is a CLAIM, not an outcome, until `ok`. It is computed before the
+      // freshness, action, `mustNotPrune`, live and ownership checks, so it reads
+      // `true` beside `ok: false` for any refused record. Nothing destructive
+      // follows — `main()` gates on `ok` — but the pairing is the contract.
+      const verdict = green({ inventory: legacyInventory({ mustNotPrune: true }) });
+      expect(codes(verdict)).toContain('must-not-prune');
+      expect(verdict.ok).toBe(false);
+      expect(verdict.keepBranch).toBe(true);
+    });
+
     it('still salvages before removing the directory', () => {
       // Ordering, not coverage: the salvage is the only thing standing between a
       // tree that turned out to hold something and its loss, and skipping it for

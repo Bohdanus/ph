@@ -566,10 +566,40 @@ So the precedence lives where the verdict is formed:
   `mustNotPrune`. Two lines, so neither surface can be the only thing standing
   between a hand-written flag and a directory holding the only copy of anything.
 
-The general rule this instance obeys: **a veto that exists only at the last gate is
-not a veto, it is a hope.** Where a curated claim can change a verdict, the
-combination rules belong beside the other verdict logic, and every refusal layer
-that repeats the rule is a second line, never the first.
+The rule this instance earns: **a veto that exists only at the last gate is not a
+veto, it is a hope.** Where a curated claim can move a verdict, the combination
+rules belong beside the other verdict logic, and a refusal layer that repeats such
+a rule is a second line, never the first.
+
+**It is not applied on evidence git did not give.** Three facts must be read
+rather than assumed, and each arrives as something indistinguishable from the
+answer when the command behind it fails:
+
+| unknown                               | arrives as                  | so                                |
+| ------------------------------------- | --------------------------- | --------------------------------- |
+| the working tree could not be read    | `modified: 0, untracked: 0` | what an empty tree looks like     |
+| the base branch could not be resolved | `ahead: null`               | what "0 commits ahead" looks like |
+| the worktree has no branch            | `branch: "(unknown)"`       | —                                 |
+
+Any of the three makes the record `undecided`, and the reason names the unknown
+instead of claiming cleanliness. **This was wrong once, in the same way the flag
+precedence above was.** `legacy` reads a cleanliness fact, and a failed
+`git status` reported an empty tree; the record then said "the branch is an
+ancestor of main and the working tree is clean" beside a printed instruction to
+remove the directory. It widened a hole older than the status — `prunable` already
+read an unreadable tree as empty, but only for a branch already on `main`; an
+unreadable worktree with a conflicting merge used to be `at-risk`.
+
+The general rule, which is the same one the precedence section reaches: **a status
+that authorises a removal must assert that the evidence it relies on was actually
+read.** Silence is not a fact, and a zero is not an observation.
+
+**The record carries both flags, so an overridden claim is visible.** `legacy` and
+`mustNotPrune` appear on the record beside `action`. An entry with both shows
+`legacy: true`, `mustNotPrune: true` and `action: "at-risk"` — a reader can tell a
+silent override from an entry that never claimed to be legacy. Both are watched by
+`node scripts/worktree-inventory.mjs --check`, so a hand-written field turning on
+or off is reported rather than silently changing the answer.
 
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as

@@ -511,6 +511,13 @@ function describeDrift(currentText, nextText) {
     'mergeConflict',
     'mergeConflictFiles',
     'mergeChecked',
+    // The two curated CLAIMS that can move a verdict, watched for the same
+    // reason `action` is: an operator has to be told when a hand-written field
+    // changed the answer, or when it stopped being able to. `mustNotPrune` was
+    // not watched before, which is a gap in its own right — a veto that turns on
+    // and off invisibly is worse than one that is at least reported.
+    'mustNotPrune',
+    'legacy',
     'writeHistory',
     // Ownership is watched because a suppressed-liveness file drifts on a
     // timer, not on a commit: the derived signals keep ageing and the operator

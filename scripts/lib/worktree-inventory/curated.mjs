@@ -58,6 +58,15 @@
  * `at-risk` and the claim is ignored. `classify` enforces it and the suite pins
  * both directions.
  *
+ * IT IS REFUSED WHEN THE EVIDENCE IS MISSING, NOT ONLY WHEN IT IS BAD. A
+ * `legacy` verdict rests on a tree that was read as clean and a base that was
+ * resolved. `git status` failing reports an empty tree, an unresolvable base
+ * reports no commits ahead, and a branchless worktree reports a placeholder — so
+ * each unknown arrives looking exactly like the answer, and `legacy` is the first
+ * status that turns a cleanliness reading into authority to delete a directory.
+ * `classify` reports `undecided` and NAMES the unknown rather than publishing
+ * "the working tree is clean" beside a removal instruction.
+ *
  * IT LOSES TO `mustNotPrune`, AND THAT IS ENFORCED IN `classify`, NOT ONLY AT
  * DISPOSAL. An entry can carry both flags, and they are opposite claims about one
  * tree: this one says the directory may go, `mustNotPrune` says the directory is

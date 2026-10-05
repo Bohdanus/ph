@@ -423,16 +423,30 @@ export function preflight({
 } = {}) {
   const failures = [];
   const refuse = (code, ...args) => failures.push({ code, message: REFUSALS[code] ? REFUSALS[code](...args) : code });
-  // Read ONCE, beside the inventory checks, and passed to `dispose()`. It is the
-  // difference between removing a directory and removing a branch, and deriving
-  // it twice from two reads of the same field is how the two halves stop
-  // agreeing — the inventory is a regenerable file, so a second read after a
-  // regeneration would be a second answer.
+  // DERIVED ONCE AND PASSED TO `dispose()`. It is the difference between removing
+  // a directory and removing a branch, and `dispose()` must not re-derive it: it
+  // has no inventory and would have to re-read `WORKTREES.json`, which is a
+  // regenerable file, so a regeneration between the decision and the action would
+  // make the two halves answer differently. The `action` field below is re-read
+  // from the SAME in-memory `record`, which is safe for the reason this comment
+  // states — one object, one read of the file — so the invariant is "one object",
+  // not "one read of one field".
+  //
+  // IT IS A CLAIM, NOT AN OUTCOME, UNTIL `ok`. It is computed before the
+  // freshness, action, `mustNotPrune`, derived-live, dirtiness, operation-state
+  // and ownership checks, so `keepBranch === true` co-occurs with `ok === false`
+  // for any record that is refused. `main()` gates on `ok` before it can reach
+  // `dispose()`, so nothing destructive follows from that today; the name is
+  // what would mislead a future caller reading the field without it.
   const keepBranch = inventory?.record?.action === ACTION.LEGACY;
 
   if (!gitState?.found) {
     refuse('unknown-worktree', target);
-    return { ok: false, failures, record: null };
+    // `keepBranch` IS HERE TOO. This return has a different key set from the
+    // one at the end of the function, so a caller that destructures the result
+    // gets `undefined` here and a boolean there — and this is the return a new
+    // caller hits first.
+    return { ok: false, failures, record: null, keepBranch };
   }
   if (gitState.isPrimary) refuse('main-worktree');
   if (gitState.detached) refuse('detached');
@@ -1211,10 +1225,27 @@ function firstLine(err) {
  * The removal itself. No `--force` parameter exists on this function, so no
  * caller can pass one.
  *
+ * TWO MODES, AND THIS FUNCTION VALIDATES NEITHER. `keepBranch: false` is the
+ * disposal described below: anchor, salvage, remove the worktree, then
+ * `git branch -d`. `keepBranch: true` is a LEGACY disposal, and it is the first
+ * mode this function has that writes no anchor and deletes no branch, because
+ * `ACTION.LEGACY` means the directory is disposable and the ref is the thing
+ * being preserved.
+ *
+ * `keepBranch` IS NOT DERIVED HERE AND IS NOT CHECKED HERE. It is a human claim
+ * carried in from `preflight()`, which is the only thing that establishes the
+ * inventory says `action: "legacy"` — and that inventory check is the whole
+ * authorisation. So this signature and its doc are the pairing a reader needs:
+ * a caller that reaches `dispose()` directly, as the tests do, can pass
+ * `keepBranch: true` for a worktree no inventory ever called legacy. Nothing
+ * destructive follows, because the flag only ever omits writes, but the authority
+ * for the mode lives in `preflight()` and nowhere else.
+ *
  * `git branch -d` rather than `-D`: it refuses an unmerged branch, and that
  * refusal is the guard. The anchor above means a branch kept by that refusal is
  * still recoverable either way, so there is nothing to gain by forcing it and a
- * work to lose.
+ * work to lose. A legacy disposal does not consult that guard at all, because
+ * the command is never run.
  */
 export function dispose(
   cwd,
@@ -1251,7 +1282,17 @@ export function dispose(
     steps.push(`removed worktree ${gitState.absolutePath}`);
   } catch (err) {
     steps.push(`KEPT worktree ${gitState.absolutePath}: ${firstLine(err)}`);
-    steps.push(`nothing was deleted; its branch is still anchored at ${ref ?? 'no anchor'}`);
+    // BRANCHED, NOT `ref ?? 'no anchor'`. `keepBranch` makes a null ref the
+    // NORMAL state, so the old fallback turned a routine legacy failure into the
+    // line "its branch is still anchored at no anchor" — self-contradicting, and
+    // pointing an operator at a ref this module's header documents as the only
+    // recovery point for a DISPOSED branch. This is the last line printed before
+    // `main()` exits 2, so it is the one read after a failed disposal.
+    steps.push(
+      keepBranch
+        ? `nothing was deleted; its branch ${gitState.branch} is untouched, as a legacy disposal keeps it`
+        : `nothing was deleted; its branch is still anchored at ${ref ?? 'no anchor'}`
+    );
     // `branchKept` IS HERE TOO, not only on the paths that reach the branch step.
     // Nothing was deleted, so a kept branch was trivially kept — and a caller
     // reading `branchKept` found `undefined` on this path and `true` on the

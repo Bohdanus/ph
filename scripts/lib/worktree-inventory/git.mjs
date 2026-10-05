@@ -216,7 +216,15 @@ function notOnBase(cwd, base, { modifiedPaths, untracked }) {
  */
 function workingTreeState(cwd, base) {
   const out = git(cwd, ['status', '--porcelain']);
-  if (out === null) return { modified: 0, untracked: 0, notOnBase: 0, paths: [] };
+  // `read: false` SAYS THE COUNTS ARE NOT A FINDING. Returning zeros on failure
+  // is indistinguishable from a genuinely empty tree to every caller, and a
+  // corrupt index or a missing git state file produces exactly that. `prunable`
+  // already required `modified === 0 && untracked === 0` and so already read an
+  // unreadable tree as an empty one; that hole is older than the flag consuming
+  // it, and it is recorded rather than fixed here because changing what `prunable`
+  // means reaches every action. A caller that is about to AUTHORISE A REMOVAL
+  // needs the distinction this field carries.
+  if (out === null) return { modified: 0, untracked: 0, notOnBase: 0, paths: [], read: false };
 
   const paths = [];
   const modifiedPaths = [];
@@ -235,7 +243,7 @@ function workingTreeState(cwd, base) {
 
   const offBase = base ? notOnBase(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
 
-  return { modified, untracked, notOnBase: offBase, paths };
+  return { modified, untracked, notOnBase: offBase, paths, read: true };
 }
 
 /** Subject line and dates of the branch's tip commit. */

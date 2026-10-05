@@ -1249,6 +1249,51 @@ describe('classify: a curated legacy claim', () => {
     );
   });
 
+  it('refuses to apply the claim when git could not read the tree or resolve the base', () => {
+    // THE THIRD UNKNOWN, AND THE ONE NO REFUSAL LAYER CAUGHT BEFORE. `git status`
+    // failing and an unresolvable base both arrive as zeros and nulls, which is
+    // what "clean" and "0 commits ahead" look like. So `legacy` — the first status
+    // that turns a cleanliness reading into a licence to delete a directory — read
+    // an unreadable tree as an empty one.
+    //
+    // It also WIDENED an older hole rather than creating it: `prunable` already
+    // read an unreadable tree as empty, but only for a branch already on `main`. An
+    // unreadable worktree with a conflicting merge was `at-risk`; with this flag it
+    // became `legacy`, which prints "worktree disposable, BRANCH KEPT".
+    const unknown = [
+      [
+        'the working tree could not be read',
+        wt({ workingTree: { modified: 0, untracked: 0, paths: [], read: false } }),
+      ],
+      ['the base branch could not be resolved', wt({ ahead: null, mergedIntoBase: false, merge: { conflict: null } })],
+      ['the worktree has no branch to keep', wt({ branch: '(unknown)' })],
+    ];
+    for (const [said, shape] of unknown) {
+      const v = of(shape, LEGACY);
+      expect(v.action, `${said} must not become a removal`).not.toBe(ACTION.LEGACY);
+      // `undecided` is the answer that keeps the directory.
+      expect(v.action, `${said}`).toBe(ACTION.UNDECIDED);
+      expect(v.prunable, `${said}`).toBe(false);
+      // AND IT MUST NOT FABRICATE THE CLEANLINESS FACT. This is the half that was
+      // wrong even after the verdict was fixed: the status block publishes "the
+      // branch is an ancestor of main and the working tree is clean" from the
+      // absence of a complaint, so a record read that sentence beside a removal
+      // instruction for a tree git had refused to open.
+      expect(v.reasons.join(' '), `${said} must name the unknown`).toContain(said);
+      expect(v.reasons.join(' '), `${said} must not claim the tree is clean`).not.toContain('working tree is clean');
+    }
+  });
+
+  it('names a conflicting merge as the reason a legacy branch is not being reconciled', () => {
+    // A stale branch that no longer merges is the COMMON case for legacy, so the
+    // conflict is expected rather than news — but a reader seeing "not proposed for
+    // merge" on a branch with three conflicting files would otherwise have to guess
+    // whether the conflict had been considered at all.
+    const v = of(wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: true, files: ['a', 'b', 'c'] } }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    expect(v.reasons.join(' ')).toContain('conflicts on 3 path(s)');
+  });
+
   it('loses to mustNotPrune, because that one is about content', () => {
     // THE PRECEDENCE IS ASSERTED HERE, NOT AT `preflight`.
     //
@@ -2338,6 +2383,10 @@ describe('the curated table', () => {
     // An entry carrying only `legacy: true` asserts an indefinite hold on a ref
     // and gives a later reader no way to tell a decision from a leftover — which
     // is the failure mode the `landed` assertion exists to prevent.
+    //
+    // VACUOUS OVER AN EMPTY SET, AND THAT IS CHECKED BELOW. Both rules here run
+    // over `CURATED`, and no entry sets `legacy` yet, so both iterate nothing and
+    // pass without testing anything. The next test refuses to let that stand.
     const silent = Object.entries(CURATED)
       .filter(([, e]) => e.legacy === true && !(typeof e.note === 'string' && e.note.trim().length > 20))
       .map(([n]) => n);
@@ -2347,13 +2396,52 @@ describe('the curated table', () => {
     ).toEqual([]);
   });
 
+  it('proves the `legacy` rule has teeth, because no live entry carries the flag yet', () => {
+    // The rule above runs over `CURATED`, and nothing in it sets `legacy` today, so
+    // it iterates an empty set and would pass even if it were nonsense. This is
+    // the repo's problem with a field nothing uses yet, and the fix is to exercise
+    // the RULE against a synthetic entry rather than to require a live one — a live
+    // entry would mean inventing a branch to call legacy, which is a judgement no
+    // test is entitled to make.
+    //
+    // The rule: an entry that sets `legacy` must carry a note saying why, or must
+    // be rejected. Stated here as the same predicate, run over three entries.
+    const unacceptable = (entry) =>
+      entry.legacy === true && !(typeof entry.note === 'string' && entry.note.trim().length > 20);
+    expect(
+      unacceptable({ legacy: true, note: 'kept for the off chance a future task needs the brush tip maths' })
+    ).toBe(false);
+    // The two shapes it must reject: a bare flag, and a note too short to be a reason.
+    expect(unacceptable({ legacy: true })).toBe(true);
+    expect(unacceptable({ legacy: true, note: 'old' })).toBe(true);
+    // And an entry that does not claim to be legacy is not subject to it, so adding
+    // a note-less entry for another reason cannot start failing this.
+    expect(unacceptable({ summary: 'a finding with no note' })).toBe(false);
+  });
+
   it('marks no dirty worktree legacy, because the directory is the only copy', () => {
     // The same condition `classify` enforces, asserted over the REAL table rather
     // than over the shape `classify` is handed. A unit test proves the branch in
     // `classify`; this proves no entry in `curated.mjs` relies on the branch not
     // existing — a dirty legacy worktree would be at-risk, so an entry could hold
     // the flag and get the wrong answer without anything here noticing.
+    //
+    // Also the guard against NAME RECYCLING. `legacy` attaches by directory
+    // basename, and `landed` carries a re-derivation assertion for exactly that
+    // reason. A `legacy` flag left behind after a disposal re-attaches to the
+    // next worktree created at the same path, and `legacy` is the one curated
+    // field that errs toward DELETION: `mustNotPrune` errs safe when stale.
     const live = listWorktrees(process.cwd());
+    const gone = Object.entries(CURATED)
+      .filter(([name]) => CURATED[name].legacy === true)
+      .map(([name]) => name)
+      .filter((name) => !live.some((x) => x.name === name));
+    expect(
+      gone,
+      `these entries mark a branch legacy but name no worktree, so the flag will attach itself to whatever ` +
+        `is created at that path next: ${gone.join(', ')}. Remove the entry when the branch is finally deleted.`
+    ).toEqual([]);
+
     const dirty = Object.entries(CURATED)
       .filter(([name]) => CURATED[name].legacy === true)
       .map(([name]) => name)

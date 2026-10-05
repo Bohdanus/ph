@@ -211,6 +211,15 @@ export function buildInventory({
       note: curated?.note ?? null,
       liveNote: curated?.liveNote ?? null,
       mustNotPrune: Boolean(curated?.mustNotPrune),
+      // The claim ITSELF, not just the verdict it produced, and the reason this
+      // is emitted for `legacy` and not for any other curated field: the two
+      // flags can both be set, and `mustNotPrune` wins, which is only useful to a
+      // reader if the record shows that a `legacy` claim existed and was
+      // overridden. Without this field a human sees `action: "at-risk"` and
+      // `mustNotPrune: true` and cannot tell a silent override from an entry that
+      // never claimed to be legacy. `preflight` derives `keepBranch` from
+      // `action`, so nothing depends on this — it is for the person reading.
+      legacy: Boolean(curated?.legacy),
 
       // Merges on `main` whose subject already carried this branch's name.
       // Advisory and verdict-free — it exists so a reader about to read a name as
