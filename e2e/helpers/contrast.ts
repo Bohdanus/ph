@@ -179,13 +179,20 @@ export const contrastRatioOver = (text: Rgb, backgroundChain: readonly Rgb[]): n
 /**
  * The floor that applies to a run of text: 3.0 for large text, 4.5 otherwise.
  *
- * "Large" is WCAG's own definition and not a round number chosen here: 18.66px, or 14px when bold
- * at 700 or heavier. A gate that hardcoded 4.5 for everything would be stricter than the standard on
- * the headings it happened to cover, which is a different defect from being too lax.
+ * "Large" is WCAG's own definition in PIXELS, and the pixels are the ones the note on SC 1.4.3 spells
+ * out: "The ratio between sizes in points and CSS pixels is 1pt = 1.333px, therefore 14pt and 18pt are
+ * equivalent to approximately 18.5px and 24px." So large-scale text is 24px or larger, or 18.66px or
+ * larger when bold at 700.
+ *
+ * The point values are NOT the pixel values, and using them as pixels makes both thresholds roughly
+ * half of correct — which is how this first read them, as `bold ? 14 : 18.66`. That is a LENIENT error
+ * in the direction that matters here: every label in the 14-24px band silently got 3.0 from a helper
+ * documented as WCAG's rule, so the gate passed things the standard does not. It survived because the
+ * elements measured today are 10-16px, all below either threshold.
  */
 export const textContrastFloor = (fontSizePx: number, fontWeight: number): number => {
   const bold = fontWeight >= 700;
-  return fontSizePx >= (bold ? 14 : 18.66) ? 3 : 4.5;
+  return fontSizePx >= (bold ? 18.66 : 24) ? 3 : 4.5;
 };
 
 /** The floor for the boundary of a user-interface component: WCAG 1.4.11. */

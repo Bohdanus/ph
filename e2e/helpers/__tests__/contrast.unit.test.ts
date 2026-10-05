@@ -190,14 +190,27 @@ describe('relativeLuminance', () => {
 });
 
 describe('textContrastFloor', () => {
-  it('asks 4.5 of ordinary text and 3.0 of large text, by WCAG own definition of large', () => {
+  it('asks 4.5 of ordinary text and 3.0 of large text, by WCAG PX definition of large', () => {
     expect(textContrastFloor(12, 400)).toBe(4.5);
     expect(textContrastFloor(10, 700)).toBe(4.5);
+    // 24px REGULAR is large; 18px regular is not.
     expect(textContrastFloor(24, 400)).toBe(3);
-    // 14px BOLD is large; 14px regular is not. This is the pair a hardcoded 4.5 would get wrong.
-    expect(textContrastFloor(14, 700)).toBe(3);
-    expect(textContrastFloor(14, 400)).toBe(4.5);
-    expect(textContrastFloor(18.66, 400)).toBe(3);
+    expect(textContrastFloor(18, 400)).toBe(4.5);
+    // 18.66px BOLD is large; 16px bold is not. WCAG states the thresholds in points — 18pt and 14pt —
+    // and its own note converts them, so the POINT numbers are not the pixel numbers.
+    expect(textContrastFloor(18.66, 700)).toBe(3);
+    expect(textContrastFloor(16, 700)).toBe(4.5);
+  });
+
+  it('does not hand out the lenient floor inside the 14-24px band, which is where the error was', () => {
+    // The bug this pins: the thresholds were the POINT values read as pixels, so everything from 14px
+    // up got 3.0. A helper documented as WCAG's rule cannot quietly apply the wrong half of it.
+    for (const size of [14, 16, 18, 20, 23]) {
+      expect(textContrastFloor(size, 400), `${size}px regular is ordinary text`).toBe(4.5);
+    }
+    for (const size of [14, 16, 18]) {
+      expect(textContrastFloor(size, 700), `${size}px bold is ordinary text`).toBe(4.5);
+    }
   });
 
   it('never asks less than the non-text floor for anything', () => {

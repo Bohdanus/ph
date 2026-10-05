@@ -155,6 +155,10 @@ test.describe('the measuring line, as pictures', () => {
       // A long shallow diagonal, because that is the shape whose two ends AND whose crossing of a dark
       // band are both in frame at once.
       await dragAcross(page, await docAt(page, 0.12, 0.28), await docAt(page, 0.88, 0.68));
+      // The gesture HAPPENED, asserted rather than assumed. Four of these pictures were pure cost with
+      // no oracle: deleting the drag entirely left them green and wrote a BLANK CANVAS to a file named
+      // `line-over-band-dark.png`, which is worse than no picture because it is invited as evidence.
+      await expect(page.getByTestId('ruler-d1'), 'the line was drawn').not.toHaveText('');
 
       await save(page.locator('[data-testid="workspace-container"]'), `line-over-band-${theme}`, testInfo);
     });
@@ -183,6 +187,7 @@ test.describe('the measuring line, as pictures', () => {
       await page.mouse.move(from.x, from.y);
       await page.mouse.down();
       await page.mouse.move((await docAt(page, 0.88, 0.68)).x, (await docAt(page, 0.88, 0.68)).y, { steps: 8 });
+      await expect(page.getByTestId('ruler-d1'), 'the line is being drawn').not.toHaveText('');
       await save(page.locator('[data-testid="workspace-container"]'), `mid-drag-${theme}`, testInfo);
       await page.mouse.up();
     });

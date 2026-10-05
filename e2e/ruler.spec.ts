@@ -83,17 +83,20 @@ const docAt = async (page: Page, fx: number, fy: number): Promise<{ x: number; y
 };
 
 /** Draws one pointer drag across the canvas, from one fraction to another. */
-const dragAcross = async (
-  page: Page,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  init: { shiftKey?: boolean; altKey?: boolean } = {}
-) => {
+/**
+ * Draws one pointer drag across the canvas.
+ *
+ * It takes NO modifier argument, deliberately. An earlier version accepted `init` and then discarded
+ * it — `void init` to satisfy the unused-parameter lint — so the next test to write
+ * `{ shiftKey: true }` here would run an UNCONSTRAINED drag and pass while asserting a constrained
+ * one. A modifier is pressed with `page.keyboard.down` around the call, which is what every caller
+ * does and what cannot be forgotten.
+ */
+const dragAcross = async (page: Page, from: { x: number; y: number }, to: { x: number; y: number }) => {
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 8 });
   await page.mouse.up();
-  if (Object.keys(init).length > 0) void init;
 };
 
 /**
@@ -143,9 +146,15 @@ test.describe('the Ruler tool', () => {
     // which is why the assertions are relational rather than literal.
     await expect(readout(page, 'ruler-w')).toHaveText('0 px');
     await expect(readout(page, 'ruler-a')).toHaveText('90°');
-    await expect(readout(page, 'ruler-h')).not.toHaveText('');
-    await expect(readout(page, 'ruler-d1')).not.toHaveText('');
     await expect(readout(page, 'ruler-y')).not.toHaveText('');
+    // H EQUALS D1, which is the one relational fact the vertical drag makes knowable, and which
+    // `not.toHaveText('')` cannot express: a clamp or a length taken before the constraint could make
+    // them disagree — or either could read `NaN px`, which is also not the empty string.
+    // `textContent()` is nullable, and a null expectation would throw a TypeError that reads as a
+    // crash rather than as the mismatch it is.
+    const length = await readout(page, 'ruler-d1').textContent();
+    expect(length, 'the drag produced a length to compare H against').not.toBeNull();
+    await expect(readout(page, 'ruler-h')).toHaveText(length ?? '');
     // No protractor has been pulled out, so D2 is absent rather than zero.
     await expect(readout(page, 'ruler-d2')).toHaveText('');
   });
@@ -228,7 +237,14 @@ test.describe('the Ruler tool', () => {
     await openToolFlyout(page, 'eyedropper');
     await selectFromFlyout(page, { toolName: 'ruler', label: 'Ruler Tool' });
 
-    await expect(page.getByTestId('ruler-clear')).toBeDisabled();
+    // "GREYS the button" is half the name and was not checked: the assertion was `toBeDisabled` twice,
+    // which a button that is disabled but not greyed satisfies. The greying is the `disabled:opacity-50`
+    // on `CLEAR_CLASS`, so the style is what has to be asserted — a disabled button at full opacity is
+    // still a live-looking control the user is invited to press.
+    const clear = page.getByTestId('ruler-clear');
+    await expect(clear).toBeDisabled();
+    const greyedOpacity = await clear.evaluate((node) => Number(window.getComputedStyle(node).opacity));
+    expect(greyedOpacity, 'a disabled Clear is dimmed, not merely inert').toBeLessThan(1);
 
     const box = (await page.getByTestId('workspace-canvas').boundingBox())!;
     await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.4);
@@ -250,6 +266,12 @@ test.describe('the Ruler tool', () => {
     await selectFromFlyout(page, { toolName: 'ruler', label: 'Ruler Tool' });
 
     await dragAcross(page, await docAt(page, 0.4, 0.4), await docAt(page, 0.6, 0.5));
+
+    // THAT THE MEASUREMENT EXISTS, first. It used to come second, or rather not at all, and the test
+    // passed with the `dragAcross` call deleted outright: Undo is already disabled on the seeded Blank
+    // document, so a Ruler that draws nothing at all satisfies "records no history state" perfectly.
+    // A precondition this blunt has to be stated, or the assertion after it means nothing.
+    await expect(readout(page, 'ruler-d1'), 'the gesture produced a measurement').not.toHaveText('');
 
     // The History panel's Undo is the app's own statement about what an edit was. A measurement
     // that created a history state would enable it, and this is the assertion that would catch it.
