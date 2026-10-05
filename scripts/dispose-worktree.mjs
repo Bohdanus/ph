@@ -431,7 +431,7 @@ export function preflight({
   if (gitState.isPrimary) refuse('main-worktree');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
-  // `git worktree list --porcelain` gave no `branch` line. They are matched by
+  // `git worktree list --porcelain -z` gave no `branch` line. They are matched by
   // identity rather than by shape: `(` is a LEGAL character in a branch name
   // (`git check-ref-format 'refs/heads/(weird)'` exits 0), so a shape test like
   // `/^[(]/` refuses a real branch and reports a state that does not exist. A
@@ -580,7 +580,7 @@ export const PLACEHOLDER_BRANCHES = new Set(['(detached)', '(unknown)']);
 /**
  * Everything about the target that git can answer, and nothing it cannot.
  *
- * `git worktree list --porcelain` is the only enumeration; a target is matched
+ * `git worktree list --porcelain -z` is the only enumeration; a target is matched
  * on its resolved realpath, because macOS reports `/private/var/...` for a path
  * reached through `/var` and a string comparison would miss it.
  *

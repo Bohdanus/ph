@@ -119,7 +119,7 @@ function parseArgs(argv) {
  * `git rev-parse --show-toplevel` is the wrong answer here: inside a worktree
  * it returns that worktree, which would inventory one directory and report the
  * other 76 as missing. The main worktree is the first entry of
- * `git worktree list --porcelain`, and its checkout is where relative paths
+ * `git worktree list --porcelain -z`, and its checkout is where relative paths
  * like `.kilo/worktrees/…` resolve.
  */
 function repoRoot(cwd) {
@@ -132,7 +132,9 @@ function repoRoot(cwd) {
   // `scripts/lib/worktree-inventory/git.mjs`.
   const first = out.split('\0').find((l) => l.startsWith('worktree '));
   if (!first) throw new Error('git worktree list returned no worktrees');
-  return resolve(first.slice('worktree '.length).trim());
+  // No `.trim()`: `--porcelain` does not quote paths, so a trailing space is part of
+  // the path. Only the NUL terminator is stripped, and `-z` already does that.
+  return resolve(first.slice('worktree '.length));
 }
 
 function printSummary(inventory, quiet) {
