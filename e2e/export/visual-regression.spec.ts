@@ -177,11 +177,22 @@ test.describe('Export visual regression', () => {
         threshold: 0.01,
         maxDiffPixels: 100,
       });
+      // A size mismatch gets its own clause rather than riding the diff-pixel sentence, because
+      // the budget numbers are meaningless in that verdict: `diffPixels` is MAX_SAFE_INTEGER and
+      // `diffRatio` is 1 whatever the two pictures contain. Reporting the two sizes instead is
+      // what turns "visual mismatch, 9007199254740991 diff pixels" into the one actionable fact,
+      // which is that a dimension moved. The usual triage for this red is an encoder or a
+      // document-size change, and neither is visible in a diff-pixel count.
+      const mismatch = result.sizeMismatch;
       expect(
         result.matches,
-        `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels ` +
-          `(ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
-          'Do not widen the budget - see the argument above this call.'
+        mismatch
+          ? `Size mismatch for ${format.label}: exported ${mismatch.actual.width}x${mismatch.actual.height} ` +
+              `against a baseline of ${mismatch.expected.width}x${mismatch.expected.height}. ` +
+              'A dimension moved, so the pixel budget does not apply - see the argument above this call.'
+          : `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels ` +
+              `(ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
+              'Do not widen the budget - see the argument above this call.'
       ).toBe(true);
 
       // The pixel diff above is the oracle that has always been there, and it is

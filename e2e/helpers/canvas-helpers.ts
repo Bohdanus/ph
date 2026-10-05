@@ -963,7 +963,11 @@ export type CanvasPixelPredicate = (screenshot: Buffer) => Promise<boolean>;
 export interface WaitForCanvasPixelsOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
-  /** Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within 10000ms". */
+  /**
+   * Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within
+   * 10000ms after 101 polls". The trailing poll count is appended by the loop, so this field
+   * carries only the subject.
+   */
   description?: string;
 }
 
@@ -988,6 +992,7 @@ export async function waitForCanvasPixels(
   const timeoutMs = options.timeoutMs ?? CANVAS_REDRAW_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
+  let polls = 0;
 
   for (;;) {
     // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
@@ -1004,13 +1009,23 @@ export async function waitForCanvasPixels(
     // it photographs is still a region. `onScreenClip` is a no-op when the region is already
     // in view, which is every poll in the current layout.
     const onScreen = await onScreenClip(page, clip);
+    polls++;
     try {
       if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
     } finally {
       await onScreen.restore();
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+      // The count is what makes this message diagnosable. Without it the operator sees a bare
+      // deadline and has to guess which of two very different failures produced it: a render
+      // that never arrived, or a loop that barely ran because each screenshot was slow. The
+      // two have opposite fixes, and the poll count separates them — compare it against
+      // `timeoutMs / pollIntervalMs`, which is the count a loop that always ran to the deadline
+      // produces. A count far below that means the polls themselves were expensive.
+      throw new Error(
+        `Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms ` +
+          `after ${polls} ${polls === 1 ? 'poll' : 'polls'}`
+      );
     }
     await page.waitForTimeout(pollIntervalMs);
   }
