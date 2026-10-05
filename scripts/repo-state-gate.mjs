@@ -149,7 +149,7 @@ repair any of it from the main checkout. See docs/ORCHESTRATION.md on landing.
 
 const UNREADABLE = `repo:state — the roster could not be read, so nothing here is a statement about the repository.
 
-  ${'git worktree list --porcelain'}
+  ${'git worktree list --porcelain -z'}
 
 Run it inside a checkout of this repository. This program reports what git's state files
 say, and it will not report a repository it could not look at as clean.

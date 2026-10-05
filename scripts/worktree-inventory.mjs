@@ -123,11 +123,14 @@ function parseArgs(argv) {
  * like `.kilo/worktrees/…` resolve.
  */
 function repoRoot(cwd) {
-  const out = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+  const out = execFileSync('git', ['worktree', 'list', '--porcelain', '-z'], {
     cwd,
     encoding: 'utf8',
   });
-  const first = out.split('\n').find((l) => l.startsWith('worktree '));
+  // `\0`, not `\n`: `--porcelain` does not quote paths, so a worktree whose path contains
+  // a newline was truncated here too. See `listWorktrees` in
+  // `scripts/lib/worktree-inventory/git.mjs`.
+  const first = out.split('\0').find((l) => l.startsWith('worktree '));
   if (!first) throw new Error('git worktree list returned no worktrees');
   return resolve(first.slice('worktree '.length).trim());
 }

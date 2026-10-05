@@ -638,7 +638,9 @@ describe('the report says which remedy applies, and warns about the destructive 
       json: true,
       out: { write: (s) => out.push(s) },
       err: { write: (s) => err.push(s) },
-      exit: () => {},
+      // No `exit` argument: `run` sets `process.exitCode` and returns, so there is
+      // nothing to stub. A stub left here asserts a seam the code deliberately does not
+      // have — see `run`'s docstring for why.
     }).code;
 
     expect(code).toBe(1);

@@ -259,15 +259,55 @@ export function resolveCommonDir(cwd) {
   }
 }
 
-/** The entries under `<common>/worktrees`, or `[]` when that directory is unreadable. */
+/**
+ * The entries under `<common>/worktrees`, or WHY they could not be read.
+ *
+ * `readError` IS NOT OPTIONAL, and returning a bare `[]` for both "there are none" and
+ * "I could not look" is the exact defect this module exists to prevent — one level up
+ * from where it was found. Measured: `chmod 000 <gitdir>/worktrees` makes this function
+ * return `[]`, the cross-check finds no orphans, and the report says "clean" with exit 0
+ * while `MERGE_HEAD` sits in the directory that just became unreadable. `[]` is also
+ * what the previous version returned, and its own docstring said so.
+ *
+ * A SYMLINK to a directory is included. `entry.isDirectory()` is false for one, which
+ * silently removed the directory from the cross-check; `statSync` follows the link, and
+ * a broken link is an error rather than an absence.
+ */
 function adminDirs(commonDir) {
+  const root = join(commonDir, 'worktrees');
+  let entries;
   try {
-    return readdirSync(join(commonDir, 'worktrees'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(commonDir, 'worktrees', entry.name));
-  } catch {
-    return [];
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    // `ENOENT` IS NOT AN ERROR: git creates `<common>/worktrees` only when there is a
+    // LINKED worktree, so a repository with none has no such directory and that is the
+    // normal case — including every repository in this suite's own fixtures. Treating it
+    // as unreadable flagged every clean repository with a synthetic orphan, which is how
+    // the first attempt at this fix turned "read nothing" into a permanent false alarm.
+    // Only a directory that EXISTS and cannot be read is a finding, and that is
+    // `EACCES`, `EPERM`, or a path that is not a directory at all.
+    if (error?.code === 'ENOENT') return { dirs: [], readError: null };
+    return {
+      dirs: [],
+      readError: `the administrative directory ${root} exists but could not be read (${error?.code ?? error?.message ?? 'unknown'})`,
+    };
   }
+  const dirs = [];
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      dirs.push(path);
+      continue;
+    }
+    if (!entry.isSymbolicLink()) continue;
+    try {
+      if (statSync(path).isDirectory()) dirs.push(path);
+    } catch {
+      // A broken symlink where an admin directory should be is itself unreadable state.
+      dirs.push(path);
+    }
+  }
+  return { dirs, readError: null };
 }
 
 /**
@@ -294,7 +334,7 @@ function adminDirs(commonDir) {
 export function resolveAdminDirFor(commonDir, worktreePath) {
   if (!commonDir) return null;
   const wanted = realpathIfPresent(worktreePath) ?? worktreePath;
-  for (const dir of adminDirs(commonDir)) {
+  for (const dir of adminDirs(commonDir).dirs) {
     let contents;
     try {
       contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
@@ -389,12 +429,19 @@ export function parseWorktreeListing(listing) {
  * `adminDirs.length === roster entries - 1`.
  */
 function unclaimedAdminDirs(commonDir, entries) {
-  if (!commonDir) return [];
+  // `commonDir` null means git would not say, which is the same failure as a directory
+  // it could not read: reported, not folded into "there were none".
+  if (!commonDir)
+    return {
+      orphans: [],
+      readError: 'git rev-parse --git-common-dir failed, so the administrative directories could not be enumerated',
+    };
+  const { dirs, readError: dirReadError } = adminDirs(commonDir);
   const claimed = new Set(
     entries.map((entry) => realpathIfPresent(entry.path) ?? entry.path).filter((path) => typeof path === 'string')
   );
   const orphans = [];
-  for (const dir of adminDirs(commonDir)) {
+  for (const dir of dirs) {
     let contents = null;
     try {
       contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
@@ -423,7 +470,7 @@ function unclaimedAdminDirs(commonDir, entries) {
         : 'the administrative directory is unreadable, so its git state could not be read',
     });
   }
-  return orphans;
+  return { orphans, readError: dirReadError };
 }
 
 /**
@@ -488,7 +535,8 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
   // is what a `chmod` on an admin directory produces — a registration git can no longer
   // describe, holding state it can no longer be asked about — and it is invisible in the
   // roster itself.
-  const orphans = unclaimedAdminDirs(commonDir, entries).map((orphan) => ({
+  const cross = unclaimedAdminDirs(commonDir, entries);
+  const orphans = cross.orphans.map((orphan) => ({
     name: basename(orphan.gitDir),
     path: orphan.owner ?? `(administrative directory ${orphan.gitDir}, whose gitdir file is unreadable)`,
     branch: null,
@@ -504,6 +552,24 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
     ok: true,
     reason: null,
     worktrees: [
+      // One synthetic record when the administrative directories could not be read at
+      // all, so the report says so rather than reporting a count it never obtained.
+      ...(cross.readError === null
+        ? []
+        : [
+            {
+              name: '(administrative directories)',
+              path: commonDir,
+              branch: null,
+              detached: false,
+              bare: false,
+              present: false,
+              gitDir: null,
+              operations: [],
+              unmerged: [],
+              readError: cross.readError,
+            },
+          ]),
       ...entries.map((entry) => {
         const name = basename(entry.path);
         const present = existsSync(entry.path);
@@ -560,8 +626,12 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
     ],
     // Reported, not enforced: a roster shorter than the directories on disk is the fact
     // the cross-check exists to surface, and a caller that wants to know whether every
-    // admin directory was accounted for reads it here.
-    adminDirs: commonDir ? adminDirs(commonDir).length : null,
+    // admin directory was accounted for reads it here. `null` means "not counted",
+    // which is deliberately distinct from `0` — a review found `adminDirs()` returning
+    // `[]` for an unreadable `<common>/worktrees` and that `0` being reported as a
+    // count, so "read nothing" was being reported as "read zero".
+    adminDirs: commonDir ? adminDirs(commonDir).dirs.length : null,
+    adminDirsReadError: cross.readError,
     roster: entries.length,
   };
 }
