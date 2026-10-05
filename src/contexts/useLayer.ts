@@ -19,6 +19,7 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+import { renderExportCanvas } from './export-canvas.ts';
 
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
@@ -745,6 +746,10 @@ export const useLayers = () => {
     }
 
     clearOverlay();
+    // The record this publishes, named explicitly: this callback closes over the pre-removal
+    // `layers`, so an unnamed repaint would draw the layer that was just deleted and leave its
+    // pixels on the glass until `Main`'s effect ran a frame later.
+    drawAllLayers(remainingLayers);
   };
 
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
@@ -958,28 +963,43 @@ export const useLayers = () => {
     drawAllLayers();
   };
 
-  const drawAllLayers = useCallback(() => {
-    if (!canvasRef.current) return;
+  /**
+   * `published` is the record the caller has already dispatched but whose dispatch the current
+   * render has not observed yet.
+   *
+   * This callback closes over `layers`, so a caller that has just REPLACED the record and then
+   * repaints without naming the replacement repaints the record it is replacing: `removeLayer`
+   * would draw the layer it deleted, and `mergeLayers` the stack it flattened, and only
+   * `Main`'s post-paint effect would undo it a frame later — which is the whole reason a deleted
+   * layer's pixels survive a frame today. Naming the record removes that lag, and the preview
+   * overlay rule is unchanged either way: a live draft is drawn over whatever record is named.
+   */
+  const drawAllLayers = useCallback(
+    (published?: LayersRecord) => {
+      if (!canvasRef.current) return;
 
-    const renderLayers = Object.keys(previewLayersRef.current).length
-      ? ({
-          ...layers,
-          ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
-        } as LayersRecord)
-      : layers;
-    const sorted = getSortedLayersArray(renderLayers);
-    try {
-      if (
-        !drawLayersToCanvas(canvasRef.current, sorted, documentFrame, new Set(Object.keys(previewLayersRef.current)))
-      ) {
-        console.error('Unable to publish runtime layer presentation');
+      const current = published ?? layers;
+      const renderLayers = Object.keys(previewLayersRef.current).length
+        ? ({
+            ...current,
+            ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
+          } as LayersRecord)
+        : current;
+      const sorted = getSortedLayersArray(renderLayers);
+      try {
+        if (
+          !drawLayersToCanvas(canvasRef.current, sorted, documentFrame, new Set(Object.keys(previewLayersRef.current)))
+        ) {
+          console.error('Unable to publish runtime layer presentation');
+        }
+      } catch (error) {
+        // Pointer-move callers must not receive renderer failures through React's
+        // event boundary. The renderer already preserves the last good canvas.
+        console.error('Unable to publish runtime layer presentation', error);
       }
-    } catch (error) {
-      // Pointer-move callers must not receive renderer failures through React's
-      // event boundary. The renderer already preserves the last good canvas.
-      console.error('Unable to publish runtime layer presentation', error);
-    }
-  }, [canvasRef, documentFrame, layers, previewLayersRef]);
+    },
+    [canvasRef, documentFrame, layers, previewLayersRef]
+  );
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
     // Unclamped on purpose, and that is the whole feature: Photoshop's crop box may be dragged
@@ -1031,19 +1051,68 @@ export const useLayers = () => {
     return true;
   };
 
+  /**
+   * `Flatten Image`: the whole stack becomes one image layer covering the document frame, and
+   * every other layer leaves the record.
+   *
+   * THE PIXELS COME FROM THE RECORD, NOT FROM THE DISPLAY SURFACE. This used to be
+   * `createImageBitmap(canvasRef.current)`, which snapshotted the visible canvas — a surface that
+   * repaints BEHIND the record: a layer hidden or removed since the last paint, or a publish
+   * whose `drawLayersToCanvas` refused and only logged (`drawAllLayers` swallows a `false`
+   * return), was baked into the merged layer as though it were in the document. The composite
+   * below is rendered through `renderExportCanvas`, the same private path every raster export
+   * uses, from the very record this call is about to publish, so the merged raster and the
+   * merged record cannot disagree.
+   *
+   * TRANSPARENT HOLES, AND THAT IS MERGE VISIBLE'S RULE, NOT FLATTEN'S. `drawLayersToCanvas`
+   * clears its staging surface and draws only visible layers, so a document with a hole flattens
+   * to a hole. Adobe's `Flatten Image` instead fills those holes with the current background
+   * colour, and `Merge Visible` — the row above this one in `DesktopHeader` — is still `unbuilt`.
+   * The pixels are left as they are, for two reasons. Nothing in the source says a fill was
+   * wanted: the only claim is the menu label, and the previous implementation produced holes too.
+   * And the fill cannot live in the path this now shares with export, because an export must
+   * keep a hole a hole: `renderExportCanvas` composites onto a cleared surface on purpose, and
+   * only a merge-specific fill could fill it. So Flatten's fill stays an operator decision rather
+   * than a side effect of decoupling the pixels.
+   */
   async function mergeLayers(name: string): Promise<Layer | null> {
     const currentLayers = commitDirtyTool();
 
-    // getBitmap of the canvas
+    // A MOUNT guard, not a pixel read. This used to guard the `createImageBitmap` snapshot of the
+    // display canvas; the composite below is rendered from the record into its own surface, so
+    // nothing here reads the display. What it still refuses is the command on a document with no
+    // mounted surface to publish into, which is the contract the `null` return has always carried
+    // to `mergeAllLayers`' callers.
     if (!canvasRef.current) return null;
-    const canvasBitmap = await createImageBitmap(canvasRef.current);
-    const source = {
-      kind: 'image',
-      bitmap: canvasBitmap,
-      name,
-      pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
-      isBedrock: false,
-    } satisfies ImageLayerSource;
+
+    let source: ImageLayerSource;
+    try {
+      const composite = renderExportCanvas(currentLayers, totalSize, documentFrame);
+      // The merged layer's extent is the FRAME's, not `totalSize`'s: those are the dimensions
+      // `renderExportCanvas` just rendered, and they are what the record has to describe for the
+      // raster to sit on the frame. The two agree on every reachable input because every frame
+      // writer re-derives `totalSize` from the frame, so this changes no output today and names
+      // one extent source where a third reader had its own.
+      source = {
+        kind: 'image',
+        bitmap: await createImageBitmap(composite),
+        name,
+        pos: { x: documentFrame.x, y: documentFrame.y, ...documentFrameSize(documentFrame) },
+        isBedrock: false,
+      } satisfies ImageLayerSource;
+    } catch (error) {
+      // Refused BEFORE the layer or the merge entry is dispatched, so a document whose composite
+      // cannot be rendered keeps its stack instead of being flattened from pixels this call could
+      // not read — and `renderExportCanvas` throws rather than hand back a blank or half-drawn
+      // surface, which is the failure that made the old snapshot unrecoverable.
+      //
+      // The repaint is the other half of the refusal: `commitDirtyTool` above may already have
+      // published a live preview, so the document is repainted from the record it just published
+      // rather than left holding the composite this call refused to use.
+      console.error('Unable to render the document for a layer merge', error);
+      drawAllLayers(currentLayers);
+      return null;
+    }
 
     const layer = createLayerSource({
       layers: currentLayers,
@@ -1066,6 +1135,10 @@ export const useLayers = () => {
     // registration it will ever get. It is aliased by `layer.bitmap`,
     // `layer.source.bitmap` and the merge entry's `args` at once.
     adoptLayerBitmaps([source.bitmap]);
+    // The record this publishes, named explicitly: this callback closes over the pre-merge
+    // `layers`, so an unnamed repaint would draw the stack this call just collapsed and leave the
+    // glass showing it until `Main`'s effect ran a frame later.
+    drawAllLayers(newLayers);
     return layer;
   }
 
