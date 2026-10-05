@@ -3338,13 +3338,15 @@ git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
   | cut -d' ' -f1 | sort | uniq -c
 ```
 
-**Most worktrees resolve their packages from the main checkout, and those are the ones
-that hit this trap**: with no `node_modules/react` above the worktree, Node resolution
+**Most worktrees UNDER THIS REPOSITORY resolve their packages from the main checkout, and
+those are the ones that hit this trap** (the command below counts every registered worktree, so
+subtract the main checkout and any out-of-tree one — a worktree outside the repository does not
+resolve upward into it, which is the same fact that makes `/tmp/avif-check` need its own install): with no `node_modules/react` above the worktree, Node resolution
 walks up into `/Users/bkalynovskyi/ph/node_modules`, so the wasm URL is a main-checkout
 path that a worktree-rooted Vite will not serve. The command above tests
-`node_modules/react` and NOT `node_modules`, and the distinction is not cosmetic — on the
-day it was written, 87 of the 102 worktrees failing that test still HAD a `node_modules`
-directory, holding nothing but Vite's own `.vite` and `.tmp` caches. So the shape that
+`node_modules/react` and NOT `node_modules`, and the distinction is not cosmetic — almost
+every worktree failing that test still HAS a `node_modules` directory, holding nothing but Vite's
+own `.vite`, `.vite-temp` and `.tmp` caches. So the shape that
 matters is "no `node_modules/react`", not "no `node_modules`". **Treat any count as a dated
 measurement and re-run the command rather than quoting one**: the totals moved twice in an
 hour while this entry was being written, because worktrees are created and disposed
@@ -5827,11 +5829,13 @@ The remaining test defects, each with the fix that was proven to work:
   none of them drifts silently: `commitKinds` is derived from `findToolProcessor(toolName)!.commit`
   over the registry and compared to `declaredCommitKinds`, `kinds` is derived the same way from
   `replay.kind` and compared to `replayKinds` with `toEqual` on two records so a tool entering or
-  leaving the registry cannot slip past, `declaredReplayKinds` is compared to the union those same
-  derived kinds produce, and `realBarControlIds` is compared to the `id` set each bar actually
-  renders. **The cost is therefore where a failure sends you:** a production table that gains or
-  renames a member fails in a TABLE in this test file rather than at the site that changed, and each
-  copy is a second place to edit when the registry moves. **What would close it** is deleting the
+  leaving the registry cannot slip past, `declaredReplayKinds` is compared to the union `replayKinds`
+  produces — which the assertion just before it has already pinned to the registry, so the pin is real
+  but one hop indirect — and `realBarControlIds` is compared to the `id` set each bar actually
+  renders. **The cost is therefore where a failure sends you:** a production table that renames a member,
+  or gains one a processor actually selects, fails in a TABLE in this test file rather than at the site
+  that changed, while a kind nothing selects fails nothing anywhere — which is deliberate, and the test
+  says so. Each copy is also a second place to edit when the registry moves. **What would close it** is deleting the
   four copies and deriving each from its production table the way `placeholderCards` already derives
   its chips — a `configKey` column resolved through `placeholderToolGroups`, the form
   `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` uses, which is what replaced
@@ -6278,11 +6282,17 @@ still no gate that would find a seventh.
 **Why the accessibility gates cannot, structurally.** `node_modules/axe-core/axe.js`'s pre-check for
 `aria-controls` in the `aria-valid-attr-value` rule returns early — skipping the check — when
 `aria-expanded="false"`, when `aria-selected="false"`, or when `aria-haspopup` is present. A collapsed
-trigger is in one of those three states by definition, so the rule never evaluates the case. When it is
-reached anyway it sets `needsReview`, which surfaces as `incomplete`, and `e2e/accessibility.spec.ts`
-deliberately does not assert that bucket. Its `excludeHidden` defaults to true, so anything inside a
-`hidden` or `md:hidden` subtree — the whole mobile shell at desktop width — is skipped outright. Adding a
-scan at a mobile viewport would still not reach a collapsed trigger.
+trigger is in one of those three states by definition, so the rule never evaluates the case.
+
+Two neighbouring paths matter and they are different. `aria-describedby` is not in that skip list, so an
+unresolvable one takes `messageKey = 'noId'` and surfaces as `incomplete`, which
+`e2e/accessibility.spec.ts` deliberately does not assert — that is the `FeatherMagneticLasso` case exactly.
+An `aria-controls` reached without `aria-haspopup` would be a real `invalid.push(...)` violation, which the
+spec does assert; it is unreachable only because of the three skip states above, so widening a scan would
+not help. And `excludeHidden` defaults to true, so anything inside a `hidden` or `md:hidden` subtree — the
+whole mobile shell at desktop width — is skipped outright, which is why a mobile-width scan alone still would
+not reach these.
+
 **Why a static source scan cannot either, which is the part worth knowing.** The obvious gate is a regex
 over `src/components`: fail where an IDREF is written as a literal and the id it names is rendered under a
 condition. It has zero false positives today, which makes it tempting, and it is useless — it misses both
@@ -6290,8 +6300,10 @@ real survivors, because both write an EXPRESSION rather than a literal. `FontSel
 `aria-controls={isOpen ? LIST_ID : undefined}` against a popup mounted on `isOpen && position`, and
 `FeatherMagneticLasso` had `aria-describedby={isInfoOpen ? INFO_TOOLTIP_ID : undefined}` against a tooltip
 mounted on `isInfoOpen && infoTooltipPos`. Nothing short of evaluating the expression distinguishes `isOpen`
-from `isOpen && position`. A rule loose enough to catch them also fires on the seven legitimate unconditional
-references, `DesktopHeader`'s `aria-controls="right-panel"` among them.
+from `isOpen && position`. A rule loose enough to catch them also fires on the six legitimate unconditional
+references — `DesktopHeader`'s `aria-controls="right-panel"`, the three dialogs' `aria-labelledby`, and
+`ConfirmDialog`'s second one — all of which name targets that exist whenever the component renders.
+
 **A second blind spot in the same class, found while reviewing the fixes.** While the mobile tool sheet is
 open, `ToolbarHorizontal` stays mounted at every width and renders the same `ToolComponent` the sheet
 renders, so two copies of the tool's options subtree are in the document at once — including two elements
@@ -6305,38 +6317,73 @@ harness as the entry above, so it is recorded here rather than split out.
 assert that every `aria-controls`, `aria-describedby`, `aria-labelledby` and `aria-owns` in the document
 resolves through `document.getElementById`. That is a property of the TREE rather than of any component, so
 an instance nobody thought to pin still fails — which is the whole point, since five of the six were found by
-a human reading a diff. It needs a harness that renders the real `StoreProvider` with a real document; every
-existing suite that mounts these components mocks `useStore`, and a mocked tree would let the gate pass for
-the wrong reason. Two conditions have to be driven explicitly, because neither is a state a user sits in:
+a human reading a diff. It needs a harness that renders the real `StoreProvider` with a real
+document, and that is a smaller job than it looks: `PanelGroup`'s and `FontSelect`'s own suites mock nothing
+at all, and the real provider already mounts in jsdom — `StoreContext.test.tsx` passes against it without
+stubbing. The obstacle is only that a MOCKED tree would let the gate pass for the wrong reason, so the
+harness has to be the real store. Two conditions have to be driven explicitly, because neither is a state a user sits in:
 `FontSelect`'s window is closed inside the same commit by its `useLayoutEffect`, so it is never painted, and
 `FeatherMagneticLasso`'s is closed after one painted frame by a passive effect. Until that harness exists, the
 only gate is a test beside each trigger, which is what let this run twice.
 **Files.** `src/components/ToolbarsRight/Text/FontSelect.tsx`, `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
 `src/components/SidebarRight/PanelGroup.tsx`, `src/components/Mobile/MobileHeader.tsx`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileToolSheet.tsx`,
-`node_modules/axe-core/axe.js`, `e2e/accessibility.spec.ts`, `src/components/SidebarLeft/__tests__/harness.tsx`
+`node_modules/axe-core/axe.js`, `e2e/accessibility.spec.ts`, `src/contexts/__tests__/StoreContext.durable-boundary.test.tsx`
+
 **Provenance.** Found 2026-10-05 on `main` by a four-way review of the five preceding fixes, split one
 reviewer per file group. Two of the seven instances were still live at that point and are fixed in the same
 series; the sixth was the precedent the first fix cited as its justification.
 
-## 239. `restoreVisibleCanvas()` holds a documented contract and no test
+## 239. `restoreVisibleCanvas()` cannot undo a partial resize, and the suite pins that it does not
 
-**The problem.** `restoreVisibleCanvas()` is the third writer of the visible canvas's backing store, after
-`useApp`'s `handleImageCreate` and `layer-renderer`'s `drawLayersToCanvas`. `docs/ARCHITECTURE.md` states its
-contract as a guarantee — _"A source or processor that throws leaves the visible canvas exactly as it was"_ —
-and `drawLayersToCanvas` calls it on every failure path after a partial resize. It has no test, direct or
-indirect: grepping `src/contexts/__tests__/` for the name returns nothing, and the only other reference in the
-tree is the pixel fixture. So the one function that puts the canvas BACK is unpinned, in a surface where the
-other two writers have just been re-ordered twice.
-**Why it matters beyond the missing test.** It takes `previousSize` and re-applies it, so it is the only code
-that can undo a wrong-extent resize after the fact. Both canvas-ordering fixes this series removed the
-resize-before-publish shape from `useApp`, and this is the mechanism that would have papered over it — silently,
-with a `console.error` rather than a thrown assertion.
-**What would close it.** A test that makes `drawLayersToCanvas` fail after a partial resize and asserts the
-visible canvas is back at `previousSize` with its prior content. `drawLayersToCanvas` takes its throw paths
-from `createLayerSource` and the layer's own `source`, so a layer whose processor throws is enough; the pixel
-fixture in `src/__tests__/fixtures/pixelCanvas.ts` already provides the content to compare.
+**The problem.** `restoreVisibleCanvas()` is the only code that can put the visible canvas back after a
+failed publish, and it is skipped for exactly the case it exists for. `drawLayersToCanvas` sets
+`wrote = true` **after** `resizeCanvas` returns:
+
+```ts
+resizeCanvas(canvas, size.width, size.height);
+wrote = true;
+context.clearRect(0, 0, size.width, size.height);
+context.drawImage(stagingCanvas, 0, 0);
+```
+
+and `resizeCanvas` assigns `width` and then `height` as two separate statements. So if the second
+assignment throws — which it does past the browser's maximum canvas size, and `canvas.width`/`canvas.height`
+are the classic `IndexSizeError` pair — the canvas has been given the new width and still carries the old
+height, `wrote` is still false, and the `if (wrote) restoreVisibleCanvas(...)` in the catch does nothing. The
+canvas is left torn, at neither the previous extent nor the new one.
+
+**This is already pinned, as the desired behaviour.** `it('reports a publish failure when resizing the
+visible canvas throws')` in `src/contexts/__tests__/layer-renderer.drawLayersToCanvas.test.ts` overrides the
+`width` setter to throw and asserts no restore blit happens. So the suite certifies the hole. That is the
+finding: the assertion is right about what the code does and wrong about what the code should do.
+
+**What the restore does cover, so the scope is not overstated.** Three of the four failure paths, all already
+exercised by that suite: the blit throws after a completed resize, `clearRect` throws, and the staging
+`drawImage` throws. `reports a publish failure when blitting the staging canvas throws` even asserts
+`restoreVisibleCanvas`'s own console message by string, which is emitted nowhere else. A throwing layer
+processor is **not** one of them — it rethrows into the outer compose catch, which returns before
+`previousSize`, `snapshot` and `wrote` are declared, so nothing is restored and nothing needs to be.
+
+**What would close it.** Set `wrote = true` before the resize rather than after, or — better — have
+`resizeCanvas` apply the two dimensions atomically so a throw leaves neither applied. Then
+`restoreVisibleCanvas(canvas, previousSize, snapshot)` puts both back, and the existing case flips from
+asserting no blit to asserting the canvas is whole again at `previousSize`. Either way the change is one line
+and the test that pins the hole is the test that should catch its removal.
+
+**The four writers, since "the restore" only means something against the alternatives.** The visible canvas's
+backing store is written in four places: `handleImageCreate()` in `useApp.ts`, the three-surface loop at the
+end of `setImageFromUpload`'s PSD arm, `drawLayersToCanvas()`, and `restoreVisibleCanvas()` itself. The
+overlays are separate surfaces written from `Main.tsx`. This matters because the restore is the only one of
+the four that can undo the other three.
+
 **Files.** `src/contexts/layer-renderer.ts` — `restoreVisibleCanvas()`, `drawLayersToCanvas()`;
-`docs/ARCHITECTURE.md` — "Stage, then publish"
-**Provenance.** Found 2026-10-05 on `main` while auditing the canvas's writers during the review of the
-open-ordering fix.
+`src/util/canvas.ts` — `resizeCanvas()`; `src/contexts/__tests__/layer-renderer.drawLayersToCanvas.test.ts` —
+`'reports a publish failure when resizing the visible canvas throws'`; `docs/ARCHITECTURE.md` —
+"Stage, then publish", whose guarantee this narrows.
+
+**Provenance.** Found 2026-10-05 on `main` by a review of the two entries added alongside the
+dangling-IDREF fixes, which checked the writer count and the reachability of the restore against the tree
+instead of against a grep. An earlier draft of this entry claimed `restoreVisibleCanvas` had no test and
+that a throwing layer processor was a way to reach it; both were false — it is module-private, so no test can
+name it, but three drive it, and `createLayerSource` appears nowhere in `layer-renderer.ts`.
