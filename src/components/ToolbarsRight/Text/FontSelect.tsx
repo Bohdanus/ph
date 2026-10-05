@@ -43,6 +43,16 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [initialValue, setInitialValue] = useState(value);
   const [position, setPosition] = useState<ListPosition | null>(null);
+  // The popup mounts only once it is open AND measured, so the trigger's `aria-controls` reads the
+  // same expression the render does rather than `isOpen` alone.
+  //
+  // Worth being precise about the reachability, because it is much narrower than the mobile and dock
+  // triggers this shape also had. `updatePosition()` runs from a `useLayoutEffect` on `[isOpen]`, so
+  // React resolves it in the SAME commit that sets `isOpen`, before the browser paints: there is a
+  // DOM state where `isOpen` is true, the list is absent and the attribute names it, but no painted
+  // frame and no settled state in which a test or a user can observe it. So this is the alignment,
+  // not a visible-bug fix -- unlike a collapsed panel, which is a state the user sits in.
+  const listIsMounted = isOpen && position !== null;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -160,7 +170,7 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
         onClick={handleToggle}
         aria-haspopup="true"
         aria-expanded={isOpen}
-        aria-controls={isOpen ? LIST_ID : undefined}
+        aria-controls={listIsMounted ? LIST_ID : undefined}
         className="flex w-full items-center justify-between rounded border border-gray-300 bg-white px-2 h-9 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         style={{ fontFamily: value }}
       >
@@ -176,8 +186,7 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
         </svg>
       </button>
 
-      {isOpen &&
-        position &&
+      {listIsMounted &&
         createPortal(
           <div
             id={LIST_ID}

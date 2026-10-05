@@ -4,7 +4,12 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
-import { makeSelectTool, mobileToolGroups } from './mobile-tools.ts';
+import {
+  isMobileToolOptionsMounted,
+  makeSelectTool,
+  mobileToolGroups,
+  MOBILE_TOOL_OPTIONS_ID,
+} from './mobile-tools.ts';
 
 export interface MobileBottomBarProps {
   onToggleToolSheet: () => void;
@@ -20,6 +25,7 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
   const [{ toolName, hasImage }] = useStore();
   const { goToTool } = useApp();
   const { patchToolArgs } = useCurrentTool();
+  const toolOptionsMounted = isMobileToolOptionsMounted(isToolSheetOpen, toolName, hasImage);
   const selectTool = makeSelectTool(goToTool, patchToolArgs);
 
   return (
@@ -74,11 +80,13 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
         data-testid="mobile-tool-options-toggle"
         aria-label="Tool options"
         aria-expanded={isToolSheetOpen}
-        // Gated for the same reason as the three triggers already fixed. The panel this names lives
-        // in `MobileToolSheet`, which `MobileShell` renders as a SIBLING and which renders its body
-        // only under `isOpen` — so a closed toggle advertised an id that was not in the tree beside
-        // `aria-expanded="false"`.
-        aria-controls={isToolSheetOpen ? 'mobile-tool-options' : undefined}
+        // Gated for the same reason as the three triggers already fixed, and on the SHARED
+        // predicate rather than `isToolSheetOpen`. The panel this names lives in
+        // `MobileToolSheet`, which `MobileShell` renders as a SIBLING and which returns null
+        // outright without a tool name or an image — so the open flag is only one clause of the
+        // panel's existence, and a bar that stayed mounted while the sheet did not would advertise
+        // an id nothing owns beside `aria-expanded="true"`.
+        aria-controls={toolOptionsMounted ? MOBILE_TOOL_OPTIONS_ID : undefined}
         className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
           isToolSheetOpen
             ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'
