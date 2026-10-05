@@ -1,5 +1,6 @@
 import { clampChannel, pixelIndex } from '../util/pixels.ts';
 import type { RasterRowTarget } from '../util/homography-resample.ts';
+import { compositeStrokeFootprint } from '../util/focus-stroke-mask.ts';
 import type { Point, Pos } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
@@ -11,31 +12,15 @@ export type SharpenToolArgs = {
   toolName: 'sharpen';
 };
 
-const STROKE_BRUSH_SIZE = 40;
-
-const maskFilteredRaster = (
-  source: ImageBitmap | HTMLCanvasElement | HTMLImageElement | OffscreenCanvas,
-  filtered: OffscreenCanvas,
-  size: { width: number; height: number },
-  points: readonly Point[]
-): OffscreenCanvas => {
-  const canvas = new OffscreenCanvas(size.width, size.height);
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(source, 0, 0);
-  if (points.length === 0) return canvas;
-
-  ctx.save();
-  ctx.beginPath();
-  if (points.length === 1) {
-    ctx.arc(points[0]!.x, points[0]!.y, STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2);
-  } else {
-    for (const point of points) ctx.arc(point.x, point.y, STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2);
-  }
-  ctx.clip();
-  ctx.drawImage(filtered, 0, 0);
-  ctx.restore();
-  return canvas;
-};
+/**
+ * The kernel floor on the STROKE path only, mirroring `blur.ts`.
+ *
+ * The whole-layer form rounds a sub-half-texel `radius` to 0 and returns the source untouched.
+ * A stroke is different: the brush is live under the pointer, so a zero-span box would make the
+ * tool look broken while the bar reads 0. One texel keeps the stroke visible, and the two forms
+ * deliberately disagree at `radius` 0.
+ */
+const STROKE_SPAN_FLOOR = 1;
 
 /**
  * `Amount` is a PERCENTAGE, as in Photoshop, and 0 is a legal choice: 0% is the
@@ -275,8 +260,9 @@ export const sharpen =
     // one texel narrower than the slider reads. It also means a `radius` below 0.5 rounds
     // to 0, which is the identity filter, and that is the same contract `brushDabCenters`
     // has for a non-positive size.
+    const stroked = Boolean(points?.length);
     const span = Math.round(
-      clampSetting(points?.length ? Math.max(1, radius) : radius, SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX)
+      clampSetting(stroked ? Math.max(STROKE_SPAN_FLOOR, radius) : radius, SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX)
     );
     if (factor === 0 || span === 0) return [canvas];
 
@@ -310,5 +296,5 @@ export const sharpen =
       accumulateRow(horizontal, sums, Math.min(height - 1, row + span + 1), width, 1);
     }
 
-    return [points?.length ? maskFilteredRaster(bitmap, canvas, size, points) : canvas];
+    return [stroked ? compositeStrokeFootprint(bitmap, canvas, size, points!) : canvas];
   };

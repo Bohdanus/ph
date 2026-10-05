@@ -1,5 +1,6 @@
 import type { ProcessorToolParams } from './toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
+import { compositeStrokeFootprint } from '../util/focus-stroke-mask.ts';
 import type { Point, Pos } from '../contexts/general-types.ts';
 
 export type BlurToolArgs = {
@@ -9,31 +10,16 @@ export type BlurToolArgs = {
   toolName: 'blur';
 };
 
-const STROKE_BRUSH_SIZE = 40;
-
-const maskFilteredRaster = (
-  source: ImageBitmap | HTMLCanvasElement | HTMLImageElement | OffscreenCanvas,
-  filtered: OffscreenCanvas,
-  size: { width: number; height: number },
-  points: readonly Point[]
-): OffscreenCanvas => {
-  const canvas = new OffscreenCanvas(size.width, size.height);
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(source, 0, 0);
-  if (points.length === 0) return canvas;
-
-  ctx.save();
-  ctx.beginPath();
-  if (points.length === 1) {
-    ctx.arc(points[0]!.x, points[0]!.y, STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2);
-  } else {
-    for (const point of points) ctx.arc(point.x, point.y, STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2);
-  }
-  ctx.clip();
-  ctx.drawImage(filtered, 0, 0);
-  ctx.restore();
-  return canvas;
-};
+/**
+ * The kernel floor on the STROKE path only.
+ *
+ * The whole-layer form treats `radius: 0` as the identity, because that is what the slider's
+ * left end says and what an existing filter entry means. A stroke is different: the brush is
+ * live under the pointer, so a 0px kernel would make the tool look broken while the bar reads 0.
+ * One texel keeps the stroke visible. The floor is therefore a property of the stroke form, and
+ * the two forms deliberately disagree at `radius` 0.
+ */
+const STROKE_KERNEL_FLOOR = 1;
 
 export const blur =
   ({ bitmap, size }: ProcessorToolParams) =>
@@ -43,10 +29,9 @@ export const blur =
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
-    // The legacy no-points form remains a whole-layer filter for old history and slider
-    // entries.  A stroke is the Photoshop tool form and is composited only under its tip.
-    ctx.filter = `blur(${points?.length ? Math.max(1, radius) : radius}px)`;
+    const stroked = Boolean(points?.length);
+    ctx.filter = `blur(${stroked ? Math.max(STROKE_KERNEL_FLOOR, radius) : radius}px)`;
     ctx.drawImage(bitmap, 0, 0);
 
-    return [points?.length ? maskFilteredRaster(bitmap, canvas, size, points) : canvas];
+    return [stroked ? compositeStrokeFootprint(bitmap, canvas, size, points!) : canvas];
   };

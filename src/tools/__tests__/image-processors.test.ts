@@ -16,6 +16,8 @@ import type { MagicWandToolArgs } from '../magicWand.ts';
 import type { RectangularSelectionToolArgs } from '../rectangularSelection.ts';
 import { normalizeShapeGeometry, shape, shapeGeometryBounds } from '../shape.ts';
 import { defaultSettings } from '../settings.ts';
+import { BRUSH_SPACING_DEFAULT, brushDabCenters } from '../../util/brush-engine.ts';
+import { FOCUS_STROKE_BRUSH_SIZE } from '../../util/focus-stroke-mask.ts';
 import type { ProcessorToolParams, ToolResult } from '../toolProcessors.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -117,6 +119,54 @@ describe('tool image processors', () => {
         0
       );
       expect(result).toBe(RecordingOffscreenCanvas.instances[1] as unknown as OffscreenCanvas);
+    });
+
+    it('clips one disc per DAB CENTRE rather than per pointer sample, so a fast drag has no unfiltered gaps', () => {
+      // The defect this pins. Pointer samples are whatever the browser coalesced the drag into,
+      // so their density is a function of pointer speed. Two samples 300px apart under a 40px
+      // brush leave ~260px of untouched, unblurred layer between them, and the stroke reads as a
+      // dashed line of blurred dots. Every other paint-family tool in this repository
+      // interpolates through `brushDabCenters` for this reason; asserting the disc COUNT is what
+      // makes the interpolation observable, because no canvas double here models `clip()` and the
+      // gap is otherwise invisible to every test.
+      const points = [
+        { x: 10, y: 40 },
+        { x: 310, y: 40 },
+      ];
+      const expectedCentres = brushDabCenters(points, FOCUS_STROKE_BRUSH_SIZE, BRUSH_SPACING_DEFAULT);
+
+      blur(params)({ radius: 5, points, rasterBounds: { x: 0, y: 0, width: 400, height: 80 }, toolName: 'blur' });
+
+      // Sanity: the two sample counts must genuinely differ, or this assertion is vacuous and
+      // would pass against the sampling bug it exists to catch.
+      expect(expectedCentres.length).toBeGreaterThan(points.length * 2);
+
+      const maskCanvas = RecordingOffscreenCanvas.instances.at(-1)!;
+      expect(maskCanvas.ctx.arc).toHaveBeenCalledTimes(expectedCentres.length);
+    });
+
+    it('clips to exactly the tip radius the tool area widens the raster frame by', () => {
+      // The frame the tool area allocates and the radius this clips to are one number shared by
+      // three modules. If the frame were the smaller of the two, the outer half of every tip
+      // would be cut off by the staged raster's own edge; if it were the larger, the layer would
+      // grow transparent padding nobody painted. Nothing else compares them, so this does.
+      blur(params)({
+        radius: 5,
+        points: [
+          { x: 8, y: 8 },
+          { x: 16, y: 8 },
+        ],
+        rasterBounds: { x: 0, y: 0, width: 64, height: 48 },
+        toolName: 'blur',
+      });
+
+      const maskCanvas = RecordingOffscreenCanvas.instances.at(-1)!;
+      // `arc(x, y, radius, start, end)`: the radius is the third argument, so the assertion
+      // starts after the centre pair.
+      expect(maskCanvas.ctx.arc).toHaveBeenCalled();
+      for (const call of vi.mocked(maskCanvas.ctx.arc).mock.calls) {
+        expect(call.slice(2)).toEqual([FOCUS_STROKE_BRUSH_SIZE / 2, 0, Math.PI * 2]);
+      }
     });
 
     it('wraps the source in a size-matched canvas with a blur() filter', () => {

@@ -10,6 +10,7 @@ import {
   isLevelsToolArgs,
   isRepositionToolArgs,
   hasPendingText,
+  isRasterStrokeArgs,
 } from '../typeGuards.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
 
@@ -147,5 +148,51 @@ describe('type guard predicates', () => {
     expect(isDrawToolArgs(undefined)).toBe(false);
     expect(isLevelsToolArgs(null)).toBe(false);
     expect(isRepositionToolArgs(undefined)).toBe(false);
+  });
+});
+
+describe('isRasterStrokeArgs', () => {
+  const frame = { x: 0, y: 0, width: 8, height: 8 };
+  const point = { x: 1, y: 2 };
+
+  it.each(['blur', 'sharpen', 'smudge'])('accepts a stroked %s as a raster stroke', (toolName) => {
+    expect(isRasterStrokeArgs({ toolName, points: [point], rasterBounds: frame } as unknown as ToolArgs)).toBe(true);
+  });
+
+  it.each([
+    ['a frame with no points', { toolName: 'blur', rasterBounds: frame }],
+    ['points with no frame', { toolName: 'blur', points: [point] }],
+    // `draw` carries `points` too, so the family restriction is the only thing separating a focus
+    // stroke from an ordinary paint one. Without it every paint tool would start widening.
+    ['a tool outside the focus family', { toolName: 'draw', points: [point], rasterBounds: frame }],
+    ['a non-finite point coordinate', { toolName: 'blur', points: [{ x: Number.NaN, y: 2 }], rasterBounds: frame }],
+    ['a point that is not an object', { toolName: 'blur', points: [7], rasterBounds: frame }],
+    ['a zero-width frame', { toolName: 'blur', points: [point], rasterBounds: { ...frame, width: 0 } }],
+    ['a zero-height frame', { toolName: 'blur', points: [point], rasterBounds: { ...frame, height: 0 } }],
+    [
+      'a frame whose extents are strings',
+      { toolName: 'blur', points: [point], rasterBounds: { ...frame, width: '8' } },
+    ],
+  ])('refuses %s', (_label, args) => {
+    expect(isRasterStrokeArgs(args as unknown as ToolArgs)).toBe(false);
+  });
+
+  it('refuses an EMPTY point list, which would otherwise become a whole-frame filter', () => {
+    // `Array.isArray([])` and `[].every(...)` are both vacuously true, so this shape passed the
+    // guard before it was pinned. It matters because an empty `points` takes each processor's
+    // WHOLE-FRAME branch: `blur` would blur the entire widened frame instead of painting under a
+    // brush, which is exactly the retained-filter semantics this predicate exists to distinguish.
+    expect(isRasterStrokeArgs({ toolName: 'blur', points: [], rasterBounds: frame } as unknown as ToolArgs)).toBe(
+      false
+    );
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a primitive', 7],
+    ['an object with no toolName', { points: [point], rasterBounds: frame }],
+  ])('refuses %s', (_label, args) => {
+    expect(isRasterStrokeArgs(args as unknown as ToolArgs)).toBe(false);
   });
 });

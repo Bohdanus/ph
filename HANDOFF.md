@@ -6388,7 +6388,67 @@ instead of against a grep. An earlier draft of this entry claimed `restoreVisibl
 that a throwing layer processor was a way to reach it; both were false — it is module-private, so no test can
 name it, but three drive it, and `createLayerSource` appears nowhere in `layer-renderer.ts`.
 
-## 240. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
+## 240. Durable materialization never sees a `reposition` that follows a raster operation, so a moved layer's pixels land at the wrong origin
+
+**Problem.** `durable-replay.ts` folds a move into `layer.snapshot.pos` and leaves `layer.operations`
+untouched. The producer loop in `materialization.ts` pushes only `apply-affine-transform` and
+`apply-filter` into its retained segment and `continue`s past everything else, so it cannot observe a
+move that was recorded after a raster operation. It starts from the post-move origin and then applies
+each raster op's own frame from there.
+
+Concrete: a layer at `pos` `{0,0,100,100}`; a Blur stroke dragged outside it commits
+`rasterBounds` `{-20,-20,140,140}`; the user then moves the layer `+50,+50`. Legacy replay publishes
+the layer at `{30,30,140,140}`. Durable materialization starts `origin` at `{50,50}`, widens it to
+`{-20,-20}`, blits the source at `+70,+70` rather than `+50,+50`, and publishes `{-20,-20,140,140}` —
+every pixel of the stroke, including the transparent padding the widening added, is 50px off.
+
+**Why it is not fixed here.** Pre-existing in kind for any raster operation followed by a move, but the
+focus-stroke frame turns a placement slip into a wrong _frame_: the padding is real published area, so
+the error is the size of the stroke footprint rather than a few pixels. Closing it needs the reposition
+to reach the producer loop as an ordered operation, which is a durable-schema question (a new
+`apply-position` marker, and what it means for an entry published before it existed), not a local fix.
+
+**What would close it.** Carry the reposition into `layer.operations` in `durable-replay.ts` so the
+producer loop can accumulate the delta into `origin` at the point each raster op occurs. Failing that,
+refuse materialization of a layer whose operation list contains a raster op recorded before a
+reposition, so the failure is loud rather than a misplaced layer.
+
+**Files.** `src/contexts/durable-replay.ts` — the `reposition-layer` arm; `src/contexts/materialization.ts` —
+the producer's operation loop and `origin` bookkeeping;
+`src/contexts/__tests__/materialization.ordering.test.ts` — the only suite that observes `origin`.
+
+**Provenance.** Found 2026-10-05 on `main` by a review of the focus-tool stroke frame, which checked
+whether the durable path stages the same frame the live path does. The staging itself is correct and now
+tested; this is the one case where the surrounding replay disagrees with it.
+
+## 241. `isRasterStrokeArgs` names the focus family in a literal, so a fourth focus tool must be remembered in two places
+
+**Problem.** `src/util/typeGuards.ts` lists `['blur', 'sharpen', 'smudge']` as the focus family. Four
+other modules — `useLayer.ts`, `history-replay.ts`, `history-append.ts`, `history-adapter.ts` — combine
+that predicate with the registry's `commit` kind independently. `sharpen` and `smudge` are already
+`commit: 'raster'`, so only `blur` depends on the guard.
+
+Register a fourth focus tool with `commit: 'layer-operation'` and, unless the literal is also updated,
+its stroke bakes as a retained whole-layer filter in the live path, in legacy replay, in the durable
+validator (where `retainedToolOperationKind` returns `'apply-filter'`), and in the adapter — with nothing
+failing, and the stroke rendering as a whole-layer blur under a brush-shaped history entry.
+
+**Why it is not fixed here.** Deriving the family from the registry inside `isRasterStrokeArgs` makes a
+`util` module depend on the processor registry, which `StoreContext.boundary-gates.test.ts` governs, and
+no fourth focus tool is registered. The failure needs the new tool to be forgotten in one place, which is
+a narrower risk than the import-graph change to prevent it.
+
+**What would close it.** Give the registry a `stroke: true` capability flag and have the predicate read
+it, so registering the tool is the whole of the work. `toolProcessors.ts` already carries per-tool
+capabilities (`commit`, `requiresCanvasFilter`, `compositesOntoInput`), so this is the same shape.
+
+**Files.** `src/util/typeGuards.ts` — `isRasterStrokeArgs()`; `src/tools/toolProcessors.ts` —
+`ToolProcessorDefinition`; `src/contexts/useLayer.ts`, `src/contexts/history-replay.ts`,
+`src/contexts/history-append.ts`, `src/contexts/history-adapter.ts` — the four independent re-questions.
+
+**Provenance.** Found 2026-10-05 on `main` by the same review as §240.
+
+## 242. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
 
 **The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate every
 viewport-relative screenshot clip passes through. It decides the region is already on screen only when
