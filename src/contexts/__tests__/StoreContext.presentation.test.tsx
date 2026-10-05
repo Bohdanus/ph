@@ -11,10 +11,21 @@ import {
 } from '../StoreContext.tsx';
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
+import { composeDurableDocument as realComposeDurableDocument } from '../durable-compositor.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { BitmapSource } from '../general-types.ts';
 import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+
+// The real compositor, wrapped rather than replaced: the wrapper counts the calls
+// so a refusal can be observed as a call that never happened. A refusal asserted
+// only through the store's visible state would be satisfied by a publication that
+// ran and then failed inside its own `catch`, which is the opposite claim.
+vi.mock('../durable-compositor.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../durable-compositor.ts')>();
+  return { ...actual, composeDurableDocument: vi.fn(actual.composeDurableDocument) };
+});
+const composeDurableDocument = vi.mocked(realComposeDurableDocument);
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -150,6 +161,83 @@ describe('durable render presentation guard', () => {
         existing.pos
       )
     ).toBe(false);
+  });
+});
+
+describe('durable navigation presentation requires a shadow that describes every entry', () => {
+  /**
+   * The pen action has no durable equivalent, so a conversion carrying one omits
+   * that entry and names it. Everything else about the timeline converts, so the
+   * published document's replay layer for this one carries no operations — which
+   * is exactly the state `durablePresentationIsRendererIdentical` ACCEPTS. Absent
+   * the gate, navigation would compose that document, decide the materialization
+   * is renderer-identical, and write the un-edited pixels over the `tmpCanvas` the
+   * renderer draws from.
+   */
+  function timelineWith(entry: HistoryItem) {
+    return {
+      entries: [baselineItem({ [layerId]: layerWithCanvas(layerId, null) }), entry],
+      cursor: 1,
+      branchRevision: 0,
+    };
+  }
+
+  const unconvertibleEntry: HistoryItem = {
+    id: 'pen-edit',
+    actionName: TOOL_ACTION,
+    layerId,
+    args: { toolName: 'pen' },
+  };
+
+  /** Navigates and lets the asynchronous publication settle, either way. */
+  async function navigate(
+    dispatch: StoreDispatch,
+    timeline: { entries: HistoryItem[]; cursor: number; branchRevision: number }
+  ) {
+    await act(async () => {
+      dispatch({
+        type: 'APPLY_HISTORY_REPLAY',
+        payload: { updates: {}, timeline },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('composes the durable replay for a timeline every entry of which converted', async () => {
+    composeDurableDocument.mockClear();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+
+    await navigate(
+      dispatch(),
+      timelineWith({ id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } })
+    );
+
+    // The control, and the half that makes the refusal below mean something: a
+    // complete shadow DOES reach the compositor.
+    expect(store().durableDiagnostics).toEqual([]);
+    expect(composeDurableDocument).toHaveBeenCalled();
+  });
+
+  it('never composes the durable replay for a shadow that is missing an edit', async () => {
+    composeDurableDocument.mockClear();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+
+    await navigate(dispatch(), timelineWith(unconvertibleEntry));
+
+    // The document is published and usable — that is the diagnostic partition — but
+    // it is missing an edit the legacy timeline has, and the presentation is the
+    // one consumer whose correctness depends on there being none.
+    expect(store().durableStatus).toBe('current');
+    expect(store().durableDocument).not.toBeNull();
+    expect(store().durableDiagnostics[0]).toMatchObject({
+      historyId: 'pen-edit',
+      severity: 'error',
+      code: 'unsupported-history-feature',
+    });
+    expect(composeDurableDocument).not.toHaveBeenCalled();
   });
 });
 
