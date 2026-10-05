@@ -272,7 +272,7 @@ Photoshop's stops at an image _edge_ (see the Quick Selection section below); th
 inverted `Frequency` is the same kind of finding. Both compute a different thing from the one
 Photoshop documents, and both are `partial` on that basis. The elliptical marquee does not:
 `applyRatio()` in `src/tools/ellipticalSelection.ts` is the width-to-height ratio Adobe's
-own worked example states, `resolveEllipseRect()` beside it makes `fixed-size` ignore the drag
+own worked example states, `resolveUnclampedEllipseRect()` beside it makes `fixed-size` ignore the drag
 with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx` — the drag
 record `handlePointerDown()` starts — passes `event.shiftKey` and `event.altKey` as
 `constrainToCircle` and `fromCentre`, which are Photoshop's two modifiers. The tessellation is a
@@ -353,7 +353,7 @@ width-to-height ratio, which is exactly what `applyRatio()` in `src/tools/ellipt
 computes and exactly what the bar's hint tells the user, `Drag at ${args.fixedRatio}:1` (the
 `hint` in `EllipticalSelection.tsx`). What the app loses is expressiveness
 in the field, not fidelity in the geometry: the ratio must be entered as one number with a floor of
-0.05, where a Width/Height pair can take any two decimals. `resolveEllipseRect` does implement
+0.05, where a Width/Height pair can take any two decimals. `resolveUnclampedEllipseRect` does implement
 `fixed-size` the way Photoshop does —
 ignoring the drag, with the press point only supplying the center, so a click is a complete
 gesture — and `EllipticalSelectionToolArea` passes `event.shiftKey` as `constrainToCircle` and
