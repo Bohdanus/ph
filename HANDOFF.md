@@ -5091,9 +5091,24 @@ rather than a bug fix:
 - Report the overflow against the box the user DRAGGED rather than the grown one, so the icon
   survives a growing box. `renderText` is handed only the final rect and has no knowledge of the
   drag, so `calculateNewRect`'s return type would have to carry it.
+- Keep the height the user dragged and CLIP the type that outgrows it, reporting the overflow with
+  the corner indicator. This keeps the icon reachable and closes the crop, and it is the fourth
+  option because no current run trips the clamp. An implementation of exactly this survives only
+  in the uncommitted residue of worktree `text-tool-ux-2026-10-04` (branch
+  `fix/text-tool-ux-2026-10-04`, tip `a115ee05`) — in `src/util/rect.ts`, `src/util/rect.test.ts`
+  and `src/components/Main/TextEditOverlay.tsx` — and in NO commit, tag or stash. It is not a merge
+  candidate: its own tests contradict each other (one asserts a dragged box keeps `height === 60`,
+  another asserts the same box is `0`), and it weakens an unrelated assertion in
+  `e2e/text-tool.spec.ts`. Reimplement it against today's `src/util/rect.test.ts` rather than
+  porting it, and settle first whether Adobe clips leading that extends above the box when the
+  leading is shorter than the font's ascent — the question that residue left open.
 
 **Provenance.** Found by review of the Type tool against its own requirements document, not by a
-failing test: no current run trips it, which is exactly why the clamp was allowed to stand.
+failing test: no current run trips it, which is exactly why the clamp was allowed to stand. The
+fourth option was recovered from the abandoned residue described in it by the harvest of
+`ses_ef4468057ffeCvhwUIlFFCVb2G`, which also established that the other 16 staged files in that
+residue are superseded: main holds the corrected text-layer re-entry from `609ac270`, and taking
+the residue's copies would have reintroduced five measured defects `main`'s own comments record.
 
 ## 194. Every button built on `buttonStyles.ts` has no keyboard focus indicator
 

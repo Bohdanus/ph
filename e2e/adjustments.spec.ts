@@ -171,6 +171,13 @@ const BLACK_STROKE = '#000000';
  * `SPRAY_VERTICAL_SPREAD_THRESHOLD` of 30, which is the line the analyser itself calls a
  * spray. A blur at radius 10 measures 50, so the two are far enough apart that the
  * blurred assertion cannot be satisfied by an unblurred reading.
+ *
+ * CAPTURE PIXELS, not CSS: `verticalSpread` is deliberately NOT scale-corrected (its
+ * JSDoc says so), so this bound is in the decoded image's own pixels and a run at
+ * `deviceScaleFactor: 2` would measure about 24 here. `playwright.config.ts` sets no
+ * scale factor and this file has no `test.use`, so nothing runs it at 2 today; a future
+ * 2x block over this spec has to derive this from the capture's scale rather than reuse
+ * 20.
  */
 const UNBLURRED_VERTICAL_SPREAD_MAX = 20;
 
