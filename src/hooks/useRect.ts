@@ -214,7 +214,7 @@ export function useRect({
    * The overlay canvas outlives this hook: `Main.tsx:239-284` renders both overlay canvases
    * unconditionally and only toggles `display`, and toggling `display` never touches a backing
    * store. The effect above is the only other thing that clears it, and it cannot cover the AREA
-   * going away — `goToTool` (`src/hooks/useApp.ts:167-196`) appends the selection clear and
+   * going away — `goToTool()` appends the selection clear and
    * dispatches `SET_TOOL_NAME` from one function body, React batches them, and the marquee's
    * component unmounts in the same commit that nulls the selection. An unmounted component's
    * effects do not run, so `initialRect` is never observed going null and the four `#007bff`

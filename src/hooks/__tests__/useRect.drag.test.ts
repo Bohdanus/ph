@@ -279,7 +279,7 @@ describe('useRect mask drawing', () => {
  * goes away has to clear the canvas itself.
  *
  * It cannot lean on the effect at `useRect.ts:58-70` seeing `initialRect` turn null. `goToTool`
- * (`src/hooks/useApp.ts:167-196`) appends the selection clear and dispatches `SET_TOOL_NAME` from
+ * (`goToTool()`) appends the selection clear and dispatches `SET_TOOL_NAME` from
  * one function body, React batches them, and the marquee's component unmounts in the same commit
  * that nulls the selection — and an unmounted component's effects do not run. That is what left the
  * `#007bff` outline, the four handles and the `rgba(0, 0, 0, 0.7)` blend on the next tool's
