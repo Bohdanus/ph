@@ -174,8 +174,9 @@ describe('ACCEPTED_CONSOLE_ERRORS', () => {
     // A `urlPattern` on either of the other two would be a narrowing nobody asked for,
     // and it is the shape a future edit takes by accident.
     const scoped = ACCEPTED_CONSOLE_ERRORS.filter((entry) => entry.urlPattern);
-    expect(scoped).toHaveLength(1);
+    expect(scoped).toHaveLength(2);
     expect(scoped[0].match).toBe(NOT_FOUND_TEXT);
+    expect(scoped[1].match).toBe('color-sampler-cap-reached');
   });
 });
 
