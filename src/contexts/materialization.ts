@@ -229,7 +229,45 @@ export async function materializeLayer(
         ownsBitmap = previous === next ? previousWasOwned : true;
       };
 
-      const renderRetainedSegment = async (operations: readonly DurableOperation[], force = false) => {
+      /**
+       * Bakes the retained operations collected so far into a surface, and leaves `origin`
+       * and `size` describing THAT surface.
+       *
+       * A published surface is BLITTED into the document — `composeDurableDocument()` and the
+       * frame path below both place it with `drawImage(bitmap, x, y, width, height)` — and a
+       * blit quantizes its destination. Two numbers therefore have to be the surface's own:
+       *
+       * 1. THE STAMP SIZE. `drawImage` with four numbers scales the source by
+       *    `width / source.width`, so stamping an evaluated un-rounded extent rescales a raster
+       *    that was already resampled into it. The legacy renderer draws the same retained
+       *    affine in ONE resample straight into the document; a stamped scale factor is a
+       *    second, and the two authorities then disagree on the pixels. `size` is read back off
+       *    the allocated surface, so the stamp is 1:1 by construction.
+       * 2. THE SURFACE ORIGIN. A destination pixel samples the surface at
+       *    `floor(x + k + 0.5)`, so a surface published at a fractional origin is not placed
+       *    where its ink is, and the resampled pixels it carries sit on a grid that is not the
+       *    document's — a sub-pixel phase shift on every edge, which `PixelContext` samples as a
+       *    whole source pixel. So a PUBLISHED surface starts on a whole document pixel, grows to
+       *    cover the presentation, and carries the sub-pixel remainder inside itself as
+       *    `surfaceOffset`.
+       *
+       * `placedOnDocumentGrid` is therefore set only for the segment this function PUBLISHES.
+       * The segment handed to a raster processor is not blitted; it is consumed at its own
+       * extent by `applyRasterTool`, whose legacy counterpart is `stageProcessorInput()` and
+       * which stages at the UN-snapped `evaluatePresentation` extent. Snapping that one would
+       * make the durable processor input a pixel wider than the legacy one, and a processor
+       * returns a raster the size of its input, so the two layers would land apart.
+       *
+       * The snap is a property of the layer alone, never of the frame this raster will be
+       * placed into: a document frame origin is a whole number of pixels (`documentFrameFromSize()`
+       * seeds `0, 0` and every crop edge is `Math.round`ed by `trimRect()`), so a whole-pixel
+       * surface origin lands on the document's grid for every frame a document can have.
+       */
+      const renderRetainedSegment = async (
+        operations: readonly DurableOperation[],
+        force = false,
+        placedOnDocumentGrid = false
+      ) => {
         if (!force && operations.length === 0) return;
         const evaluation = evaluatePresentation({
           position: { x: origin.x, y: origin.y, width: size.width, height: size.height },
@@ -237,19 +275,34 @@ export async function materializeLayer(
           operations: presentationOperations(operations),
           mode: 'layer-bounds',
         });
-        const output = createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
+        // The presentation's extent in document space, which is what a blit places.
+        const extentX = origin.x + evaluation.localBounds.x;
+        const extentY = origin.y + evaluation.localBounds.y;
+        // Flooring keeps the offset non-negative and the surface a superset of the ink, so a
+        // blurred edge inside `localBounds` is never clipped by the surface it is baked into.
+        const surfaceX = placedOnDocumentGrid ? Math.floor(extentX) : extentX;
+        const surfaceY = placedOnDocumentGrid ? Math.floor(extentY) : extentY;
+        const surfaceOffsetX = extentX - surfaceX;
+        const surfaceOffsetY = extentY - surfaceY;
+        const output = createCanvas(
+          evaluation.localBounds.width + surfaceOffsetX,
+          evaluation.localBounds.height + surfaceOffsetY
+        );
         const ctx = context2d(output);
         ctx.save();
         try {
           // The evaluator composes affine operations first, then applies the
           // joined filter string to that presentation.
-          drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
+          drawEvaluatedPresentation(ctx, bitmap, evaluation, {
+            kind: 'bounds',
+            surfaceOffset: { x: surfaceOffsetX, y: surfaceOffsetY },
+          });
         } finally {
           ctx.restore();
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
-        origin = { x: evaluation.bounds.x, y: evaluation.bounds.y };
-        size = { width: evaluation.bounds.width, height: evaluation.bounds.height };
+        origin = { x: surfaceX, y: surfaceY };
+        size = { width: output.width, height: output.height };
       };
 
       try {
@@ -326,7 +379,10 @@ export async function materializeLayer(
           size.width <= 0 ||
           size.height <= 0 ||
           area <= MAX_AFFINE_PIXELS;
-        await renderRetainedSegment(retainedOperations, requiresSurface);
+        // The segment this layer is PUBLISHED at: its raster is the one a blit places, so it is
+        // the one that has to be snapped and sized from its own surface. See
+        // `renderRetainedSegment()`.
+        await renderRetainedSegment(retainedOperations, requiresSurface, true);
         const bounds: Pos = { x: origin.x, y: origin.y, width: size.width, height: size.height };
         // The materialization cache owns every bitmap it publishes, and it
         // outlives this producer's lease on the source. Skipping the final

@@ -9,7 +9,7 @@ import {
   transformCorners,
 } from './affine-transform.ts';
 import type { DocumentFrame } from './document-frame.ts';
-import type { BitmapSource, Pos, Size } from './general-types.ts';
+import type { BitmapSource, Point, Pos, Size } from './general-types.ts';
 import type { Layer, LayerOperation } from './layer-types.ts';
 import { FilterArgumentUnrenderableError } from '../util/canvas-filter.ts';
 import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
@@ -52,7 +52,18 @@ export type PresentationEvaluation = Readonly<{
 }>;
 
 export type PresentationDrawTarget =
-  Readonly<{ kind: 'document'; frame?: DocumentFrame }> | Readonly<{ kind: 'bounds' }>;
+  | Readonly<{ kind: 'document'; frame?: DocumentFrame }>
+  | Readonly<{
+      kind: 'bounds';
+      /**
+       * Where the allocated surface's own (0, 0) sits inside the presentation, in the
+       * same layer-local units as `localBounds`. Omitted means the surface starts exactly
+       * at the evaluated extent, which is right only when the caller's surface origin and
+       * the extent's origin are the same number — see `renderRetainedSegment()` in
+       * `materialization.ts` for the caller that has to differ, and why.
+       */
+      surfaceOffset?: Point;
+    }>;
 
 /**
  * Scales a vector creator's coordinates from its recorded source rectangle to
@@ -441,6 +452,11 @@ export function evaluatePresentationForDraw(
  * Draws an already-evaluated presentation without allocating a surface. The
  * caller chooses the target coordinate space; staging, publishing, and cache
  * ownership stay outside this module.
+ *
+ * A `bounds` target draws into a surface the CALLER sized, so the caller also owns where
+ * that surface's origin sits inside the presentation and says so in
+ * `PresentationDrawTarget.surfaceOffset`. Drawing at the evaluated extent instead — the
+ * un-offset default — puts a snapped surface's ink on the wrong pixel, which is silent.
  */
 export function drawEvaluatedPresentation(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -448,8 +464,14 @@ export function drawEvaluatedPresentation(
   evaluation: PresentationEvaluation,
   target: PresentationDrawTarget
 ): void {
-  const x = target.kind === 'bounds' ? -evaluation.localBounds.x : evaluation.position.x - (target.frame?.x ?? 0);
-  const y = target.kind === 'bounds' ? -evaluation.localBounds.y : evaluation.position.y - (target.frame?.y ?? 0);
+  const x =
+    target.kind === 'bounds'
+      ? -evaluation.localBounds.x + (target.surfaceOffset?.x ?? 0)
+      : evaluation.position.x - (target.frame?.x ?? 0);
+  const y =
+    target.kind === 'bounds'
+      ? -evaluation.localBounds.y + (target.surfaceOffset?.y ?? 0)
+      : evaluation.position.y - (target.frame?.y ?? 0);
 
   ctx.filter = evaluation.filter;
   if (isIdentityAffineTransform(evaluation.affine)) {
