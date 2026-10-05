@@ -599,6 +599,10 @@ describe('Image Comparison Helpers', () => {
         diffPixels: 0,
         diffRatio: 0,
         channelDelta: NO_MOVEMENT,
+        // `toEqual` on the whole verdict, so widening the channels must not turn a decoded
+        // size disagreement into a match: `sizeMismatch` is `null` only because the two decodes
+        // agree, and this assertion now says so.
+        sizeMismatch: null,
       });
     });
 
