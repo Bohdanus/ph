@@ -37,7 +37,7 @@
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run tsc && npm run build",
     "gate:commit": "lint-staged --fail-on-changes --no-stash && npm run gate:verify",
-    "gate:push": "npm run test"
+    "gate:push": "npm run test -- --reporter=dot --silent"
   },
   "engines": {
     "node": ">=24"
