@@ -912,6 +912,78 @@ describe('materialization affine composition', () => {
   });
 });
 
+describe('materialization of a published surface', () => {
+  // A 90-degree rotation of a 10x10 layer at the origin, translated by a quarter of a pixel.
+  // Its transformed corners are (3.5, 2.25) (3.5, 12.25) (-6.5, 12.25) (-6.5, 2.25), so the
+  // evaluated extent is x -6.5..3.5 and y 2.25..12.25 — fractional on BOTH edges of BOTH axes,
+  // which is the ordinary shape of a rotated layer's extent and the reason the numbers below
+  // cannot be integers by accident.
+  const quarterTurn = (transform: { a: number; b: number; c: number; d: number; e: number; f: number }) =>
+    ({
+      kind: 'apply-affine-transform',
+      layerId: 'layer-1',
+      transform: Object.freeze(transform),
+    }) as DurableOperation;
+
+  const turnedLayer = (operations: DurableOperation[] = [quarterTurn({ a: 0, b: 1, c: -1, d: 0, e: 3.5, f: 2.25 })]) =>
+    makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, operations);
+
+  it('publishes a whole-pixel extent sized to the surface it allocated, and carries the remainder inside', async () => {
+    const registry = new AssetRegistry();
+
+    const result = await materializeLayer(turnedLayer(), makeRequest(registry));
+
+    // Snapped down to whole document pixels, grown by the sub-pixel remainder it absorbed:
+    // ceil(10 + 0.5) x ceil(10 + 0.25). The evaluated extent it came from was 10x10 at
+    // (-6.5, 2.25), and publishing THAT is a second defect — a blit stamps a source at the
+    // rectangle it is given, so 10 wide into 10.5 rescales a raster already resampled into it.
+    expect(result.bounds).toEqual({ x: -7, y: 2, width: 11, height: 11 });
+    expect(Number.isInteger(result.bounds.x)).toBe(true);
+    expect(Number.isInteger(result.bounds.y)).toBe(true);
+
+    // The ink sits where the extent says, inside the snapped surface: the draw offset is
+    // `-localBounds.x + surfaceOffset`, i.e. 6.5 + 0.5, and NOT the un-offset 6.5. Drawing at
+    // 6.5 would shift a whole source pixel of every edge, which `PixelContext` samples as one.
+    const staged = recordedContexts.at(-1);
+    expect(vi.mocked(staged!.translate).mock.calls).toEqual([[7, -2]]);
+    expect(vi.mocked(staged!.drawImage).mock.calls.at(-1)?.slice(1)).toEqual([0, 0, 10, 10]);
+
+    result.lease.release();
+    registry.shutdown();
+  });
+
+  it('stages a raster processor input at the UN-snapped extent, because no blit places it', async () => {
+    const registry = new AssetRegistry();
+    const seen: Array<{ width: number; height: number }> = [];
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation(({ size }) => {
+      seen.push({ ...size });
+      return () => [new RecordingOffscreenCanvas(size.width, size.height) as unknown as BitmapSource];
+    });
+    const processor = {
+      kind: 'apply-raster-processor',
+      layerId: 'layer-1',
+      processorId: 'blur',
+      version: 1,
+      args: Object.freeze({ toolName: 'blur', radius: 1 }),
+    } as const;
+    // A processor AFTER the retained affine is the case that matters: the two-segment order in
+    // `materializeLayer` bakes the affine, hands THAT to the processor, and bakes the trailing
+    // segment. Only the trailing bake is a blit target.
+    const layer = turnedLayer([quarterTurn({ a: 0, b: 1, c: -1, d: 0, e: 3.5, f: 2.25 }), processor]);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    // `applyRasterTool`'s legacy counterpart is `stageProcessorInput()`, which stages at the
+    // un-snapped `evaluatePresentation` extent, and a processor returns a raster the size of
+    // its input — so 11x11 here would make every durable processor output land a pixel apart
+    // from the legacy one.
+    expect(seen).toEqual([{ width: 10, height: 10 }]);
+
+    result.lease.release();
+    registry.shutdown();
+  });
+});
+
 describe('materialization document frame presentation', () => {
   it('frames the presentation into the requested document frame bounds', async () => {
     const registry = new AssetRegistry();

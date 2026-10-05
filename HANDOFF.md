@@ -67,11 +67,10 @@ are mounted.
 the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
 reconciling these changes pixel-tool results.
 
-**Fix.** Close the divergence the pixel differential found (§205) and the export axis it cannot see
-(§206), add the history-panel state axis (§207), then make the presentation authority explicit and
-rehydrate the options bar from durable sources. Keep legacy logical state as the authority until those
-projections are staged, lease-safe, and failure-contained; do not mount all remaining consumers at
-once.
+**Fix.** Close the export axis the pixel differential cannot see (§206), add the history-panel state
+axis (§207), then make the presentation authority explicit and rehydrate the options bar from durable
+sources. Keep legacy logical state as the authority until those projections are staged, lease-safe, and
+failure-contained; do not mount all remaining consumers at once.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
@@ -5339,43 +5338,6 @@ fallback. Assert the seam values, not pixel colours — the pixel claim belongs 
 
 **Files.** `src/components/DevStatusStrip/DevStatusStrip.tsx`, `src/contexts/StoreContext.tsx`,
 `e2e/error-boundary.spec.ts`, and the history navigation specs
-
----
-
-## 205. The durable composition resamples a retained affine twice, and the two authorities disagree on the pixels
-
-**Problem.** `materializeLayer()` — `renderRetainedSegment()` draws a layer's retained affine into
-an intermediate surface sized `Math.ceil(localBounds)`, and `composeDurableDocument()` then stamps
-that surface at `bounds.width`/`bounds.height` — the un-rounded `getAffineBounds()` numbers. So the
-durable side runs the affine through two resamples at a fractional scale. `drawLayerSource()`
-(`layer-renderer.ts`) applies the same affine in ONE `drawImage` straight into the document surface.
-The legacy side resamples once; the durable side resamples twice.
-
-**Measured, not inferred.** `history-migration.pixel-parity.test.ts` — the
-`diverges today: reposition and affine transform at cursor 2 …` `it.fails` title: **764 of 480000
-bytes differ**, first at (45, 41), where the legacy presentation is opaque white
-(`rgba 255,255,255,255`) and the durable one is transparent (`rgba 0,0,0,0`). Removing that row from
-`DECLARED_DIVERGENCES` puts the same failure on the hard matrix, so the harness detects it rather
-than merely recording it.
-
-**Consequence.** Any layer carrying a retained affine reaches the screen through a different
-resample chain than the legacy authority, so the two paint measurably different edges on the same
-history. This is the divergence the pixel differential was built to find, and it is latent for every
-durable presentation that carries a transform.
-
-**Fix — a ruling, then an edit.** Decide which side is correct: either the durable composition must
-not round its intermediate bounds, or `composeDurableDocument()` must stamp at the surface's actual
-size, or the legacy renderer must adopt the same two-step. The two-step arrangement is the durable
-model's own, so the un-rounded bounds are its own output and the cheapest fix is to make the stamp
-use the surface it was handed. Whichever is chosen, re-derive the answer with the harness as the
-oracle and remove the `it.fails` pin **in the same change** — a pin that outlives its fix stops being
-a tripwire and starts being a lie.
-
-**Files.** `src/contexts/materialization.ts` — `renderRetainedSegment()`,
-`src/contexts/durable-compositor.ts` — `composeDurableDocument()`,
-`src/contexts/presentation-evaluator.ts` — `getAffineBounds()`,
-`src/contexts/layer-renderer.ts` — `drawLayerSource()`,
-`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — `DECLARED_DIVERGENCES`
 
 ---
 

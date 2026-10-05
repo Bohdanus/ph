@@ -61,6 +61,18 @@ function orderedLayers(replay: DurableReplayResult): readonly string[] {
  * Composes successful per-layer materializations into one document-frame bitmap.
  * `materializeDocument` deliberately returns only layers that could be rendered;
  * this compositor never substitutes an unfiltered source for a refused layer.
+ *
+ * **THE STAMP IS AN OWNERSHIP RULE, NOT A PLACEMENT RULE.** The draw below is a BLIT, so it
+ * quantizes its destination and scales a source whose size differs from the rectangle it is
+ * given. Both facts belong to the layer that owns the raster, not to the compositor: a
+ * `MaterializedLayer.bounds` is the extent of the surface `materialization.ts` actually
+ * allocated, its origin sits on a whole document pixel, and the presentation's sub-pixel
+ * remainder is carried INSIDE that surface. So this function places the surface at
+ * `bounds - frame` and stamps it at `bounds` unchanged — nothing here re-derives a size, and a
+ * blit that places or scales is not this function's decision to make.
+ *
+ * The legacy renderer draws the same retained affine in ONE resample straight into the document
+ * (`layer-renderer.ts`), and the pixel differential is what keeps the blit honest about it.
  */
 export async function composeDurableDocument(
   replay: DurableReplayResult,
