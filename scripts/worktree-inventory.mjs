@@ -36,7 +36,7 @@ import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { collectWorktrees, findMissingWorktrees } from './lib/worktree-inventory/git.mjs';
+import { collectWorktrees, findMissingWorktrees, resolveBaseRef } from './lib/worktree-inventory/git.mjs';
 import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { auditWrites } from './lib/worktree-inventory/writes.mjs';
@@ -49,7 +49,8 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   (no flags)          write WORKTREES.json
   --check             exit 1 if WORKTREES.json is missing or stale, write nothing
   --stdout            print the inventory instead of writing it
-  --base <branch>     compare against <branch> (default: main)
+  --base <branch>     compare against <branch>. Default: the first of main, origin/main,
+                      refs/remotes/origin/main that resolves; the run is refused if none does.
   --window-hours <n>  chat window in hours (default: 24)
   --now <ms>          pin the clock, for reproducible output
   --out <path>        write somewhere other than WORKTREES.json
@@ -83,7 +84,14 @@ function takeValue(argv, i, inline) {
 }
 
 function parseArgs(argv) {
-  const opts = { base: 'main', windowHours: 24, now: null, out: null, noLiveWriters: null };
+  // `base: null` and NOT `base: 'main'`. A literal default here is the one thing
+  // that must not survive: a checkout without a ref named `main` — which is what
+  // `actions/checkout` produces on a `pull_request`, and what a fresh clone of
+  // any repository whose default branch is called something else produces — would
+  // carry that name into every ahead/behind answer as a silent null, and the
+  // generator would print an inventory that says nothing is at risk because it
+  // asked git nothing. `main()` resolves it below and refuses if it cannot.
+  const opts = { base: null, windowHours: 24, now: null, out: null, noLiveWriters: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--check') opts.check = true;
@@ -341,7 +349,21 @@ function main() {
   const missingPaths = new Set(missing.map((w) => w.path));
   const existingPaths = new Set(worktrees.map((w) => w.path).filter((p) => !missingPaths.has(p)));
 
-  const mainHead = execFileSync('git', ['rev-parse', opts.base], {
+  // `--base` wins; otherwise the ref is RESOLVED, and an unresolvable one is a
+  // refusal rather than a null. This is the only place the two answers can be
+  // confused, so the refusal names the candidates and the flag.
+  const requested = opts.base;
+  const base = requested ?? resolveBaseRef(root);
+  if (base === null) {
+    throw new Error(
+      `no base ref could be resolved in ${root}, so every ahead/behind and merged-into-base answer ` +
+        'would be null and the inventory would read as "nothing is at risk" for a reason that has nothing ' +
+        `to do with risk. Tried main, origin/main, refs/remotes/origin/main. Pass --base <ref> to name one.`
+    );
+  }
+  opts.base = base;
+
+  const mainHead = execFileSync('git', ['rev-parse', base], {
     cwd: root,
     encoding: 'utf8',
   }).trim();

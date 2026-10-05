@@ -69,6 +69,8 @@ Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for o
 - `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files, reports every path a merge resolution hand-edited after git had merged it cleanly, and refuses a resolution that dropped a test file BOTH sides still carry. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
 - `npm run repo:state` reports every worktree with a merge, rebase or bisect in progress. Nothing else in the tree can see that state, and it lives in no commit, branch name or `git status`. Run it before a sweep or a landing. [`docs/ORCHESTRATION.md#what-git-is-doing-right-now`](docs/ORCHESTRATION.md#what-git-is-doing-right-now) is the detailed source.
+- `npm run inventory:verify` is a REPORT about the worktrees on this machine, not a gate, and no hook or CI job runs it. The gated suite asserts the same rules over a fleet it builds, so run this one before a sweep or a landing instead of blocking a push on it; [`docs/TESTING.md#gates`](docs/TESTING.md#gates) is where the split is stated.
+- Its exit code is its own verdict about this machine, and it is non-zero on a finding **and** on a check that could not run — a worktree holding work on no ref that could not be classified, facts git could not be read for, or a session audit that could not run — because "git could not be asked" is not "nothing is at risk". Read the exit line before acting on the number; `docs/TESTING.md` §Gates has the full set and all three of its exit lines.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
 
 ## Test traps
@@ -91,10 +93,12 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
-- CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs. It audits high-severity vulnerabilities but does not enforce dependency licences.
+- CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs, and none of them may carry `continue-on-error`: all three are gates. It audits high-severity vulnerabilities but does not enforce dependency licences.
 - Never weaken a gate with a skip, raised threshold, deleted assertion, or re-recorded baseline. A baseline is re-recorded only with `--update-snapshots=all`.
 - Hooks dispatch from `<common-dir>/.git/hooks-gate/`, not each worktree's `.husky/_`; `HUSKY=0` bypasses them. A blocked commit may leave `.git/lint-staged_unstaged.patch`.
-- Reference timings: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` about 9s, `test:staged` 2.8s, and the full test about 7-14s.
+- Reference timings, each one a single command on one machine: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` about 9s, `test:staged` 2.8s.
+- **Quote a per-file measurement and say which machine it came from. A suite total is a statement about the machine as much as the tree.** `scripts/__tests__/worktree-inventory.test.mjs` measured at 10.4-24.7s across ten consecutive runs in isolation, all green at `166 passed`, on one loaded machine. A range rather than a figure because the fleet it builds is real `git` worktrees and a busy host moves it; a single number for it would be a guess wearing a measurement's clothes.
+- The same file, BEFORE it stopped reading the operator's own worktrees, took 61.47s of a 142.78s `npm run test` at 92 live worktrees. After: 102.46s for the full suite under the same machine load. Both are stated as the before/after pair they are, not as targets.
 
 ## Known failures
 

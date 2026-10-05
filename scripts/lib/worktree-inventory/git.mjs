@@ -102,6 +102,79 @@ export function listWorktrees(cwd) {
 }
 
 /**
+ * The ref this checkout should be compared against, or `null` if there is none.
+ *
+ * THE LITERAL `main` IS NOT AVAILABLE EVERYWHERE, and assuming it is was a real
+ * outage. `git rev-list main...HEAD` and `git merge-base --is-ancestor HEAD main`
+ * both need a ref NAMED `main` to exist. They do not resolve `origin/main`, and
+ * they do not resolve a remote-tracking ref spelled differently. A checkout made
+ * by `actions/checkout` with the default `fetch-depth: 1` on a `pull_request`
+ * event contains `refs/remotes/pull/N/merge` and `refs/remotes/origin/main` and
+ * NO `refs/heads/main` at all, so on that shape every ahead/behind answer this
+ * module produced was `{ ahead: null, behind: null }` and every "already landed"
+ * answer was `false` — the two values that make a guard read as a machine with
+ * nothing at risk on it.
+ *
+ * So the base is ASKED FOR rather than assumed, in the order that prefers the
+ * most local answer and falls back to the one a shallow clone still has. The
+ * candidates are probed with `rev-parse --verify`, which is the question "does
+ * this name resolve to exactly one commit" and is false for both a missing ref
+ * and an ambiguous one.
+ *
+ * `null` is a real answer and not an error to be papered over: it means this
+ * checkout has no base that can be trusted, which is a fact about the checkout
+ * rather than about any worktree in it. Every caller must pass it through rather
+ * than substitute a default, because substituting one is what produced the
+ * outage.
+ *
+ * TWO WAYS A REF CAN RESOLVE AND STILL BE THE WRONG ANSWER, both found by
+ * building the shapes rather than reasoning about them, and both of which return
+ * a number rather than admitting ignorance.
+ *
+ * A SHALLOW REPOSITORY. `rev-parse --verify` asks "does this name name one
+ * commit", and in a `--depth 1` clone `origin/main` names exactly one commit —
+ * the tip, with its ancestry cut off. So the probe passes and every answer built
+ * on it is confidently wrong. Measured on a depth-1 fetch of a real ancestor of
+ * `origin/main`: `merge-base --is-ancestor HEAD origin/main` exits 1, and
+ * `rev-list --left-right --count origin/main...HEAD` prints `1 1`, for a branch
+ * that IS on the base. Before the shallow check this function returned
+ * `origin/main` there, which converts "I know nothing" into "I am certain and
+ * wrong" — strictly worse than the null it replaced, because a wrong number is
+ * read and a null is checked. `--is-shallow-repository` is the question, and the
+ * answer is that ancestry is not available in such a checkout at any depth, so
+ * there is no ref worth certifying.
+ *
+ * A TAG NAMED `main`. `rev-parse --verify main^{commit}` resolves the TAG, and so
+ * does every consumer afterwards, so the module stays self-consistent while
+ * comparing against a tag that may point anywhere. With a branch `main` and a
+ * lightweight tag `main` both present, git prints `warning: refname 'main' is
+ * ambiguous`, the tag wins, and `is-ancestor` against the tag exits 1 where it
+ * exits 0 against the branch. The first candidate is therefore FULLY QUALIFIED.
+ * It was `main`, which is the bug this function's own existence is about.
+ *
+ * ON THE ORDER OF THE REST, which is a deliberate choice and not an oversight: a
+ * stale local base is preferred over a fresh remote one. Comparing against a
+ * `main` that is behind makes a landed branch read as NOT landed, and every
+ * downstream verdict on that branch then protects it — which is the direction
+ * this tool must fail in. Preferring the fresher ref would make more worktrees
+ * read as disposable. Every consumer prints the ref it resolved, so a stale base
+ * is visible rather than silent.
+ */
+export function resolveBaseRef(cwd, candidates = ['refs/heads/main', 'origin/main', 'refs/remotes/origin/main']) {
+  if (isShallow(cwd)) return null;
+  for (const candidate of candidates) {
+    const out = git(cwd, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
+    if (out !== null && out !== '') return candidate;
+  }
+  return null;
+}
+
+/** Whether this checkout's history is truncated, so ancestry means nothing here. */
+function isShallow(cwd) {
+  return git(cwd, ['rev-parse', '--is-shallow-repository']) === 'true';
+}
+
+/**
  * Ahead/behind of a worktree's HEAD against `base`, as `{ ahead, behind }`.
  *
  * `rev-list --left-right --count base...HEAD` prints "<left> <right>", where
@@ -337,7 +410,13 @@ export function mergeConflict(cwd, base) {
  * is a question about the whole repository and a reader counting the entries
  * against `git worktree list` must not come up one short.
  */
-export function collectWorktrees(cwd, { base = 'main' } = {}) {
+export function collectWorktrees(cwd, { base } = {}) {
+  // NO DEFAULT, and the absence is the point: a defaulted `base` is a literal
+  // `main` waiting for a checkout that has none, and the caller above is the only
+  // thing that can notice. `resolveBaseRef` is where the question belongs.
+  if (base === undefined) {
+    throw new Error('collectWorktrees needs a base that resolveBaseRef has already resolved');
+  }
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);
   const nameCollisions = historicalNameCollisions(root, base);
@@ -463,4 +542,12 @@ export function findMissingWorktrees(cwd) {
   return listWorktrees(cwd).filter((w) => !existsSync(w.path));
 }
 
-export const __testables = { aheadBehind, workingTreeState, tipCommit, isMergedInto, commitsAhead };
+export const __testables = {
+  aheadBehind,
+  workingTreeState,
+  tipCommit,
+  isMergedInto,
+  commitsAhead,
+  resolveBaseRef,
+  isShallow,
+};

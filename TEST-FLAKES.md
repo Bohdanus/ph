@@ -675,74 +675,106 @@ default it is guarding. Two properties were checked rather than assumed and are
 worth keeping: the budget is scoped to the file that declares it (a body several
 times the default in an undeclared sibling still died at the 5s default in the same
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
-budget, which is how the three tests that read git in every worktree keep their
-declared `60_000`.
+budget. **Nothing in the tree relies on that second property any more.** The three
+cases that used to hold a declared `60_000` on top of the file budget are gone, and
+`scripts/__tests__/gates-wiring.test.mjs` now fails if any per-test timeout
+argument reappears in the inventory suite: a per-test budget is the shape a
+cost-that-grows takes, and there is nothing left in that file that grows.
 
-### The worktree-inventory suite, which is this family plus a shared store
+### The worktree-inventory suite: its failure mode is closed, and what replaced it is a guard
 
-`scripts/__tests__/worktree-inventory.test.mjs` carries **three** cases that run the inventory
-generator over every worktree git reports, each with its own per-test `it(name, fn, 60_000)`
-argument that wins over the file budget. They are `never asks the table to protect a worktree
-whose protection is derived`, `never offers a live worktree that holds uncommitted work on no
-ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
-about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
-it — but each carries its own budget, so which of them runs out first is not something the budget
-may depend on. That budget is a small multiple of what the walk costs, and the two drivers this
-section separates below both move it: more worktrees means more git reads, and a busier machine
-means slower ones. Neither measurement settles the other. The knife edge moves when a sweep grows
-the fleet and when nothing is committed.
+**The failure this subsection used to describe can no longer happen.** It needed the suite
+to read git in every worktree of the OPERATOR's repository, and it no longer does:
+the set under test is a synthetic fleet the file builds in a throwaway repository,
+eight worktrees — the primary checkout, seven registered inside it, and one
+registered outside it. The three per-test budgets are gone, the memoised
+`liveWorktreeFacts` read is gone with the fleet it memoised, and the file carries
+one 15s budget for the whole file. So "which of them runs out first" no longer
+describes anything, and what follows is kept as the record of a failure mode that is
+closed rather than as a tripwire to watch.
 
-Observed 2026-10-05 on `main` at `3abe6ce0` with a 96-worktree fleet — not the 150 this entry
-previously claimed for the observation: two different cases from that list timed out on different
-`npm run test` runs while the file passed alone. Note that the
-same file also fails, differently, when the SHARED main checkout is dirty — that is the
-`classify` defect `HANDOFF.md` §142 records, it reports a `keep` verdict rather than timing out,
-and no amount of budget fixes it.
+**What replaced it is checked, not written down.**
+`scripts/__tests__/gates-wiring.test.mjs` — `does not read the operator machine,
+which is what made this gate a machine probe` — reads that suite's source and
+fails if a per-test timeout argument is back or if any of five spellings of the
+live read returns: `listWorktrees(process.cwd())`, `collectWorktrees(process.cwd())`,
+a memoised `liveWorktreeFacts`, a memoised `liveInventory`, or a session store
+opened off `process.env.HOME`. Five shapes rather than one, because a guard written
+against a single literal is satisfied by renaming the call.
 
-Two costs compound, and it is worth keeping them apart because only one was ever measured:
+**`HANDOFF.md` §142 is still open, and its reproduction route is not.** `classify()`
+still answers `keep` for the primary worktree while that checkout holds the only copy of
+uncommitted work, and no file in this change touches it. What is gone is the way the
+entry says to see it — "edit any tracked file in main and run the inventory suite" —
+because that suite no longer reads the operator's main at all, so it will now be green
+with three files modified there. `npm run inventory:verify` works around the defect
+rather than fixing it: it lists the primary under `HOLDS WORK ON NO REF` from git's
+facts and then skips classifying it, so the wrong `keep` verdict is never the reason a
+primary checkout goes unreported. The entry's own instruction not to touch the guard it
+names in `worktree-inventory.test.mjs` still stands.
 
-- **Git per worktree.** `liveWorktreeFacts()` walks the worktree list and reads each one, so
-  more worktrees means more work. This is fleet-dependent.
-- **Concurrent readers of one shared store.** `chats.mjs`, `board.mjs` and `writes.mjs` each
-  open the operator's session database independently, and `chats.mjs`'s own module docstring
-  names two unindexed `LIKE` scans over `part` as the dominant cost. This is contention-
-  dependent, and it bites hardest when the swarm is busiest.
+**The three cases, under their current titles.** `never asks the table to protect a
+worktree whose protection is derived` and `protects that shape in a worktree
+NOBODY has written anything down about` sit in `describe('the curated table')`, and
+`never offers a worktree that holds uncommitted work on no ref for disposal` sits
+in `describe('work git cannot see: derived from the worktrees, never curated')`. One
+of the three titles lost its word "live" on the way, because there is no live fleet
+in it any more. A `describe` block is the unit of sharing: `sharedFleet()` builds one
+fleet in a `beforeAll` and removes it in an `afterAll`, so a block pays for one build
+and a per-test build pays for one per test. The first version rebuilt per test and the
+full-suite run then spent its time in git spawns — thirty-odd per test, four workers at
+a time — which was enough to push the slowest of them past this file's own 15s budget
+and turn three passing tests into three timeouts. One build per block is safe because
+the fleet is immutable: no test in those blocks writes to a worktree, and
+`buildInventory` and `classify` take plain records and return new ones.
 
-Measured on `main` with 56 worktrees: the same test passed alone unloaded at 53180ms, and
-failed inside a full suite at 76957ms with `Error: Test timed out in 60000ms`; a third
-measurement showed 147s of wall clock against 24.85s of CPU, about 17% utilisation.
+**Non-vacuity is assertable now, and each of the three asserts it.** Every one of
+them states, in its own assertion, that the set it reasons about is non-empty and
+that every fact in it was read: the fleet is built to hold work on no ref reached
+through a MODIFIED file and through an UNTRACKED file, disposed by different
+clauses of `classify`, so a guard that saw only one of them would fail, and an
+`ahead` of `null` reds the block rather than emptying it. The live version could
+make neither assertion. Its set was whatever the operator happened to have, and on
+a `pull_request` CI checkout it was empty — so on the machine where a green tick is
+a claim about a merge, every assertion was satisfied by nothing at all.
 
-Re-measured 2026-10-05 at 96 worktrees, and the 53180ms figure does not reproduce here. The whole
-file, all 160 cases vitest reported, passed in 14.71s at a load average near 6, and that one case
-passed alone in runs between 6.7s and 16.4s — so a single figure for it would be a guess wearing a
-measurement's clothes. It then exceeded 60s at a load average near 20. Read that as a floor and not
-a ratio: 60s is about five times the unloaded cost, and the busy figure is a harness kill rather
-than a measurement, so the spread is bounded below and not above.
+**The timings, for the file as it now stands.** 166 tests, and 10.4-24.7s across
+ten consecutive isolated runs, all green, on one loaded machine. A range and not a
+figure, because the fleet is real `git` worktrees and a busy host moves it. On the
+same machine load the whole `npm run test` went from 142.78s to 102.46s, with
+61.47s of the before figure inside this one file.
 
-That is also why the value was left alone rather than raised. It is not the defect; it is the
-instrument reading a cost `liveWorktreeFacts()` spends as four git reads per worktree plus three
-`git worktree list` spawns, and it will keep reading high until that walk gets cheaper. Raising it
-would have drifted every prose mention of the value — eight of them, two in this paragraph — plus
-the three `it(name, fn, 60_000)` arguments, which is the failure mode this repository keeps paying
-for.
+**The two drivers, kept apart, because neither is in the suite any more.** Git per
+worktree is fleet-dependent, and it is now paid against a fixed fleet of eight rather
+than against whatever the operator happens to have. Concurrent readers of one shared
+store — `chats.mjs`, `board.mjs` and `writes.mjs` each opening the operator's session
+database independently, with `chats.mjs`'s own module docstring naming two unindexed
+`LIKE` scans over `part` as the dominant cost — was the contention-dependent half.
+None of those three modules is imported by a test any more. `npm run inventory:verify`
+is the only reader of the session store that runs on demand, and it is not the same
+read: one indexed `WHERE id IN (...)` lookup against `session`, no `part` scan. It is
+a report — no hook and no CI job runs it, and its exit code is its own verdict about
+this machine rather than something that can block a push.
 
-**Low CPU utilisation does not exonerate the fleet.** That measurement rules out a CPU- or
-process-bound cost, and running `git` per worktree is itself I/O, so the fleet term survives it.
-An earlier version of this note used the 17% figure to refute the fleet explanation, which
-over-read it. Both drivers are real; neither measurement on its own settles the other.
-
-The failure is a bare `Test timed out` with no assertion, which is byte-identical to what a
-genuine break produces — so a red here is not evidence of a break, and a green here is not
-evidence of a fix. **Do not raise the timeout to quiet it:** that moves the knife edge rather
-than removing it, and the timeout is a gate value. Make the enumeration hermetic instead —
-answer the question from a handful of synthetic worktrees in a temporary repository, which is
-the technique the fixture-based cases in the same file already use.
+**The historical record, kept because it is what the guard is built on.** On `main`
+at `3abe6ce0` with a 96-worktree fleet — not the 150 an earlier revision of this
+entry claimed — two of these cases timed out on different `npm run test` runs while
+the file passed alone. At 56 worktrees the same case passed alone unloaded at
+53180ms and failed inside a full suite at 76957ms with `Error: Test timed out in
+60000ms`; a third measurement showed 147s of wall clock against 24.85s of CPU,
+about 17% utilisation. That rules out a CPU- or process-bound cost, and because
+running `git` per worktree is itself I/O it does not exonerate the fleet either — an
+earlier version of this note used the 17% figure to refute the fleet explanation,
+which over-read it. Every figure in this paragraph describes a file that no longer
+exists in this shape, and they are the reason the current one cannot be: it does
+not read the machine at all.
 
 **Remaining verification:** the code review this change was merged without. Every
 review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
 was not an available substitute, and it was merged on the operator's decision with
 the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
-fixed two false claims in the new comments, but that is not the review.
+fixed two false claims in the new comments, but that is not the review. The rewrite
+that closed the failure mode above carries the same open item.
 
 ## 15. The `currentDevicePixelRatio` SSR guard cannot be reached from any test in this suite
 
