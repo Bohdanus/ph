@@ -163,11 +163,12 @@ describe('buttonStyles disabled affordance', () => {
    * `MENU_ITEM_BUTTON` is the third style that ships disabled styling, and it is deliberately not
    * in `DISABLED_CAPABLE`: that pair is opacity-based, and this one dims with colour instead.
    *
-   * `buttonStyles.ts:99-105` states why these tokens are load-bearing rather than decoration — a
-   * disabled `<button>` still matches `:hover` in every engine, and Tailwind's preflight adds no
-   * `button:disabled` rule, so without the hover RESETS the twenty-one unbuilt `Image ▸ Adjustments`
-   * commands paint exactly the hover affordance of the two that work. A disabled styling that only
-   * dimmed the text would not have caught that, which is why the hover resets are pinned by name.
+   * The `MENU_ITEM_BUTTON` doc comment states why these tokens are load-bearing rather than
+   * decoration — a disabled `<button>` still matches `:hover` in every engine, and Tailwind's
+   * preflight adds no `button:disabled` rule, so without the hover RESETS the twenty-one unbuilt
+   * `Image ▸ Adjustments` commands paint exactly the hover affordance of the two that work. A
+   * disabled styling that only dimmed the text would not have caught that, which is why the
+   * hover resets are pinned by name.
    */
   it('resets the hover background of a disabled menu item, in both themes', () => {
     const tokens = classesOf('MENU_ITEM_BUTTON');

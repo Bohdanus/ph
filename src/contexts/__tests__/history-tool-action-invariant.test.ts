@@ -107,7 +107,7 @@ describe('durable tool-action invariant', () => {
 
 /**
  * The registry-wide half of the same rule. The test above pins ONE geometry tool by name,
- * which leaves the other 33 entries of `toolProcessors` unpinned: a tool can be wired to
+ * which leaves every other entry of `toolProcessors` unpinned: a tool can be wired to
  * the wrong `commit` kind, or its `commit` to the wrong `replay.kind`, or be left with
  * neither a per-layer operation nor a refusal, and every other suite stays green because
  * each of them names a single tool.
@@ -132,24 +132,34 @@ const REPLAY_KIND_FOR_COMMIT: Record<ToolCommitKind, ToolReplayKind> = {
 };
 
 /**
- * The durable operation a commit kind owes the timeline, or `null` for the kinds that
- * deliberately have none. `null` here is NOT "unknown": it is the claim that the kind is
- * not a per-layer edit, and the arm of `operationForTool` that produces it is asserted
- * below rather than assumed.
+ * What `operationForTool` owes the timeline for each commit kind, as an EXACT outcome
+ * rather than a "may be either".
+ *
+ * `'declines'` means it returns nothing. `'refuses'` means it throws
+ * `UnsupportedHistoryFeatureError`. Naming which of the two each kind owes is the whole
+ * point: an earlier version of this table used `null` for all four kinds that owe no
+ * operation and accepted EITHER outcome, which made the arm unfalsifiable — `planned` is
+ * initialised to `null`, so a tool that threw a plain `TypeError` from a renamed field
+ * satisfied "planned is null" without the refusal ever being checked. `unimplemented` in
+ * particular must REFUSE, because a quiet `null` there is the silent drop that comment used
+ * to warn about while the assertion permitted it.
  */
-const OPERATION_FOR_COMMIT: Record<ToolCommitKind, string | null> = {
+const OUTCOME_FOR_COMMIT: Record<ToolCommitKind, string | 'declines' | 'refuses'> = {
   geometry: 'reposition-layer',
   'layer-operation': 'apply-filter',
   'affine-operation': 'apply-affine-transform',
   raster: 'apply-raster-processor',
-  // A creator commits a whole new layer rather than an edit to this one, so there is no
-  // per-layer operation to plan; a document crop and a selection move the document or the
-  // selection, not the layer's pixels.
-  source: null,
-  'document-operation': null,
-  selection: null,
-  // Nothing is owed, and a refusal is the honest answer. `null` would be a silent drop.
-  unimplemented: null,
+  // A creator commits a whole new layer rather than an edit to this one, and this planner
+  // is only ever asked about a layer that already exists — so there is no per-layer
+  // operation to plan and the honest answer is to say so rather than invent one.
+  source: 'refuses',
+  // A document crop moves the document and a selection moves the selection; neither is a
+  // per-layer edit, and both are handled outside this planner.
+  'document-operation': 'declines',
+  selection: 'declines',
+  // Nothing is owed AND nothing may be invented: refusing is the only honest answer, and a
+  // quiet `null` here would be a silent drop of the tool action.
+  unimplemented: 'refuses',
 };
 
 /** Args that name a tool and give its commit kind the field it reads. */
@@ -212,7 +222,7 @@ describe('tool processor registry invariants', () => {
         'unimplemented',
       ].sort()
     );
-    expect(Object.keys(OPERATION_FOR_COMMIT).sort()).toEqual(Object.keys(REPLAY_KIND_FOR_COMMIT).sort());
+    expect(Object.keys(OUTCOME_FOR_COMMIT).sort()).toEqual(Object.keys(REPLAY_KIND_FOR_COMMIT).sort());
   });
 
   it('registers at least one tool for every commit kind, so no row above is aspirational', () => {
@@ -224,28 +234,27 @@ describe('tool processor registry invariants', () => {
     expect(definition.replay.kind).toBe(REPLAY_KIND_FOR_COMMIT[definition.commit]);
   });
 
-  it.each(registry)(
-    '%s either plans the operation its commit kind owes or refuses, and never both',
-    (toolName, definition) => {
-      const owed = OPERATION_FOR_COMMIT[definition.commit];
-      let planned: string | null = null;
-      let refused: string | null = null;
-      try {
-        planned = operationForTool(toolItem(toolName), snapshot())?.kind ?? null;
-      } catch (error) {
-        refused = error instanceof UnsupportedHistoryFeatureError ? error.code : `unexpected ${String(error)}`;
-      }
-
-      if (owed === null) {
-        // A kind with no per-layer operation may decline quietly, but a refusal is the
-        // stronger answer and is never a failure of the table.
-        expect(planned === null || refused === 'unsupported-history-feature').toBe(true);
-      } else {
-        expect(refused).toBeNull();
-        expect(planned).toBe(owed);
-      }
+  it.each(registry)('%s produces exactly the outcome its commit kind owes', (toolName, definition) => {
+    const owed = OUTCOME_FOR_COMMIT[definition.commit];
+    let planned: string | null = null;
+    let refused: string | null = null;
+    try {
+      planned = operationForTool(toolItem(toolName), snapshot())?.kind ?? null;
+    } catch (error) {
+      refused = error instanceof UnsupportedHistoryFeatureError ? error.code : `unexpected ${String(error)}`;
     }
-  );
+
+    if (owed === 'declines') {
+      expect(refused).toBeNull();
+      expect(planned).toBeNull();
+    } else if (owed === 'refuses') {
+      expect(planned).toBeNull();
+      expect(refused).toBe('unsupported-history-feature');
+    } else {
+      expect(refused).toBeNull();
+      expect(planned).toBe(owed);
+    }
+  });
 
   it.each(PIXEL_FREE_TOOLS)(
     'refuses %s by name, because a tool that commits no pixels owns no operation',

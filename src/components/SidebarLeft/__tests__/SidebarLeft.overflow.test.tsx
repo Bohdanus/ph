@@ -559,8 +559,8 @@ describe('SidebarLeft the three-dots tile', () => {
 
     // The Brush is one of the tools the collapse took off the rail, so `group` here is the
     // whole hidden set and the ordinary pressed derivation would be `true`. `aria-pressed` is
-    // the announcement half of that claim and it is withheld on this tile on purpose
-    // (`SidebarLeft.tsx:658`): a control whose only job is to open a menu must not report
+    // the announcement half of that claim and it is withheld on this tile on purpose:
+    // a control whose only job is to open a menu must not report
     // itself as a pressed toggle for a tool the user cannot see, and `aria-haspopup`/
     // `aria-expanded` are what it carries instead.
     expect(overflowTile(), 'the Brush really is a hidden tool at this slot height').not.toBeNull();

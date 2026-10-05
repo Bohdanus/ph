@@ -508,7 +508,28 @@ describe('cloneDurableDocument source-edit cloning', () => {
  * an arm makes the switch fall through and `tsc` reject the return type. This table is
  * the other half: the test-side pin, which `tsc` cannot give. A new kind needs a row
  * here, and the rows are deliberately exhaustive rather than illustrative.
+ *
+ * `OPERATION_KINDS` below is what makes that claim enforceable rather than aspirational.
+ * An array literal has no key set for `tsc` to check, so without it a thirteenth kind
+ * could be added to the union with no row and no failure — the test would simply cover
+ * twelve of thirteen. The runtime comparison in the case that consumes `OPERATION_KINDS`
+ * closes that, the same way the sibling registry test closes its own tables.
  */
+const OPERATION_KINDS: DurableOperation['kind'][] = [
+  'apply-affine-transform',
+  'apply-filter',
+  'apply-raster-processor',
+  'create-layer',
+  'merge-document',
+  'remove-layer',
+  'reorder-layers',
+  'replace-layer-source',
+  'reposition-layer',
+  'set-document-frame',
+  'set-layer-properties',
+  'set-selection',
+];
+
 const operationArms: { kind: DurableOperation['kind']; operation: () => DurableOperation }[] = [
   {
     kind: 'create-layer',
@@ -652,6 +673,10 @@ describe('expectDeepCopy', () => {
 });
 
 describe('freezeDurableDocument operation cloning, arm by arm', () => {
+  it('covers every durable operation kind, so a new kind cannot arrive without an arm', () => {
+    expect(operationArms.map((arm) => arm.kind).sort()).toEqual([...OPERATION_KINDS].sort());
+  });
+
   it.each(operationArms)('copies and deep-freezes every field of a $kind operation', ({ kind, operation }) => {
     const input = operation();
 

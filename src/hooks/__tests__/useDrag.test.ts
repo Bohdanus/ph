@@ -283,9 +283,11 @@ describe('useDrag', () => {
       act(() => {
         result.current.onPointerMove(makeEvent());
       });
-      // Read the handle off the scheduler rather than assuming a value: the fake timers'
-      // rAF counter is module-level and shared across every case in this file, so a
-      // literal `1` would be pinned to the order the runner happened to use.
+      // Read the handle off the scheduler rather than assuming a value. Whether the fake
+      // timers' rAF counter restarts per `vi.useFakeTimers()` call or is shared across
+      // this file is a property of the timer library rather than of the hook, and it is
+      // not something this assertion should depend on: a literal would pin the handle to
+      // the order the runner happened to use.
       const scheduled = rafSpy.mock.results.at(-1)!.value as unknown as number;
       cancelSpy.mockClear();
 

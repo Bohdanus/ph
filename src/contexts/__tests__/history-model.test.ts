@@ -113,9 +113,12 @@ describe('durable history preparation', () => {
       pos: { x: 1, y: 2, width: 40, height: 20 },
     });
     // The bitmap is a borrowed live resource, so it is carried by reference; the
-    // record around it is a copy. The previous form of this line compared a boolean
-    // expression against the bitmap, which passed only because `&&` returns its right
-    // operand — it never asserted the kind, and read as a truthiness check.
+    // record around it is a copy. The previous form compared
+    // `item.layerSource?.kind === 'image' && item.layerSource.bitmap` against the
+    // bitmap, which did fail for a wrong kind — but only because `&&` returns its
+    // right operand, so the kind was checked as a side effect of a truthiness
+    // expression rather than stated. What it could not check was the rest of the
+    // record, which is why the whole payload is asserted above instead.
     expect(item.layerSource.bitmap).toBe(bitmap);
     expect(item.layerSource.pos).not.toBe(source.pos);
     expect(Object.isFrozen(item.layerSource)).toBe(true);
