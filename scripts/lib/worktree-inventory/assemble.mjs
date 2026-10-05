@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -178,6 +178,8 @@ export function buildInventory({
       mergeChecked: verdict.mergeChecked,
       riskScore: riskScore(verdict),
       statusReasons: verdict.reasons,
+      patchEquivalence: verdict.patchEquivalence,
+      patchEquivalenceReason: verdict.patchEquivalenceReason,
 
       // The three facts that decide everything else, kept flat so a reader
       // scanning a diff can see a worktree's state change without opening it.
@@ -186,6 +188,9 @@ export function buildInventory({
       mergedIntoMain: wt.mergedIntoBase,
       dirty: wt.workingTree.modified,
       untracked: wt.workingTree.untracked,
+      statusError: wt.workingTree.statusError ?? null,
+      locked: Boolean(wt.locked),
+      prunableReason: wt.prunableReason ?? null,
       // The subset of `dirty` whose content main does NOT already hold, plus
       // every untracked path. Reported beside `dirty` and never instead of it:
       // `dirty` counts what differs from this worktree's own HEAD, so on a
@@ -203,6 +208,7 @@ export function buildInventory({
       // the two agree, so a stale `landed: true` fails the suite instead of
       // quietly contradicting `mergedIntoMain` in the same record.
       claimedLanded: curated?.landed ?? null,
+      legacy: Boolean(curated?.legacy),
 
       summary: curated?.summary ?? null,
       summarySource: curated?.summary ? 'curated' : 'none',
@@ -350,6 +356,8 @@ export function buildInventory({
   // also appears under no other action: it is disposable AND worth keeping, and
   // one `action` field can only say one of those at a time. See `ACTION.LEGACY`.
   const legacy = byActionNames(ACTION.LEGACY);
+  const inUse = byActionNames(ACTION.IN_USE);
+  const undecided = byActionNames(ACTION.UNDECIDED);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -527,6 +535,8 @@ export function buildInventory({
       }))
       .sort((a, b) => RISK_ORDER[a.readRisk] - RISK_ORDER[b.readRisk] || a.id.localeCompare(b.id)),
     readLostWorktreeHighRisk: readAudit.records.filter((r) => r.worktreeGone && r.readRisk === 'high').length,
+    inUse,
+    undecided,
 
     totals: {
       worktrees: records.length,
@@ -535,6 +545,8 @@ export function buildInventory({
       disposalCandidates: disposalCandidates.length,
       atRisk: atRisk.length,
       legacy: legacy.length,
+      inUse: inUse.length,
+      undecided: undecided.length,
       salvage: records.filter((r) => r.recommendation === 'salvage').length,
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,

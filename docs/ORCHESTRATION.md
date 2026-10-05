@@ -470,7 +470,7 @@ node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
 **Read `action` first.** Every record carries one value, and it is the whole
-answer — which of the six things it is:
+answer — which of the seven things it is:
 
 | `action`    | meaning                                                                                         | do this                            |
 | ----------- | ----------------------------------------------------------------------------------------------- | ---------------------------------- |
@@ -481,6 +481,11 @@ answer — which of the six things it is:
 | `in-use`    | an agent or a session is active there                                                           | leave it                           |
 | `keep`      | the main checkout                                                                               | never a candidate                  |
 | `undecided` | cannot be told from what is known                                                               | do not remove                      |
+
+An absorbed branch is the one exception to ancestry-based disposal: when the generated
+`patchEquivalence` is `"absorbed"` (no merge commits and every non-merge patch is already on
+`main`), `dispose-worktree.mjs` anchors the tip and performs its guarded branch removal. There is
+still no caller-controlled `--force`.
 
 **`legacy` is the one status whose instruction is two commands long.** A git branch
 needs no worktree, so `legacy` separates the two halves: the checkout, its
@@ -513,6 +518,9 @@ and will never be worked on again. They are opposite claims about one tree, and 
 one about losing content wins — `preflight` checks `must-not-prune` before it
 accepts `action: "legacy"`.
 
+After disposal, the kept branch has no worktree and therefore no per-worktree row in a
+regenerated inventory; the branch ref and its curated entry are the record that remains.
+
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as
 `generatedAt`. `main` moves, and a branch that merged cleanly stops doing so.
@@ -526,7 +534,7 @@ If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's
 `summary` and `note` before disposing of it. **`land` and `at-risk` are separate:**
 `land` is clean and mergeable; `at-risk` requires preservation or human review.
 
-**`mustNotPrune` vetoes `land` and `dispose`.** It records a human claim that the
+**`mustNotPrune` vetoes `land`, `dispose` and `legacy`.** It records a human claim that the
 worktree is not accounted for, and it is for a claim git cannot make about a
 **clean** tree. Every such entry must include a note explaining what would be
 lost. A merge recommendation is as much a claim about the contents as a prune
@@ -603,12 +611,12 @@ value as a clean answer.
 non-empty. `derivedLive` is an **or** of four arms, and only three of them are records of a call
 inside the directory:
 
-| arm         | what it actually is                                                   | window                     | names a chat?      |
-| ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
-| `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
-| `ioLive`    | recent `shellHistory` **and `readHistory`** — a reader counts         | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
-| `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
-| `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
+| arm         | what it actually is                                                       | window                     | names a chat?      |
+| ----------- | ------------------------------------------------------------------------- | -------------------------- | ------------------ |
+| `writeLive` | the write calls inside the worktree                                       | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
+| `ioLive`    | recent `shellHistory` — read history is tracked separately and releasable | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_     | `LIVE_WINDOW_MS`           | no                 |
+| `liveAgent` | a board row, not a call history                                           | the board's own            | prints an agent id |
 
 So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **reads**. A
 session arm makes it worse than it looks: `writes.mjs` argues in its own header that attributing a

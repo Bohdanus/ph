@@ -469,15 +469,16 @@ subject and the sweep read that as proof the work was already landed.
 `dispose-worktree.mjs` checks the generated `action`, the board's claims and file
 locks, and the session database, then anchors the branch at
 `refs/keep/disposed/<name>` and salvages uncommitted work before removing
-anything. It has no `--force`, and `kilo.jsonc` denies
-`git worktree remove --force` against a `kilo/` path and puts `git branch -D`
-behind a prompt.
+anything. It has no caller-controlled `--force`, and `kilo.jsonc` denies
+`git worktree remove --force` against a `kilo/` path. Ordinary branch removal
+uses `-d`; only a generated `patchEquivalence: "absorbed"` disposal uses guarded
+`-D` after anchoring the tip.
 
 If it refuses, the refusal names the signal that produced it. `in-use` means a
 chat is in there: **only the operator may stop a writing chat**, so report it and
 move on. A dirty tree means commit it or carry it as a patch. `git branch -d`
-refusing is likewise a finding, not an obstacle — and `dispose` already uses `-d`,
-so a branch it kept is anchored and recoverable.
+refusing is likewise a finding, not an obstacle — and ordinary `dispose` uses
+`-d`, so a branch it kept is anchored and recoverable.
 
 **Expect `derived-live-writer`, and do not expect it to name you.** Step 5 ran the gates in that
 worktree, so the refusal is about you or about nobody in particular — only the write arm names a
@@ -540,8 +541,8 @@ skipped its own safety steps.
   re-reading `git status`.
 - **Land a branch without bringing `main` into it first.** A merge that skips this
   is a merge whose result nobody composed or tested.
-- **`git branch -D`.** Use `-d`. It refuses while the branch is unmerged, and that
-  refusal is the last thing standing between a bad harvest and lost work.
+- **Manual `git branch -D`.** Use the inventory and `npm run dispose`; only its
+  generated patch-absorbed path may use guarded `-D` after anchoring the tip.
 - **Report a branch unmerged without `git cherry`.** `git log` and `merge-tree`
   both call unmerged work that is already byte-identically on `main`.
 - **Accept a curated note about a branch you have not read.** `curated.mjs` is a

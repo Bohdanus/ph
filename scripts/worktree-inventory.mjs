@@ -140,7 +140,7 @@ function printSummary(inventory, quiet) {
   process.stdout.write(
     `${inventory.worktrees.length} worktrees · ` +
       `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
-      `${t.atRisk} at risk · ${t.inUse} in use · ` +
+      `${t.legacy} legacy · ${t.atRisk} at risk · ${t.inUse} in use · ${t.undecided} undecided · ` +
       `${t.holdingUncommittedWork} holding uncommitted work · ` +
       `${t.withoutSummary} without a summary\n`
   );
@@ -508,12 +508,11 @@ function describeDrift(currentText, nextText) {
     'mergeConflict',
     'mergeConflictFiles',
     'mergeChecked',
-    // The two curated CLAIMS that can move a verdict, watched for the same
-    // reason `action` is: an operator has to be told when a hand-written field
-    // changed the answer, or when it stopped being able to. `mustNotPrune` was
-    // not watched before, which is a gap in its own right — a veto that turns on
-    // and off invisibly is worse than one that is at least reported.
-    'mustNotPrune',
+    'patchEquivalence',
+    'patchEquivalenceReason',
+    'statusError',
+    'locked',
+    'prunableReason',
     'legacy',
     'writeHistory',
     // Ownership is watched because a suppressed-liveness file drifts on a

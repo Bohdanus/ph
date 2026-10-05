@@ -33,7 +33,13 @@ import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/work
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
-import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
+import {
+  __testables,
+  findMissingWorktrees,
+  listWorktrees,
+  mergeConflict,
+  PATCH_EQUIVALENCE,
+} from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import {
   auditWrites,
@@ -399,6 +405,44 @@ describe('git.mjs against a real repository', () => {
       const { ahead, behind } = __testables.aheadBehind(dir, 'main');
       expect(behind).toBe(1);
       expect(ahead).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recognises a branch whose non-merge patches were cherry-picked onto the base', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('checkout', '--quiet', 'side');
+      const commits = execFileSync('git', ['rev-list', '--reverse', 'main..HEAD'], { cwd: dir, encoding: 'utf8' })
+        .trim()
+        .split('\n');
+      g('checkout', '--quiet', 'main');
+      g('cherry-pick', '--quiet', ...commits);
+      g('branch', 'absorbed', 'side');
+      g('checkout', '--quiet', 'absorbed');
+      const result = __testables.patchEquivalence(dir, 'main', 2);
+      expect(result).toEqual({ status: PATCH_EQUIVALENCE.ABSORBED, reason: expect.any(String) });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats merge commits as unknown rather than letting git cherry hide them', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('branch', 'base', 'main');
+      g('checkout', '--quiet', '-b', 'merge-side', 'base');
+      writeFileSync(join(dir, 'merge.txt'), 'merge');
+      g('add', '.');
+      g('commit', '--quiet', '-m', 'merge-side');
+      g('checkout', '--quiet', '-b', 'merge-result', 'base');
+      g('merge', '--quiet', '--no-ff', '-m', 'merge merge-side', 'merge-side');
+      const result = __testables.patchEquivalence(dir, 'base', 2);
+      expect(result.status).toBe(PATCH_EQUIVALENCE.UNKNOWN);
+      expect(result.reason).toMatch(/merge commit/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1115,6 +1159,58 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
     expect(v.prunable).toBe(true);
   });
 
+  it('calls a clean branch whose patches are already on main a disposal candidate', () => {
+    const v = classify(wt({ ahead: 2, mergedIntoBase: false, patchEquivalence: PATCH_EQUIVALENCE.ABSORBED }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.LANDED);
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('keeps an unreadable working-tree status out of every destructive verdict', () => {
+    const v = classify(
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 0, paths: [], statusError: 'status failed' },
+      }),
+      { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
+    );
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('keeps git-protected worktrees out of destructive verdicts', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true, locked: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not call unknown branch facts landed', () => {
+    const v = classify(wt({ ahead: null, behind: null, mergedIntoBase: null }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
   it('derives the action from the recommendation, and covers every value', () => {
     // Each case builds inputs that actually PRODUCE that recommendation.
     // An earlier version fed one default worktree and asserted seven
@@ -1398,6 +1494,8 @@ describe('classify: the 0-ahead trap', () => {
       }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
+    expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(v.recommendation).toBe(RECOMMENDATION.KEEP);
     expect(v.prunable).toBe(false);
     expect(v.uncommitted).toBe(true);
   });
@@ -1754,12 +1852,20 @@ describe('the headline lists and totals', () => {
 
   it('puts every record in exactly the list its action names', () => {
     const inv = build();
-    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK]) {
+    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK, ACTION.LEGACY]) {
       const expected = worktrees
         .map((w) => w.name)
         .filter((n) => inv.worktrees.find((r) => r.name === n).action === action);
       const actual =
-        inv[action === ACTION.LAND ? 'readyToLand' : action === ACTION.DISPOSE ? 'disposalCandidates' : 'atRisk'];
+        inv[
+          action === ACTION.LAND
+            ? 'readyToLand'
+            : action === ACTION.DISPOSE
+              ? 'disposalCandidates'
+              : action === ACTION.AT_RISK
+                ? 'atRisk'
+                : 'legacy'
+        ];
       expect(actual, `list for ${action}`).toEqual(expected);
     }
   });
@@ -2226,7 +2332,7 @@ describe('the curated table', () => {
   // is derived: `describe('work git cannot see: derived from the worktrees,
   // never curated')` below pins it over the real repository with the curated
   // entry REMOVED — the state most of those worktrees are actually in — and pins
-  // that no curated field except `mustNotPrune` can move a verdict at all.
+  // that only the explicit safety fields (`mustNotPrune` and `legacy`) can move a verdict.
   //
   // What is left for a human is a judgement git cannot make about a tree it
   // already calls disposable, and that is `mustNotPrune` on a clean merged
@@ -2716,8 +2822,8 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     // The reason the coverage rule could not simply be dropped: a curated entry
     // that changed a verdict would be a hand-written claim overriding git, and
     // `curated.mjs` is prose maintained by agents under time pressure. `classify`
-    // reads exactly one field, `mustNotPrune`, and it can only ever make a
-    // worktree LESS safe to delete. Everything else — `summary`, `note`,
+    // reads the explicit safety fields, `mustNotPrune` and `legacy`; they can only
+    // make a worktree less destructive or deliberately keep its branch. Everything else — `summary`, `note`,
     // `liveNote`, `issues`, `landed` — is documentation, and documentation that
     // moves a verdict is a lie the generator cannot detect.
     //
@@ -3431,6 +3537,7 @@ describe('the call history', () => {
     const fresh = kind(recent);
     const released = summariseReads(stale, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 });
     expect(released.chatCount).toBe(0);
+    expect(released.lastAtMs).toBeNull();
     expect(released.releasedBefore).toBe(new Date(NOW - 3_600_000).toISOString());
     // A reader newer than the mark is not released.
     expect(summariseReads(fresh, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 }).chatCount).toBe(1);
@@ -3503,20 +3610,18 @@ describe('the call history', () => {
     expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
   });
 
-  it('counts a reader as occupying the worktree, and honours the read release', () => {
-    // A read is weaker evidence than a write and is admitted on the same window,
-    // because the skill treats a read as grounds for LIVE unless the hit can be
-    // shown to be an inventory row. Without this, a worktree whose agent only
-    // read its spec — and then went quiet for the rest of its task — read as
-    // empty while its owner was still live.
+  it('tracks readers without treating inspection as ownership, and honours the read release', () => {
+    // Read history is retained separately for audit and can be released, but a
+    // reviewer opening a stale worktree must not block its disposal for four
+    // hours merely by inspecting it.
     const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
       chatSummary: { count: 0, lastActivity: null },
       chatSessions: [],
       nowMs: NOW,
       readHistory: { lastAtMs: NOW - 90 * 60_000 },
     });
-    expect(reading.live).toBe(true);
-    expect(reading.liveSignals.io).toBe(true);
+    expect(reading.live).toBe(false);
+    expect(reading.liveSignals.io).toBe(false);
 
     // A released reader must read as no signal rather than as a standing claim,
     // or every worktree any agent ever inspected becomes permanently in-use.
@@ -3527,6 +3632,18 @@ describe('the call history', () => {
       readHistory: { lastAtMs: null, releasedBefore: NOW - 60_000 },
     });
     expect(released.derivedLive).toBe(false);
+  });
+
+  it('does not let the wide shell-I/O window extend the write liveness window', () => {
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      writeHistory: { lastAtMs: NOW - 2 * 60 * 60_000, derivedChatIds: [] },
+    });
+    expect(verdict.live).toBe(false);
+    expect(verdict.liveSignals.write).toBe(false);
+    expect(verdict.liveSignals.io).toBe(false);
   });
 
   it('stops calling a worktree live once its I/O falls outside the window', () => {

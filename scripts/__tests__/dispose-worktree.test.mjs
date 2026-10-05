@@ -88,7 +88,13 @@ function greenInventory(overrides = {}) {
     reason: null,
     generatedAt: new Date(NOW - 60_000).toISOString(),
     generatedAtMs: NOW - 60_000,
-    record: { action: ACTION.DISPOSE, mustNotPrune: false, derivedLive: false, writeHistory: { derivedChatIds: [] } },
+    record: {
+      action: ACTION.DISPOSE,
+      prunable: true,
+      mustNotPrune: false,
+      derivedLive: false,
+      writeHistory: { derivedChatIds: [] },
+    },
     ...overrides,
   };
 }
@@ -183,6 +189,11 @@ describe('dispose preflight', () => {
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
+      [
+        'the inventory schema is from another disposer',
+        { inventory: { ok: false, reason: 'version', version: 3 } },
+        'inventory-version',
+      ],
       ['the inventory has no entry for it', { inventory: greenInventory({ record: null }) }, 'not-in-inventory'],
       [
         'the inventory is older than the limit',
@@ -322,7 +333,7 @@ describe('dispose preflight', () => {
         modified: 0,
         untracked: 0,
       }),
-      inventory: greenInventory({ record: { action: ACTION.DISPOSE, mustNotPrune: false } }),
+      inventory: greenInventory({ record: { action: ACTION.DISPOSE, prunable: true, mustNotPrune: false } }),
       board: {
         available: true,
         claims: [],
@@ -687,6 +698,17 @@ describe('dispose execution', () => {
     expect(refused.steps.join('\n')).toContain('KEPT branch fix/task');
     // The anchor is what makes a kept branch recoverable, so it must be reported.
     expect(refused.steps.join('\n')).toContain(KEEP_REF_PREFIX);
+  });
+
+  it('uses guarded -D only for a patch-absorbed branch after anchoring it', () => {
+    const h = harness();
+    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs, deleteAbsorbedBranch: true });
+    const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    expect(anchorAt).toBeGreaterThanOrEqual(0);
+    expect(deleteAt).toBeGreaterThan(anchorAt);
+    expect(result.branchDeleted).toBe(true);
+    expect(result.steps.join('\n')).toContain('patch-equivalence verification');
   });
 
   it('salvages a binary-safe patch and an untracked archive, and lists what it wrote', () => {

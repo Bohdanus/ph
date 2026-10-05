@@ -6,7 +6,7 @@
  * THE RULE THAT IS WORTH THE MOST
  * --------------------------------
  * A worktree is `prunable` only when three independent things hold at once:
- * its branch is already on `main`, its working tree is clean, AND it has no
+ * its branch is already on `main` (or every safe-to-compare patch is absorbed), its working tree is clean, AND it has no
  * curated finding attached. The third condition exists because the first two
  * are both true of a branch created from main and never committed to — and such
  * a branch can be holding the only copy of hours of work. Ahead/behind is
@@ -153,22 +153,12 @@ export const LIVE_WINDOW_MS = 30 * 60 * 1000;
 export const RECENT_IO_WINDOW_MS = 4 * 60 * 60 * 1000;
 
 /**
- * Did anything demonstrably happen inside this worktree recently?
+ * Did a shell command demonstrably run inside this worktree recently?
  *
- * `shellHistory.lastAtMs` is a command whose recorded workdir, or whose target
- * path, is inside this worktree. That is weaker evidence than a file write and
- * stronger than a message: a `read` proves a reader, and a `write` here is
- * already covered by `writeHistory`. All three are folded in because a reader
- * inside a live window is still a live occupant — the skill is explicit that a
- * read is grounds for LIVE unless the hit can be shown to be an inventory row —
- * and because each history is a separate pass over the transcript, so any one
- * of them can be the pass that caught the activity and the other two can be
- * silent about the same session.
- *
- * A read is admitted on the same window as a write rather than a wider one,
- * because readers accumulate: `readHistory` is why `--release-reads` exists.
- * The release writes through to the same `lastAtMs`, so a released reader
- * reads as no signal here rather than as a permanent claim.
+ * Read history is intentionally excluded: reading a worktree is tracked in its
+ * own releasable structure, not treated as proof that somebody still owns it.
+ * Otherwise an audit that inspected a stale worktree would block its disposal
+ * for the whole four-hour shell window.
  *
  * `derivedChatIds` and not `activeNow` for the same reason `writeLive` reads the
  * former: `activeNow` is the value AFTER the suppression flag has been applied,
@@ -183,7 +173,7 @@ function isWorkingTreeHeld(wt) {
 }
 
 function hasUnmergedCommits(wt) {
-  return typeof wt.ahead === 'number' && wt.ahead > 0;
+  return typeof wt.ahead === 'number' && wt.ahead > 0 && wt.patchEquivalence !== 'absorbed';
 }
 
 /**
@@ -245,6 +235,8 @@ export function classify(
   const reasons = [];
   const uncommitted = isWorkingTreeHeld(wt);
   const unmerged = hasUnmergedCommits(wt);
+  const treeUnreadable = Boolean(wt.workingTree.statusError);
+  const gitFactsUnreadable = wt.ahead === null || wt.behind === null || wt.mergedIntoBase === null;
   const liveAgent = boardAgents.find((a) => a.live);
   // EITHER source makes a worktree in-use. The session database is blind to a
   // session that was opened in the main checkout and then driven into a task
@@ -262,14 +254,14 @@ export function classify(
   // override erase its own evidence and `derivedLive` would quietly agree with
   // `live` about a signal nobody ever checked.
   const writeLive = Boolean(writeHistory?.derivedChatIds?.length);
-  // Direct I/O inside this directory, on the wider window. Without it the three
+  // Shell I/O inside this directory, on the wider window. Without it the three
   // signals above are all keyed on a chat's own liveness or on the board, and a
   // main-checkout agent that ran `git -C … worktrees/<name> …` minutes ago is in
   // neither: its `directory` is the main checkout, and the board is keyed on the
   // branch. That gap is not theoretical — it is why a worktree with agents
   // editing it an hour ago could carry `action: "dispose"` with `prunable: true`
   // and every one of its git facts correct.
-  const ioLive = hasRecentIo([shellHistory, writeHistory, readHistory], nowMs);
+  const ioLive = hasRecentIo([shellHistory], nowMs);
   const derivedLive = chatLive || writeLive || ioLive || Boolean(liveAgent);
 
   // A declared hard state outranks every heuristic above. Both of them are
@@ -301,9 +293,13 @@ export function classify(
   } else if (wt.tip === null) {
     status = STATUS.UNREADABLE;
     reasons.push('git could not read a tip commit for this worktree');
-  } else if (wt.isPrimary) {
-    status = STATUS.LANDED;
-    reasons.push('this is the main worktree');
+  } else if (treeUnreadable || gitFactsUnreadable) {
+    status = STATUS.UNREADABLE;
+    reasons.push(
+      treeUnreadable
+        ? `git could not read the working tree (${wt.workingTree.statusError})`
+        : 'git could not establish the branch relationship to the base'
+    );
   } else if (uncommitted && wt.ahead === 0) {
     status = STATUS.UNCOMMITTED_ONLY;
     reasons.push('the branch reports 0 commits ahead of main and is an ancestor of it');
@@ -313,6 +309,12 @@ export function classify(
         ? 'git cannot distinguish this from a branch that landed and was then edited'
         : 'the branch is not on main either'
     );
+  } else if (wt.patchEquivalence === 'absorbed') {
+    status = STATUS.LANDED;
+    reasons.push(wt.patchEquivalenceReason ?? 'every branch commit has an equivalent patch on the base');
+  } else if (wt.isPrimary) {
+    status = STATUS.LANDED;
+    reasons.push('this is the main worktree');
   } else if (uncommitted || unmerged) {
     status = STATUS.UNMERGED_WORK;
     if (unmerged) reasons.push(`${wt.ahead} commit(s) ahead of main`);
@@ -346,12 +348,24 @@ export function classify(
         : chatLive
           ? 'a session messaged inside the last 30 minutes'
           : ioLive
-            ? `a command ran inside this worktree at ${new Date(
-                Math.max(shellHistory?.lastAtMs ?? 0, writeHistory?.lastAtMs ?? 0, readHistory?.lastAtMs ?? 0)
-              ).toISOString()}`
+            ? `a command ran inside this worktree at ${new Date(shellHistory?.lastAtMs ?? 0).toISOString()}`
             : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
-  } else if (curatedLegacy && !uncommitted && !wt.detached && wt.tip !== null) {
+  } else if (wt.locked || wt.prunableReason) {
+    recommendation = RECOMMENDATION.UNKNOWN;
+    reasons.push(
+      wt.locked
+        ? 'git marks this worktree locked'
+        : `git marks this worktree administratively prunable (${wt.prunableReason})`
+    );
+  } else if (
+    curatedLegacy &&
+    !curatedBlocksPrune &&
+    !uncommitted &&
+    !treeUnreadable &&
+    !wt.detached &&
+    wt.tip !== null
+  ) {
     // CHECKED HERE, NOT AT THE BOTTOM, AND ONLY FOR A CLEAN TREE.
     //
     // `uncommitted` is the load-bearing condition. `legacy` authorises removing
@@ -429,9 +443,14 @@ export function classify(
   const prunable =
     wt.isPrimary !== true &&
     recommendation === RECOMMENDATION.PRUNE &&
-    wt.mergedIntoBase === true &&
+    wt.ahead !== null &&
+    wt.mergedIntoBase !== null &&
+    (wt.mergedIntoBase === true || wt.patchEquivalence === 'absorbed') &&
     wt.workingTree.modified === 0 &&
-    wt.workingTree.untracked === 0;
+    wt.workingTree.untracked === 0 &&
+    !wt.locked &&
+    !wt.prunableReason &&
+    !treeUnreadable;
 
   // The one decision. Derived from the recommendation rather than restated, so
   // the two cannot disagree.
@@ -479,6 +498,8 @@ export function classify(
     mergeChecked: mergeState !== 'unknown',
     mergeConflictFiles: wt.merge?.files ?? [],
     prunable,
+    patchEquivalence: wt.patchEquivalence ?? 'unknown',
+    patchEquivalenceReason: wt.patchEquivalenceReason ?? null,
     reasons,
     live,
     // What the signals said before any declared hard state overrode them. Kept
