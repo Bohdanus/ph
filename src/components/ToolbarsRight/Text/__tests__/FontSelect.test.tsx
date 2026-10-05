@@ -108,6 +108,9 @@ describe('FontSelect closed state', () => {
 
     expect(trigger()).toHaveAttribute('aria-expanded', 'true');
     expect(trigger()).toHaveAttribute('aria-controls', 'font-family-list');
+    // And open, the name RESOLVES — asserting the attribute alone passes whether or not the list
+    // it names is in the tree, which is the whole defect.
+    expect(document.getElementById('font-family-list')).not.toBeNull();
   });
 
   it.fails('exposes the popup as a listbox (FontSelect.tsx, the portalled popup)', () => {

@@ -1003,7 +1003,8 @@ building the target list — the list as written ships a rail that is still not 
 | Adjustment Brush has "zero Adobe pages" — exclude it                          | Two Adobe pages, "Select Adjustment Brush Tool **from the toolbar**". Include it; it is a large _feature_, which is a different decision from membership.                                                                                                                                                                                                                              |
 | —                                                                             | **Remove tool** and **Content-Aware Tracing tool** are absent from the list entirely. Both are Adobe-documented, and the Remove tool's page says "In the Tools panel, select Remove tool." A sweep of Adobe's _overview tables_ misses both, because each has its own page instead. Content-Aware Tracing's own page confirms its **group**: "from the Pen tool group in the toolbar". |
 | —                                                                             | **Artboard, Frame, Perspective Crop, Slice, Slice Select** are also absent. All are in Adobe's own shortcut PDF. **The Ruler was in this list and is built** — `src/tools/ruler.ts`, `src/components/Main/RulerToolArea.tsx`, `src/components/ToolbarsRight/Ruler/Ruler.tsx` — so it is named here rather than left in a row that would read as a gap.                                 |
-| §68 below points at this section                                              | The `AGENTS.md` pointer named a section that did not exist. It exists now.                                                                                                                                                                                                                                                                                                             |
+
+| §68 below points at this section | The `AGENTS.md` pointer named a section that did not exist. It exists now. |
 
 Two that must **not** be added despite appearing in the shortcut PDF: **3D Material Eyedropper** and
 **3D Material Drop** (the removed 3D feature), and **Rounded Rectangle** (CC-era, in neither 2026
@@ -3375,14 +3376,18 @@ git worktree list --porcelain | grep '^worktree ' | cut -d' ' -f2- \
   | cut -d' ' -f1 | sort | uniq -c
 ```
 
-**133 of 160 worktrees have no `node_modules` of their own**, and those are the ones that
-hit this trap: Node resolution walks up into the main checkout's, so the wasm URL is a
-main-checkout path that a worktree-rooted Vite will not serve. The census is deliberately
-stated as presence of `node_modules/react` rather than as how it got there, and it is a
-**census of the shape, not a universal**, and deliberately counted rather than argued:
-absence of `node_modules/react` above a worktree is the overwhelmingly likely cause of
-the 403, not a proof of it, and the counts move as worktrees come and go. What the probe
-below settles is the MECHANISM, and it does not rest on the census.
+**Most worktrees resolve their packages from the main checkout, and those are the ones
+that hit this trap**: with no `node_modules/react` above the worktree, Node resolution
+walks up into `/Users/bkalynovskyi/ph/node_modules`, so the wasm URL is a main-checkout
+path that a worktree-rooted Vite will not serve. The command above tests
+`node_modules/react` and NOT `node_modules`, and the distinction is not cosmetic — on the
+day it was written, 87 of the 102 worktrees failing that test still HAD a `node_modules`
+directory, holding nothing but Vite's own `.vite` and `.tmp` caches. So the shape that
+matters is "no `node_modules/react`", not "no `node_modules`". **Treat any count as a dated
+measurement and re-run the command rather than quoting one**: the totals moved twice in an
+hour while this entry was being written, because worktrees are created and disposed
+continuously. What the probe below settles is the MECHANISM, and it does not rest on the
+census at all.
 
 **A scope correction to the entry's own recipe, because it is what makes the trap
 reproducible.** Its reproduction assumes a symlinked `node_modules`. **A worktree with no
@@ -3391,10 +3396,17 @@ no symlink has to be created for it: the packages still resolve up into the main
 and the wasm URL is still a main-checkout path. Measured the same URL against both roots
 on one machine, same commit, no code change:
 
-| dev server rooted at                     | `@fs/…/node_modules/@jsquash/avif/codec/enc/avif_enc.wasm` |
-| ---------------------------------------- | ---------------------------------------------------------- |
-| `/Users/bkalynovskyi/ph` (main checkout) | **200**                                                    |
-| a worktree with no `node_modules`        | **403 Restricted** — "outside of Vite serving allow list"  |
+| dev server rooted at              | `@fs/…/node_modules/@jsquash/avif/codec/enc/avif_enc.wasm` |
+| --------------------------------- | ---------------------------------------------------------- |
+| `/Users/bkalynovskyi/ph`          | **200**                                                    |
+| any path under `.kilo/worktrees/` | **403 Restricted** — "outside of Vite serving allow list"  |
+
+Both rows are the same `vite.config.ts`, which is why the row that varies is the ROOT and
+not the commit: there is no commit in this table, and re-deriving it is two dev servers and
+one `curl` per row, not a checkout. Note the second row is scoped to a worktree UNDER this
+repository — Node resolution only walks up into the main checkout from there, which is also
+why the entry's own `/tmp/avif-check` recipe has to create a real `node_modules` before it
+can reproduce anything.
 
 `vite.config.ts` declares no `server.fs` block, so Vite's default workspace root is the
 boundary, and a worktree's is the worktree. Only AVIF is exposed: `@jsquash/avif` is the
@@ -3419,7 +3431,7 @@ time. **The AVIF entry in `e2e/OPEN_PROBLEMS.md` stands.** Do not edit it, and d
 AVIF entry.
 
 **Files.** `e2e/OPEN_PROBLEMS.md` — "P2 — the AVIF export waits on a wasm encoder inside a 30s
-download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `waitUntil()`;
+download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `submitSaveDialogForDownload()` and `DOWNLOAD_TIMEOUT_MS`;
 `vite.config.ts` — the absent `server.fs` block that sets the boundary;
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
 
@@ -5773,7 +5785,7 @@ exists here already.
 
 **Problem.** `merge-takeover-guard.mjs` compares a merge result against one whole side's content, and
 it is now good at that — the seven shapes an adversarial review measured as silent passes are closed,
-and it reports correctly on all 407 merges on `main` with no verdict changed. What it still cannot
+and it reports correctly on every merge on `main` with no verdict changed. What it still cannot
 see is the defect **upstream** of it: a branch that _committed_ a stale copy of a tracked file, from
 a checkout sitting at another HEAD. The merge inherits it. That is the shape `git add -A` in a
 worktree at another HEAD produces, and it is the one that cost this repository 17 files and 1,835
@@ -5845,16 +5857,26 @@ The remaining test defects, each with the fix that was proven to work:
   still accepts a paint commit. Adobe refuses paint tools on a locked layer, so this is an app-wide
   gap that a passing test now certifies. The gate belongs where `isBedrock` is already checked, in
   `CloneStampToolArea.tsx` and its siblings, and the test follows the gate.
-- A hand-copied literal table drifts. The instance that already drifted is fixed:
-  `src/tools/__tests__/tool-processors.test.ts` copied a seven-chip list into every pen-family card,
-  `main` then re-pointed two of those cards at their own groups, and the table went stale silently.
-  `placeholderCards` now carries a `configKey` column resolved through `placeholderToolGroups`, the
-  form `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` uses. **Four of the same
-  shape remain live, all in that same file:** `declaredCommitKinds` copies `ToolCommitKind`,
-  `declaredReplayKinds` copies `ToolReplayKind`, `replayKinds` copies the registry's 43 `replay.kind`
-  literals, and `realBarControlIds` copies the control ids of fifteen options bars. Each resolves
-  against its own list, so a production table that gains or renames a member fails nothing until the
-  copy is updated by hand. `placeholderNames` and `icons` in the same file are **not** instances:
+- A hand-copied literal table is a maintenance cost, not a detection hole. **Four copies of a
+  production literal remain live, all in `src/tools/__tests__/tool-processors.test.ts`:**
+  `declaredCommitKinds` copies `ToolCommitKind`, `declaredReplayKinds` copies `ToolReplayKind`,
+  `replayKinds` copies the registry's 43 `replay.kind` literals, and `realBarControlIds` copies the
+  control ids of **fourteen** options bars. Every one of the four is already pinned to production, so
+  none of them drifts silently: `commitKinds` is derived from `findToolProcessor(toolName)!.commit`
+  over the registry and compared to `declaredCommitKinds`, `kinds` is derived the same way from
+  `replay.kind` and compared to `replayKinds` with `toEqual` on two records so a tool entering or
+  leaving the registry cannot slip past, `declaredReplayKinds` is compared to the union those same
+  derived kinds produce, and `realBarControlIds` is compared to the `id` set each bar actually
+  renders. **The cost is therefore where a failure sends you:** a production table that gains or
+  renames a member fails in a TABLE in this test file rather than at the site that changed, and each
+  copy is a second place to edit when the registry moves. **What would close it** is deleting the
+  four copies and deriving each from its production table the way `placeholderCards` already derives
+  its chips — a `configKey` column resolved through `placeholderToolGroups`, the form
+  `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` uses, which is what replaced
+  the seven-chip list that drifted here before. `realBarControlIds` and `realBarNames` are the pair
+  with the widest blast radius: they are pinned to each other and to `toolNames` for membership, but
+  never to a production registry of which tools have a real bar, so a new bar with no row in either
+  table is invisible to this file. `placeholderNames` and `icons` are **not** instances:
   the first is an independent claim about which cards render, and the second has a coverage test.
 
 **Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
@@ -5863,8 +5885,7 @@ reviewers who had read neither the triage nor the authors' reasoning then found 
 cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
 no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table,
 which was the only one of them that was a merge artefact rather than a defect present from the
-start — and which that session then fixed itself, so only the four copies above are still open. The
-fixture divergence was left unfixed because the mandate was test files only.
+start. The fixture divergence was left unfixed because the mandate was test files only.
 
 ## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
 
@@ -6213,14 +6234,18 @@ toggle covers and not the other half.
 **Affected.** `src/contexts/ThemeContext.tsx` — the two-value `Theme` union and the context type;
 `src/index.scss` — no size custom property and no `:root` font size.
 
-**What would close it.** Add the control, or state the gap where appearance is described.
-`docs/FEATURES.md` documents the theme toggle; an interface-size entry beside it that names what is
-missing is enough to stop the theme toggle reading as the whole of appearance. If the control is
-built, the property it writes has to reach every size the interface expresses — a root font size
-scales the rem-based type but not the fixed pixel control heights, so the honest first step is
+**What would close it.** Add the control, or state the gap where appearance is described. Note first
+that `docs/FEATURES.md` does NOT document the theme toggle — a search of it for `theme`, `appearance`,
+`dark mode` and `toggleTheme` returns nothing — so this entry's remedy cannot be carried out by
+adding a neighbour to an entry that is not there. The only maintained prose on the subject is
+`docs/ARCHITECTURE.md`'s note that the two `localStorage` keys are `theme` and `panelLayout`, which
+is about persistence rather than appearance. An interface-size entry there, beside that note, naming
+what is missing, is enough to stop the theme toggle reading as the whole of appearance. If the
+control is built, the property it writes has to reach every size the interface expresses — a root font
+size scales the rem-based type but not the fixed pixel control heights, so the honest first step is
 naming which of the two the control drives.
 
-**Files.** `src/contexts/ThemeContext.tsx`, `src/index.scss`, `docs/FEATURES.md`
+**Files.** `src/contexts/ThemeContext.tsx`, `src/index.scss`, `docs/ARCHITECTURE.md`
 
 ## 235. The paint cursor is a crosshair, so it carries neither the tip's position nor its width
 
@@ -6229,9 +6254,15 @@ naming which of the two the control drives.
 about where the brush tip is or how wide it is, which for the one tool whose cursor carries
 information is the whole content of the cursor. `DrawToolArea.tsx` draws no outline of its own, and
 no modifier anywhere switches to a precise cursor — the class carries no precise variant and the
-component consults no modifier key. Sixteen other tool areas do set their own cursor, so this is not
-a general absence of per-tool cursors and must not be described as one; what is missing is the
-cursor for the tool whose cursor is load-bearing.
+component consults no modifier key. This is not a general absence of per-tool cursors and must not
+be described as one; what is missing is the cursor for the tool whose cursor is load-bearing. The
+count, stated exactly: 23 of the 25 tool areas in `src/components/Main/` set some `cursor-` class,
+22 of them other than `DrawToolArea`, and 7 of those 22 set something other than the shared
+`cursor-crosshair` — `cursor-crop` on `CropToolArea`, `cursor-move` on `MoveToolArea` (which also
+adds `cursor-grabbing` imperatively while a move is in flight), `cursor-text` on `TextToolArea`,
+`cursor-draw` on `EraserToolArea` and `ShapeToolArea`, `cursor-cell` on `ColorReplacementToolArea`
+outside its colour-sample mode, and `cursor-not-allowed` on `CloneStampToolArea` while it is
+disabled. `DrawToolArea`'s own `cursor-draw` is the crosshair this entry is about.
 
 **Affected.** `src/components/Main/DrawToolArea.tsx`; the cursor rules in
 `src/components/Main/Main.scss` for the precise variant.
@@ -6265,3 +6296,76 @@ they are the incoming figure's. Ordering it against `makeSelectTool` also remove
 two surfaces can disagree, which is how the sheet and the bar came to differ once already.
 
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`
+
+## 238. Nothing can detect a dangling `aria-controls` or `aria-describedby`, and a static scan cannot either
+
+**The problem.** Seven triggers named an id that was not in the tree. Every one is fixed — the right-hand
+dock's panel tab, the mobile tool sheet's header, the mobile header's menu and layers buttons, the mobile
+bottom bar's options toggle, `FontSelect`'s trigger, and `FeatherMagneticLasso`'s settings button — and the
+last two were found only by a review pass, after the first five were already landed and merged. There is
+still no gate that would find a seventh.
+
+**Why the accessibility gates cannot, structurally.** `node_modules/axe-core/axe.js`'s pre-check for
+`aria-controls` in the `aria-valid-attr-value` rule returns early — skipping the check — when
+`aria-expanded="false"`, when `aria-selected="false"`, or when `aria-haspopup` is present. A collapsed
+trigger is in one of those three states by definition, so the rule never evaluates the case. When it is
+reached anyway it sets `needsReview`, which surfaces as `incomplete`, and `e2e/accessibility.spec.ts`
+deliberately does not assert that bucket. Its `excludeHidden` defaults to true, so anything inside a
+`hidden` or `md:hidden` subtree — the whole mobile shell at desktop width — is skipped outright. Adding a
+scan at a mobile viewport would still not reach a collapsed trigger.
+
+**Why a static source scan cannot either, which is the part worth knowing.** The obvious gate is a regex
+over `src/components`: fail where an IDREF is written as a literal and the id it names is rendered under a
+condition. It has zero false positives today, which makes it tempting, and it is useless — it misses both
+real survivors, because both write an EXPRESSION rather than a literal. `FontSelect` had
+`aria-controls={isOpen ? LIST_ID : undefined}` against a popup mounted on `isOpen && position`, and
+`FeatherMagneticLasso` had `aria-describedby={isInfoOpen ? INFO_TOOLTIP_ID : undefined}` against a tooltip
+mounted on `isInfoOpen && infoTooltipPos`. Nothing short of evaluating the expression distinguishes `isOpen`
+from `isOpen && position`. A rule loose enough to catch them also fires on the seven legitimate unconditional
+references, `DesktopHeader`'s `aria-controls="right-panel"` among them.
+
+**What would close it.** One rendered-tree invariant: render the shell in each state a trigger can be in and
+assert that every `aria-controls`, `aria-describedby`, `aria-labelledby` and `aria-owns` in the document
+resolves through `document.getElementById`. That is a property of the TREE rather than of any component, so
+an instance nobody thought to pin still fails — which is the whole point, since five of the six were found by
+a human reading a diff. It needs a harness that renders the real `StoreProvider` with a real document; every
+existing suite that mounts these components mocks `useStore`, and a mocked tree would let the gate pass for
+the wrong reason. Two conditions have to be driven explicitly, because neither is a state a user sits in:
+`FontSelect`'s window is closed inside the same commit by its `useLayoutEffect`, so it is never painted, and
+`FeatherMagneticLasso`'s is closed after one painted frame by a passive effect. Until that harness exists, the
+only gate is a test beside each trigger, which is what let this run twice.
+
+**Files.** `src/components/ToolbarsRight/Text/FontSelect.tsx`, `src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
+`src/components/SidebarRight/PanelGroup.tsx`, `src/components/Mobile/MobileHeader.tsx`,
+`src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileToolSheet.tsx`,
+`node_modules/axe-core/axe.js`, `e2e/accessibility.spec.ts`, `src/components/SidebarLeft/__tests__/harness.tsx`
+
+**Provenance.** Found 2026-10-05 on `main` by a four-way review of the five preceding fixes, split one
+reviewer per file group. Two of the seven instances were still live at that point and are fixed in the same
+series; the sixth was the precedent the first fix cited as its justification.
+
+## 239. `restoreVisibleCanvas()` holds a documented contract and no test
+
+**The problem.** `restoreVisibleCanvas()` is the third writer of the visible canvas's backing store, after
+`useApp`'s `handleImageCreate` and `layer-renderer`'s `drawLayersToCanvas`. `docs/ARCHITECTURE.md` states its
+contract as a guarantee — _"A source or processor that throws leaves the visible canvas exactly as it was"_ —
+and `drawLayersToCanvas` calls it on every failure path after a partial resize. It has no test, direct or
+indirect: grepping `src/contexts/__tests__/` for the name returns nothing, and the only other reference in the
+tree is the pixel fixture. So the one function that puts the canvas BACK is unpinned, in a surface where the
+other two writers have just been re-ordered twice.
+
+**Why it matters beyond the missing test.** It takes `previousSize` and re-applies it, so it is the only code
+that can undo a wrong-extent resize after the fact. Both canvas-ordering fixes this series removed the
+resize-before-publish shape from `useApp`, and this is the mechanism that would have papered over it — silently,
+with a `console.error` rather than a thrown assertion.
+
+**What would close it.** A test that makes `drawLayersToCanvas` fail after a partial resize and asserts the
+visible canvas is back at `previousSize` with its prior content. `drawLayersToCanvas` takes its throw paths
+from `createLayerSource` and the layer's own `source`, so a layer whose processor throws is enough; the pixel
+fixture in `src/__tests__/fixtures/pixelCanvas.ts` already provides the content to compare.
+
+**Files.** `src/contexts/layer-renderer.ts` — `restoreVisibleCanvas()`, `drawLayersToCanvas()`;
+`docs/ARCHITECTURE.md` — "Stage, then publish"
+
+**Provenance.** Found 2026-10-05 on `main` while auditing the canvas's writers during the review of the
+open-ordering fix.
