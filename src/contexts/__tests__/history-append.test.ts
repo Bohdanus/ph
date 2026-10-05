@@ -35,6 +35,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
   type ActionType,
@@ -318,6 +319,12 @@ describe('planHistoryAppend: layer-property translation', () => {
     { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
     { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'an opacity change',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.35 },
+      patch: { opacity: 0.35 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;

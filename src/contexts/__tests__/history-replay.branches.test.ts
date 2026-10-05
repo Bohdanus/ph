@@ -14,6 +14,7 @@ import {
   REPLACE_LAYER_SOURCE_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -514,6 +515,20 @@ describe('replayHistory layer bookkeeping actions', () => {
     const result = replayHistory(history, 2, initialSize, dependencies);
 
     expect(result.layers['layer-1'].name).toBe('Renamed');
+    expect(result.layers.ghost).toBeUndefined();
+  });
+
+  it('applies opacity to a present layer and ignores it for a missing or invalid layer', () => {
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+      { id: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity: 0.35 } },
+      { id: 'missing', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'ghost', args: { opacity: 0.2 } },
+      { id: 'invalid', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity: 2 } },
+    ];
+
+    const result = replayHistory(history, history.length - 1, initialSize, createDependencies());
+
+    expect(result.layers['layer-1'].opacity).toBe(0.35);
     expect(result.layers.ghost).toBeUndefined();
   });
 

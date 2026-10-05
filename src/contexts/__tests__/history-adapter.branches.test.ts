@@ -34,6 +34,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -1498,6 +1499,7 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'show', actionName: SHOW_LAYER_ACTION },
     { label: 'hide', actionName: HIDE_LAYER_ACTION },
     { label: 'rename', actionName: RENAME_LAYER_ACTION },
+    { label: 'opacity', actionName: SET_LAYER_OPACITY_ACTION },
   ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('accepts $label', ({ actionName }) => {
     expect(isSetLayerPropertiesAction(actionName)).toBe(true);
   });
@@ -1525,6 +1527,12 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'hide', actionName: HIDE_LAYER_ACTION, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
     { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'an opacity change',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.35 },
+      patch: { opacity: 0.35 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1566,6 +1574,21 @@ describe('deriveSetLayerPropertiesEntry', () => {
     expect(derive()).toBeNull();
   });
 
+  it('derives nothing from an opacity outside the layer range', () => {
+    const derive = (opacity: unknown) =>
+      deriveSetLayerPropertiesEntry({
+        id: 'opacity',
+        actionName: SET_LAYER_OPACITY_ACTION,
+        layerId: 'layer-1',
+        args: { opacity },
+      });
+
+    expect(derive(-0.01)).toBeNull();
+    expect(derive(1.01)).toBeNull();
+    expect(derive(Number.NaN)).toBeNull();
+    expect(derive('0.5')).toBeNull();
+  });
+
   it('carries the disabled state of the legacy item onto the derived entry', () => {
     const derived = deriveSetLayerPropertiesEntry({
       id: 'hide-disabled',
@@ -1604,6 +1627,22 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
       registry.shutdown();
     }
   );
+
+  it('records an opacity action as a durable layer-property patch', () => {
+    const registry = new AssetRegistry();
+    const converted = convert(
+      [{ id: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity: 0.35 } }],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history.map((entry) => entry.operation)).toEqual([
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { opacity: 0.35 } },
+    ]);
+    expect(converted.document.baseline.layers.find((layer) => layer.id === 'layer-1')?.opacity).toBe(1);
+    expect(converted.document.history[0]?.operation.kind).toBe('set-layer-properties');
+    registry.shutdown();
+  });
 
   it('keeps a disabled visibility patch from changing the converted layer', () => {
     const registry = new AssetRegistry();

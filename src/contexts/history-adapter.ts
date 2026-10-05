@@ -46,6 +46,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
@@ -452,15 +453,16 @@ export function deriveSetSelectionEntry(
  * The value is the closed set of properties an action may own, not every key
  * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
  * derivation and the append validator exhaustively switch on the owned key —
- * widening it to `keyof DurableLayerPropertyPatch` would let a new action own
- * `opacity` and fall into the visibility arm as a silent default.
+ * a new action must name its property here and receive its own derivation and
+ * validation branch rather than silently inheriting another property's rule.
  */
-type LayerPropertyKey = 'visible' | 'name';
+type LayerPropertyKey = 'visible' | 'name' | 'opacity';
 
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
+  [SET_LAYER_OPACITY_ACTION]: 'opacity',
 } as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
@@ -506,6 +508,10 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     const name = (item.args as { name?: unknown } | undefined)?.name;
     if (typeof name !== 'string') return null;
     patch = { name };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'opacity') {
+    const opacity = (item.args as { opacity?: unknown } | undefined)?.opacity;
+    if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
+    patch = { opacity };
   } else {
     // Visibility comes from the action, never from `args.visible`: that is the
     // rule legacy replay applies, and a hand-built args object must not be able

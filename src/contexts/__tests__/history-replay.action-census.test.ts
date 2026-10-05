@@ -55,6 +55,7 @@ import {
   REPLACE_LAYER_SOURCE_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
   type ActionType,
@@ -270,6 +271,11 @@ const CENSUS: Record<ActionType, CensusCase> = {
     prefix: oneLayerDocument(),
     entry: entry({ id: 'rename-entry', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } }),
   },
+  [SET_LAYER_OPACITY_ACTION]: {
+    label: 'setting a layer opacity',
+    prefix: oneLayerDocument(),
+    entry: entry({ id: 'opacity-entry', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.35 } }),
+  },
   [REORDER_ACTION]: {
     label: 'a reorder',
     prefix: [
@@ -352,6 +358,7 @@ describe('replayHistory accounts for every action the union can name', () => {
       REORDER_ACTION,
       SELECTION_ACTION,
       SET_DOCUMENT_FRAME_ACTION,
+      SET_LAYER_OPACITY_ACTION,
       SHOW_LAYER_ACTION,
       TOOL_ACTION,
     ]);

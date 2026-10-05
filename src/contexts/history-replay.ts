@@ -27,6 +27,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
@@ -163,6 +164,14 @@ export function replayHistory(
     if (actionName === RENAME_LAYER_ACTION) {
       const layer = layers[layerId];
       if (layer) layers = { ...layers, [layerId]: { ...layer, name: (args as { name: string }).name } };
+      continue;
+    }
+    if (actionName === SET_LAYER_OPACITY_ACTION) {
+      const opacity = (args as { opacity?: unknown } | undefined)?.opacity;
+      const layer = layers[layerId];
+      if (layer && typeof opacity === 'number' && Number.isFinite(opacity) && opacity >= 0 && opacity <= 1) {
+        layers = { ...layers, [layerId]: { ...layer, opacity } };
+      }
       continue;
     }
     if (actionName === REORDER_ACTION) {

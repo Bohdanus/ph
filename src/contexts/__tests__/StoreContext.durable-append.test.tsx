@@ -23,6 +23,7 @@ import {
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -130,11 +131,12 @@ function commitCrop(
 const crop = () => cropItem();
 const plannedFor = (entry: HistoryItem) => deriveSetDocumentFrameEntry(entry, defaultFrame);
 
-/** The three actions the append boundary translates into `set-layer-properties`. */
+/** The layer-property actions the append boundary translates into `set-layer-properties`. */
 const propertyActions = [
   [RENAME_LAYER_ACTION, { name: 'Renamed' }],
   [SHOW_LAYER_ACTION, { visible: true }],
   [HIDE_LAYER_ACTION, { visible: false }],
+  [SET_LAYER_OPACITY_ACTION, { opacity: 0.5 }],
 ] as const;
 
 function propertyItem(id: string, actionName: (typeof propertyActions)[number][0], patch: object): HistoryItem {

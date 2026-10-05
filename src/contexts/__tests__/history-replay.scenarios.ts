@@ -16,6 +16,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -213,6 +214,7 @@ export const replayParityScenarios: readonly ReplayParityScenario[] = [
       historyItem('hide', HIDE_LAYER_ACTION, layerA),
       historyItem('show', SHOW_LAYER_ACTION, layerA),
       historyItem('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
+      historyItem('opacity', SET_LAYER_OPACITY_ACTION, layerA, { opacity: 0.35 }),
     ],
   },
   {
