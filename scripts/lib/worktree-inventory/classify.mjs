@@ -290,9 +290,16 @@ export function classify(
     );
   }
 
+  // `read !== true`, NOT `read === false`. A missing `read` field is the ABSENCE of
+  // evidence that the tree was read, and this rule is affirmative evidence, not the
+  // absence of a complaint. The looser polarity looked equivalent while every
+  // production path set the field, and it is not: `read === false` treats "nothing
+  // said the tree was unreadable" as "the tree was read", which is the exact
+  // inversion of the rule stated above and in docs/ORCHESTRATION.md. Any caller that
+  // builds a `workingTree` without the field gets a legacy verdict it never earned.
   let legacyUnknown = null;
   if (curated?.legacy) {
-    if (wt.workingTree?.read === false) legacyUnknown = 'the working tree could not be read';
+    if (wt.workingTree?.read !== true) legacyUnknown = 'the working tree could not be read';
     else if (typeof wt.ahead !== 'number') legacyUnknown = 'the base branch could not be resolved';
     else if (wt.branch === '(unknown)') legacyUnknown = 'the worktree has no branch to keep';
   }
