@@ -13,6 +13,7 @@
     "swarm:release-merged": "node scripts/merge-release.mjs",
     "dispose": "node scripts/dispose-worktree.mjs",
     "docs:tools": "node scripts/generate-tool-docs.mjs",
+    "handoff:id": "node scripts/handoff-id.mjs",
     "lint": "node scripts/lint-tracked.js --eslint-only",
     "lint:check": "node scripts/lint-tracked.js",
     "tsc": "tsc -b",
