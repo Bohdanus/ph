@@ -323,7 +323,7 @@ const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true 
  * everything, and a guard written that way is green no matter what the generator
  * does with a dirty merged branch.
  *
- * Memoised: two tests below need the same few seconds of git, and a second read
+ * Memoised: three tests below need the same few seconds of git, and a second read
  * of a repository other agents are actively writing to could see a different
  * shape than the first.
  */
@@ -2242,7 +2242,7 @@ describe('the curated table', () => {
     // A derived set cannot be cheaper than the facts it is derived from: this
     // reads git in every worktree in the repository, which is precisely what the
     // hand-written list was pretending not to have to do. `liveWorktreeFacts`
-    // memoises, so the suite pays for the read once, and which of the two tests
+    // memoises, so the suite pays for the read once, and which of the three tests
     // asking first is not something the budget may depend on.
   }, 60_000);
 
