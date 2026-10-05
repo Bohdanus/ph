@@ -654,7 +654,7 @@ test.describe('Layers panel', () => {
 
     // The count the rename is measured AGAINST, asserted rather than read off a first poll.
     // A freshly opened document carries exactly one entry — the open itself
-    // (`setImageFromUpload()` seeds the timeline with it) — so the precondition is a fact about the
+    // (`setBlankImage()` seeds the timeline with it) — so the precondition is a fact about the
     // panel rather than a zero, and "one entry" below means two rather than "one more than
     // whatever happened to be there".
     const historyRows = page.getByTitle(HISTORY_ROW_TITLE);

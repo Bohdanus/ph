@@ -83,12 +83,13 @@ export const useApp = (): UseAppType => {
     // adopted. Sizing the canvas after the layer exists cannot be wrong in the other direction:
     // nothing between the two reads it.
     //
-    // That zero is a CONTRACT guard rather than a live user path, and worth saying so plainly: every
-    // current caller clamps it away. `NewImageDialog` seeds its inputs from presets that clamp with
-    // `Math.min(10000, Math.max(1, n)) || 1`, and its submit is a real `<form>` whose `min="1"`
-    // blocks zero — but `onChange` is `setWidth(parseInt(value) || 0)`, so clearing the field DOES
-    // put zero into state and only the browser's native constraint validation stands between that
-    // and this throw. Change that submit to `type="button"` and the path becomes reachable.
+    // That zero is a CONTRACT guard rather than a live user path, and worth saying so plainly: no
+    // current caller PRODUCES a zero. `NewImageDialog` clamps its preset and DPI inputs with
+    // `Math.min(10000, Math.max(1, n)) || 1` and submits through a real `<form>` whose `min="1"`
+    // blocks zero — but its `onChange` is `setWidth(parseInt(value) || 0)`, so clearing the field DOES
+    // put zero into state and only native constraint validation stands between that and this throw.
+    // Change that submit to `type="button"` and the path opens. `DEFAULT_BLANK_IMAGE` is a fourth
+    // producer that does not clamp at all; it holds by VALUE rather than by mechanism.
     createBlankLayer({ ...params }, true);
     handleImageCreate(params.size);
   }
@@ -164,7 +165,17 @@ export const useApp = (): UseAppType => {
       // The three surfaces take the imported size only AFTER the replacement is published, which is
       // the same rule the raster arm below follows. Resizing before the dispatch would leave all
       // three at the incoming file's extent with nothing published if either the dispatch or the
-      // bitmap adoption threw — the half-applied state this ordering exists to prevent.
+      // bitmap adoption threw.
+      //
+      // Scoped deliberately: this covers those TWO throw sites and not every one. `resizeCanvas` can
+      // itself throw — assigning `canvas.width` past the browser's maximum canvas size raises
+      // `IndexSizeError`, and nothing upstream caps a PSD's extent (`useLayer`'s `MAX_DOCUMENT_FRAME_SIDE`
+      // says so outright). Under this order that throw leaves the document PUBLISHED with the three
+      // surfaces still at the outgoing extent, where the old order left them at the incoming extent
+      // with nothing published. The class is reshaped rather than removed: `Main` resizes both
+      // overlays from the published `totalSize` on its next pass, so the store and the document agree
+      // and only the workspace canvas lags. Untested, because provoking it needs a PSD past the
+      // browser's ceiling.
       for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
         if (ref.current) {
           resizeCanvas(ref.current, size.width, size.height);
