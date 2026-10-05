@@ -321,22 +321,109 @@ function realpathIfPresent(path) {
   }
 }
 
-/** Parse `git worktree list --porcelain` into records. */
-function parseWorktreeListing(listing) {
+/**
+ * Parse `git worktree list --porcelain -z` into records.
+ *
+ * `-z` IS NOT OPTIONAL, and the version without it had two defects a review drove out
+ * with real repositories:
+ *
+ * `git worktree list --porcelain` does NOT quote its paths. A worktree at
+ * `…/wt\nwith-newline` came back as two lines, so `listing.split('\n')` produced the
+ * path `…/wt` — truncated at the newline, naming a directory that does not exist. The
+ * live worktree then read as `present: false` with `readError`, the tool stated as fact
+ * that git had dropped state still sitting on disk, and the record for the worktree that
+ * actually held the merge never existed. This is the same trap `unmergedPaths` documents
+ * for `git status --porcelain`, in the same file, a few dozen lines away.
+ *
+ * With `-z` every record is NUL-terminated and a path round-trips verbatim, newline and
+ * all. Verified on the git here for newline, space and non-ASCII paths.
+ *
+ * `bare` is read because a bare repository is a first-class git layout — what a mirror
+ * lives in — and its only roster entry has no working tree, so `git diff
+ * --diff-filter=U` answers "fatal: this operation must be run in a work tree" forever.
+ * Without this the tool was permanently red in a valid configuration, which is how a
+ * report gets bypassed.
+ */
+export function parseWorktreeListing(listing) {
   const entries = [];
   let current = null;
-  for (const line of listing.split('\n')) {
-    if (line.startsWith('worktree ')) {
+  for (const record of listing.split('\0')) {
+    if (record === '') continue;
+    const sep = record.indexOf(' ');
+    const key = sep === -1 ? record : record.slice(0, sep);
+    const value = sep === -1 ? null : record.slice(sep + 1);
+    if (key === 'worktree') {
       if (current) entries.push(current);
-      current = { path: line.slice('worktree '.length) };
-    } else if (line.startsWith('branch ') && current) {
-      current.branch = line.slice('branch '.length).replace('refs/heads/', '');
-    } else if (line === 'detached' && current) {
+      current = { path: value };
+    } else if (current && key === 'branch') {
+      current.branch = value?.replace('refs/heads/', '');
+    } else if (current && record === 'detached') {
       current.detached = true;
+    } else if (current && record === 'bare') {
+      current.bare = true;
     }
   }
   if (current) entries.push(current);
   return entries;
+}
+
+/**
+ * The administrative directories that NO roster entry claims.
+ *
+ * This is the cross-check that closes the hole a review found by `chmod`. When an admin
+ * directory cannot be read, `git worktree list --porcelain` does not report the
+ * registration AT ALL — measured: `chmod 000 .git/worktrees/<name>` removes the entry,
+ * and the roster shrank from three worktrees to two while `MERGE_HEAD` sat in the
+ * directory that had just become unreadable. The report then said "clean" and exited 0,
+ * which is the one output this module exists to never produce, and it falsified both its
+ * own docstring and the sentence in `docs/ORCHESTRATION.md` that says a worktree it could
+ * not describe is reported unreadable rather than clean.
+ *
+ * So the roster is not trusted on its own. Every entry under `<common>/worktrees` is
+ * matched against it by the worktree its own `gitdir` file names, and an admin directory
+ * no entry claims becomes a record — read for operations, and carrying a `readError`
+ * when nothing can claim it. The count is also returned, so a caller can tell "the roster
+ * is shorter than the directories on disk" from "it is not".
+ *
+ * The primary worktree has no admin directory of its own, so a matching count is
+ * `adminDirs.length === roster entries - 1`.
+ */
+function unclaimedAdminDirs(commonDir, entries) {
+  if (!commonDir) return [];
+  const claimed = new Set(
+    entries.map((entry) => realpathIfPresent(entry.path) ?? entry.path).filter((path) => typeof path === 'string')
+  );
+  const orphans = [];
+  for (const dir of adminDirs(commonDir)) {
+    let contents = null;
+    try {
+      contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
+    } catch {
+      // Unreadable `gitdir` file: the directory is exactly the case this cross-check
+      // exists for, and skipping it would drop it again.
+    }
+    const owner = contents === null || contents === '' ? null : dirname(contents);
+    if (owner !== null && claimed.has(realpathIfPresent(owner) ?? owner)) continue;
+    // `readError` here rather than an empty operations list, because an empty list is
+    // what a clean worktree reports. An administrative directory git dropped from the
+    // roster AND that cannot be read is the least known state in the module, and it has
+    // to be a finding — otherwise the cross-check finds the worktree and the report
+    // still says nothing about it.
+    let readable = true;
+    try {
+      readdirSync(dir);
+    } catch {
+      readable = false;
+    }
+    orphans.push({
+      gitDir: dir,
+      owner,
+      readError: readable
+        ? 'git worktree list does not report this administrative directory, so the worktree is not in the roster'
+        : 'the administrative directory is unreadable, so its git state could not be read',
+    });
+  }
+  return orphans;
 }
 
 /**
@@ -374,10 +461,10 @@ function parseWorktreeListing(listing) {
  * this module's whole argument is that it does not report health it has not
  * established.
  */
-export function scanRepository(cwd = process.cwd()) {
+export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths } = {}) {
   let listing;
   try {
-    listing = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+    listing = execFileSync('git', ['worktree', 'list', '--porcelain', '-z'], {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -391,59 +478,91 @@ export function scanRepository(cwd = process.cwd()) {
     return {
       ok: false,
       reason: 'git worktree list produced no worktree records',
-      detail: `\`git worktree list --porcelain\` answered with no \`worktree \` line in: ${JSON.stringify(listing)}`,
+      detail: `\`git worktree list --porcelain -z\` answered with no \`worktree\` record in: ${JSON.stringify(listing)}`,
       worktrees: [],
     };
   }
   const commonDir = resolveCommonDir(cwd);
 
+  // Every admin directory the roster did not account for, read as records below. This
+  // is what a `chmod` on an admin directory produces — a registration git can no longer
+  // describe, holding state it can no longer be asked about — and it is invisible in the
+  // roster itself.
+  const orphans = unclaimedAdminDirs(commonDir, entries).map((orphan) => ({
+    name: basename(orphan.gitDir),
+    path: orphan.owner ?? `(administrative directory ${orphan.gitDir}, whose gitdir file is unreadable)`,
+    branch: null,
+    detached: false,
+    present: orphan.owner === null ? false : existsSync(orphan.owner),
+    gitDir: orphan.gitDir,
+    operations: readOperations(orphan.gitDir),
+    unmerged: [],
+    readError: orphan.readError,
+  }));
+
   return {
     ok: true,
     reason: null,
-    worktrees: entries.map((entry) => {
-      const name = basename(entry.path);
-      const present = existsSync(entry.path);
+    worktrees: [
+      ...entries.map((entry) => {
+        const name = basename(entry.path);
+        const present = existsSync(entry.path);
 
-      if (!present) {
-        const gitDir = resolveAdminDirFor(commonDir, entry.path);
+        if (!present) {
+          const gitDir = resolveAdminDirFor(commonDir, entry.path);
+          return {
+            name,
+            path: entry.path,
+            branch: entry.branch ?? null,
+            detached: entry.detached === true,
+            present: false,
+            gitDir,
+            operations: readOperations(gitDir),
+            unmerged: [],
+            readError: gitDir
+              ? null
+              : 'no administrative directory claims this worktree, so its git directory is gone too',
+          };
+        }
+
+        const gitDir = resolveGitDir(entry.path);
+        let unmerged = [];
+        let readError = gitDir === null ? 'git rev-parse --absolute-git-dir failed' : null;
+        // A bare repository's only entry has no working tree, so the work-tree-only query
+        // answers "fatal: this operation must be run in a work tree" every time. Its
+        // operation state is still readable from the git directory, so only the probe is
+        // skipped.
+        const probe = entry.bare === true;
+        if (!probe) {
+          try {
+            unmerged = unmergedOf(entry.path);
+          } catch (error) {
+            // Recorded, not thrown. The operations are still known, and a report that
+            // lost the whole worktree over an unreadable index would hide the merge that
+            // matters most.
+            readError = readError ?? error?.message ?? String(error);
+          }
+        }
         return {
           name,
           path: entry.path,
           branch: entry.branch ?? null,
           detached: entry.detached === true,
-          present: false,
+          bare: probe,
+          present: true,
           gitDir,
           operations: readOperations(gitDir),
-          unmerged: [],
-          readError: gitDir
-            ? null
-            : 'no administrative directory claims this worktree, so its git directory is gone too',
+          unmerged,
+          readError,
         };
-      }
-
-      const gitDir = resolveGitDir(entry.path);
-      let unmerged = [];
-      let readError = gitDir === null ? 'git rev-parse --absolute-git-dir failed' : null;
-      try {
-        unmerged = unmergedPaths(entry.path);
-      } catch (error) {
-        // Recorded, not thrown. The operations are still known, and a report that
-        // lost the whole worktree over an unreadable index would hide the merge that
-        // matters most.
-        readError = readError ?? error?.message ?? String(error);
-      }
-      return {
-        name,
-        path: entry.path,
-        branch: entry.branch ?? null,
-        detached: entry.detached === true,
-        present: true,
-        gitDir,
-        operations: readOperations(gitDir),
-        unmerged,
-        readError,
-      };
-    }),
+      }),
+      ...orphans,
+    ],
+    // Reported, not enforced: a roster shorter than the directories on disk is the fact
+    // the cross-check exists to surface, and a caller that wants to know whether every
+    // admin directory was accounted for reads it here.
+    adminDirs: commonDir ? adminDirs(commonDir).length : null,
+    roster: entries.length,
   };
 }
 
