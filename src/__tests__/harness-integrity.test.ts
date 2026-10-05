@@ -193,7 +193,7 @@ describe('global canvas environment (src/test/setup.ts)', () => {
     //
     // This branch IS production-reachable, and the route is NOT through `immutableRaster`.
     // Both `immutableRaster` copies (`src/contexts/useLayer.ts:80-86` and
-    // `src/hooks/useApp.ts:24-30`) open with
+    // `useApp.ts`'s copy) open with
     // `if (typeof bitmap.close === 'function') return bitmap;`, so a decoded raster
     // early-returns and never reaches `createImageBitmap` — the `transferToImageBitmap()`
     // shape used below is precisely the shape those two functions refuse to forward.

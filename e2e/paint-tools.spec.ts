@@ -783,7 +783,7 @@ test.describe('Paint tools', () => {
 
       // Sharpen is a one-shot FILTER, not a gesture. Nothing is in history until
       // `commitDirtyTool` (`src/contexts/useLayer.ts:323`) promotes the preview, and a tool
-      // switch is what calls it (`goToTool`, `src/hooks/useApp.ts:155-158`). Undo BEFORE the
+      // switch is what calls it (`goToTool()`). Undo BEFORE the
       // switch would pop the draw instead, so the bake is part of the contract under test
       // rather than a convenience.
       await clickToolButton(page, 'reposition');

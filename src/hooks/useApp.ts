@@ -78,10 +78,17 @@ export const useApp = (): UseAppType => {
   function setBlankImage(params: NewDocumentBlankParams) {
     // Same ordering as `setImageFromUpload`'s raster arm, and for the same reason. A blank document's
     // layer is built synchronously, so there is no microtask boundary here — but
-    // `createBlankLayer` throws from `createLayerSource` when the extent is not positive, and a
-    // canvas already resized to that extent is a document-sized canvas around a document that was
-    // never adopted. Sizing the canvas after the layer exists cannot be wrong in the other
-    // direction: nothing between the two reads it.
+    // `createBlankLayer` throws from `createLayerSource` when either extent is ZERO, and a canvas
+    // already resized to that extent is a document-sized canvas around a document that was never
+    // adopted. Sizing the canvas after the layer exists cannot be wrong in the other direction:
+    // nothing between the two reads it.
+    //
+    // That zero is a CONTRACT guard rather than a live user path, and worth saying so plainly: every
+    // current caller clamps it away. `NewImageDialog` seeds its inputs from presets that clamp with
+    // `Math.min(10000, Math.max(1, n)) || 1`, and its submit is a real `<form>` whose `min="1"`
+    // blocks zero — but `onChange` is `setWidth(parseInt(value) || 0)`, so clearing the field DOES
+    // put zero into state and only the browser's native constraint validation stands between that
+    // and this throw. Change that submit to `type="button"` and the path becomes reachable.
     createBlankLayer({ ...params }, true);
     handleImageCreate(params.size);
   }
@@ -115,11 +122,6 @@ export const useApp = (): UseAppType => {
       );
       setRefValue(currentArgsRef, {} as typeof currentArgsRef.current);
       clearPreviewLayers?.();
-      for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
-        if (ref.current) {
-          resizeCanvas(ref.current, size.width, size.height);
-        }
-      }
       dispatch({
         type: 'REPLACE_DOCUMENT',
         payload: {
@@ -159,6 +161,15 @@ export const useApp = (): UseAppType => {
           .map((layer) => (layer.source?.kind === 'image' ? layer.source.bitmap : null))
           .filter((bitmap): bitmap is BitmapSource => bitmap !== null)
       );
+      // The three surfaces take the imported size only AFTER the replacement is published, which is
+      // the same rule the raster arm below follows. Resizing before the dispatch would leave all
+      // three at the incoming file's extent with nothing published if either the dispatch or the
+      // bitmap adoption threw — the half-applied state this ordering exists to prevent.
+      for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
+        if (ref.current) {
+          resizeCanvas(ref.current, size.width, size.height);
+        }
+      }
       return;
     }
     const { image } = data;
@@ -175,8 +186,9 @@ export const useApp = (): UseAppType => {
     // published `data-fit-document-*` while opening a 4000x3000 PNG: the current order disagrees on
     // one frame, the old order on two, and neither is sustained long enough to be worth a paint.
     // `immutableRaster`'s `createImageBitmap` on an already-decoded `HTMLImageElement` resolves
-    // inside the same frame. The PSD arm above already orders it this way: it resizes all three
-    // refs only after every `immutableRaster` has resolved.
+    // inside the same frame. The PSD arm above now orders it the same way, and for the same reason:
+    // it resolves every `immutableRaster` first and sizes all three surfaces only after
+    // `REPLACE_DOCUMENT` and `adoptLayerBitmaps` have both run.
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
     handleImageCreate(size);
     _setFileName(fileName);
