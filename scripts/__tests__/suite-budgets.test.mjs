@@ -83,6 +83,7 @@ const BUDGETED = [
   'agents-citations.test.mjs',
   'docs-index.test.mjs',
   'e2e-run.test.mjs',
+  'handoff-id.test.mjs',
   'main-worktree-guard.test.mjs',
   'merge-release.test.mjs',
   'merge-takeover-guard.test.mjs',

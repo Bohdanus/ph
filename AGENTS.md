@@ -134,6 +134,26 @@ deliberate and described in [`docs/DOCUMENTATION.md#citations`](docs/DOCUMENTATI
 no changelogs, completion summaries, or status reports. Verify every claim against the tree;
 each entry needs a validated problem, affected files, and an actionable fix. Fixed and verified deletes the entry.
 
+### Entry ids
+
+**A NEW ENTRY GETS A SHA, NOT A NUMBER. MINT IT WITH `npm run handoff:id -- "<title>"`, PASTE THE
+RESULT, AND NEVER RECOMPUTE IT.**
+
+A number is a shared allocator with no owner: every session reads the same highest number and
+claims it, so two sessions adding one entry each collide by construction and the merge arbitrates a
+conflict over prose. A sha derived from the entry's own title needs no allocator. The parser reads
+either form, so `## a1b2c3d. Title` and `## 242. Title` are both items and a document may hold both.
+
+- **Retitling changes the id**, because the id is the hash of the title. A retitled entry reads as a
+  new item on the board. Mint once, on creation.
+- **The id is 7 lowercase hex characters.** `## Defaced shapes` is a prose heading, not an entry —
+  an id must carry a digit. Do not invent a longer or mixed-case one; uppercase is normalised, but a
+  non-hex token is not an id at all.
+- **Numbers are not being removed.** An existing numbered entry stays numbered. Renumbering the
+  document to convert it is a separate, larger change and is not required.
+- Retiring an entry works for both forms: end the heading with a dead word, or list the id under a
+  heading like `### Items 3, a1b2c3d — deleted`.
+
 ## Architecture status
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**. The durable document is mounted only
