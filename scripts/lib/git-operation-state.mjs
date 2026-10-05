@@ -56,7 +56,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 /**
  * Where git records each operation, and what to call it.
@@ -334,22 +334,61 @@ function adminDirs(commonDir) {
 export function resolveAdminDirFor(commonDir, worktreePath) {
   if (!commonDir) return null;
   const wanted = realpathIfPresent(worktreePath) ?? worktreePath;
-  for (const dir of adminDirs(commonDir).dirs) {
-    let contents;
-    try {
-      contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
-    } catch {
-      continue;
-    }
-    if (contents === '') continue;
-    const owner = dirname(contents);
-    // `realpath` on BOTH sides, falling back to the string each already is when a path
-    // cannot be resolved — which is the normal case here, since this function exists
-    // for worktrees whose directory is GONE. Comparing only resolved paths would make
-    // every one of them fail to match, which is the bug the first version of this had.
-    if ((realpathIfPresent(owner) ?? owner) === wanted) return dir;
+  for (const record of adminDirRecords(commonDir).dirs) {
+    if (record.owner !== null && (realpathIfPresent(record.owner) ?? record.owner) === wanted) return record.path;
   }
   return null;
+}
+
+/**
+ * One pass over the administrative directories, recording what each one CLAIMS.
+ *
+ * Built once and shared, because the cross-check and the absent-worktree lookup were
+ * each enumerating and each reading every `gitdir` — measured at 95 directories that is
+ * two `readFileSync` per directory for one answer, and the two answers could disagree.
+ *
+ * `owner` is the WORKTREE path, resolved. NOT always the same as `dirname(contents)`:
+ * `git worktree add --relative-paths` writes a RELATIVE path into `gitdir`, measured as
+ * `../../../rel/.git`, and a relative `gitdir` is relative to the ADMINISTRATIVE
+ * DIRECTORY. Taking `dirname()` of it verbatim yields `../../../rel`, which resolves
+ * against the caller's cwd rather than the admin directory, never matches a roster
+ * entry, and so produced a false orphan on a perfectly healthy repository — the report
+ * told the operator a live worktree was gone and unreadable, permanently, on a
+ * documented git configuration.
+ *
+ * `readError` per record is the error that ACTUALLY happened, so a message can never
+ * claim a read failed that succeeded. The previous version inferred readability from
+ * `readdirSync`, which at mode 0111 throws while the markers read perfectly — so it
+ * printed "its git state could not be read" immediately above the `MERGE_HEAD` it had
+ * just read.
+ */
+function adminDirRecords(commonDir) {
+  const { dirs, readError } = adminDirs(commonDir);
+  return {
+    readError,
+    dirs: dirs.map((dir) => {
+      let contents;
+      try {
+        contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
+      } catch (error) {
+        // `ENOENT` MEANS "NOT A WORKTREE", not "unreadable". A directory under the admin
+        // root with no `gitdir` file is a stray directory — an interrupted
+        // `git worktree add`, a temp directory, an editor artefact — and reporting it as a
+        // lost registration asserts git's intent that was never measured. That made a
+        // healthy repository permanently red.
+        if (error?.code === 'ENOENT') return { path: dir, owner: null, readError: null, notAWorktree: true };
+        return { path: dir, owner: null, readError: `its gitdir file could not be read (${error?.code ?? 'unknown'})` };
+      }
+      if (contents === '') {
+        // A directory with an EMPTY gitdir file is not a worktree git manages. Reporting
+        // it as one is how a stray directory — an interrupted `git worktree add`, a temp
+        // dir, an editor artefact — turned a healthy repository permanently red.
+        return { path: dir, owner: null, readError: null, notAWorktree: true };
+      }
+      const absolute = isAbsolute(contents) ? contents : resolve(dir, contents);
+      return { path: dir, owner: dirname(absolute), readError: null };
+    }),
+  };
 }
 
 /** `realpathSync` when the path exists, and null when it does not — never a throw. */
@@ -401,6 +440,16 @@ export function parseWorktreeListing(listing) {
       current.detached = true;
     } else if (current && record === 'bare') {
       current.bare = true;
+    } else if (current && key === 'locked') {
+      // `locked` is what stops `git worktree prune` deleting the very resolution state
+      // this tool exists to protect, so discarding it discards the answer to "is this
+      // state about to be destroyed". `prunable` is the state `dispose-worktree.mjs`
+      // refuses on. Both were dropped because this parser only ever handled four keys,
+      // and the `-z` rewrite made the omission read as an oversight rather than as the
+      // parser it was.
+      current.locked = value === null || value === '' ? true : value;
+    } else if (current && key === 'prunable') {
+      current.prunableReason = value === null || value === '' ? true : value;
     }
   }
   if (current) entries.push(current);
@@ -436,41 +485,64 @@ function unclaimedAdminDirs(commonDir, entries) {
       orphans: [],
       readError: 'git rev-parse --git-common-dir failed, so the administrative directories could not be enumerated',
     };
-  const { dirs, readError: dirReadError } = adminDirs(commonDir);
-  const claimed = new Set(
-    entries.map((entry) => realpathIfPresent(entry.path) ?? entry.path).filter((path) => typeof path === 'string')
-  );
+
+  const scanned = adminDirRecords(commonDir);
+
+  // owner -> every administrative directory claiming it. A MAP, not a Set: two admin
+  // directories naming one worktree are indistinguishable to a Set, and the second
+  // one's state is then read by nothing at all. Measured: a `gitdir` naming an already
+  // claimed worktree produced no finding and its `MERGE_HEAD` was never read — real
+  // merge state, in a directory git does not list, invisible.
+  const owners = new Map();
+  for (const record of scanned.dirs) {
+    if (record.owner === null) continue;
+    const key = realpathIfPresent(record.owner) ?? record.owner;
+    if (!owners.has(key)) owners.set(key, []);
+    owners.get(key).push(record.path);
+  }
+
+  const claimed = new Set(owners.keys());
+
   const orphans = [];
-  for (const dir of dirs) {
-    let contents = null;
-    try {
-      contents = readFileSync(join(dir, 'gitdir'), 'utf8').trim();
-    } catch {
-      // Unreadable `gitdir` file: the directory is exactly the case this cross-check
-      // exists for, and skipping it would drop it again.
+  for (const record of scanned.dirs) {
+    // A directory with no `gitdir` file, or an empty one, is NOT a worktree git dropped
+    // from its roster. It is a directory that is not a worktree: an interrupted
+    // `git worktree add`, a temp directory, an editor artefact. Reporting it as a lost
+    // registration asserts git's intent that was never measured, and it made a healthy
+    // repository permanently red.
+    if (record.notAWorktree === true) continue;
+
+    const ownerKey = record.owner === null ? null : (realpathIfPresent(record.owner) ?? record.owner);
+    if (ownerKey !== null && claimed.has(ownerKey)) {
+      // Claimed by the roster, or by a sibling directory that is itself an orphan. Either
+      // way this directory's state is reachable through the roster entry, so it is not an
+      // orphan — but TWO directories claiming one worktree is unresolvable state, and it
+      // is reported so the operator can decide which is real.
+      const siblings = owners.get(ownerKey);
+      if (siblings.length > 1 && !entries.some((entry) => (realpathIfPresent(entry.path) ?? entry.path) === ownerKey)) {
+        orphans.push({
+          gitDir: record.path,
+          owner: record.owner,
+          readError: `${siblings.length} administrative directories claim this worktree (${siblings.join(', ')}), so which one is authoritative is unknown`,
+        });
+      }
+      continue;
     }
-    const owner = contents === null || contents === '' ? null : dirname(contents);
-    if (owner !== null && claimed.has(realpathIfPresent(owner) ?? owner)) continue;
-    // `readError` here rather than an empty operations list, because an empty list is
-    // what a clean worktree reports. An administrative directory git dropped from the
-    // roster AND that cannot be read is the least known state in the module, and it has
-    // to be a finding — otherwise the cross-check finds the worktree and the report
-    // still says nothing about it.
-    let readable = true;
-    try {
-      readdirSync(dir);
-    } catch {
-      readable = false;
-    }
+
     orphans.push({
-      gitDir: dir,
-      owner,
-      readError: readable
-        ? 'git worktree list does not report this administrative directory, so the worktree is not in the roster'
-        : 'the administrative directory is unreadable, so its git state could not be read',
+      gitDir: record.path,
+      owner: record.owner,
+      // The message names the read that ACTUALLY failed. The previous version inferred
+      // readability from `readdirSync`, which throws at mode 0111 while the markers read
+      // perfectly — so the report printed "its git state could not be read" directly above
+      // the `MERGE_HEAD` it had just read. Never assert a read failed that succeeded.
+      readError:
+        record.readError ??
+        'git worktree list does not report this administrative directory, so the worktree is not in the roster',
     });
   }
-  return { orphans, readError: dirReadError };
+
+  return { orphans, readError: scanned.readError };
 }
 
 /**
@@ -581,6 +653,9 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
             path: entry.path,
             branch: entry.branch ?? null,
             detached: entry.detached === true,
+            bare: entry.bare === true,
+            locked: entry.locked ?? false,
+            prunableReason: entry.prunableReason ?? null,
             present: false,
             gitDir,
             operations: readOperations(gitDir),
@@ -598,8 +673,8 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
         // answers "fatal: this operation must be run in a work tree" every time. Its
         // operation state is still readable from the git directory, so only the probe is
         // skipped.
-        const probe = entry.bare === true;
-        if (!probe) {
+        const bare = entry.bare === true;
+        if (!bare) {
           try {
             unmerged = unmergedOf(entry.path);
           } catch (error) {
@@ -614,7 +689,9 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
           path: entry.path,
           branch: entry.branch ?? null,
           detached: entry.detached === true,
-          bare: probe,
+          bare,
+          locked: entry.locked ?? false,
+          prunableReason: entry.prunableReason ?? null,
           present: true,
           gitDir,
           operations: readOperations(gitDir),
