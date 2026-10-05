@@ -715,6 +715,28 @@ export function operationForTool(
     });
   }
   if (processor.commit === 'raster') {
+    // The same refusal the live append boundary makes, on the same registry field and in the same
+    // words: a processor that creates its raster from its own input rather than reading the layer's
+    // pixels has no retained operation to replay, because materialization would have to recreate
+    // the stroke that created it. `history-append.ts` reads this in `retainedToolOperationKind`
+    // (which returns `null` and degrades the one entry) and again in `translate()` (which refuses
+    // a plan it was handed); without the arm here the conversion path published an
+    // `apply-raster-processor` those two refuse, so the same timeline converted and appended
+    // differently.
+    //
+    // A throw rather than `null` because this is a tool that owes the timeline an edit and has no
+    // way to express it — the same answer as an unregistered tool, an unsupported filter and a
+    // tool that cannot be replayed durably. `null` is the shape for an argument set that plans
+    // nothing, which is not this. What a refusal costs is the SEVERITY, and that asymmetry between
+    // this path's `error` (which withholds the whole shadow document through
+    // `convertLegacyHistorySafely`) and the append boundary's per-entry `warning` is a separate
+    // open decision, not part of the rule.
+    if (processor.compositesOntoInput === false) {
+      throw new UnsupportedHistoryFeatureError(
+        `Tool ${args.toolName} creates a raster from its own input and cannot replay as a retained processor`,
+        item.id
+      );
+    }
     return Object.freeze({
       kind: 'apply-raster-processor',
       layerId: item.layerId,

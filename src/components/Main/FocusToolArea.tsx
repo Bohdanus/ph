@@ -51,12 +51,7 @@ export const FocusToolArea = ({ toolName, className }: FocusToolAreaProps) => {
 
   const strokeArgs = (points: Parameters<typeof documentPointsToLayerLocal>[0]): FocusToolArgs | null => {
     if (!args || !sourceBounds) return null;
-    const bounds = rasterBoundsForStroke(
-      sourceBounds,
-      points,
-      FOCUS_STROKE_BRUSH_SIZE / 2 + kernelReach,
-      'rasterBounds' in args ? args.rasterBounds : undefined
-    );
+    const bounds = rasterBoundsForStroke(sourceBounds, points, FOCUS_STROKE_BRUSH_SIZE / 2 + kernelReach);
     return {
       ...args,
       points: documentPointsToLayerLocal(points, bounds),
