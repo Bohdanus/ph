@@ -529,15 +529,47 @@ the list a sweep reads first — so a branch that was never going to be worked o
 kept being re-investigated every pass. `legacy` also suppresses a clean merge
 verdict: it says do not merge this either.
 
-`legacy` is one of two curated fields that may move a verdict. The other is
-`mustNotPrune`, which says the work is **not** accounted for; `legacy` says it is
-and will never be worked on again. They are opposite claims about one tree, so an
-entry carrying both is self-contradictory and `mustNotPrune` wins: `classify`
-reports `at-risk` and the `legacy` flag is inert. That precedence is in the
-classifier, where the verdict is formed, and `preflight` refuses
-`action: "legacy"` on a record carrying `mustNotPrune` as well — two independent
-lines, because the inventory is what a human reads and the flag pair must not
-resolve to "disposable" on either surface.
+### `mustNotPrune` outranks `legacy`, and the precedence belongs in `classify`
+
+Two curated fields may move a verdict, and they are opposite claims about one tree:
+
+| field          | claim                                                                    |
+| -------------- | ------------------------------------------------------------------------ |
+| `mustNotPrune` | this work is **not** accounted for; the directory is the only copy of it |
+| `legacy`       | this work **is** accounted for, and it will never be worked on again     |
+
+An entry carrying both is self-contradictory, so it has to resolve somewhere, and
+the direction is not a matter of taste: the flag that can lose content wins.
+
+**It resolved the wrong way once, and the reason is worth keeping.** `classify`
+tests `curatedLegacy` high in its ladder — deliberately, above the merge verdicts,
+because a stale branch that no longer merges is the common case. But it sat there
+above _both_ `curatedBlocksPrune` arms as well, so an entry with both flags took
+the `legacy` arm and never reached either veto. The result was a record reading
+`action: "legacy"`, printed as "LEGACY — worktree disposable, BRANCH KEPT", listed
+under **no** protection: not `at-risk`, not `disposalCandidates`, and not
+`readyToLand`. The `mustNotPrune` field was still on the record, and `preflight`
+still refused it — so **no directory was lost**, and that is exactly why the defect
+was worth writing down rather than just fixing.
+
+The bug was not a hole in the disposal program. It was a second line of defence
+being relied on as the first, on the surface a human actually reads. An operator
+reading the generated inventory sees one answer, and for that answer the
+contradictory pair said "this directory is safe to remove".
+
+So the precedence lives where the verdict is formed:
+
+- `classify` requires `!curatedBlocksPrune` for a `legacy` verdict, so the pair
+  reports `at-risk` and the `legacy` flag is **visibly inert** rather than silently
+  overriding.
+- `preflight` independently refuses `action: "legacy"` on a record carrying
+  `mustNotPrune`. Two lines, so neither surface can be the only thing standing
+  between a hand-written flag and a directory holding the only copy of anything.
+
+The general rule this instance obeys: **a veto that exists only at the last gate is
+not a veto, it is a hope.** Where a curated claim can change a verdict, the
+combination rules belong beside the other verdict logic, and every refusal layer
+that repeats the rule is a second line, never the first.
 
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as
