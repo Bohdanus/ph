@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
+import { planHistoryAppend } from '../history-append.ts';
 import { legacyHistoryToDurable, operationForTool, UnsupportedHistoryFeatureError } from '../history-adapter.ts';
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
 import type { DurableLayerSnapshot } from '../history-model.ts';
@@ -273,5 +274,93 @@ describe('tool processor registry invariants', () => {
       kind: 'reposition-layer',
       move: { x: 4, y: 8 },
     });
+  });
+});
+
+/**
+ * The two boundaries that translate one `TOOL_ACTION`, pinned against each other on the two
+ * conditions that used to answer differently.
+ *
+ * `operationForTool` serves the CONVERSION path (`legacyHistoryToDurable`), and
+ * `planHistoryAppend` serves the LIVE path, so a rule one of them honours and the other does not
+ * means the same timeline converts one way and is appended another — with the durable document as
+ * a navigation cache, that is a shadow whose contents depend on how the edit arrived rather than
+ * on what it was.
+ */
+describe('durable agreement between the conversion and append boundaries', () => {
+  const strokeFrame = { x: -16, y: -16, width: 64, height: 64 };
+
+  /** The stroke form of a tool the registry declares `strokeShaped`, over its own defaults. */
+  const strokeArgsFor = (toolName: 'blur' | 'sharpen' | 'smudge'): Record<string, unknown> => ({
+    ...(defaultSettings[toolName] as Record<string, unknown>),
+    toolName,
+    points: [
+      { x: 4, y: 4 },
+      { x: 12, y: 4 },
+    ],
+    rasterBounds: strokeFrame,
+  });
+
+  const strokeShapedTools = ['blur', 'sharpen', 'smudge'] as const;
+
+  /** What the LIVE append boundary would publish for these arguments, or its refusal. */
+  const plannedByAppend = (args: Record<string, unknown>) =>
+    planHistoryAppend({
+      item: { actionName: TOOL_ACTION, layerId, args },
+      timeline: {
+        entries: [{ id: 'baseline', actionName: OPEN_DOCUMENT_ACTION, layerId }],
+        cursor: 0,
+        branchRevision: 0,
+      },
+      currentFrame: frame,
+      currentLayer: layer(),
+      id: 'tool-stroke',
+    });
+
+  it.each(strokeShapedTools)(
+    'translates a stroked %s as a raster processor on BOTH boundaries, not by its commit kind',
+    (toolName) => {
+      const args = strokeArgsFor(toolName);
+      const item: HistoryItem = { id: 'stroke', actionName: TOOL_ACTION, layerId, args };
+      // The whole-layer form of the same tool, which the commit-kind table above already covers, is
+      // what this pair must NOT produce: `blur` owes `apply-filter` as a `layer-operation`, so a
+      // stroke silently reclassified by commit kind would replay the brush as a whole-layer blur.
+      const converted = operationForTool(item, snapshot());
+      const appended = plannedByAppend(args);
+
+      expect(converted).toMatchObject({ kind: 'apply-raster-processor', layerId, processorId: toolName });
+      expect(converted).not.toMatchObject({ kind: 'apply-filter' });
+      expect(appended.diagnostics).toEqual([]);
+      expect(appended.durableEntry?.operation).toEqual(converted);
+    }
+  );
+
+  it('refuses a raster processor that does not composite onto its input on BOTH boundaries', () => {
+    // No registered tool declares `compositesOntoInput: false` — `tool-processors.test.ts` forbids
+    // it, because every processor today reads the layer's pixels. The field is still read by both
+    // boundaries, so it has to be LIVE in both: a raster created from a processor's own stroke
+    // cannot be replayed from the durable layer source, and whichever boundary published it anyway
+    // would hand materialization an operation it cannot honour.
+    const definition = toolProcessors.gradient;
+    expect(definition.compositesOntoInput).toBeUndefined();
+    definition.compositesOntoInput = false;
+
+    try {
+      const args = { ...defaultSettings.gradient, toolName: 'gradient' };
+      const item: HistoryItem = { id: 'own-raster', actionName: TOOL_ACTION, layerId, args };
+      const appended = plannedByAppend(args as Record<string, unknown>);
+
+      expect(() => operationForTool(item, snapshot())).toThrow(UnsupportedHistoryFeatureError);
+      expect(appended.durableEntry).toBeNull();
+      expect(appended.diagnostics).toEqual([
+        expect.objectContaining({
+          historyId: 'tool-stroke',
+          code: 'unsupported-history-feature',
+          severity: 'warning',
+        }),
+      ]);
+    } finally {
+      delete definition.compositesOntoInput;
+    }
   });
 });

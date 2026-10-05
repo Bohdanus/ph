@@ -15,15 +15,22 @@ describe('rasterBoundsForStroke', () => {
     ).toEqual({ x: -5, y: 20, width: 95, height: 47 });
   });
 
-  it('never shrinks a frame that was already staged earlier in the stroke', () => {
-    expect(
-      rasterBoundsForStroke({ x: 10, y: 20, width: 40, height: 30 }, [{ x: 20, y: 30 }], 5, {
-        x: -5,
-        y: 10,
-        width: 95,
-        height: 50,
-      })
-    ).toEqual({ x: -5, y: 10, width: 95, height: 50 });
+  it('always contains the base frame, so no stroke can crop the layer out of its own raster', () => {
+    // This is the containment the removed `previous` parameter was nominally serving, and it is
+    // reachable without it: every point outside the layer only ever widens the union, and an
+    // empty stroke returns the base box untouched. A stroke that began and ended inside the
+    // layer is the case that used to be able to shrink the frame.
+    const base = { x: 10, y: 20, width: 40, height: 30 };
+    const contains = (frame: { x: number; y: number; width: number; height: number }) =>
+      frame.x <= base.x &&
+      frame.y <= base.y &&
+      frame.x + frame.width >= base.x + base.width &&
+      frame.y + frame.height >= base.y + base.height;
+
+    expect(contains(rasterBoundsForStroke(base, [{ x: 20, y: 30 }], 5))).toBe(true);
+    expect(contains(rasterBoundsForStroke(base, [{ x: 0, y: 0 }], 5))).toBe(true);
+    expect(contains(rasterBoundsForStroke(base, [], 5))).toBe(true);
+    expect(rasterBoundsForStroke(base, [], 5)).toEqual(base);
   });
 
   it('only widens when a stroke crosses outward from the layer', () => {

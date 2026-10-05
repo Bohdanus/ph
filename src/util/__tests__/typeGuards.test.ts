@@ -162,9 +162,11 @@ describe('isRasterStrokeArgs', () => {
   it.each([
     ['a frame with no points', { toolName: 'blur', rasterBounds: frame }],
     ['points with no frame', { toolName: 'blur', points: [point] }],
-    // `draw` carries `points` too, so the family restriction is the only thing separating a focus
-    // stroke from an ordinary paint one. Without it every paint tool would start widening.
-    ['a tool outside the focus family', { toolName: 'draw', points: [point], rasterBounds: frame }],
+    // `draw` and `dodge` both carry `points`, so the registry's `strokeShaped` capability is the
+    // only thing separating a stroke-shaped edit from an ordinary paint or tonal one. Without it
+    // every one of them would start widening its layer to the frame the brush happens to be inside.
+    ['a paint tool', { toolName: 'draw', points: [point], rasterBounds: frame }],
+    ['a tonal tool', { toolName: 'dodge', points: [point], rasterBounds: frame }],
     ['a non-finite point coordinate', { toolName: 'blur', points: [{ x: Number.NaN, y: 2 }], rasterBounds: frame }],
     ['a point that is not an object', { toolName: 'blur', points: [7], rasterBounds: frame }],
     ['a zero-width frame', { toolName: 'blur', points: [point], rasterBounds: { ...frame, width: 0 } }],
