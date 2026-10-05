@@ -678,6 +678,39 @@ run), and a per-test `it(name, fn, timeout)` argument still wins over the file
 budget, which is how the two tests that read git in every worktree keep their
 declared `60_000`.
 
+### The worktree-inventory suite, which is this family plus a shared store
+
+`scripts/__tests__/worktree-inventory.test.mjs` carries two cases that run the inventory
+generator over every worktree git reports, with a per-test `it(name, fn, 60_000)` argument
+that wins over the file budget. On a fleet past 150 worktrees that budget is a function of the
+operator's environment, not of the repository's content, so the knife edge moves when a sweep
+grows the fleet and when nothing is committed.
+
+Two costs compound, and it is worth keeping them apart because only one was ever measured:
+
+- **Git per worktree.** `liveWorktreeFacts()` walks the worktree list and reads each one, so
+  more worktrees means more work. This is fleet-dependent.
+- **Concurrent readers of one shared store.** `chats.mjs`, `board.mjs` and `writes.mjs` each
+  open the operator's session database independently, and `chats.mjs`'s own module docstring
+  names two unindexed `LIKE` scans over `part` as the dominant cost. This is contention-
+  dependent, and it bites hardest when the swarm is busiest.
+
+Measured on `main` with 56 worktrees: the same test passed alone unloaded at 53180ms, and
+failed inside a full suite at 76957ms with `Error: Test timed out in 60000ms`; a third
+measurement showed 147s of wall clock against 24.85s of CPU, about 17% utilisation.
+
+**Low CPU utilisation does not exonerate the fleet.** That measurement rules out a CPU- or
+process-bound cost, and running `git` per worktree is itself I/O, so the fleet term survives it.
+An earlier version of this note used the 17% figure to refute the fleet explanation, which
+over-read it. Both drivers are real; neither measurement on its own settles the other.
+
+The failure is a bare `Test timed out` with no assertion, which is byte-identical to what a
+genuine break produces — so a red here is not evidence of a break, and a green here is not
+evidence of a fix. **Do not raise the timeout to quiet it:** that moves the knife edge rather
+than removing it, and the timeout is a gate value. Make the enumeration hermetic instead —
+answer the question from a handful of synthetic worktrees in a temporary repository, which is
+the technique the fixture-based cases in the same file already use.
+
 **Remaining verification:** the code review this change was merged without. Every
 review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
 was not an available substitute, and it was merged on the operator's decision with
