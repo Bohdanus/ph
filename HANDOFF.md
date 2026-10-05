@@ -6387,3 +6387,54 @@ dangling-IDREF fixes, which checked the writer count and the reachability of the
 instead of against a grep. An earlier draft of this entry claimed `restoreVisibleCanvas` had no test and
 that a throwing layer processor was a way to reach it; both were false — it is module-private, so no test can
 name it, but three drive it, and `createLayerSource` appears nowhere in `layer-renderer.ts`.
+
+## 240. A screenshot clip taller than the viewport is silently returned short, and the capture path asserts it cannot happen
+
+**The problem.** `onScreenClip()` in `e2e/helpers/canvas-helpers.ts` is the private gate every
+viewport-relative screenshot clip passes through. It decides the region is already on screen only when
+
+```
+pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height
+```
+
+which a clip **taller than the viewport** can never satisfy. Such a clip therefore takes the scroll
+path, and the returned clip keeps its full height untouched — only `y` is rewritten:
+
+```
+clip: { ...clip, y: pageRect.y - scrolledTo },
+```
+
+Nothing compares `clip.height` against `viewport.height`, and no clamp exists anywhere in `e2e/` or
+`src/`.
+
+**Why that is a silent wrong answer rather than a loud one.** The CDP path pins
+`captureBeyondViewport: false`, and the comment beside it states the invariant this breaks:
+"the clip is inside the viewport by construction, so there is nothing beyond it to capture." With
+that flag set, Chrome clips the capture to the viewport and returns successfully, so a caller asking
+for 900px of canvas in a 720px window receives the 720px it could get — a smaller region than was
+requested, at exit 0. Any visual-regression baseline recorded through this path from an over-tall
+clip is then a baseline of the wrong region, and it will keep passing.
+
+**What makes this a defect rather than an unreachable case.** The function's own docblock calls
+itself "a SAFETY NET, not a workaround for a bug that is present", and the reason it is described as
+necessary is that a future layout change reintroducing a scrolling page would otherwise break every
+capture. The safety net handles the vertical **offset**; it does not handle the vertical **extent**,
+which is exactly the case the docblock says it exists to absorb.
+
+**What would close it.** Refuse a clip that cannot fit, rather than returning a short one: a
+`clipToViewport`-style helper that throws when `clip.height` exceeds the viewport height, called once
+at the top of `waitForCanvasPixels` before its deadline is armed and in `takeLineScreenshot`, so the
+failure names the caller instead of producing a plausible wrong image. Raising nothing and skipping
+nothing: the current code answers a different question than the one it is asked.
+
+**Files.** `e2e/helpers/canvas-helpers.ts` — `onScreenClip()` and its `alreadyVisible` test;
+`e2e/helpers/cdp-helpers.ts` — the `captureBeyondViewport: false` flag and the comment asserting
+viewport-boundedness; `e2e/helpers/history-helpers.ts` — the caller that documents `onScreenClip` as
+private to the module.
+
+**Provenance.** Found 2026-10-05 on `main` while triaging `land/audit-falsehoods-verified`, whose
+author had recorded it against a 2026-09-30 tree. Re-derived against the current tree: the
+`alreadyVisible` predicate, the untouched `height`, the absence of any clamp and the
+`captureBeyondViewport` flag were each read directly. Not reproduced as a failing screenshot — the
+defect needs a capture whose clip is taller than the window, and the suite's own viewport fixtures do
+not ask for one — so this is a read of the code path, not an observed wrong image.

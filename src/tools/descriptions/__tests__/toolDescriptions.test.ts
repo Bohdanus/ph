@@ -160,6 +160,44 @@ describe('toolDescriptions', () => {
     ).toEqual([]);
   });
 
+  it('names the crop commit controls this app renders, and promises no double-click commit', () => {
+    // A tripwire for two named claims, in the app-facing surfaces only.
+    //
+    // `CropToolArea`'s own window `keydown` listener is the crop's whole keyboard contract: Enter
+    // calls the commit and Escape the cancel, both through a ref refreshed every render. The crop
+    // panel adds the same two actions as buttons, and it labels them `Apply` and `Clear` — the
+    // record this test guards used to call them `Done / Cancel`, which is Adobe's naming and not
+    // this app's, and it told the reader that "a double-click inside the box" also commits. No
+    // double-click handler exists anywhere in the crop path: `CropToolArea.tsx`, `useRect.ts`,
+    // `document-gesture.ts` and `Crop.tsx` carry no `dblclick`, no `detail` read and no
+    // `onDoubleClick`. Both halves shipped into `docs/TOOLS.md` by the generator, so the record
+    // was the only place the claim could be corrected from.
+    //
+    // What is deliberately NOT pinned is the crop's `purpose`, which describes Photoshop and says
+    // so; Adobe's Done button and its double-click are true there, and the sentence is a
+    // fidelity record rather than a description of this app.
+    //
+    // Not vacuous: before the correction the control row read `Done / Cancel` and carried the
+    // double-click sentence, so both assertions below fail on the state that shipped.
+    // Identified by the two buttons it names rather than by position or by `appRef`, because every
+    // control on this panel shares one `appRef` and the row that commits the crop is not the first.
+    const commitRow = toolDescriptions.crop.options.find(
+      (option) => /\bApply\b/.test(option.detail) && /\bClear\b/.test(option.detail)
+    );
+
+    expect(commitRow?.control, 'the crop record no longer names the pair that commits and clears it').toBe(
+      'Apply / Clear'
+    );
+    expect(
+      toolDescriptions.crop.options.map((option) => option.detail).filter((detail) => /double-?click/i.test(detail)),
+      'a crop control row promises a double-click commit the app has no handler for'
+    ).toEqual([]);
+    expect(
+      toolDescriptions.crop.shortcuts.filter((shortcut) => /Done button/.test(shortcut.action)),
+      'a crop shortcut names a Done button this app does not render'
+    ).toEqual([]);
+  });
+
   it('resolves a shape figure to its own description rather than the generic one', () => {
     // The five shape tiles all carry the name `shape` in `toolbarMap`, so a lookup on the
     // name alone would put the generic Shape Tool's summary under the Rectangle Tool.

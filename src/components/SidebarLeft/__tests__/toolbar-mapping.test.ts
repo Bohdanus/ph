@@ -284,10 +284,6 @@ describe('toolbar mapping shortcut contract', () => {
 
 describe('toolbar mapping icon contract', () => {
   /**
-    * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
-
-describe('toolbar mapping icon contract', () => {
-  /**
    * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
    * lookup and the rail renders the result as a component. A tool added to the mapping
    * without an icon therefore has no failure of its own: it surfaces as React's "Element
