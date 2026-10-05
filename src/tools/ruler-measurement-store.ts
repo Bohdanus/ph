@@ -33,6 +33,16 @@ import type { RulerMeasurement } from './ruler.ts';
  * document. `documentId` is minted per open in `useApp` and is already in the store, so the
  * identity was available the whole time; the size is kept beside it because a CROP keeps the
  * document and changes the frame, and a line across the old frame is stale for the same reason.
+ *
+ * **WHO ADVANCES THE KEY.** `syncRulerFrame` has exactly one caller in the application, and it is
+ * `Main.tsx` rather than `RulerToolArea.tsx`, which is where it started. A module value that
+ * outlives its mounts needs an owner that is mounted when the value's WORLD changes, and the tool
+ * area is not: it is one of the registry's tools and is absent whenever another is selected, so a
+ * line measured and then left behind survived the document open that should have discarded it.
+ * `Main` is mounted whatever the active tool is. This is the same shape as
+ * `resetDocumentGestures` in `src/hooks/document-gesture.ts`, which `useKeyboardEvents` calls from
+ * its own mount and cleanup for the same reason — module state outliving a mount is bounded by
+ * resetting it from above the mount, not from inside it.
  */
 const NO_MEASUREMENT: RulerMeasurement | null = null;
 
@@ -61,7 +71,7 @@ export const clearRulerMeasurement = (): void => setRulerMeasurement(null);
 /**
  * Drops a line that belongs to a document or a frame this key cannot be describing.
  *
- * Called from the tool area with the current document and frame on every paint. An unchanged key is
+ * Called from `Main` in a layout effect, with the current document and frame. An unchanged key is
  * the overwhelmingly common case, so the comparison is a string compare and the subscribers are not
  * woken.
  *

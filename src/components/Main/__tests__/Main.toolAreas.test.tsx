@@ -1,10 +1,17 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Main, { SELECTION_INTERACTION_MODES } from '../Main.tsx';
 import { DummyToolArea } from '../DummyToolArea.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
+import {
+  resetRulerMeasurementForTest,
+  setRulerMeasurement,
+  syncRulerFrame,
+  useRulerMeasurement,
+} from '../../../tools/ruler-measurement-store.ts';
+import type { RulerMeasurement } from '../../../tools/ruler.ts';
 
 /**
  * Tool-area routing and drop handling. DummyToolArea is the real component so
@@ -58,6 +65,9 @@ const storeState = vi.hoisted(
       toolName: 'reposition' as ToolName,
       totalSize: { width: 640, height: 480 },
       documentFrame: { x: 0, y: 0, width: 640, height: 480 },
+      // `Main` reads this for the Ruler's frame key. Absent here it would read as `undefined` and
+      // key the store on the string "undefined@640x480", which every case would share.
+      documentId: 'doc-under-test',
     }) as Record<string, unknown>
 );
 
@@ -117,6 +127,10 @@ vi.mock('../QuickSelectionToolArea.tsx', () => ({ QuickSelectionToolArea: marker
 // drag, and it commits to the ACTIVE layer rather than creating one.
 vi.mock('../ColorReplacementToolArea.tsx', () => ({ ColorReplacementToolArea: marker('color-replacement') }));
 vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
+// The Ruler was missing from this list, so its area loaded for real while every sibling was a
+// marker — the file's own contract is that each one is replaced. It matters here because the real
+// area needs `CurrentToolProvider`, which this file deliberately does not mount.
+vi.mock('../RulerToolArea.tsx', () => ({ RulerToolArea: marker('ruler') }));
 vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
 vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
 vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') }));
@@ -175,6 +189,7 @@ beforeEach(() => {
   storeState.toolName = 'reposition';
   storeState.totalSize = { width: 640, height: 480 };
   storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
+  storeState.documentId = 'doc-under-test';
   storeState.currentArgs = { current: { toolName: 'brush' } as ToolArgs };
   loadDocumentFile.mockResolvedValue({ fileName: 'photo.png' });
   setImageFromUpload.mockResolvedValue(undefined);
@@ -900,5 +915,78 @@ describe('DummyToolArea', () => {
     const { container } = render(<DummyToolArea />);
 
     expect((container.firstElementChild as HTMLElement).className).toBe('');
+  });
+});
+
+/**
+ * The Ruler's measuring line is document-scoped, and `Main` is what enforces that.
+ *
+ * The line lives in a module store so it can outlive the tool area's mount, which is what makes
+ * Adobe's "selecting the Ruler tool causes it to be displayed" true. Module state outliving a
+ * mount needs an owner mounted when the value's WORLD changes, and `RulerToolArea` is not: it is
+ * one of the registry's tools, absent whenever another is selected. So the key is advanced here,
+ * where `documentId` changes whatever the active tool is.
+ *
+ * These cases are about the OWNER, and they are unit tests rather than end-to-end ones on purpose.
+ * The end-to-end consequence is a single painted frame — the stale line, and the bar reading the
+ * previous document's geometry — before the passive effect that discards it runs. An e2e assertion
+ * auto-retries, so it waits the frame out and passes with or without this ownership; a unit test
+ * observes the store immediately after the layout phase, where the difference is.
+ */
+describe("Main's ownership of the Ruler's document-scoped line", () => {
+  beforeEach(() => {
+    resetRulerMeasurementForTest();
+  });
+
+  /** Establishes a line against `documentId`, the way a measurement on that document would. */
+  const measureOn = (documentId: string, size: { width: number; height: number }) => {
+    act(() => {
+      syncRulerFrame(documentId, size);
+      setRulerMeasurement({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
+    });
+  };
+
+  const currentLine = () => {
+    const readings: (RulerMeasurement | null)[] = [];
+    const Probe = () => {
+      readings.push(useRulerMeasurement());
+      return null;
+    };
+    act(() => {
+      render(
+        <>
+          <GuardedMain />
+          <Probe />
+        </>
+      );
+    });
+    return readings[readings.length - 1];
+  };
+
+  it('discards a line measured on another document, with the Ruler NOT the active tool', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-B';
+    // The SAME SIZE as the line's own document, which is the half of the key that cannot tell two
+    // equal-sized documents apart — and the app's blank seed is a fixed size, so it is not exotic.
+    measureOn('doc-A', { width: 640, height: 480 });
+
+    expect(currentLine(), 'a line from another document must not survive into this one').toBeNull();
+  });
+
+  it('keeps the line when the document is the one it was measured on', () => {
+    storeState.toolName = 'reposition';
+    storeState.documentId = 'doc-A';
+    measureOn('doc-A', { width: 640, height: 480 });
+
+    expect(currentLine()).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
+  });
+
+  it('discards a line measured on another document when the Ruler IS the active tool', () => {
+    storeState.toolName = 'ruler';
+    storeState.currentArgs = { current: { toolName: 'ruler' } as ToolArgs };
+    storeState.documentId = 'doc-B';
+    measureOn('doc-A', { width: 640, height: 480 });
+
+    expect(currentLine()).toBeNull();
   });
 });

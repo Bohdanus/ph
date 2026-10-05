@@ -2644,12 +2644,12 @@ The Ruler answers a question about the image that no other tool answers: how far
 
 | Control               | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                  | In this app                                                    |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| X, Y                  | The starting location of the measurement, which is where the drag began rather than either end of it. The app reads the pointer-down point directly, so a drag that ends up and to the left of where it started reports the start it was given.                                                                                                                                                            | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:82`  |
-| W, H                  | The horizontal and vertical distances traveled from the x and y axes. Both are magnitudes in the app, so a drag up and to the left reports the same W and H as the drag down and to the right; Adobe prints them as unsigned distances too.                                                                                                                                                                | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:84`  |
-| A                     | The angle measured relative to the axis, in degrees. It is the one readout Adobe exempts from the document unit: "All measurements except the angle are calculated in the unit of measure currently set in the Units & Rulers preference dialog box." With a protractor present the bar re-reads it as the angle between the two legs, which is Adobe's own reuse of the same letter.                      | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:86`  |
-| D1                    | The total length traveled. The app reports it in document pixels, which is the unit available while the app has no Units & Rulers preference; a measurement scale would rescale this number and not the geometry.                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:87`  |
-| D2                    | The second leg of a protractor, and the only readout that appears and disappears with a gesture: it is present once an Alt/Option-drag has pulled a leg out of an existing line and absent before that, rather than reported as zero.                                                                                                                                                                      | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:91`  |
-| Clear                 | Removes the measuring line, which Adobe describes as one of two ways to remove it: "To remove the line, drag it outside the image area or press the Clear button". The app implements both, and the button is greyed while there is no line because there is nothing for it to remove.                                                                                                                     | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:110` |
+| X, Y                  | The starting location of the measurement, which is where the drag began rather than either end of it. The app reads the pointer-down point directly, so a drag that ends up and to the left of where it started reports the start it was given.                                                                                                                                                            | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:84`  |
+| W, H                  | The horizontal and vertical distances traveled from the x and y axes. Both are magnitudes in the app, so a drag up and to the left reports the same W and H as the drag down and to the right; Adobe prints them as unsigned distances too.                                                                                                                                                                | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:86`  |
+| A                     | The angle measured relative to the axis, in degrees. It is the one readout Adobe exempts from the document unit: "All measurements except the angle are calculated in the unit of measure currently set in the Units & Rulers preference dialog box." With a protractor present the bar re-reads it as the angle between the two legs, which is Adobe's own reuse of the same letter.                      | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:88`  |
+| D1                    | The total length traveled. The app reports it in document pixels, which is the unit available while the app has no Units & Rulers preference; a measurement scale would rescale this number and not the geometry.                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:89`  |
+| D2                    | The second leg of a protractor, and the only readout that appears and disappears with a gesture: it is present once an Alt/Option-drag has pulled a leg out of an existing line and absent before that, rather than reported as zero.                                                                                                                                                                      | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:93`  |
+| Clear                 | Removes the measuring line, which Adobe describes as one of two ways to remove it: "To remove the line, drag it outside the image area or press the Clear button". The app implements both, and the button is greyed while there is no line because there is nothing for it to remove.                                                                                                                     | `present` — `src/components/ToolbarsRight/Ruler/Ruler.tsx:112` |
 | Use Measurement Scale | A checkbox Adobe's Ruler page does not document and this app does not render. The measurement scale itself is an Image > Analysis menu command — "Select Image > Analysis > Set Measurement Scale > Custom", where the Pixel Length and Logical Length are typed — and the app has no Analysis submenu, so the scale does not exist to be switched on. Recorded rather than omitted so the gap is visible. | `missing`                                                      |
 
 **Modifiers**
@@ -2666,17 +2666,17 @@ The Ruler answers a question about the image that no other tool answers: how far
 
 Implementation:
 
-- `src/components/Main/RulerToolArea.tsx:313`
-- `src/components/Main/RulerToolArea.tsx:328`
-- `src/components/Main/RulerToolArea.tsx:411`
-- `src/components/Main/RulerToolArea.tsx:470`
-- `src/components/Main/RulerToolArea.tsx:158`
-- `src/components/Main/RulerToolArea.tsx:210`
-- `src/components/ToolbarsRight/Ruler/Ruler.tsx:71`
-- `src/tools/ruler.ts:165`
-- `src/tools/ruler.ts:106`
-- `src/tools/ruler.ts:232`
-- `src/tools/ruler-measurement-store.ts:74`
+- `src/components/Main/RulerToolArea.tsx:408`
+- `src/components/Main/RulerToolArea.tsx:423`
+- `src/components/Main/RulerToolArea.tsx:506`
+- `src/components/Main/RulerToolArea.tsx:575`
+- `src/components/Main/RulerToolArea.tsx:190`
+- `src/components/Main/RulerToolArea.tsx:277`
+- `src/components/ToolbarsRight/Ruler/Ruler.tsx:73`
+- `src/tools/ruler.ts:190`
+- `src/tools/ruler.ts:131`
+- `src/tools/ruler.ts:268`
+- `src/tools/ruler-measurement-store.ts:84`
 - `src/tools/toolProcessors.ts:103`
 - `src/tools/toolsMap.ts:153`
 - `toolbar-mapping.ts:79`

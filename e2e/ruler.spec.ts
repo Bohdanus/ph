@@ -1,5 +1,6 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -352,6 +353,53 @@ test.describe('the Ruler tool', () => {
 
     await page.keyboard.press('Shift+I');
     await expect(page.getByRole('combobox', { name: 'Sample Size' }), 'the cycle wraps').toBeVisible();
+  });
+
+  /**
+   * The measuring line must not survive a document change, and the interesting case is the one
+   * where the Ruler is NOT the active tool when the document changes.
+   *
+   * The line lives in a module store so that it can outlive the tool area's mount, which is what
+   * makes Adobe's "selecting the Ruler tool causes it to be displayed" true at all. The cost of
+   * that is that nothing inside the tool area is guaranteed to be mounted when the document under
+   * the line is replaced — and the sync that discards it used to live there, so this exact
+   * sequence carried the old line across: measure, switch tools, open a document, come back.
+   *
+   * The new document is given the SAME SIZE as the first on purpose. That is the harder half of the
+   * key, because a size-only key cannot tell two equal-sized documents apart, and the app's own
+   * blank seed is a fixed size so this is not an exotic setup — it is what a user gets by opening
+   * two documents without resizing either.
+   */
+  test('a line measured on one document is gone when another document is opened', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await clickToolButton(page, 'eyedropper');
+    await openToolFlyout(page, 'eyedropper');
+    await selectFromFlyout(page, { toolName: 'ruler', label: 'Ruler Tool' });
+
+    const box = (await page.getByTestId('workspace-canvas').boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.4);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5, { steps: 6 });
+    await page.mouse.up();
+    await expect(readout(page, 'ruler-d1')).not.toHaveText('');
+
+    // Leave the Ruler before the document changes, so the tool area is unmounted when it does.
+    await page.keyboard.press('v');
+    await expect(page.getByTestId('workspace-canvas')).toBeVisible();
+
+    await page.getByTestId('header-file-menu-button').click();
+    await page.getByTestId('header-file-new-button').click();
+    await acceptDiscardPrompt(page);
+    await expect(page.getByTestId('new-image-dialog')).toBeVisible();
+    await page.getByTestId('new-image-dialog-submit-button').click();
+    await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
+
+    // Back to the Ruler. If the line survived, this bar reports the previous document's geometry.
+    await page.keyboard.press('i');
+    await page.keyboard.press('Shift+I');
+    await expectRulerActive(page);
+    await expect(readout(page, 'ruler-d1'), "the previous document's line must not be here").toHaveText('');
+    await expect(readout(page, 'ruler-x')).toHaveText('');
   });
 
   test('dims every unimplemented tool in the rail flyouts, and no working one', async ({ page }) => {
