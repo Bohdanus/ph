@@ -103,6 +103,23 @@ function describeWorktree(finding) {
     lines.push('    no operation marker, so no `git merge --abort` will clean this up — see the index yourself');
   }
 
+  // A record with no worktree directory — an administrative directory git no longer
+  // reports — has nowhere to run `git status` and nothing to abandon from. The header
+  // tells the reader to go inside the worktree and the CAREFUL line hands over a
+  // destructive command; for this shape both are unrunnable, and an earlier version
+  // printed them anyway under a `path` that was a parenthesised sentence rather than a
+  // path any command accepts.
+  if (finding.present === false) {
+    if (finding.destructive) {
+      lines.push(
+        '    Its state lives in the administrative directory above, not in a worktree, so there is',
+        '    nothing to run in and no command here that would abandon it. Recover the state by',
+        '    hand from that directory, or prune it deliberately.'
+      );
+    }
+    return lines.join('\n');
+  }
+
   if (finding.destructive) {
     // Filtered on `destructive`, which the finding already computed, rather than on a
     // second test of the same thing: `git bisect reset` returns a non-null command and
@@ -209,8 +226,14 @@ export function run({
     err.write(REPORT_HEADER);
     err.write(`${found.map(describeWorktree).join('\n\n')}\n\n`);
     const unreadable = found.filter((f) => f.readError).length;
+    // The denominator is the ROSTER, not the record count. The cross-check re-adds
+    // registrations git dropped, so the record count legitimately exceeds the roster —
+    // and quoting it inflated the denominator by exactly the worktrees it had just
+    // rescued, which is the worst place to be off by one.
+    const extra = scanned.worktrees.length - scanned.roster;
     err.write(
-      `${found.length} of ${scanned.worktrees.length} worktree(s) need${found.length === 1 ? 's' : ''} attention` +
+      `${found.length} of ${scanned.roster} worktree(s) need${found.length === 1 ? 's' : ''} attention` +
+        `${extra > 0 ? `, plus ${extra} administrative director${extra === 1 ? 'y' : 'ies'} git no longer reports` : ''}` +
         `${unreadable > 0 ? `, ${unreadable} of them because they could not be read` : ''}.\n`
     );
   } else {
