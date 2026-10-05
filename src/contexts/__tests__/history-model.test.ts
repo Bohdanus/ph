@@ -11,6 +11,9 @@ describe('durable history preparation', () => {
     // A shallow freeze: `sourceSize` stays mutable, which is what makes the copy below
     // observable. `Object.freeze` on the source covers the source object only.
     const sourceSize = { width: 30, height: 20 };
+    // The frame is a mutable store field here for the same reason `pos` is: the copy
+    // below is only observable if the input is.
+    const frame = { x: 2, y: 3, width: 300, height: 200 };
     const source: DurableLayerSource = Object.freeze({
       kind: 'blank',
       color: '#123456',
@@ -28,15 +31,23 @@ describe('durable history preparation', () => {
         blendMode: 'source-over',
         order: 3,
         pos,
+        frame,
       },
       source
     );
 
     pos.x = 99;
+    frame.width = 999;
     sourceSize.width = 999;
 
     expect(snapshot.pos.x).toBe(4);
     expect(snapshot.pos).toStrictEqual({ x: 4, y: 5, width: 30, height: 20 });
+    // The frame is copied for the same reason `pos` is, and it is the field whose
+    // mutation would invalidate every position above: a snapshot that restated what
+    // frame it was captured against could not be trusted to describe its own geometry.
+    expect(snapshot.frame).toStrictEqual({ x: 2, y: 3, width: 300, height: 200 });
+    expect(snapshot.frame).not.toBe(frame);
+    expect(Object.isFrozen(snapshot.frame)).toBe(true);
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.pos)).toBe(true);
     // The source is a runtime object too. `cloneLayerSource`'s blank arm copies `size`

@@ -100,6 +100,25 @@ export type DurableLayerSnapshot = Readonly<{
   blendMode: GlobalCompositeOperation;
   order: number;
   pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+  /**
+   * The document frame this snapshot's geometry was taken against, copied at
+   * construction and never rewritten.
+   *
+   * Provenance, not a claim about the document's current frame. `pos` and a
+   * vector or text `source`'s `size` and `sourcePos` are document-space numbers,
+   * and a crop moves the frame those numbers are read in, so a snapshot that did
+   * not name the frame it was captured against cannot say whether it still
+   * describes the layer it claims to. A baseline layer and a layer created after
+   * a crop therefore legitimately carry different frames in one document, and
+   * replay preserves each rather than restamping it: restamping would destroy the
+   * only evidence that the two were captured under different frames.
+   *
+   * Required rather than optional on purpose. An absent frame is indistinguishable
+   * from a frame nobody recorded, which is the defect this field exists to remove,
+   * so every producer — conversion, the append planners, every test fixture —
+   * states the frame it captured against and `tsc` names the ones that do not.
+   */
+  frame: DocumentFrame;
   source: DurableLayerSource;
 }>;
 
@@ -351,6 +370,12 @@ export function toLayerSnapshot(
   return Object.freeze({
     ...layer,
     pos: Object.freeze({ ...layer.pos }),
+    // Copied and frozen with the rest of the geometry rather than spread through
+    // `...layer`, because the frame is the one field whose mutation would
+    // invalidate every position in the snapshot: a caller holding the live
+    // `documentFrame` must not be able to reach through the snapshot and restate
+    // what frame it was captured against.
+    frame: Object.freeze({ ...layer.frame }),
     source: cloneLayerSource(source),
   });
 }
@@ -367,6 +392,7 @@ export function cloneLayerSnapshot(layer: DurableLayerSnapshot): DurableLayerSna
       blendMode: layer.blendMode,
       order: layer.order,
       pos: layer.pos,
+      frame: layer.frame,
     },
     layer.source
   );

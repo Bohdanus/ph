@@ -389,6 +389,49 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     registry.shutdown();
   });
 
+  /**
+   * The provenance invariant of HANDOFF §10: a snapshot names the frame it was
+   * authored against, so a frame change is something a consumer can see rather
+   * than something a snapshot silently absorbed.
+   */
+  it('records on every snapshot the frame it was authored against, and replay does not restamp it', () => {
+    const registry = new AssetRegistry();
+    const croppedFrame = { x: 20, y: 10, width: 200, height: 150 };
+
+    const converted = convert(
+      [
+        { id: 'frame', actionName: SET_DOCUMENT_FRAME_ACTION, layerId: 'document', args: { nextFrame: croppedFrame } },
+        {
+          id: 'layer-2',
+          actionName: NEW_LAYER_ACTION,
+          layerId: 'layer-2',
+          layerSource: {
+            kind: 'blank',
+            color: '#000000',
+            opacity: 1,
+            isBedrock: false,
+            pos: { x: 20, y: 10, width: 100, height: 80 },
+          },
+        },
+      ],
+      registry
+    );
+
+    const replayed = replayDurableDocument(converted.document, converted.document.cursor);
+    // The baseline layer predates the crop and the new layer follows it, so one
+    // document legitimately holds two different provenance frames. Asserting
+    // they differ is the whole point: a model that restamped on replay, or that
+    // recorded no frame, would show one frame here and could not tell which
+    // layer was authored in which.
+    expect(replayed.frame).toStrictEqual(croppedFrame);
+    expect(replayed.layers['layer-1']?.snapshot.frame).toStrictEqual(baselineFrame);
+    expect(replayed.layers['layer-2']?.snapshot.frame).toStrictEqual(croppedFrame);
+    // And the frozen baseline snapshot keeps its own frame rather than adopting
+    // the document's later one.
+    expect(converted.document.baseline.layers[0]?.frame).toStrictEqual(baselineFrame);
+    registry.shutdown();
+  });
+
   it('drops a document frame action that carries no next frame and reports the loss', () => {
     const registry = new AssetRegistry();
 

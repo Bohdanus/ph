@@ -660,6 +660,9 @@ describe('durable entry id uniqueness', () => {
             blendMode: 'source-over',
             order: 0,
             pos: { x: 0, y: 0, width: 100, height: 80 },
+            // Provenance: the document source opened the document at `baselineFrame`,
+            // and a baseline layer records the frame it was authored against.
+            frame: baselineFrame,
             source: {
               kind: 'blank',
               color: '#ffffff',

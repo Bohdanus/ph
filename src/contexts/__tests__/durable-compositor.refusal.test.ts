@@ -129,6 +129,7 @@ function layer(
     blendMode: options.blendMode ?? 'source-over',
     order,
     pos,
+    frame: { ...frame },
     source: source(pos.width, pos.height),
   });
   return Object.freeze({ snapshot, operations: Object.freeze(options.operations ?? []) });

@@ -34,6 +34,7 @@ function layer(id: string, overrides: Partial<DurableLayerSnapshot> = {}): Durab
     blendMode: 'source-over',
     order: 0,
     pos: { x: 0, y: 0, width: 8, height: 6 },
+    frame: { x: 0, y: 0, width: 100, height: 100 },
     source: blankSource,
     ...overrides,
   };

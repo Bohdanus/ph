@@ -62,6 +62,7 @@ function makeSnapshot(
     blendMode: 'source-over' as GlobalCompositeOperation,
     order: 0,
     pos,
+    frame: { ...defaultFrame },
     source,
   });
 }
