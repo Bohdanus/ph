@@ -12,6 +12,8 @@ import {
 const DOC_A = 'doc-a';
 const DOC_B = 'doc-b';
 const SIZE = { width: 800, height: 600 };
+/** `documentFrame.x`/`.y`, which `totalSize` cannot carry. `doc-a` opens at the origin. */
+const AT_ORIGIN = { x: 0, y: 0 };
 const LINE = { start: { x: 10, y: 10 }, end: { x: 110, y: 10 } };
 
 /**
@@ -48,7 +50,7 @@ describe('the ruler measurement store', () => {
 
     // Adobe: "If your document has an existing measuring line, selecting the Ruler tool causes it
     // to be displayed" — a line that vanished on every switch could never satisfy that.
-    act(() => syncRulerFrame(DOC_A, SIZE));
+    act(() => syncRulerFrame(DOC_A, SIZE, AT_ORIGIN));
 
     expect(store.current()).toEqual(LINE);
   });
@@ -57,7 +59,7 @@ describe('the ruler measurement store', () => {
     const store = readStore();
     act(() => {
       setRulerMeasurement(LINE);
-      syncRulerFrame(DOC_A, SIZE);
+      syncRulerFrame(DOC_A, SIZE, AT_ORIGIN);
     });
     expect(store.current()).toEqual(LINE);
 
@@ -66,32 +68,67 @@ describe('the ruler measurement store', () => {
     // line standing over the second — with the bar reporting X/Y/W/H/D1 for a line that does not
     // exist in this document. A size cannot tell two documents apart; `documentId` can, and it was
     // already in `StoreContext` the whole time.
-    act(() => syncRulerFrame(DOC_B, SIZE));
+    act(() => syncRulerFrame(DOC_B, SIZE, AT_ORIGIN));
 
     expect(store.current()).toBeNull();
   });
 
-  it('DROPS the line on a CROP of the same document, because the frame origin has moved', () => {
+  it('DROPS the line when a CROP of the same document changes the frame SIZE', () => {
     const store = readStore();
     act(() => {
       setRulerMeasurement(LINE);
-      syncRulerFrame(DOC_A, SIZE);
+      syncRulerFrame(DOC_A, SIZE, AT_ORIGIN);
     });
 
-    act(() => syncRulerFrame(DOC_A, { width: 400, height: 300 }));
+    act(() => syncRulerFrame(DOC_A, { width: 400, height: 300 }, AT_ORIGIN));
 
     expect(store.current()).toBeNull();
+  });
+
+  it('DROPS the line on a CROP that moves the origin at an UNCHANGED frame size', () => {
+    const store = readStore();
+    const CROPPED = { width: 400, height: 300 };
+    act(() => {
+      setRulerMeasurement(LINE);
+      syncRulerFrame(DOC_A, CROPPED, AT_ORIGIN);
+    });
+    expect(store.current()).toEqual(LINE);
+
+    // The defect this pins. A crop keeps the document and `totalSize` is `documentFrameSize(frame)`,
+    // so the same-size band off the top and then the same-size band off the left produced ONE key
+    // and the second crop kept the first crop's line. Nothing about the frame's SIZE had changed,
+    // so a size in the key could not see it — while a measurement is in FRAME coordinates, so
+    // every pixel that line names had just been cropped away and X/Y were reporting against it.
+    act(() => syncRulerFrame(DOC_A, CROPPED, { x: 120, y: 80 }));
+
+    expect(store.current()).toBeNull();
+  });
+
+  it('KEEPS the line when the frame origin moves BACK to the one it was measured on', () => {
+    const store = readStore();
+    const CROPPED = { width: 400, height: 300 };
+    act(() => {
+      setRulerMeasurement(LINE);
+      syncRulerFrame(DOC_A, CROPPED, AT_ORIGIN);
+    });
+
+    // Not a blanket "any second crop drops it": a crop that lands back on the frame the line was
+    // measured against describes the same document pixels, so the line is still that line. This is
+    // what makes the ORIGIN part of the key rather than a counter of how many crops have happened.
+    act(() => syncRulerFrame(DOC_A, CROPPED, AT_ORIGIN));
+
+    expect(store.current()).toEqual(LINE);
   });
 
   it('does not wake its subscribers for a sync that changes nothing', () => {
     const store = readStore();
     act(() => {
       setRulerMeasurement(LINE);
-      syncRulerFrame(DOC_A, SIZE);
+      syncRulerFrame(DOC_A, SIZE, AT_ORIGIN);
     });
     const before = store.renders.mock.calls.length;
 
-    act(() => syncRulerFrame(DOC_A, SIZE));
+    act(() => syncRulerFrame(DOC_A, SIZE, AT_ORIGIN));
 
     // A sync runs on every paint of the tool area, so waking the options bar each time would
     // re-render the seven readouts on every pointer move for a document that did not change.
@@ -102,7 +139,7 @@ describe('the ruler measurement store', () => {
     const store = readStore();
     act(() => {
       setRulerMeasurement(LINE);
-      syncRulerFrame(DOC_A, SIZE);
+      syncRulerFrame(DOC_A, SIZE, AT_ORIGIN);
     });
 
     act(() => clearRulerMeasurement());
@@ -114,7 +151,7 @@ describe('the ruler measurement store', () => {
 
   it('publishes a NEW object even when the geometry is identical, because a drag republishes it', () => {
     const store = readStore();
-    act(() => syncRulerFrame(DOC_A, SIZE));
+    act(() => syncRulerFrame(DOC_A, SIZE, AT_ORIGIN));
 
     // The store's own doc says the value is held by reference and that a drag publishes a fresh
     // object per move. A store that deduplicated by geometry would freeze the last move of a drag.

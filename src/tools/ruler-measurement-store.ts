@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { Size } from '../contexts/general-types.ts';
+import type { Point, Size } from '../contexts/general-types.ts';
 import type { RulerMeasurement } from './ruler.ts';
 
 /**
@@ -25,14 +25,29 @@ import type { RulerMeasurement } from './ruler.ts';
  * when the DOCUMENT changes instead, and a crop is covered for the same reason: a line measured
  * against an origin that has moved is worse than no line.
  *
- * The key is `documentId` AND the frame size together, and it has to be both. Size alone was the
- * first version and it was wrong in a way no test caught: two documents of the same size — the
- * common case, since the app's own default is 800×600 and its Blank seed is a fixed size — produced
- * an equal key, so opening the second one left the first one's line standing, painted over it, with
- * the options bar reporting authoritative-looking X/Y/W/H/D1 for a line that does not exist in this
- * document. `documentId` is minted per open in `useApp` and is already in the store, so the
- * identity was available the whole time; the size is kept beside it because a CROP keeps the
- * document and changes the frame, and a line across the old frame is stale for the same reason.
+ * The key is `documentId`, the frame ORIGIN and the frame SIZE together, and it has to be all
+ * three. Each one was a version that was wrong in a way no test caught.
+ *
+ * `documentId` alone was wrong because two documents of the same size — the common case, since the
+ * app's own default is 800×600 and its Blank seed is a fixed size — produced an equal key, so
+ * opening the second one left the first one's line standing, painted over it, with the options bar
+ * reporting authoritative-looking X/Y/W/H/D1 for a line that does not exist in this document.
+ * `documentId` is minted per open in `useApp` and is already in the store, so the identity was
+ * available the whole time.
+ *
+ * Size joined it because a CROP keeps the document and changes the frame. Size alone as the
+ * remaining half was still wrong, and it is the case this module now has a test for: the line is
+ * stored in FRAME coordinates — `RulerToolArea` measures in overlay-canvas pixels and its own
+ * `isInsideFrame` refuses to subtract `documentFrame.x` — so a crop that keeps the size and moves
+ * the origin re-anchors every pixel the line names to different DOCUMENT coordinates, and a 400×300
+ * crop at one origin and a 400×300 crop at another produced one key. Cropping a band out of the top
+ * and then a band of the same size out of the left is two ordinary gestures, and the second left the
+ * first crop's line standing over the new frame with the bar reporting X/Y against coordinates that
+ * were cropped away.
+ *
+ * So the origin is part of the key, and it is passed rather than derived: `totalSize` is
+ * `documentFrameSize(frame)` and carries no `x`/`y`, so the store cannot recover the origin from
+ * what it was already given. `Main` reads both out of `StoreContext` and hands them over together.
  *
  * **WHO ADVANCES THE KEY.** `syncRulerFrame` has exactly one caller in the application, and it is
  * `Main.tsx` rather than `RulerToolArea.tsx`, which is where it started. A module value that
@@ -75,14 +90,21 @@ export const clearRulerMeasurement = (): void => setRulerMeasurement(null);
  * the overwhelmingly common case, so the comparison is a string compare and the subscribers are not
  * woken.
  *
+ * `origin` is `documentFrame.x`/`.y`, and it is an ARGUMENT rather than something read from `size`
+ * because `size` is `totalSize` — `documentFrameSize(frame)`, which is width and height and no
+ * position. A measurement is in FRAME coordinates, so the origin is the half of the frame that says
+ * which document pixels those frame coordinates name, and without it two equal-sized frames are one
+ * key. `documentFrameEquals` is the same four-field comparison the crop commit already makes, so
+ * there is one definition of "the frame changed" in the app rather than two.
+ *
  * The FIRST sync only establishes the key, and that is a deliberate asymmetry rather than an
  * oversight. There is no previous document for a line to be stale against, so treating the blank
  * key as "a different document" would drop a line published before the tool area ever mounted —
  * which is reachable from a test that seeds the store, and is a footgun in the API even where the
  * app's own ordering happens to avoid it. A real key is never blank, so the sentinel is safe.
  */
-export const syncRulerFrame = (documentId: string, size: Size): void => {
-  const key = `${documentId}@${size.width}x${size.height}`;
+export const syncRulerFrame = (documentId: string, size: Size, origin: Point): void => {
+  const key = `${documentId}@${origin.x},${origin.y}+${size.width}x${size.height}`;
   if (key === frameKey) return;
   const isFirstSync = frameKey === '';
   frameKey = key;
