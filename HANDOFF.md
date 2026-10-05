@@ -6498,3 +6498,122 @@ author had recorded it against a 2026-09-30 tree. Re-derived against the current
 `captureBeyondViewport` flag were each read directly. Not reproduced as a failing screenshot — the
 defect needs a capture whose clip is taller than the window, and the suite's own viewport fixtures do
 not ask for one — so this is a read of the code path, not an observed wrong image.
+
+## 243. The primary worktree is classified `landed` before any uncommitted-work branch can run
+
+**Problem.** `classify()` in `scripts/lib/worktree-inventory/classify.mjs` tests `wt.isPrimary`
+BEFORE it tests for uncommitted work, unmerged paths, or a tip it cannot read. The `isPrimary`
+branch sets `status = STATUS.LANDED` with the reason `this is the main worktree`, and the
+recommendation branch that follows it returns `keep` or `in-use` for the same reason. Every later
+branch — the one for "0 commits ahead of main and uncommitted changes", the one for
+`unmerged-work`, the one for `unreadable` — is therefore unreachable for the main checkout.
+
+**Why it matters.** `main` is the one worktree in this repository that other sessions resolve paths
+through and the one a merge lands in, so it is the most likely place for a half-finished operation to
+sit. `npm run dispose` refuses the main worktree anyway, so nothing is deleted by this; but
+`WORKTREES.json` reports `landed` for a checkout holding uncommitted work, and every reader of that
+verdict — the board's headline totals, `npm run swarm`, a session deciding whether the repository is
+quiet — is told the worktree is finished. It is the same shape as the hazard `npm run repo:state`
+was written for, one layer up: a verdict asserted without having been established.
+
+**What would close it.** Move the `isPrimary` test below the uncommitted and unmerged branches, so
+the main worktree reports `unmerged-work` or `uncommitted-only` when it holds work, and keep
+`isPrimary` only where it belongs: in the recommendation, which is where the "never a deletion
+candidate" rule actually lives. The existing comment on that recommendation already explains why
+`live` is computed locally rather than read off the record, so the branch is understood; only its
+position is wrong.
+
+**Files.** `scripts/lib/worktree-inventory/classify.mjs` — `classify()`'s `status` chain and its
+`recommendation` chain; `scripts/__tests__/worktree-inventory.test.mjs` — the suite that pins the
+current ordering.
+
+**Provenance.** Read from the tree on 2026-10-05. The ordering is visible in the `status` chain
+directly; no test asserts the main worktree may be `landed` while dirty, and the entry is filed from
+the code rather than from an observed wrong verdict.
+
+## 244. Nothing enforces the `Chat:` and `Branch:` trailers, so untraceable commits reach `main`
+
+**Problem.** `.husky/` contains `post-merge`, `pre-commit`, `pre-merge-commit` and `pre-push`. None
+of them is `commit-msg`, and no script in `scripts/` validates a commit message. `AGENTS.md` requires
+every commit to carry a `Chat:` trailer and every merge into `main` to carry `Branch:`, but nothing
+in the tree enforces either, so a commit that omits both lands like any other.
+
+**Why it matters.** Two commits already on `main` show both failure modes. `c9ec5292` carries
+neither trailer, and its message contains a LITERAL `\n\n` rather than newlines — the two characters,
+backslash and n — so any parser reading the message for `Branch:` or `Chat:` finds nothing, because
+the trailer is part of the subject line. `0948b2cd` does carry both trailers, with the same literal
+`\n\n` between them. `npm run swarm -- --agent ses_…` resolves a session's identity from these
+trailers, so a commit whose trailers cannot be read cannot be attributed to the session that made it.
+
+**What would close it.** A `commit-msg` hook that requires `Chat: ses_` on every commit and `Branch:`
+on a merge into `main`, with the check in a script under `scripts/` so it is testable, and a refusal
+that prints the exact remedy rather than a boolean. The risk to weigh before adding it: a hook that
+blocks commits during an incident gets bypassed, and `--no-verify` then protects nothing. Scope it to
+the trailer that matters most and state the bypass in the message.
+
+**Files.** `.husky/` — the missing `commit-msg`; `scripts/merge-takeover-guard.mjs` — the existing
+`pre-merge-commit` gate whose install pattern a second hook would follow;
+`scripts/lib/worktree-inventory/chats.mjs` — the consumer that resolves a session id from a trailer.
+
+**Provenance.** Verified on `main` at 2026-10-05: the four hook files were listed, and both commit
+messages were read with `cat -v` to show the literal escape. `c9ec5292` has no `Chat:` line at all.
+
+## 245. `WORKTREES.json` has no field for a merge, rebase or bisect in progress
+
+**Problem.** A worktree holding an unresolved or resolved-but-uncommitted merge keeps that state in
+its git directory. `WORKTREES.json` cannot represent it. The inventory's only merge signal is
+`mergeConflict`, produced by `git merge-tree --write-tree` against the branch tip — a HYPOTHETICAL
+merge of the base against the tip, which says nothing about an operation already running. A worktree
+mid-merge and a worktree with no merge produce the same record. This was confirmed directly: the
+inventory for a worktree holding a real eight-path unresolved merge carried `mergeConflict: null` and
+`mergeChecked: false`.
+
+**Why it matters.** `WORKTREES.json` is what `npm run dispose`, `npm run swarm` and a session
+deciding whether to sweep all read, and `workingTreeState()` counts a `UU` path as an ordinary
+modification, so a conflict is indistinguishable from an edit. Until recently the only way to see
+this state was to run `find .git/worktrees -name MERGE_HEAD` by hand — which is how the incident that
+prompted `npm run repo:state` was found. That command now exists and reports the state, but nothing in
+the inventory consumes it, so the verdict a session reads still cannot express it.
+
+**What would close it.** Read the per-worktree operation state that `scripts/lib/git-operation-state.mjs`
+already computes and carry it on each inventory record — the same fields `repo:state` prints — then
+have `classify()` treat an operation in progress as `unmerged-work` regardless of ahead/dirty. The
+blast radius is the reason this is filed rather than done: `classify()`'s verdicts are read by 160
+tests, and the fix should land with the tests that pin the new verdict rather than alongside a
+refactor.
+
+**Files.** `scripts/lib/worktree-inventory/git.mjs` — `mergeConflict` and the `git merge-tree` call;
+`scripts/lib/worktree-inventory/classify.mjs` — `mergeVerdict()` and the `status` chain;
+`scripts/lib/git-operation-state.mjs` — the reader to consume, and `scanRepository`'s per-record
+`operations`.
+
+**Provenance.** Verified on `main` at 2026-10-05 by reading a real record for a worktree that held an
+unresolved merge, and by grepping `git diff --name-only --diff-filter=U` across `scripts/` where it
+appears in no parser but the new one.
+
+## 246. `repo:state`'s cross-check sees one direction of a dropped registration, and says so only in a comment
+
+**Problem.** `unclaimedAdminDirs()` in `scripts/lib/git-operation-state.mjs` cross-checks git's
+roster against the administrative directories, because `chmod 000` on an administrative directory
+makes `git worktree list --porcelain` omit the registration entirely. It therefore catches a
+registration git can no longer DESCRIBE. It cannot catch the other direction: an administrative
+directory deleted while the worktree directory survives. Measured: removing
+`<gitdir>/worktrees/<name>` with the worktree still on disk makes git omit it, the administrative
+directory is no longer there to be counted, and the record count drops by one with nothing reported.
+
+**Why it matters.** The report's central claim is that "I could not look here" can never be reported
+as "clean here", and that claim is currently true only for one of the two ways a registration can go
+missing. Closing the second direction needs a scan for `.git` FILES in the worktree fleet, which is a
+different traversal from the one this module does. That is not a reason to leave it unstated — it is
+a reason to state it, because the docstring currently implies the roster's gaps are closed.
+
+**What would close it.** Either extend the cross-check to compare the roster against a `.git`-file
+scan, or amend the docstring and the `docs/ORCHESTRATION.md` section to say which direction is
+covered. The second is honest and cheap; the first is a real traversal with its own cost, and should
+be measured against a fleet before it lands.
+
+**Files.** `scripts/lib/git-operation-state.mjs` — `unclaimedAdminDirs()` and `scanRepository()`;
+`docs/ORCHESTRATION.md` — `What git is doing right now`.
+
+**Provenance.** Found and measured by a review of `fix/repo-state-roster` on 2026-10-05, and
+reproduced by removing one administrative directory from a fixture with a live worktree beside it.
