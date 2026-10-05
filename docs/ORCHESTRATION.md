@@ -492,7 +492,7 @@ node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
 **Read `action` first.** Every record carries one value, and it is the whole
-answer — which of the six things it is:
+answer — which of the seven things it is:
 
 | `action`    | meaning                                                                                         | do this                            |
 | ----------- | ----------------------------------------------------------------------------------------------- | ---------------------------------- |
@@ -531,9 +531,13 @@ verdict: it says do not merge this either.
 
 `legacy` is one of two curated fields that may move a verdict. The other is
 `mustNotPrune`, which says the work is **not** accounted for; `legacy` says it is
-and will never be worked on again. They are opposite claims about one tree, and the
-one about losing content wins — `preflight` checks `must-not-prune` before it
-accepts `action: "legacy"`.
+and will never be worked on again. They are opposite claims about one tree, so an
+entry carrying both is self-contradictory and `mustNotPrune` wins: `classify`
+reports `at-risk` and the `legacy` flag is inert. That precedence is in the
+classifier, where the verdict is formed, and `preflight` refuses
+`action: "legacy"` on a record carrying `mustNotPrune` as well — two independent
+lines, because the inventory is what a human reads and the flag pair must not
+resolve to "disposable" on either surface.
 
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as

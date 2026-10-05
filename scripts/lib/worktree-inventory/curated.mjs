@@ -58,6 +58,15 @@
  * `at-risk` and the claim is ignored. `classify` enforces it and the suite pins
  * both directions.
  *
+ * IT LOSES TO `mustNotPrune`, AND THAT IS ENFORCED IN `classify`, NOT ONLY AT
+ * DISPOSAL. An entry can carry both flags, and they are opposite claims about one
+ * tree: this one says the directory may go, `mustNotPrune` says the directory is
+ * the only copy. Checked only at `preflight`, the pair filed the worktree as
+ * `legacy` — "worktree disposable, BRANCH KEPT", listed under no protection —
+ * and the refusal downstream was the only thing between that and a lost tree.
+ * The condition in `classify` makes the pair resolve to `at-risk`, so the claim
+ * about losing content wins wherever the verdict is read.
+ *
  * IT IS A CLAIM ABOUT THE FUTURE, SO IT MUST CARRY A NOTE. The reason is the
  * whole content of the entry: which branch, kept for what, and what would make
  * it worth revisiting. An entry saying only `legacy: true` asserts an indefinite

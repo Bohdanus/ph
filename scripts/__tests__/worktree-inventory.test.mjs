@@ -1249,6 +1249,37 @@ describe('classify: a curated legacy claim', () => {
     );
   });
 
+  it('loses to mustNotPrune, because that one is about content', () => {
+    // THE PRECEDENCE IS ASSERTED HERE, NOT AT `preflight`.
+    //
+    // Both flags on one entry is a self-contradictory entry — `mustNotPrune`
+    // says the directory is the only copy, `legacy` says it may go — and the
+    // ladder checks `legacy` above both `curatedBlocksPrune` arms. Without this
+    // guard the pair classified as `legacy`: printed as "worktree disposable,
+    // BRANCH KEPT", listed under no protection at all, while the record still
+    // carried `mustNotPrune` for `preflight` to catch downstream.
+    //
+    // `preflight` DOES refuse that record, so no directory was lost — which is
+    // exactly why the defect survived the existing test at the disposal layer.
+    // A second line of defence was doing the work of the first, on the surface a
+    // human reads. The flag pair must resolve to `at-risk` wherever the verdict
+    // is formed.
+    const both = { mustNotPrune: true, legacy: true, note: 'contradictory entry' };
+    for (const shape of [
+      wt({ name: 'landed', ahead: 0, mergedIntoBase: true }),
+      wt({ name: 'to-land', ahead: 4, mergedIntoBase: false, merge: { conflict: false } }),
+    ]) {
+      const v = of(shape, both);
+      expect(v.action, `${shape.name}: mustNotPrune must win over legacy`).toBe(ACTION.AT_RISK);
+      expect(v.prunable, `${shape.name}: a legacy verdict must not be reachable here`).toBe(false);
+      // And the flag pair is visibly inert rather than silently overriding:
+      // the verdict is the one `mustNotPrune` alone produces.
+      expect(v.action, `${shape.name}: the two flags must agree`).toBe(
+        of(shape, { mustNotPrune: true, note: 'a finding' }).action
+      );
+    }
+  });
+
   it('changes nothing when the branch is already disposable and no flag is set', () => {
     // Guards the negative direction: adding a field to `classify` must not make
     // every clean merged branch legacy by accident.

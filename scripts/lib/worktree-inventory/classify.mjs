@@ -351,7 +351,7 @@ export function classify(
               ).toISOString()}`
             : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
-  } else if (curatedLegacy && !uncommitted && !wt.detached && wt.tip !== null) {
+  } else if (curatedLegacy && !curatedBlocksPrune && !uncommitted && !wt.detached && wt.tip !== null) {
     // CHECKED HERE, NOT AT THE BOTTOM, AND ONLY FOR A CLEAN TREE.
     //
     // `uncommitted` is the load-bearing condition. `legacy` authorises removing
@@ -361,6 +361,23 @@ export function classify(
     // seen, so allowing it here would let a prose field authorise the loss the
     // whole program exists to prevent. A dirty legacy worktree therefore stays
     // `at-risk`, which is where a human has to look.
+    //
+    // `!curatedBlocksPrune` IS THE OTHER GUARD THAT MATTERS, AND IT WAS THE ONE
+    // MISSING. An entry can carry both flags, and they are opposite claims about
+    // one tree: `mustNotPrune` says the work is in no commit and no ref, so the
+    // directory is the only copy; `legacy` says the directory may go. Without
+    // this condition the ladder below never reached either `curatedBlocksPrune`
+    // arm, so the pair filed the worktree as `legacy` — printed as "worktree
+    // disposable, BRANCH KEPT" and listed under NO protection, which is the
+    // opposite of what the flag pair says.
+    //
+    // `preflight` refuses `action: "legacy"` when the record also carries
+    // `mustNotPrune`, so nothing was lost through `npm run dispose` — but that
+    // made a second line of defence the only one, and the inventory is what a
+    // human reads. The precedence belongs HERE, where the verdict is formed.
+    // With it, the flag pair is self-contradictory in the safe direction: the
+    // entry reports `at-risk`, the claim about losing content wins, and the
+    // `legacy` flag is visibly inert rather than silently overriding.
     //
     // `detached` and an unreadable tip are excluded for the same reason
     // `mustNotPrune` cannot rescue them: there is no branch to keep, so

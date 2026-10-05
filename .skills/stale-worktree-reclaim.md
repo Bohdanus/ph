@@ -130,14 +130,15 @@ node scripts/worktree-inventory.mjs          # regenerate, then read it
 there is no commit step: regenerate it whenever you add or remove a worktree, and never
 `git add -f` it. **Read `action` first**, and treat it as a point-in-time answer:
 
-| `action`    | meaning                                                                 |
-| ----------- | ----------------------------------------------------------------------- |
-| `land`      | clean tree, commits ahead of `main`, merges clean — land it             |
-| `at-risk`   | work on no ref, the merge needs a human, or a curated finding disagrees |
-| `dispose`   | on `main`, clean, nothing protects it — delete it                       |
-| `in-use`    | an agent or session is active there — leave it alone                    |
-| `keep`      | the main checkout — never a candidate                                   |
-| `undecided` | cannot be told from what is known — do not remove it                    |
+| `action`    | meaning                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------ |
+| `land`      | clean tree, commits ahead of `main`, merges clean — land it                                            |
+| `at-risk`   | work on no ref, the merge needs a human, or a curated finding disagrees                                |
+| `dispose`   | on `main`, clean, nothing protects it — delete it                                                      |
+| `legacy`    | a curated `legacy: true`: clean, and nobody will work on it again — drop the worktree, keep the branch |
+| `in-use`    | an agent or session is active there — leave it alone                                                   |
+| `keep`      | the main checkout — never a candidate                                                                  |
+| `undecided` | cannot be told from what is known — do not remove it                                                   |
 
 ## 2 — Rank by staleness
 

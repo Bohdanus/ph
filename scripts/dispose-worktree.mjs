@@ -1252,7 +1252,18 @@ export function dispose(
   } catch (err) {
     steps.push(`KEPT worktree ${gitState.absolutePath}: ${firstLine(err)}`);
     steps.push(`nothing was deleted; its branch is still anchored at ${ref ?? 'no anchor'}`);
-    return { steps, branchDeleted: false, worktreeRemoved: false, anchorRef: ref, salvage: saved };
+    // `branchKept` IS HERE TOO, not only on the paths that reach the branch step.
+    // Nothing was deleted, so a kept branch was trivially kept — and a caller
+    // reading `branchKept` found `undefined` on this path and `true` on the
+    // other, so the shape depended on which failure happened.
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: ref,
+      salvage: saved,
+      branchKept: keepBranch,
+    };
   }
 
   let branchDeleted = false;
