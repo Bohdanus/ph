@@ -589,7 +589,22 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (error) {
-    return { ok: false, reason: 'git worktree list failed', detail: error?.message ?? String(error), worktrees: [] };
+    try {
+      // `safe.bareRepository=explicit` disables repository discovery from inside a
+      // bare repository; naming its git directory explicitly keeps bare scans usable.
+      listing = execFileSync('git', [`--git-dir=${cwd}`, 'worktree', 'list', '--porcelain', '-z'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (fallbackError) {
+      return {
+        ok: false,
+        reason: 'git worktree list failed',
+        detail: `${error?.message ?? String(error)}\nExplicit git-directory lookup failed: ${fallbackError?.message ?? String(fallbackError)}`,
+        worktrees: [],
+      };
+    }
   }
 
   const entries = parseWorktreeListing(listing);
@@ -601,7 +616,11 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
       worktrees: [],
     };
   }
-  const commonDir = resolveCommonDir(cwd);
+  const bareRoot =
+    entries.length === 1 &&
+    entries[0].bare === true &&
+    (realpathIfPresent(entries[0].path) ?? entries[0].path) === (realpathIfPresent(cwd) ?? cwd);
+  const commonDir = bareRoot ? entries[0].path : resolveCommonDir(cwd);
 
   // Every admin directory the roster did not account for, read as records below. This
   // is what a `chmod` on an admin directory produces — a registration git can no longer
@@ -666,7 +685,7 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
           };
         }
 
-        const gitDir = resolveGitDir(entry.path);
+        const gitDir = entry.bare === true ? entry.path : resolveGitDir(entry.path);
         let unmerged = [];
         let readError = gitDir === null ? 'git rev-parse --absolute-git-dir failed' : null;
         // A bare repository's only entry has no working tree, so the work-tree-only query

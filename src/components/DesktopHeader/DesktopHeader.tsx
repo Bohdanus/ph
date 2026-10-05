@@ -101,6 +101,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'burn', label: 'Burn Tool' },
   { toolName: 'sponge', label: 'Sponge Tool' },
   { toolName: 'eyedropper', label: 'Eyedropper Tool' },
+  { toolName: 'color-sampler', label: 'Color Sampler Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
   { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
