@@ -226,7 +226,7 @@ describe('DodgeToolArea', () => {
     // would still pass.
     //
     // `size: 20` and `hardness: 0.5` here differ from the seeded defaults (`size: 40`,
-    // `hardness: 100`, `src/tools/settings.ts:256-263`), which is what makes the payload
+    // `hardness: 100` in `defaultSettings.dodge`), which is what makes the payload
     // distinguishable from a default-shaped one on those two fields. `exposure` and `range` are
     // the defaults for this tool and cannot be made to differ by fixture alone; `toolName` is
     // what separates a dodge payload from a burn one, and it is asserted exactly.

@@ -366,10 +366,10 @@ describe('App mobile surface reset', () => {
     expect(shell()).toHaveAttribute('data-tool-sheet', 'true');
     expect(shell()).toHaveAttribute('data-layers', 'true');
 
-    // `MOBILE_MEDIA_QUERY` is `(width < 768px)` (`src/hooks/useMediaQuery.ts:14`), so 767 is the
-    // last mobile width and 768 the first desktop one. The whole condition is `wasMobile !==
-    // isMobile`, so a reset that ignored the DIRECTION would close a drawer the user had just
-    // opened, 500 -> 767 away, with nothing on screen to explain it.
+    // `MOBILE_MEDIA_QUERY` is `(width < 768px)`, so 767 is the last mobile width and 768 the
+    // first desktop one. The whole condition is `wasMobile !== isMobile`, so a reset that
+    // ignored the DIRECTION would close a drawer the user had just opened, 500 -> 767 away,
+    // with nothing on screen to explain it.
     act(() => {
       setViewportWidth(767);
     });

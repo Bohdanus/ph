@@ -583,10 +583,10 @@ describe('Main tool-area routing', () => {
     const previousFrame = storeState.documentFrame;
 
     // The negative half, and it is the half that was missing: the effect's deps are
-    // `[documentFrame, drawAllLayers, layers]` (`src/components/Main/Main.tsx:146-148`), all
-    // three unchanged by identity here, so a re-render must repaint NOTHING. Asserting only the
-    // positive case below passes against an effect whose deps were emptied — which would
-    // re-rasterize the whole document on every render, including every pointer move that
+    // `[documentFrame, drawAllLayers, layers]`, all three unchanged by identity here, so a
+    // re-render must repaint NOTHING. Asserting only the positive case below passes against
+    // an effect whose deps were emptied — which would re-rasterize the whole document on
+    // every render, including every pointer move that
     // re-renders `Main`. `GuardedMain`, not a bare `Main`: `Main` reads `useUnsavedChanges`, which
     // throws outside its provider, and the render under test is the same one the positive half uses.
     rerender(<GuardedMain />);

@@ -249,7 +249,7 @@ describe('TIFF error paths', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
-  // One case per clause of the guard at `tiff-utils.ts:156-161`, because each clause is a
+  // One case per clause of the `loadTiffFile` dimension guard, because each clause is a
   // separate way for a page to describe something no canvas can hold. The positive cases
   // above cover none of them: a negative or fractional extent is truthy, so it survives the
   // `!width || !height` catch and lands on `canvas.width = -4` / `canvas.width = 2.5`.

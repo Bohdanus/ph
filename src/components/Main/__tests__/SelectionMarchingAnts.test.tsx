@@ -274,23 +274,27 @@ describe('SelectionMarchingAnts', () => {
     expect(cycled[1]?.offset).toBeCloseTo(strokes[1]?.offset ?? Number.NaN, 9);
   });
 
-  it('leaves a rectangular selection to `useRect`, which already strokes that border with handles', () => {
+  it('marches a rectangular selection the way it marches a polygon', () => {
     // A RECTANGLE is marched like every other selection, and that is the deliberate contract
-    // rather than an oversight. `useSelectionMarchingAnts` takes every active selection
-    // whatever made it — Adobe documents the border as the universal display of a pixel
-    // selection, listing all nine marquee and lasso tools as making selections, with none
-    // of them documented as producing a different kind of border — and the tool areas
-    // that used to draw their own dashed outline no longer do. This test used to assert the
-    // opposite (that a rectangle is skipped so it cannot double `useRect`'s border), which
-    // pinned the pre-Adobe behaviour and would have failed the moment the doubling was
-    // removed at the source.
+    // rather than an oversight. `useSelectionMarchingAnts` filters on `isActive` alone and
+    // never inspects `geometry`, so every active selection is drawn — Adobe documents the
+    // border as the universal display of a pixel selection, listing all nine marquee and
+    // lasso tools as making selections, with none of them documented as producing a
+    // different kind of border. This test used to assert the OPPOSITE (that a rectangle is
+    // skipped), which pinned the pre-Adobe behaviour.
     //
-    // The claim worth pinning is therefore the ANTI-DOUBLING one, and it is now checkable
-    // rather than assumed: exactly the black/white pair, two strokes a frame. Four would
-    // mean both the ants and a tool area were stroking the same edge.
+    // What it does NOT prove, stated here because the old comment claimed the opposite:
+    // nothing here detects a doubled border. `useRect` is not mounted in this test and paints
+    // into a different canvas with a different context, so no assertion on this mock could
+    // see it. That the marquee does not draw its own border at rest is `useRect`'s
+    // `borderMode: 'while-dragging'` wiring, which belongs to the tool area's suite.
     storeState.selections = [
       polygon({
         geometry: 'rectangle',
+        sourceTool: 'rectangular-selection',
+        // Four corners, normalised into `pos` above — the shape
+        // `createCommittedRectangleSelection` commits, and the only thing that makes this a
+        // rectangle rather than the three-point triangle the default fixture describes.
         points: [
           { x: 0, y: 0 },
           { x: 30, y: 0 },
@@ -303,11 +307,20 @@ describe('SelectionMarchingAnts', () => {
 
     frame();
 
+    // The CONTOUR, not merely that something was stroked. Reading the coordinates back off
+    // the recorded path is what puts the border in the right place; a count or a colour
+    // would pass for a rectangle drawn anywhere.
+    const path = vi.mocked(ctx.stroke).mock.calls[0][0] as Path2D;
+    expect(path.moveTo).toHaveBeenCalledWith(10, 20);
+    expect(path.lineTo).toHaveBeenCalledWith(40, 20);
+    expect(path.lineTo).toHaveBeenCalledWith(40, 60);
+    expect(path.lineTo).toHaveBeenCalledWith(10, 60);
+    expect(path.closePath).toHaveBeenCalledOnce();
+
+    // And the dashed pair on that ONE path, so the border interleaves instead of painting
+    // two outlines.
     expect(ctx.stroke).toHaveBeenCalledTimes(2);
     expect(strokes.map((stroke) => stroke.style)).toEqual(['black', 'white']);
-    // The pair addresses the same path twice, so it interleaves into one dashed border
-    // instead of painting two outlines — the property that would fail if `useRect` were
-    // still stroking its own edge.
     const paths = vi.mocked(ctx.stroke).mock.calls.map((call) => call[0]);
     expect(paths[0]).toBe(paths[1]);
   });
@@ -322,7 +335,7 @@ describe('SelectionMarchingAnts', () => {
   });
 
   it('paints nothing for a two-point polygon, because a contour needs three points to close', () => {
-    // `toClosedSelectionPath` returns `null` below three points (`src/hooks/useSelectionAnts.ts:39`).
+    // `shapePath` returns `null` below three points.
     // A two-point "polygon" is reachable: a lasso click sequence abandoned after two anchors
     // commits its points as they stand, and stroking the two of them as a degenerate outline
     // would draw a visible line along a selection that was never closed.

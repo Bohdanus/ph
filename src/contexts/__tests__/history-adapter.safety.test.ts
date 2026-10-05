@@ -445,7 +445,8 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(transaction).toHaveBeenCalledExactlyOnceWith('test-doc');
     // Hand-derived on purpose. `collectDurableAssetIds(result.document!)` would be
     // the very call the code under test makes on the very document it converted
-    // (`history-adapter.ts:906`), so it could only ever catch a hand-supplied
+    // (`collectDurableAssetIds` in `history-adapter.ts`), so it could only ever catch a
+    // hand-supplied
     // document, never a defect in the set the adapter reconciles with. The id is
     // read off the published layer instead, and the reconciled set must be exactly
     // that one id: a set carrying a stray id would release an asset the document
@@ -683,8 +684,8 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
   });
 
   /**
-   * `isValidSelectionSnapshot` reads three shapes for `activeSelectionId`
-   * (`history-adapter.ts:320`): absent, null, or a string. Every unusable-shape
+   * `isValidSelectionSnapshot` reads three shapes for `activeSelectionId`:
+   * absent, null, or a string. Every unusable-shape
    * table above feeds it an unusable `selections`, which the guard rejects on the
    * FIRST clause — so the third clause is pinned nowhere in the suite, and a
    * snapshot whose `selections` is perfectly readable is the only thing that can
@@ -736,7 +737,8 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
   /**
    * CURRENT behaviour, pinned as a tripwire, and it is the wrong behaviour: the
    * baseline derivation reads the first selection entry's previous state with no
-   * structural guard at all (`selection-baseline.ts:57`), so a malformed one throws
+   * structural guard at all — `deriveSelectionBaseline` reads the first selection entry's
+   * previous state directly — so a malformed one throws
    * OUTSIDE the per-entry try and voids the entire shadow. The same shape one
    * entry later is merely ignored, because `deriveSetSelectionEntry` falls back to
    * the tracked baseline. Fixing the tolerance must DELETE this test rather than
@@ -794,8 +796,8 @@ describe('deriveSetSelectionEntry', () => {
     const nextSelection = selectionState('next');
 
     // PRESENT AND MALFORMED is a different input from absent, and the two tests
-    // above and here are the two halves of one ternary
-    // (`history-adapter.ts:359-361`). A production change that dropped the
+    // above and here are the two halves of one ternary in `deriveSetSelectionEntry`.
+    // A production change that dropped the
     // `isValidSelectionSnapshot(previous)` guard would call
     // `selectionSnapshot(null, undefined)` on this fixture and throw out of the
     // per-entry try, voiding the shadow instead of deriving an entry.
@@ -937,8 +939,8 @@ describe('plainValue absence handling (history-adapter)', () => {
     if (operation?.kind === 'apply-filter') {
       const durableStops = operation.filter.args.stops as readonly unknown[];
       // This array is DENSE, so the only clause of the array walk that can accept
-      // its middle element is `value[index] === undefined`
-      // (`history-adapter.ts:110`). Dropping that clause would call
+      // its middle element is `value[index] === undefined` in `plainValue`
+      // (`history-adapter.ts`). Dropping that clause would call
       // `plainValue(undefined, ...)`, which throws `Non-plain value`, and void the
       // whole document — so the status assertion above is the one that catches it,
       // while these three catch the array being rebuilt shorter or reordered.
