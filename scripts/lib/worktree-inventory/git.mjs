@@ -37,6 +37,9 @@ import { basename, relative, resolve } from 'node:path';
  * generated file — silently wrong rather than absent, which is the worst
  * failure mode for a list whose purpose is "what would be lost".
  * Leading whitespace is data here; only the trailing newline is not.
+ *
+ * Timeout: 180 seconds (180,000 ms). `git worktree list` can take this long
+ * on repositories with many worktrees.
  */
 function git(cwd, args, fallback = null) {
   try {
@@ -45,6 +48,7 @@ function git(cwd, args, fallback = null) {
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 180_000,
     }).replace(/\n+$/, '');
   } catch {
     return fallback;

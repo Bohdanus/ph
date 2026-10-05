@@ -1786,6 +1786,7 @@ export class Board {
         cwd: this.identity?.worktree ?? process.cwd(),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 180_000,
       });
       for (const line of listed.split('\0')) {
         // No `.trim()`: `--porcelain` does not quote paths, so a trailing space is part

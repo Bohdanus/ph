@@ -134,6 +134,7 @@ function repoRoot(cwd) {
   const out = execFileSync('git', ['worktree', 'list', '--porcelain', '-z'], {
     cwd,
     encoding: 'utf8',
+    timeout: 180_000,
   });
   // `\0`, not `\n`: `--porcelain` does not quote paths, so a worktree whose path contains
   // a newline was truncated here too. See `listWorktrees` in

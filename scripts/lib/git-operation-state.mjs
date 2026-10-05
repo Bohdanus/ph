@@ -644,6 +644,7 @@ export function scanRepository(cwd = process.cwd(), { unmergedOf = unmergedPaths
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 180_000,
     });
   } catch (error) {
     return { ok: false, reason: 'git worktree list failed', detail: error?.message ?? String(error), worktrees: [] };
