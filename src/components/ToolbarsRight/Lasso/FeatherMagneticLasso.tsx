@@ -87,10 +87,12 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
   // Gating `aria-describedby` on `isInfoOpen` alone left it naming an id nothing owned in between.
   //
   // Unlike `FontSelect`'s equivalent, this window is a PAINTED one: `updateInfoTooltipPosition`
-  // runs from a passive `useEffect`, so it lands after the browser has already shown the button
-  // with a `describedby` pointing nowhere -- one frame per hover and per pin. It stayed invisible to
-  // the repo's axe run because an unresolvable `aria-describedby` is reported as `incomplete`, which
-  // `e2e/accessibility.spec.ts` deliberately does not assert.
+  // runs from a passive `useEffect`, so on the HOVER and focus paths it lands after the browser has
+  // already shown the button with a `describedby` pointing nowhere. The pin path cannot: its click
+  // handler measures BEFORE it sets the flags, and React batches the three calls, so a pinned
+  // tooltip is never measured-less. It stayed invisible to the repo's axe run because an
+  // unresolvable `aria-describedby` is reported as `incomplete`, which `e2e/accessibility.spec.ts`
+  // deliberately does not assert.
   //
   // No test pins this, and that is a real gap rather than an oversight of the test: the window is
   // between paint and effect, so a test that awaits settling never observes it. `HANDOFF.md` records

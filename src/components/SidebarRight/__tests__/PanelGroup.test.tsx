@@ -45,8 +45,10 @@ const setup = (overrides: Partial<Props> = {}) => {
     /**
      * The element the body would occupy, looked up by the id the component builds. This does NOT
      * resolve through `control.getAttribute('aria-controls')` — it reconstructs the string from the
-     * test's own prop, so on its own it proves only that the body mounts. The pairing with the
-     * attribute is pinned separately, by `derives the group, the row and the control from one id`.
+     * test's own prop, so on its own it proves only that the body mounts. The pairing is pinned
+     * twice, and it is worth naming both halves: `derives the group, the row and the control from one
+     * id` holds the two strings equal on a mount that was never rolled up, and the round-trip case
+     * holds them equal again AFTER a collapse, which is what a one-way attribute would break.
      */
     body: () => utils.container.querySelector<HTMLElement>(`#panel-body-${props.id}`),
     /** Applies a prop change from the parent, which is what a toggle callback does upstream. */
