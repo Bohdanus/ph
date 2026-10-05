@@ -9,7 +9,7 @@ import { textLayerEditTarget } from '../text-layer-edit.ts';
  * The one conversion every re-entry route funnels through.
  *
  * All four callers — `TextToolArea`'s pointer-down, `MoveToolArea`'s double-click and
- * `LayersTab`'s select and its `T` control — hydrate through `textLayerEditTarget`, so the four
+ * `LayersTab`'s select and its `T` control — hydrate through `textLayerEditTarget`, so the five
  * refusals and the one offset below are each worth exactly one test here: a component test can only
  * see the arm its own component reaches, and the panel routes disagree with each other about which
  * layers are re-enterable.
@@ -104,19 +104,66 @@ describe('textLayerEditTarget', () => {
     expect(textLayerEditTarget(textLayer({ visible: false }))).toBeNull();
   });
 
-  it('refuses to re-enter a text layer that carries operations', () => {
-    // Mutation killed: deleting the `layer.operations.length > 0` clause. Operations are the
-    // canonical editable form of a filter, so hydrating the source rect of a layer whose pixels
-    // come from a filter (or an affine transform) hands the text editor a rect describing a raster
-    // it does not own, and committing writes a source the operation's own entry no longer
-    // reproduces.
+  it('re-enters a text layer whose retained operations leave its own box where it is', () => {
+    // Mutation killed: reinstating `layer.operations.length > 0`. The clause it replaced claimed
+    // that committing "writes a source the operation's own entry no longer reproduces", and neither
+    // replay authority does that — legacy `replayHistory` keeps `operations: [...layer.operations]`
+    // across a `REPLACE_LAYER_SOURCE_ACTION`, and `replayDurableDocument` keeps the retained list
+    // for the same reason (`durable-replay.source-edit.test.ts` — `retains the operations already
+    // applied to the layer`). Both renderers re-apply it to the new source, so the pixels agree with
+    // the record and a blur is exactly the layer Photoshop still lets you retype.
+    //
+    // A filter is the discriminating fixture because it is the operation that provably cannot move
+    // anything: `ctx.filter` is assigned inside the same `drawImage`, so the composed extent is
+    // `layer.pos` and the hydrated rect is the box the ink is in.
     const layer = textLayer({
-      operations: [
-        { id: 'op-1', kind: 'affine-transform', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, enabled: true },
-      ],
+      operations: [{ id: 'op-1', args: { toolName: 'blur', radius: 4 }, enabled: true }],
+    });
+
+    const target = textLayerEditTarget(layer);
+
+    expect(target?.layerId).toBe(layer.id);
+    expect(target?.args.rect).toEqual({ x1: 120, y1: 80, x2: 220, y2: 140 });
+    // The re-entry marker is what makes the commit an in-place edit rather than a second layer
+    // stacked over the first, so a target without it is a different bug than a missing target.
+    expect(target?.args.editingLayerId).toBe(layer.id);
+  });
+
+  it.each([
+    { label: 'a translation', transform: { a: 1, b: 0, c: 0, d: 1, e: 40, f: 25 } },
+    { label: 'a scale', transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 } },
+    { label: 'a rotation', transform: { a: 0, b: 1, c: -1, d: 0, e: 0, f: 0 } },
+  ])('refuses to re-enter a text layer carrying $label that moves its drawn box', ({ transform }) => {
+    // Mutation killed: dropping the `layerPresentationKeepsLayerBounds` clause, which is the whole
+    // of what remains of the operations guard. A retained affine is a geometry fact rather than a
+    // record-keeping one: the editor is a contenteditable `div` over the box `pos` names, and the
+    // ink is drawn somewhere else. The extent is what discriminates — a translation keeps the
+    // width, so an assertion on the size alone would pass under the mutation.
+    const layer = textLayer({
+      operations: [{ id: 'op-1', kind: 'affine-transform', transform, enabled: true }],
     });
 
     expect(textLayerEditTarget(layer)).toBeNull();
+  });
+
+  it('re-enters a text layer whose only retained transform leaves the box where it is', () => {
+    // The control for the pair above, and the other half of "does the box move": a disabled
+    // operation and an IDENTITY one both leave the composed extent equal to `layer.pos`, so neither
+    // may be refused. `drawLayerSource` skips a disabled operation and `drawEvaluatedPresentation`
+    // skips an identity matrix, so the drawn ink and the hydrated rect are the same box.
+    const disabled = textLayer({
+      operations: [
+        { id: 'op-1', kind: 'affine-transform', transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 }, enabled: false },
+      ],
+    });
+    const identity = textLayer({
+      operations: [
+        { id: 'op-2', kind: 'affine-transform', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, enabled: true },
+      ],
+    });
+
+    expect(textLayerEditTarget(disabled)?.args.rect).toEqual({ x1: 120, y1: 80, x2: 220, y2: 140 });
+    expect(textLayerEditTarget(identity)?.args.rect).toEqual({ x1: 120, y1: 80, x2: 220, y2: 140 });
   });
 
   it('refuses a source that is not a tool source at all', () => {
