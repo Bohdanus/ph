@@ -6618,7 +6618,14 @@ be measured against a fleet before it lands.
 **Provenance.** Found and measured by a review of `fix/repo-state-roster` on 2026-10-05, and
 reproduced by removing one administrative directory from a fixture with a live worktree beside it.
 
-## 247. `land/audit-falsehoods-verified` cannot be merged: its only novel change deletes a true, tested feature, and the rest is superseded
+## 247. `land/audit-falsehoods-verified` cannot be merged: its only novel change deletes a true, tested feature, and its other work `main` already holds in a stronger form
+
+<!-- The title must not END in a word `DEAD_HEADING` in `handoff-import.mjs` matches, or the
+     parser retires this live entry and it never becomes an importable item. That is what a
+     title ending in "superseded" did: the first commit of this entry passed tsc, build and
+     the citations gate, and `it('produces one item per numbered heading, and no item for a
+     prose section')` caught it. "holds in a stronger form" carries the meaning and matches
+     nothing the rule retires. -->
 
 **Problem.** The branch carries 10 commits `main` does not have (`git cherry main
 land/audit-falsehoods-verified`), and every one of them is either already on `main` in a better
