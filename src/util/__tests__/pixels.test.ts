@@ -86,6 +86,37 @@ describe('createPixelBuffer', () => {
     // of 4, so every second write would land mid-pixel.
     expect(createPixelBuffer({ width: 2.5, height: 2.5 }).length).toBe(2 * 2 * 4);
   });
+
+  it('allocates an empty buffer for a NON-FINITE extent rather than throwing', () => {
+    // `Math.floor(Infinity)` is Infinity and `Math.max(0, NaN)` is NaN, so the guard is the
+    // only thing between a corrupt size and `new Uint8ClampedArray(Infinity)` — which is a
+    // RangeError, not an empty buffer. The mutant is the `Number.isFinite` check removed, and
+    // a caller sizing a canvas from an unloaded image would take the whole tool down.
+    expect(createPixelBuffer({ width: Number.POSITIVE_INFINITY, height: 4 }).length).toBe(0);
+    expect(createPixelBuffer({ width: 4, height: Number.NEGATIVE_INFINITY }).length).toBe(0);
+    expect(createPixelBuffer({ width: Number.NaN, height: Number.NaN }).length).toBe(0);
+    // And a negative extent floors to an empty buffer rather than a negative length.
+    expect(createPixelBuffer({ width: -10, height: 4 }).length).toBe(0);
+  });
+
+  it('visits nothing for a non-finite size, in both iterators', () => {
+    // Same guard, reached through the walks: the `width === 0` arm cannot fire for NaN, so
+    // without the finite check the loops would run against NaN bounds and visit nothing by
+    // accident — or, for Infinity, forever.
+    const visits: string[] = [];
+    forEachPixelInSize({ width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY }, (x, y) => {
+      visits.push(`${x},${y}`);
+    });
+    forEachPixelInRect(
+      { width: Number.NaN, height: Number.NaN },
+      { left: 0, top: 0, right: 10, bottom: 10 },
+      (x, y) => {
+        visits.push(`${x},${y}`);
+      }
+    );
+
+    expect(visits).toEqual([]);
+  });
 });
 
 describe('readRgba', () => {
@@ -445,6 +476,16 @@ describe('multiplyChannel', () => {
     expect(multiplyChannel(1.5, -2)).toBe(0);
     expect(multiplyChannel(0, -1)).toBe(0);
   });
+
+  it('collapses to 0 at a non-finite FACTOR, which the unclamped factor does not excuse', () => {
+    // The factor is deliberately not clamped, so Infinity is a legal argument here and 0 is
+    // the answer for it: `clampChannel` is the only place a non-finite value becomes a number.
+    // A NaN factor is the sharper case, because `value * NaN` is NaN for every value.
+    expect(multiplyChannel(255, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(multiplyChannel(255, Number.NEGATIVE_INFINITY)).toBe(0);
+    expect(multiplyChannel(255, Number.NaN)).toBe(0);
+    expect(multiplyChannel(0, Number.NaN)).toBe(0);
+  });
 });
 
 describe('blendPixel', () => {
@@ -586,6 +627,37 @@ describe('blendPixel', () => {
 
     expect(Array.from(data)).toEqual([7, 7, 7, 7]);
   });
+
+  /**
+   * A NaN source alpha passes the `src.a <= 0` guard, because every comparison against NaN is
+   * false, and then poisons every term: `outAlpha` is NaN, `NaN <= 0` is false, so the
+   * `outAlpha <= 0` clear arm does NOT catch it either, and the writes land as NaN — which a
+   * `Uint8ClampedArray` stores as 0.
+   *
+   * So a NaN alpha BLACKENS the pixel rather than leaving it alone. That is the same
+   * convention `clampChannel` documents (non-finite becomes 0), and this pins it: the mutant
+   * is a `Number.isFinite(src.a)` added to the early return, under which the pixel would stay
+   * (7, 7, 7, 7). Whichever way it is resolved, it must be a decision rather than an artefact
+   * of two NaN comparisons in a row.
+   */
+  it('writes transparent black for a NaN source alpha, following the non-finite convention', () => {
+    const data = solidBuffer(1, 1, { r: 7, g: 7, b: 7, a: 7 });
+
+    blendPixel(data, 0, { r: 200, g: 200, b: 200, a: Number.NaN }, 1);
+
+    expect(Array.from(data)).toEqual([0, 0, 0, 0]);
+  });
+
+  it('leaves the pixel alone for a NaN OPACITY rather than blackening it', () => {
+    // The opposite arm: `!(opacity > 0)` catches NaN, so the destination survives. The pair
+    // above and this one is the whole shape — where the guard rejects NaN, and where it does
+    // not, is decided by the position of the comparison, not by any finiteness check.
+    const data = solidBuffer(1, 1, { r: 7, g: 7, b: 7, a: 7 });
+
+    blendPixel(data, 0, { r: 200, g: 200, b: 200, a: 255 }, Number.NaN);
+
+    expect(Array.from(data)).toEqual([7, 7, 7, 7]);
+  });
 });
 
 describe('toHex', () => {
@@ -637,6 +709,28 @@ describe('fromHex', () => {
     expect(() => fromHex('#1234567')).toThrow(TypeError);
     expect(() => fromHex('#gggggg')).toThrow(TypeError);
     expect(() => fromHex('transparent')).toThrow(TypeError);
+  });
+
+  /**
+   * `toThrow(TypeError)` alone is satisfied by ANY TypeError, so the assertion above pins the
+   * class and nothing about the value — and the module's whole argument for throwing rather
+   * than defaulting is that the failure has to be findable at the call site.
+   *
+   * The docstring promises "the throw names the offending string". These are the mutants that
+   * promise removes: a message with a generic literal, a message that interpolates the value
+   * unquoted (so `#12345` becomes `12345` and a leading `#` is lost), and a message naming
+   * only the prefix. Each is a plausible edit and each passes the class-only assertion.
+   */
+  it('names the offending string in the message, so the failing call site is findable', () => {
+    expect(() => fromHex('#12345')).toThrow(/"#12345"/);
+    expect(() => fromHex('#12345')).toThrow(/expected '#rgb' or '#rrggbb'/);
+    expect(() => fromHex('transparent')).toThrow(/"transparent"/);
+    // Quoted, so an empty string and a whitespace string are distinguishable in the log.
+    expect(() => fromHex('')).toThrow(/""/);
+    expect(() => fromHex(' ')).toThrow(/" "/);
+    // A 4-digit form is the case a "is it hex at all" pre-check would let through by
+    // widening the pattern, and it must throw like every other malformed value.
+    expect(() => fromHex('#1234')).toThrow(/"#1234"/);
   });
 
   it('round-trips every channel through toHex and fromHex', () => {

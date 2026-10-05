@@ -11,6 +11,11 @@ import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const frame: DocumentFrame = { x: 0, y: 0, width: 400, height: 300 };
 
+/** The same layer at another geometry: only `pos` differs between the two. */
+function layerAt(pos: { x: number; y: number; width: number; height: number }): Layer {
+  return { ...layer, pos };
+}
+
 const layer: Layer = {
   id: 'layer-1',
   name: 'Layer 1',
@@ -46,6 +51,15 @@ function plan(args: object, currentLayer: Layer | null = layer, id = 'tool') {
   return planHistoryAppend(input);
 }
 
+/** The planned operation, or a throw: a null entry is a refusal and belongs in a refusal test. */
+function plannedOperation(args: object, currentLayer: Layer | null = layer) {
+  const result = plan(args, currentLayer);
+  expect(result.diagnostics).toEqual([]);
+  const operation = result.durableEntry?.operation;
+  if (!operation) throw new Error(`expected a durable operation for ${JSON.stringify(args)}`);
+  return operation;
+}
+
 describe('history append retained tool translation', () => {
   it.each([
     ['blur', { toolName: 'blur', radius: 4 }],
@@ -55,7 +69,10 @@ describe('history append retained tool translation', () => {
     const result = plan(args);
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.durableEntry?.operation).toMatchObject({
+    // Exact, like every other payload in this file: `version` is the processor's
+    // own replay version, so a boundary that stamped its own would plan an entry
+    // a later replay refuses, and `toMatchObject` would not see the difference.
+    expect(result.durableEntry?.operation).toEqual({
       kind: 'apply-filter',
       layerId: 'layer-1',
       filter: { toolName: args.toolName, version: 1, args },
@@ -69,17 +86,53 @@ describe('history append retained tool translation', () => {
     });
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.durableEntry?.operation).toMatchObject({ kind: 'apply-affine-transform', layerId: 'layer-1' });
+    // The matrix, not just the operation kind: the payload is the entire content
+    // of the entry, and `validateAffineTransform` normalizes it on the way in, so
+    // a scale dropped there would replay as a layer that never resized.
+    expect(result.durableEntry?.operation).toEqual({
+      kind: 'apply-affine-transform',
+      layerId: 'layer-1',
+      transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 },
+    });
+  });
+
+  it('grades the affine bounds against the live layer, so the same args plan differently per geometry', () => {
+    // 1000x on a 100x80 layer is 100000x80000 = 8e9 pixels, past the raster
+    // budget; on a 4x4 layer it is 16e6 and legal. Nothing else differs between
+    // the two plans, so the outcome is attributable to `currentLayer` alone.
+    const args = { toolName: 'transform', transform: { a: 1000, b: 0, c: 0, d: 1000, e: 0, f: 0 } };
+
+    const refused = plan(args, layerAt({ x: 0, y: 0, width: 100, height: 80 }));
+    const accepted = plan(args, layerAt({ x: 0, y: 0, width: 4, height: 4 }));
+
+    expect(refused.durableEntry).toBeNull();
+    expect(refused.diagnostics).toHaveLength(1);
+    expect(refused.diagnostics[0]).toMatchObject({
+      code: 'unsupported-history-feature',
+      severity: 'warning',
+      historyId: 'tool',
+      message: 'Affine transform exceeds raster bounds',
+    });
+    expect(accepted.diagnostics).toEqual([]);
+    expect(accepted.durableEntry?.operation).toEqual({
+      kind: 'apply-affine-transform',
+      layerId: 'layer-1',
+      transform: { a: 1000, b: 0, c: 0, d: 1000, e: 0, f: 0 },
+    });
   });
 
   it('retains a trapezoid transform whose processor is declared affine-operation', () => {
     const result = plan({ toolName: 'transform', trapezoid: 20 });
 
     expect(result.diagnostics).toEqual([]);
-    expect(result.durableEntry?.operation).toMatchObject({
+    // The args travel with the operation: a durable replay of the trapezoid runs
+    // it from this payload, so a dropped `args` leaves the processor parameterless.
+    expect(result.durableEntry?.operation).toEqual({
       kind: 'apply-raster-processor',
+      layerId: 'layer-1',
       processorId: 'transform',
       version: 1,
+      args: { toolName: 'transform', trapezoid: 20 },
     });
   });
 
@@ -137,6 +190,49 @@ describe('history append retained tool translation', () => {
     expect(result.diagnostics[0]?.message).toMatch(/Mixed trapezoid and affine transform is unsupported/);
   });
 
+  it('refuses a transform carrying both a trapezoid and a retained matrix', () => {
+    // A different branch from the case above, and a different refusal: `transform`
+    // AND `trapezoid` is a contradiction, not a mixed affine/skew combination, so
+    // recording the trapezoid would silently drop the affine half of the edit.
+    const result = plan({ toolName: 'transform', trapezoid: 20, transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } });
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      code: 'unsupported-history-feature',
+      severity: 'warning',
+      historyId: 'tool',
+      message: 'A transform cannot combine trapezoid and affine values',
+    });
+  });
+
+  it('names a tool that has no processor at all', () => {
+    // `findToolProcessor` misses, so `operationForTool` throws rather than
+    // returning null: a nameless processor is a defect in the writer, and the
+    // boundary has to say which name it could not resolve.
+    const result = plan({ toolName: 'not-a-tool' });
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      code: 'unsupported-history-feature',
+      severity: 'warning',
+      historyId: 'tool',
+      message: 'Unknown processor not-a-tool',
+    });
+  });
+
+  it('refuses a tool action carrying no tool name', () => {
+    const result = plan({ radius: 4 });
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      code: 'unsupported-history-feature',
+      message: 'The tool action has no retained durable operation; the legacy entry remains authoritative.',
+    });
+  });
+
   it('refuses a tool action when the live layer is absent', () => {
     const result = plan({ toolName: 'blur', radius: 4 }, null);
 
@@ -145,19 +241,48 @@ describe('history append retained tool translation', () => {
     expect(result.diagnostics[0]?.message).toContain('layer-1');
   });
 
-  it.each([
-    { label: 'a raw retained transform', args: { toolName: 'transform', rotate: 15, resizeX: 125, resizeY: 90 } },
-    {
-      label: 'a normalized retained transform',
-      args: { toolName: 'transform', transform: { a: 1, b: 0, c: 0, d: 1, e: 2, f: 3 } },
-    },
-    { label: 'a move', args: { toolName: 'reposition', move: { x: 12, y: 18 } } },
-    { label: 'a resize', args: { toolName: 'reposition', resize: { x: 0, y: 0, width: 120, height: 90 } } },
-  ])('parity matrix retains $label', ({ args }) => {
-    const result = plan(args);
+  it('parity matrix retains the exact operation for every writer shape', () => {
+    expect(plannedOperation({ toolName: 'transform', transform: { a: 1, b: 0, c: 0, d: 1, e: 2, f: 3 } })).toEqual({
+      kind: 'apply-affine-transform',
+      layerId: 'layer-1',
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 2, f: 3 },
+    });
+    // A move is absolute, and a resize carries no move: durable replay assigns
+    // `pos.x/y` from the move and spreads the resize over the whole rect
+    // (`durable-replay.ts:96-105`), so a relative move or a defaulted resize key
+    // would place the layer somewhere the document never put it.
+    expect(plannedOperation({ toolName: 'reposition', move: { x: 12, y: 18 } })).toEqual({
+      kind: 'reposition-layer',
+      layerId: 'layer-1',
+      move: { x: 12, y: 18 },
+    });
+    expect(plannedOperation({ toolName: 'reposition', resize: { x: 0, y: 0, width: 120, height: 90 } })).toEqual({
+      kind: 'reposition-layer',
+      layerId: 'layer-1',
+      resize: { x: 0, y: 0, width: 120, height: 90 },
+    });
+  });
 
-    expect(result.diagnostics).toEqual([]);
-    expect(result.durableEntry).not.toBeNull();
+  it('composes a raw rotate and resize about the layer centre', () => {
+    // The one case whose matrix is not worth hand-transcribing: rotation and
+    // scaling compose in an order the test should not assume. Three properties
+    // are derivable by hand from the tool's own contract instead, and each kills
+    // a distinct defect — a dropped rotation, a dropped scale, or a pivot that
+    // moved off the layer centre. `toBeCloseTo` is the float tolerance of an
+    // exact-value comparison, not a threshold on a measured quantity.
+    const operation = plannedOperation({ toolName: 'transform', rotate: 15, resizeX: 125, resizeY: 90 });
+    if (operation.kind !== 'apply-affine-transform') throw new Error('expected an affine operation');
+    const { a, b, c, d, e, f } = operation.transform;
+
+    // The x and y axes carry the two scale factors, whichever order composed.
+    expect(Math.hypot(a, b)).toBeCloseTo(1.25, 10);
+    expect(Math.hypot(c, d)).toBeCloseTo(0.9, 10);
+    // The untransformed centre of a 100x80 layer is fixed by every transform.
+    expect(a * 50 + c * 40 + e).toBeCloseTo(50, 10);
+    expect(b * 50 + d * 40 + f).toBeCloseTo(40, 10);
+    // Positive rotation is clockwise in the editor's y-down frame.
+    expect(b).toBeGreaterThan(0);
+    expect(operation.layerId).toBe('layer-1');
   });
 });
 

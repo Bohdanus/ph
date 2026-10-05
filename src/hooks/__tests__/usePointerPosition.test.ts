@@ -653,11 +653,20 @@ describe('usePointerPosition', () => {
 
       unmount();
 
-      expect(() => {
+      act(() => {
         const event = new Event('pointercancel', { bubbles: true });
         Object.defineProperty(event, 'pointerId', { value: 1 });
         el.dispatchEvent(event);
-      }).not.toThrow();
+      });
+
+      // The hook's own state, not merely the absence of a throw: the unmount cleanup only
+      // detaches the listener, it does not clear the tracked pointer, so an unmounted hook
+      // that still had a live listener would have run `clearEvent` here and flipped this
+      // ref. `result.current` is the last committed render, and its refs are the very objects
+      // the listener would have written to.
+      expect(result.current.isMouseDown.current).toBe(true);
+      expect(result.current.pointerIdRef.current).toBe(1);
+      expect(el.releasePointerCapture).not.toHaveBeenCalled();
     });
 
     it('registers no pointercancel listener when the ref is null at mount', () => {

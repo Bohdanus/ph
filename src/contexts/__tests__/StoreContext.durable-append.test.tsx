@@ -317,16 +317,20 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable removal', () => {
       expect(begin).toHaveBeenCalledTimes(1);
       expect(reconcile).toHaveBeenCalledTimes(1);
 
-      // Control: a refused publication still falls back to conversion, which
-      // opens and reconciles its own transaction after the failed planned path.
+      // Control: a refused publication still falls back to conversion, and the
+      // conversion is itself transactional — `convertLegacyHistorySafely` opens and
+      // reconciles its own document transaction (`history-adapter.ts:892,906`). So
+      // the second commit adds exactly one more of each, and the totals are exact
+      // rather than "more than before": a fallback path that stopped reconciling,
+      // or reconciled twice, fails here.
       const retargeted = removalItem('remove-2');
       commitRemoval(dispatch(), retargeted, {
         ...(deriveRemoveLayerEntry(retargeted) as DurableHistoryEntry),
         operation: { kind: 'remove-layer', layerId: 'layer-2' },
       } as DurableHistoryEntry);
 
-      expect(begin.mock.calls.length).toBeGreaterThan(1);
-      expect(reconcile.mock.calls.length).toBeGreaterThan(1);
+      expect(begin).toHaveBeenCalledTimes(2);
+      expect(reconcile).toHaveBeenCalledTimes(2);
     } finally {
       begin.mockRestore();
       reconcile.mockRestore();
@@ -834,11 +838,25 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
       });
 
       const durableEntry = store().durableDocument!.history[0];
-      expect(durableEntry?.operation.kind).toBe('create-layer');
-      if (durableEntry?.operation.kind !== 'create-layer' || durableEntry.operation.layer.source.kind !== 'raster') {
-        return;
-      }
-      expect(registry.getRecord(durableEntry.operation.layer.source.assetId)).toBeDefined();
+      // The kinds are ASSERTED, not tested by branching. A bare
+      // `if (kind !== 'create-layer' || source.kind !== 'raster') return;` reads the
+      // same and passes with nothing executed the moment the derivation produces a
+      // different operation, which is the exact translation bug this test exists for.
+      expect(durableEntry).toMatchObject({ id: entry.id, enabled: true, operation: { kind: 'create-layer' } });
+      const operation = durableEntry!.operation;
+      // The two throws after the assertions are type narrowing only: each is
+      // unreachable once the assertion above it has passed.
+      if (operation.kind !== 'create-layer') throw new Error(`expected create-layer, got ${operation.kind}`);
+      expect(operation.layer.source.kind).toBe('raster');
+      if (operation.layer.source.kind !== 'raster') throw new Error('expected a raster source');
+      // The registry holds the raster the import created, under the document that
+      // owns it, at the raster's own size — not merely an entry with that id.
+      expect(registry.getRecord(operation.layer.source.assetId)).toMatchObject({
+        id: operation.layer.source.assetId,
+        documentId: store().documentId,
+        width: 40,
+        height: 30,
+      });
       expect(begin).toHaveBeenCalledTimes(1);
       expect(reconcile).toHaveBeenCalledTimes(1);
     } finally {

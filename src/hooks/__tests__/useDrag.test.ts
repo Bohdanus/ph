@@ -249,21 +249,77 @@ describe('useDrag', () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
+    it('releases the pointer and cancels the queued frame even with no end handler', () => {
+      // Every consumer of this hook that needs a release has to name it, and the frame
+      // bookkeeping must not be conditional on one existing. A guard that made the release
+      // path optional would strand the capture `usePointerPosition` took.
+      vi.useFakeTimers();
+      const { result } = renderUseDrag();
+
+      act(() => {
+        result.current.onPointerDown(makeEvent({ button: 0 }));
+      });
+      act(() => {
+        result.current.onPointerMove(makeEvent());
+      });
+      act(() => {
+        result.current.onPointerUp(makeEvent({ button: 0 }));
+      });
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+
+      // The mock's `isPointerUpValid` is what clears `isMouseDown`, so the release ran.
+      expect(pointerState.isMouseDown.current).toBe(false);
+    });
+
     it('cancels a pending animation frame on pointer up', () => {
       vi.useFakeTimers();
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
+      const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame');
       const hoverHandler = vi.fn();
       const { result } = renderUseDrag({ handlePointerHoverMove: hoverHandler });
 
       act(() => {
         result.current.onPointerMove(makeEvent());
       });
+      // Read the handle off the scheduler rather than assuming a value: the fake timers'
+      // rAF counter is module-level and shared across every case in this file, so a
+      // literal `1` would be pinned to the order the runner happened to use.
+      const scheduled = rafSpy.mock.results.at(-1)!.value as unknown as number;
+      cancelSpy.mockClear();
 
       act(() => {
         result.current.onPointerUp(makeEvent({ button: 0 }));
       });
 
-      expect(cancelSpy).toHaveBeenCalled();
+      // The EXACT handle the pending frame was registered under. A bare "was called"
+      // would be satisfied by a cancel of any handle at all — including `0`, the null
+      // sentinel the hook's own `frameRequested.current !== null` guard exists to keep
+      // away from `cancelAnimationFrame` — and the frame itself would still run.
+      expect(cancelSpy).toHaveBeenCalledExactlyOnceWith(scheduled);
+    });
+
+    it('drops the queued hover move rather than flushing it after the release', () => {
+      vi.useFakeTimers();
+      const hoverHandler = vi.fn();
+      const endHandler = vi.fn();
+      const { result } = renderUseDrag({ handlePointerHoverMove: hoverHandler, handleDragEnd: endHandler });
+
+      // A press and release with no movement: the queued hover move is the only pending
+      // work, and the release has to run the end path anyway.
+      act(() => {
+        result.current.onPointerMove(makeEvent());
+      });
+      act(() => {
+        result.current.onPointerUp(makeEvent({ button: 0 }));
+      });
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+
+      expect(hoverHandler).not.toHaveBeenCalled();
+      expect(endHandler).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 20 });
     });
   });
 

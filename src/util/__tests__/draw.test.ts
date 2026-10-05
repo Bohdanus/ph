@@ -48,6 +48,54 @@ describe('pointsBoundingPos', () => {
     const result = pointsBoundingPos({ points: [{ x: 50, y: 50 }], lineWidth: 2 });
     expect(result).toEqual({ x: 48, y: 48, width: 4, height: 4 });
   });
+
+  /**
+   * `lineWidth: 0` is not hypothetical: `src/util/selection.ts` calls this with exactly
+   * that, because a selection outline needs the points' own extent with no stroke padding.
+   *
+   * Every other case here uses a positive width, where `x = minX - lineWidth` and
+   * `width = maxX - minX + 2 * lineWidth` are both shifted. At 0 the two formulas must
+   * collapse to the bare extent, and a rewrite that special-cased 0 by widening to the 1px
+   * default would return a box a pixel larger on each side for every lasso.
+   */
+  it('collapses to the bare extent for a zero lineWidth, which a selection outline passes', () => {
+    const points = [
+      { x: 4, y: 6 },
+      { x: 20, y: 30 },
+    ];
+
+    expect(pointsBoundingPos({ points, lineWidth: 0 })).toEqual({ x: 4, y: 6, width: 16, height: 24 });
+    // And it is the same box the padded form collapses to, not a different one.
+    const padded = pointsBoundingPos({ points, lineWidth: 1 });
+    expect(padded.width - 2).toBe(pointsBoundingPos({ points, lineWidth: 0 }).width);
+  });
+
+  it('gives a single point a box of exactly two line widths', () => {
+    // The loop never runs, so min and max are the same point and the extent is pure padding.
+    // A click is a real gesture for both the pen and the block stamp, and the DEFAULT width is
+    // the one a caller that omits `lineWidth` gets — which is a different number from the
+    // explicit width the case above pins.
+    expect(pointsBoundingPos({ points: [{ x: 7, y: 9 }] })).toEqual({ x: 6, y: 8, width: 2, height: 2 });
+    expect(pointsBoundingPos({ points: [{ x: 7, y: 9 }], lineWidth: 10 })).toEqual({
+      x: -3,
+      y: -1,
+      width: 20,
+      height: 20,
+    });
+  });
+
+  it('tracks both extrema for an unsorted path, rather than reading the endpoints', () => {
+    // It scans for minima and maxima independently, so an unsorted input cannot produce a
+    // negative extent — this pins that both min AND max are tracked, which a rewrite to
+    // `points[last] - points[0]` would satisfy for a monotonic path and fail here.
+    const zigzag = [
+      { x: 50, y: 0 },
+      { x: 0, y: 80 },
+      { x: 50, y: 40 },
+    ];
+
+    expect(pointsBoundingPos({ points: zigzag, lineWidth: 0 })).toEqual({ x: 0, y: 0, width: 50, height: 80 });
+  });
 });
 
 describe('bezierSmoothedLine', () => {
@@ -269,5 +317,223 @@ describe('drawLine', () => {
     const strokeSpy = vi.spyOn(ctx, 'stroke');
     drawLine({ args, ctx });
     expect(strokeSpy).toHaveBeenCalled();
+  });
+
+  /**
+   * The two arms the dispatch above cannot reach, because every existing case supplies both a
+   * known `penType` and a non-empty `points`.
+   *
+   * An unrecognised pen type must paint NOTHING — a `switch` with a fallthrough to `drawPen`,
+   * or a `?? 'pen'` default, would draw a stroke for a mode the tool does not have. And
+   * `args.points ?? []` is the guard that makes a released gesture with no samples a no-op
+   * rather than a `points[0]` crash, so both are asserted on the CALL COUNTS rather than on
+   * `not.toThrow()`, which a silently-wrong path would also satisfy.
+   */
+  it('paints nothing for an unrecognised pen type', () => {
+    const ctx = makeMockCtx();
+    const args = {
+      points: [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+      ],
+      alpha: 1,
+      color: '#000000',
+      penType: 'eraser' as unknown as 'pen',
+      lineWidth: 5,
+      toolName: 'draw' as const,
+    };
+
+    drawLine({ args, ctx });
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+  });
+
+  it('paints nothing when the args carry no points at all', () => {
+    const ctx = makeMockCtx();
+    const args = {
+      alpha: 1,
+      color: '#000000',
+      penType: 'pen' as const,
+      lineWidth: 5,
+      toolName: 'draw' as const,
+    } as unknown as Parameters<typeof drawLine>[0]['args'];
+
+    drawLine({ args, ctx });
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `smoothing` is applied by `drawLine` BEFORE the renderer choice, and no other case in this
+   * file sets it. At 0 the input array is returned by identity, so the stroke is byte-for-byte
+   * the unsmoothed one; at 50 the interior samples are pulled half of the way to the midpoint of
+   * their neighbours while both endpoints stay put.
+   *
+   * The call COUNT is unchanged either way, which is the property the overlay depends on: a
+   * smoothing filter that added or removed a sample would change how many beziers a live
+   * stroke issues and leave the committed layer with a different number of segments than the
+   * preview showed.
+   */
+  it('applies smoothing to the sampled path and leaves the endpoint count alone', () => {
+    const points = [
+      { x: 0, y: 0 },
+      { x: 10, y: 100 },
+      { x: 20, y: 0 },
+    ];
+    const build = (smoothing: number) => {
+      const ctx = makeMockCtx();
+      drawLine({
+        args: {
+          points,
+          smoothing,
+          alpha: 1,
+          color: '#000000',
+          penType: 'pen',
+          lineWidth: 5,
+          toolName: 'draw',
+        } as unknown as Parameters<typeof drawLine>[0]['args'],
+        ctx,
+      });
+      return ctx;
+    };
+
+    const unsmoothed = build(0);
+    const smoothed = build(50);
+
+    // moveTo the first sample, then one bezier per consecutive triple: 2 points are free.
+    expect(unsmoothed.moveTo).toHaveBeenCalledWith(0, 0);
+    expect(unsmoothed.bezierCurveTo).toHaveBeenCalledTimes(1);
+    expect(smoothed.moveTo).toHaveBeenCalledWith(0, 0);
+    expect(smoothed.bezierCurveTo).toHaveBeenCalledTimes(1);
+
+    // 50% pull: the interior sample at (10, 100) moves halfway to the midpoint of (0,0) and
+    // (20, 0), which is (10, 0), so it becomes (10, 50) — the spike is halved, not removed.
+    expect(unsmoothed.bezierCurveTo).toHaveBeenCalledWith(0, 0, 10, 100, 20, 0);
+    expect(smoothed.bezierCurveTo).toHaveBeenCalledWith(0, 0, 10, 50, 20, 0);
+  });
+});
+
+/**
+ * Block mode's stamping loop, whose arithmetic is exact and whose only other coverage is the
+ * dispatch flag in `draw.destination-out.test.ts`.
+ */
+describe('drawPen with blockStamp', () => {
+  const blockArgs = (lineWidth: number, points: { x: number; y: number }[]) =>
+    ({
+      points,
+      blockStamp: true,
+      alpha: 1,
+      color: '#ff0000',
+      penType: 'pen',
+      lineWidth,
+      toolName: 'draw',
+    }) as unknown as Parameters<typeof drawPen>[0]['args'];
+
+  it('stamps one square per `lineWidth` of travel, centred on each stamp', () => {
+    const ctx = makeMockCtx();
+
+    // 25px of travel at lineWidth 5 is exactly 5 steps, plus the first point: 6 stamps. The
+    // step count divides evenly so every expected coordinate is exact rather than a float
+    // expression of the code's own.
+    drawPen({
+      args: blockArgs(5, [
+        { x: 0, y: 0 },
+        { x: 25, y: 0 },
+      ]),
+      ctx,
+    });
+
+    expect(ctx.fillRect).toHaveBeenCalledTimes(6);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(1, -2.5, -2.5, 5, 5);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(2, 2.5, -2.5, 5, 5);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(3, 7.5, -2.5, 5, 5);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(4, 12.5, -2.5, 5, 5);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(5, 17.5, -2.5, 5, 5);
+    // The last stamp is the lifted point itself, so a stroke always ends where the pointer did.
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(6, 22.5, -2.5, 5, 5);
+  });
+
+  it('takes exactly one step for travel no greater than the stamp size', () => {
+    const ctx = makeMockCtx();
+
+    drawPen({
+      args: blockArgs(10, [
+        { x: 0, y: 0 },
+        { x: 4, y: 0 },
+      ]),
+      ctx,
+    });
+
+    // ceil(0.4) clamps to 1: the endpoint is still stamped, and the two squares are adjacent.
+    expect(ctx.fillRect).toHaveBeenCalledTimes(2);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(2, 4 - 5, -5, 10, 10);
+  });
+
+  it('stamps the endpoint of a duplicate pair once, so a held pointer adds nothing', () => {
+    const ctx = makeMockCtx();
+
+    // hypot is 0, and 0 / size is 0, so `Math.max(1, ...)` supplies the single step and the
+    // stamp lands on top of the first one. The mutant is dropping the max, which would make
+    // the step count 0 and silently drop the tail of the stroke.
+    drawPen({
+      args: blockArgs(10, [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+      ]),
+      ctx,
+    });
+
+    expect(ctx.fillRect).toHaveBeenCalledTimes(2);
+    expect(ctx.fillRect).toHaveBeenNthCalledWith(2, -5, -5, 10, 10);
+  });
+
+  it('clamps a zero or negative lineWidth to a 1px stamp instead of a negative one', () => {
+    for (const lineWidth of [0, -4]) {
+      const ctx = makeMockCtx();
+
+      drawPen({ args: blockArgs(lineWidth, [{ x: 3, y: 4 }]), ctx });
+
+      // A single point issues exactly one stamp. A negative width would be an invalid
+      // fillRect, which a real canvas accepts and paints nothing for.
+      expect(ctx.fillRect, String(lineWidth)).toHaveBeenCalledTimes(1);
+      expect(ctx.fillRect, String(lineWidth)).toHaveBeenCalledWith(2.5, 3.5, 1, 1);
+    }
+  });
+
+  it('issues no path at all, and paints fully opaque in the tool colour', () => {
+    const ctx = makeMockCtx();
+
+    drawPen({
+      args: blockArgs(10, [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+      ]),
+      ctx,
+    });
+
+    // The block is drawn as fillRect rather than as a stroked path, so `beginPath`/`stroke`
+    // must not appear: a stroke would add a line cap the mode does not have.
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.save).toHaveBeenCalledTimes(1);
+    expect(ctx.restore).toHaveBeenCalledTimes(1);
+    expect(ctx.fillStyle).toBe('#ff0000');
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it('stamps nothing at all for an empty point list, and does not touch the context', () => {
+    const ctx = makeMockCtx();
+
+    drawPen({ args: blockArgs(10, []), ctx });
+
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.restore).not.toHaveBeenCalled();
   });
 });

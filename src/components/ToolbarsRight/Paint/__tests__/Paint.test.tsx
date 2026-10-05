@@ -395,8 +395,23 @@ describe.each([
         // `src/tools/__tests__/paint-tools.test.ts`; what matters here is that the bar
         // shows the real renderer's output rather than an approximation of it.
         const ctx = last();
-        expect(ctx.clearRect).toHaveBeenCalled();
-        expect(ctx.drawImage).toHaveBeenCalledTimes(1);
+        // `Paint.tsx:77` clears the whole backing store in STORE units, not CSS units.
+        // Asserting only that `clearRect` ran let a sub-rect (`width / 2`, a hardcoded `PREVIEW_WIDTH`)
+        // through: at dpr 2 that leaves the right-hand half of every repaint holding the previous
+        // stroke, and no other assertion here would notice. `canvas.width`/`canvas.height` are
+        // read off the element rather than written as literals so the assertion stays dpr-correct.
+        const canvas = previewCanvas();
+        expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, canvas.width, canvas.height);
+        // One blit, of the raster at the full store size, 1:1. Mirrors the Draw bar's pin
+        // (`Draw/__tests__/Draw.test.tsx:604-611`) — a destination of `PREVIEW_WIDTH / 2` would
+        // shrink the thumbnail to half the control while every `canvas.width` assertion passed.
+        expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ width: canvas.width, height: canvas.height }),
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
         // Smoothing the stroke is sampled, not stamped, so the blit is scaled down
         // from a zoom-sized canvas into the fixed preview; smoothing quality is set
         // low deliberately, as in the Draw bar.

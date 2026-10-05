@@ -717,7 +717,44 @@ was not an available substitute, and it was merged on the operator's decision wi
 the review explicitly open. A self-review against `docs/CODE-REVIEW.md` found and
 fixed two false claims in the new comments, but that is not the review.
 
-## 15. Files
+## 15. The `currentDevicePixelRatio` SSR guard cannot be reached from any test in this suite
+
+**Status: OPEN. Not a flake — an unreachable assertion. No test asserts this branch.**
+
+`src/hooks/useDevicePixelRatio.ts` opens with
+`if (typeof window === 'undefined') return 1;`, and that guard is the only thing
+between a server render and a `ReferenceError`. Nothing in the suite reaches it.
+
+Under `vitest.config.ts`'s `environment: 'jsdom'` the global `window` is a
+**non-configurable accessor** on the vm context global — its own property descriptor
+reports `configurable: false` — so it can be neither redefined nor deleted. The
+obvious attempt, `vi.stubGlobal('window', undefined)`, throws
+`TypeError: Cannot redefine property: window` before the assertion under it runs. That
+failure was carried into this repository as a red test rather than diagnosed: the
+salvaged `unit-hardening` work asserted this case in
+`src/hooks/__tests__/useDevicePixelRatio.test.ts`, and it cannot pass in this
+environment at all.
+
+A Node-environment test file is also not a way out. `@vitest-environment node` loads
+`src/test/setup.ts` — the suite's global `setupFiles` — and that file spies on
+`HTMLCanvasElement.prototype` at module scope, so the run dies in setup before the test
+body is reached.
+
+**Actionable fix.** Declare a second Vitest project for DOM-free files, with
+`environment: 'node'` and its own (empty) `setupFiles`, and move the assertion there. It
+has to be a project rather than a per-file `environmentMatchGlobs`, which Vitest
+removed; and it has to carry its own `setupFiles` rather than inherit the shared one. The
+pair of files then pins the contract from both sides: the Node project shows the value is
+1 with no `window`, and the existing jsdom cases in `useDevicePixelRatio.test.ts` show
+the same function returns the live ratio when there is one. Either half alone is
+satisfiable by a function that is wrong in the other direction.
+
+## 16. Files
+
+- `src/hooks/useDevicePixelRatio.ts` — the `typeof window === 'undefined'` guard section 15 is about
+- `src/hooks/__tests__/useDevicePixelRatio.test.ts` — the file that carried the unreachable assertion
+- `src/test/setup.ts` — the module-scope `HTMLCanvasElement` spy that blocks a `@vitest-environment node` file
+- `vitest.config.ts` — the `environment` and `setupFiles` a second project would have to diverge from
 
 - `vitest.config.ts` — the `test` block whose `pool`, `maxWorkers` and `isolate` this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved

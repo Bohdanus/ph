@@ -1,10 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
-import { legacyHistoryToDurable, operationForTool } from '../history-adapter.ts';
+import { legacyHistoryToDurable, operationForTool, UnsupportedHistoryFeatureError } from '../history-adapter.ts';
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
+import type { DurableLayerSnapshot } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
+import {
+  PIXEL_FREE_TOOLS,
+  toolProcessors,
+  type ToolCommitKind,
+  type ToolReplayKind,
+} from '../../tools/toolProcessors.ts';
+import { defaultSettings } from '../../tools/settings.ts';
 import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
@@ -94,5 +102,167 @@ describe('durable tool-action invariant', () => {
     expect(legacy.layers[layerId]?.pos).toEqual({ x: 20, y: 30, width: 120, height: 80 });
     expect(durable.layers[layerId]?.snapshot.pos).toEqual(legacy.layers[layerId]?.pos);
     expect(applyRasterTool).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The registry-wide half of the same rule. The test above pins ONE geometry tool by name,
+ * which leaves the other 33 entries of `toolProcessors` unpinned: a tool can be wired to
+ * the wrong `commit` kind, or its `commit` to the wrong `replay.kind`, or be left with
+ * neither a per-layer operation nor a refusal, and every other suite stays green because
+ * each of them names a single tool.
+ *
+ * These two tables are the whole contract, and both are exhaustive by construction: the
+ * `Record<ToolCommitKind, ...>` annotation is a compile error if a kind is added to the
+ * union without a row here, and the runtime count check below catches the reverse.
+ */
+
+/** The one commit kind whose replay kind is spelled differently, and why. */
+const REPLAY_KIND_FOR_COMMIT: Record<ToolCommitKind, ToolReplayKind> = {
+  geometry: 'geometry',
+  'layer-operation': 'layer-operation',
+  'affine-operation': 'affine-operation',
+  'document-operation': 'document-operation',
+  source: 'source',
+  selection: 'selection',
+  // `raster` is the only rename: a raster tool commits a patched bitmap, and the replay
+  // side names the mechanism rather than the tool class.
+  raster: 'raster-processor',
+  unimplemented: 'unimplemented',
+};
+
+/**
+ * The durable operation a commit kind owes the timeline, or `null` for the kinds that
+ * deliberately have none. `null` here is NOT "unknown": it is the claim that the kind is
+ * not a per-layer edit, and the arm of `operationForTool` that produces it is asserted
+ * below rather than assumed.
+ */
+const OPERATION_FOR_COMMIT: Record<ToolCommitKind, string | null> = {
+  geometry: 'reposition-layer',
+  'layer-operation': 'apply-filter',
+  'affine-operation': 'apply-affine-transform',
+  raster: 'apply-raster-processor',
+  // A creator commits a whole new layer rather than an edit to this one, so there is no
+  // per-layer operation to plan; a document crop and a selection move the document or the
+  // selection, not the layer's pixels.
+  source: null,
+  'document-operation': null,
+  selection: null,
+  // Nothing is owed, and a refusal is the honest answer. `null` would be a silent drop.
+  unimplemented: null,
+};
+
+/** Args that name a tool and give its commit kind the field it reads. */
+function argsFor(toolName: string): Record<string, unknown> {
+  switch (toolName) {
+    case 'blur':
+      return { ...defaultSettings.blur };
+    case 'color':
+      return { ...defaultSettings.color };
+    case 'levels':
+      return { ...defaultSettings.levels };
+    case 'transform':
+      // The stored defaults are all identity, and an identity transform plans nothing.
+      // A real rotation is what makes this kind owe an operation.
+      return { ...defaultSettings.transform, rotate: 15 };
+    case 'crop':
+      return { ...defaultSettings.crop };
+    case 'reposition':
+      // Geometry is the one kind that reads a patch OUT of its args, so a bare
+      // `{ toolName }` legitimately plans nothing and would read as a missing
+      // operation. The sweep has to carry the patch; the no-patch half is the
+      // dedicated test below.
+      return { toolName, move: { x: 4, y: 8 } };
+    default:
+      return { toolName };
+  }
+}
+
+function toolItem(toolName: string): HistoryItem {
+  return { id: `tool-${toolName}`, actionName: TOOL_ACTION, layerId, args: argsFor(toolName) };
+}
+
+function snapshot(): DurableLayerSnapshot {
+  return legacyHistoryToDurable(
+    history({
+      id: 'baseline',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId,
+      documentSource: { layers: { [layerId]: layer() }, size, frame },
+    }),
+    {
+      documentId: 'registry-invariant',
+    }
+  ).document.baseline.layers[0]!;
+}
+
+const registry = Object.entries(toolProcessors);
+
+describe('tool processor registry invariants', () => {
+  it('covers every commit kind in both tables, so a new kind cannot arrive unwired', () => {
+    expect(Object.keys(REPLAY_KIND_FOR_COMMIT).sort()).toEqual(
+      [
+        'affine-operation',
+        'document-operation',
+        'geometry',
+        'layer-operation',
+        'raster',
+        'selection',
+        'source',
+        'unimplemented',
+      ].sort()
+    );
+    expect(Object.keys(OPERATION_FOR_COMMIT).sort()).toEqual(Object.keys(REPLAY_KIND_FOR_COMMIT).sort());
+  });
+
+  it('registers at least one tool for every commit kind, so no row above is aspirational', () => {
+    const seen = new Set(Object.values(toolProcessors).map((definition) => definition.commit));
+    expect([...seen].sort()).toEqual(Object.keys(REPLAY_KIND_FOR_COMMIT).sort());
+  });
+
+  it.each(registry)('pairs %s with the replay kind its commit kind promises', (_toolName, definition) => {
+    expect(definition.replay.kind).toBe(REPLAY_KIND_FOR_COMMIT[definition.commit]);
+  });
+
+  it.each(registry)(
+    '%s either plans the operation its commit kind owes or refuses, and never both',
+    (toolName, definition) => {
+      const owed = OPERATION_FOR_COMMIT[definition.commit];
+      let planned: string | null = null;
+      let refused: string | null = null;
+      try {
+        planned = operationForTool(toolItem(toolName), snapshot())?.kind ?? null;
+      } catch (error) {
+        refused = error instanceof UnsupportedHistoryFeatureError ? error.code : `unexpected ${String(error)}`;
+      }
+
+      if (owed === null) {
+        // A kind with no per-layer operation may decline quietly, but a refusal is the
+        // stronger answer and is never a failure of the table.
+        expect(planned === null || refused === 'unsupported-history-feature').toBe(true);
+      } else {
+        expect(refused).toBeNull();
+        expect(planned).toBe(owed);
+      }
+    }
+  );
+
+  it.each(PIXEL_FREE_TOOLS)(
+    'refuses %s by name, because a tool that commits no pixels owns no operation',
+    (toolName) => {
+      expect(toolProcessors).not.toHaveProperty(toolName);
+      expect(() => operationForTool(toolItem(toolName), snapshot())).toThrow(UnsupportedHistoryFeatureError);
+    }
+  );
+
+  it('plans a geometry operation only once the args carry the patch it reads', () => {
+    const layer = snapshot();
+    expect(
+      operationForTool({ id: 'bare', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition' } }, layer)
+    ).toBeNull();
+    expect(operationForTool(toolItem('reposition'), layer)).toMatchObject({
+      kind: 'reposition-layer',
+      move: { x: 4, y: 8 },
+    });
   });
 });
