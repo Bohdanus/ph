@@ -17,25 +17,31 @@
 //                     light tile   dark tile   dark flyout row
 //   opacity 0.40        2.05:1       3.25:1          3.17:1
 //   opacity 0.55        2.81:1       4.96:1          4.68:1
-//   opacity 0.80        5.11:1       9.27:1          8.17:1
+//   opacity 0.80        5.11:1       9.29:1          8.17:1
 //
-// (Composited from this repository's own `@theme` hexes in `src/index.scss`; `e2e/toolbar-contrast.spec.ts`
-// measures the same five cells in a real browser and is the gate.)
+// (Composited from this repository's own `@theme` hexes in `src/index.scss`. The 3.17:1 and the
+// 4.68:1 are pinned in `e2e/helpers/__tests__/contrast.unit.test.ts`, which is what a change to this
+// table has to keep honest. `e2e/toolbar-contrast.spec.ts` measures ONE dimmed cell in a browser — the
+// dark flyout row, at whatever opacity ships — so it gates the 0.55 and not the table: it does not
+// sweep the fractions, and it measures no dimmed tile and no light-theme dim.)
 //
-// The cell that DRIVES the dark value is the flyout row, not the tile. A row's label is 11px text,
-// so it is owed the ordinary 4.5:1, and at 0.40 it got 3.17:1. The dark TILE glyph is a 24px icon,
-// which is scored at the 3:1 non-text floor and clears it at 3.25:1 — so the tile was never the
-// broken case and raising its number would have been fixing the wrong thing. Dark is therefore 0.55,
-// where both of its text cells clear their floor, and light stays at the button's own
+// The cell that drives the dark value is the flyout row, and the dark TILE is short too — so the
+// honest statement is that BOTH are under the floor at 0.40, not that the tile was never broken. A
+// row's label is 11px text, so it is owed the ordinary 4.5:1, and it got 3.17:1; the tile glyph got
+// 3.25:1, because the tile is measured at the size the BUTTON reports — the inherited 16px, not the
+// icon's own 28px box — so nothing here is scored at the 3:1 non-text floor after all. Dark is
+// therefore 0.55, where both dark cells clear 4.5:1, and light stays at the button's own
 // `disabled:opacity-40` because it is unregressed there and 0.55 buys nothing: light was already the
 // darker of the two readings and raising it only makes working tools look less finished by
 // comparison.
 //
 // WHAT LIGHT STILL DOES NOT CLEAR, stated rather than hidden: its tile sits at 2.05:1 and its flyout
 // row at 2.06:1 at the fraction it keeps. Reaching 4.5:1 in light needs 0.80, at which point the dim
-// is 5.11:1 against a working tool's 9.37:1 — still dimmer, but by a margin that no longer reads as
-// "does not work yet" at a glance. That is a real shortfall rather than an oversight, and it is the
-// honest cost of an operator-requested treatment Adobe does not have. The greyed controls are also
+// is 5.11:1 against a working tool's 8.55:1 — still dimmer, but by a margin that no longer reads as
+// "does not work yet" at a glance. (8.55 is the working tile's glyph on its own fill, `bg-gray-200/80`
+// over the rail; the bare rail is 9.37:1 and is not what a tile is drawn on.) That is a real shortfall
+// rather than an oversight, and it is the honest cost of an operator-requested treatment Adobe does
+// not have. The greyed controls are also
 // the one category WCAG exempts as an inactive component — but only genuinely inactive ones, and
 // these are not: a dimmed tile still selects and still mounts its placeholder options bar, which is
 // why they are scored here rather than excused.

@@ -59,12 +59,37 @@ export const rulerLegVertex = (measurement: RulerMeasurement): Point =>
 /**
  * `measurement` with its vertex recorded, and nothing else changed.
  *
- * The `'end'` case returns the measurement as it came rather than a copy with `legAt: 'end'` on it,
- * so a leg pulled from the far end — and every plain measuring line — keeps exactly the shape it had
- * before `legAt` existed, and a test that pins one does not have to know the field exists.
+ * The `'end'` case DELETES `legAt` rather than leaving the measurement alone, and that is the whole
+ * reason this is a function. Returning the argument unchanged — which is what it did first, to keep a
+ * far-end leg byte-identical to the shape that existed before `legAt` — makes the field write-once: a
+ * line whose leg was pulled from its START end can never have it moved back, so a second Alt-drag from
+ * the other end draws its leg from the wrong endpoint and reports an angle and a D2 measured at the
+ * wrong vertex. The shape saving was worth nothing next to a vertex that cannot move.
+ *
+ * So the invariant is maintained by writing the field only when it says `'start'`, and the absence of
+ * the key means `'end'` — which is what `rulerLegVertex` already reads.
  */
-export const withRulerLegVertex = (measurement: RulerMeasurement, at: 'start' | 'end'): RulerMeasurement =>
-  at === 'end' ? measurement : { ...measurement, legAt: 'start' };
+export const withRulerLegVertex = (measurement: RulerMeasurement, at: 'start' | 'end'): RulerMeasurement => {
+  if (at === 'end') {
+    if (measurement.legAt === undefined) return measurement;
+    const { legAt: _dropped, ...rest } = measurement;
+    return rest;
+  }
+  return { ...measurement, legAt: 'start' };
+};
+
+/**
+ * `measurement` with `legAt` copied only when it is the start end.
+ *
+ * `legAt: measurement.legAt` in an object literal creates the key with value `undefined` when the
+ * source has no `legAt` — which is the opposite of the invariant, and `'legAt' in moved` is then true
+ * for a plain measuring line. `JSON.stringify` drops it and `toEqual` ignores it, so nothing notices
+ * until something asserts on key presence. This copies the field through `withRulerLegVertex`, which
+ * cannot create the key, rather than restating that rule at each of the three places a measurement is
+ * rebuilt.
+ */
+export const carryRulerLeg = <T extends RulerMeasurement>(measurement: T): Omit<T, 'legAt'> & Pick<T, 'legAt'> =>
+  measurement.legAt === undefined ? measurement : { ...measurement };
 
 /**
  * The seven numbers Adobe's Ruler page names, in its order: "The starting location (X and Y) /
