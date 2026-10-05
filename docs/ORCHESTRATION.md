@@ -224,8 +224,8 @@ status` and `git diff` before staging.
   **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
   about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
   repository, driven through `findTakeovers` with the real index. All seven destroyed
-  committed work and reported success. **Replayed over the 407 merges on `main` before and
-  after the fixes, the same 36 merges are refused, with the same kinds and the same paths** —
+  committed work and reported success. **Replayed over every merge on `main` before and after
+  the fixes, the same merges are refused, with the same kinds and the same paths** —
   every change was a shape that was _invisible_, never a verdict that moved:
 
   | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
@@ -256,10 +256,32 @@ status` and `git diff` before staging.
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
   conflict runs no hook at all, so an operation left open is invisible to it — which is how
   `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting
-  merge that this guard would have refused the moment anyone ran `git commit`. Nothing else
-  detects that state either: `scripts/worktree-inventory.mjs` has no notion of an operation
-  in progress, and no hook, script or CI job regenerates its output. The guard is the floor
-  under the rule, not a substitute for noticing.
+  merge that this guard would have refused the moment anyone ran `git commit`. `npm run
+repo:state` is what reports an operation in progress, and it separates the two states that
+  share one `action`: unmerged paths mean git still holds every side and nothing has been
+  decided, while **none** mean a resolution is staged in no commit, which `git merge --abort`
+  discards. Nothing else in the tree can see that state, which is why it is a command and not
+  a field.
+
+  **A hand edit to a file git merged CLEANLY, which is a shape with no conflict marker in it
+  anywhere.** Counting `remerge CONFLICT` lines does not measure hand-written merge work, and
+  the gap is not small: on the history `findHandResolutions` in
+  `scripts/merge-takeover-guard.mjs` was measured over, more paths were hand-edited on a merge
+  git had already resolved cleanly than were resolved as conflicts. That function's JSDoc holds
+  the rules, the figures, and how to re-derive them; the figures move as `main` grows, so they
+  are not held here. What it enforces, in three lines:
+
+  - a path changed after a **clean** merge is **reported** with the count of lines git's merged
+    result had and the staged result does not. Refusing those would train every agent to reach
+    for `--no-verify`, which is how the three whole-file shapes above were nearly lost once.
+  - a **test** file that git's merge produced and the result does not contain is **refused**,
+    UNLESS a side's own commit had already deleted it, which includes every `modify/delete`
+    conflict — deleting the file there is git's own recommendation and was reviewed where it was
+    written. A path that was renamed is reported as a rename, because rename detection on hides
+    the erasure and rename detection off refuses a legitimate rename.
+  - a merge run with `-X`/`-s` **cannot be detected and cannot cause the refusal**: git records
+    a merge's result in its reflog action, not the invocation, so no hook can read the flag; a
+    strategy option resolves a hunk and never removes a path, so its cost is report lines.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the
