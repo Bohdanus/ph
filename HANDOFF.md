@@ -6253,16 +6253,25 @@ picked from the rail commits the outgoing tool against the incoming tool's args.
 commit takes its drop branch: `useLayer`'s text branch reads `args.text` and `args.rect`, finds
 neither on a shape args object, early-returns, and an unapplied text layer is dropped with nothing to
 undo. The inverse order is what `mobile-tools.ts`'s `makeSelectTool` already does, and what the
-header's figure rows used to do before the `Tools` menu was removed; the rail is the one caller left
-that does it the other way. Nothing pins either order: the header's own test for it was deleted with
-its surface, and no rail test asserts the sequence.
+header's figure rows used to do before the `Tools` menu was removed. Nothing pins either order:
+the header's own test for it was deleted with its surface, and neither the rail nor the keyboard
+has a test asserting the sequence.
 
-**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; the surviving safe order is in
-`src/components/Mobile/mobile-tools.ts`.
+**Affected.** `src/components/SidebarLeft/SidebarLeft.tsx`; `src/components/Common/AppKeyboardShortcuts.tsx`;
+the surviving safe order is in `src/components/Mobile/mobile-tools.ts`.
 
-**What would close it.** Select first, then patch, in `SidebarLeft`, plus a test that asserts the
-order the way the header's asserted it: have `commitDirtyTool` record the args it sees and fail if
-they are the incoming figure's. Ordering it against `makeSelectTool` also removes the last place the
-two surfaces can disagree, which is how the sheet and the bar came to differ once already.
+**What would close it.** Select first, then patch, in `SidebarLeft` **and** in
+`AppKeyboardShortcuts`'s `selectShapeTool`, plus a test that asserts the order the way the header's
+asserted it: have `commitDirtyTool` record the args it sees and fail if they are the incoming
+figure's.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Mobile/mobile-tools.ts`
+**This entry's scope was wrong and is corrected here.** It used to claim the rail was "the one
+caller left that does it the other way" and that reordering it "removes the last place the two
+surfaces can disagree". Both are false. `selectShapeTool` in `AppKeyboardShortcuts.tsx` patches and
+then selects at two sites, reachable from plain `U` and from `Shift+U`, so three call sites carry
+the hazard and only `mobile-tools.ts`'s `makeSelectTool` gets the order right. Reordering the rail
+alone would leave the keyboard surface able to commit an outgoing tool against a replaced figure,
+while this entry read as satisfied.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx`, `src/components/Common/AppKeyboardShortcuts.tsx`,
+`src/components/Mobile/mobile-tools.ts`

@@ -686,11 +686,12 @@ argument that wins over the file budget. They are `never asks the table to prote
 whose protection is derived`, `never offers a live worktree that holds uncommitted work on no
 ref for disposal`, and `protects that shape in a worktree NOBODY has written anything down
 about`. `liveWorktreeFacts()` memoises, so the suite pays for the read once and the three share
-it — but each carries its own budget, and two different ones from this list have been observed
-failing on different full-suite runs, with the file green when run alone. Which of them runs out
-first is not something the budget may depend on. On a fleet past 150 worktrees that budget is a
-function of the operator's environment, not of the repository's content, so the knife edge moves
-when a sweep grows the fleet and when nothing is committed.
+it — but each carries its own budget. Observed 2026-10-05 while correcting the count: two
+different ones from this list failed on different `npm run test` runs on `main`, and the file
+passed 160/160 in 24s alone. Which of them runs out first is not something the budget may depend
+on. On a fleet past 150 worktrees that budget is a function of the operator's environment, not of
+the repository's content, so the knife edge moves when a sweep grows the fleet and when nothing
+is committed.
 
 Two costs compound, and it is worth keeping them apart because only one was ever measured:
 

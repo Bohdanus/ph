@@ -154,9 +154,12 @@ const INK_SUM_CEILING = 240;
  * A half pixel, and it is not slack: it is exactly the disagreement the measurement owes to
  * `right`/`bottom` being inclusive indices. A block whose left edge is at `P` and which is `W`
  * pixels wide measures back as spanning `P` through `P + W - 1`, so its measured centre is
- * `P + (W - 1) / 2` while the true centre of the canvas is `width / 2`. At `P = (width - W) / 2`
- * those differ by exactly half a pixel, for every `W` — so half a pixel is the floor, and zero
- * would fail on a correct paste.
+ * `P + (W - 1) / 2` while the true centre of the canvas is `width / 2`. Wherever `P` can be
+ * `(width - W) / 2` — that is, wherever the centred placement is a whole number of pixels — those
+ * differ by exactly half a pixel, for every such `W`. Half a pixel is therefore the floor for any
+ * placement the app can actually produce, and zero would fail on a correct paste. Where `width` and
+ * `W` differ in parity the centred `P` is not an integer, no placement sits at it, and the error
+ * is smaller — so this is the worst case, not a universal one.
  *
  * This block's own first draft said one, from the first commit that added this file, while the two
  * assertions below have always enforced `0.5` and no constant was ever declared — so the comment

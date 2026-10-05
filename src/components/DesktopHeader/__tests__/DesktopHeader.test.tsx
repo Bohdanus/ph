@@ -5,14 +5,23 @@
  * The five figure rows were a SECOND selection surface over the rail, and they had a trap in
  * them: `tools-menu-ellipse-button` had to dispatch `goToTool('shape')` plus a
  * `patchToolArgs('shape', { figure: 'oval' })`, because dispatching the registered
- * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where
- * `isShapeFamilyToolName()` in `src/components/ToolbarsRight/Figures/Shape.tsx` returned early
- * and suppressed the store-colour publish — a red colour well committing black. Neither the trap
- * nor the fix is affected: both live in `SidebarLeft`, which selects a figure as
- * `goToTool('shape')` plus the `figure` value `toolbarMap` carries, and
- * `toolbar-mapping.test.ts` pins that mapping's order and members directly. The guard was a bare
- * `args.toolName !== 'shape'` when that trap was recorded; it is a named predicate now, which is
- * why the shape it has to satisfy is the family and not one literal.
+ * `ToolName` `ellipse` mounted the Shape panel with `toolName: 'ellipse'`, where a bare
+ * `args.toolName !== 'shape'` guard returned early and suppressed the store-colour publish —
+ * a red colour well committing black.
+ *
+ * **That trap is closed, and it was the colour publish that closed it.** The guard is now
+ * `isShapeFamilyToolName()` in `src/components/ToolbarsRight/Figures/Shape.tsx`, and
+ * `SHAPE_FAMILY_TOOL_NAMES` admits all six names including `ellipse`, so the early return no
+ * longer fires for a figure and the publish proceeds. `Main.tsx`'s interaction-mode arm lists the
+ * same six, so all of them mount `ShapeToolArea`. So the colour argument above no longer forces
+ * the routing and must not be repeated as the reason for it.
+ *
+ * What still forces it is one literal, and it is not in the guard:
+ * `ShapeToolArea`'s `editsActiveLayer` tests `args.toolName === 'shape'` to decide whether a
+ * commit REPLACES the active layer's source rather than creating a new one. A figure that arrived
+ * as `toolName: 'ellipse'` would mount the same panel and still refuse to be dragged or resized
+ * in place. The routing therefore stands, on that reason alone, and
+ * `toolbar-mapping.test.ts` pins `toolbarMap`'s order and members directly.
  *
  * The other thing this file proved was that the header's tool rows committed a pending
  * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
@@ -25,11 +34,14 @@
  *
  * WHERE THE ORDER STILL MATTERS, so this is not read as "the rule moved to the rail":
  * `mobile-tools.ts`'s `makeSelectTool` selects first and patches second, which is the safe
- * order, and it is the only caller left that both patches and selects. `SidebarLeft`'s own
- * `selectTool` patches FIRST and then selects, so a figure picked from the rail commits the
- * outgoing tool against already-replaced args. Nothing here pins that, and this file cannot:
- * it no longer has a surface that patches. The defect is recorded in `HANDOFF.md` §237, not
- * enshrined by a test written to match the code.
+ * order. Three call sites patch FIRST and then select, and all three carry the same hazard
+ * `HANDOFF.md` §237 describes — the outgoing tool commits against already-replaced args:
+ * `SidebarLeft`'s own `selectTool`, and `AppKeyboardShortcuts`'s `selectShapeTool` at both of
+ * its patch sites, reachable from plain `U` and from `Shift+U`. Nothing here pins any of them,
+ * and this file cannot: it no longer has a surface that patches. §237 names only
+ * `SidebarLeft.tsx`, so its claim that reordering there removes the last place the surfaces can
+ * disagree does not hold either. The defect is recorded in `HANDOFF.md`, not enshrined by a test
+ * written to match the code.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

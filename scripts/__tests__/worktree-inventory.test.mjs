@@ -323,8 +323,8 @@ const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true 
  * everything, and a guard written that way is green no matter what the generator
  * does with a dirty merged branch.
  *
- * Memoised: two tests below need the same few seconds of git, and a second read
- * of a repository other agents are actively writing to could see a different
+ * Memoised: the three tests below need the same few seconds of git, and a second
+ * read of a repository other agents are actively writing to could see a different
  * shape than the first.
  */
 let _liveFacts = null;
