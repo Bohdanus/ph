@@ -6,6 +6,7 @@ import type { Layer, LayerSource } from '../layer-types.ts';
 import { MERGE_ACTION, NEW_LAYER_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const pos = { x: 3, y: 4, width: 40, height: 20 };
+const frame = { x: 5, y: 6, width: 200, height: 160 };
 
 function fakeBitmap(width: number, height: number) {
   return { width, height, close: () => undefined } as unknown as ImageBitmap;
@@ -295,6 +296,15 @@ describe('createHistoryItem document sources', () => {
  * without a production change.
  */
 
+/**
+ * The `toLayerSnapshot` geometry argument: a runtime layer plus the one field a
+ * `Layer` does not carry and a snapshot must — the document frame its geometry was
+ * taken against.
+ */
+function snapshotLayer(overrides: Partial<Layer> = {}): Layer & { frame: typeof frame } {
+  return { ...runtimeLayer(overrides), frame: { ...frame } };
+}
+
 describe('toLayerSnapshot source cloning', () => {
   it('clones vector and text source arguments, size and source position', () => {
     const vector: DurableLayerSource = {
@@ -313,8 +323,8 @@ describe('toLayerSnapshot source cloning', () => {
       sourcePos: { ...pos },
     };
 
-    const vectorSnapshot = toLayerSnapshot(runtimeLayer(), vector);
-    const textSnapshot = toLayerSnapshot(runtimeLayer(), text);
+    const vectorSnapshot = toLayerSnapshot(snapshotLayer(), vector);
+    const textSnapshot = toLayerSnapshot(snapshotLayer(), text);
 
     expect(vectorSnapshot.source).toStrictEqual(vector);
     if (vectorSnapshot.source.kind !== 'vector' || textSnapshot.source.kind !== 'text') {
@@ -336,7 +346,7 @@ describe('toLayerSnapshot source cloning', () => {
       isBedrock: true,
     };
 
-    const snapshot = toLayerSnapshot(runtimeLayer(), legacy);
+    const snapshot = toLayerSnapshot(snapshotLayer(), legacy);
 
     expect(snapshot.source).toStrictEqual(legacy);
     expect(snapshot.source).not.toHaveProperty('sourcePos');
@@ -345,14 +355,14 @@ describe('toLayerSnapshot source cloning', () => {
   });
 
   it('keeps a raster asset id by value and a blank source size by copy', () => {
-    const raster = toLayerSnapshot(runtimeLayer(), {
+    const raster = toLayerSnapshot(snapshotLayer(), {
       kind: 'raster',
       assetId: 'asset-1' as AssetId,
       width: 40,
       height: 20,
       name: 'Raster',
     });
-    const blank = toLayerSnapshot(runtimeLayer(), {
+    const blank = toLayerSnapshot(snapshotLayer(), {
       kind: 'blank',
       color: '#ffffff',
       opacity: 1,
@@ -362,5 +372,21 @@ describe('toLayerSnapshot source cloning', () => {
     if (raster.source.kind !== 'raster' || blank.source.kind !== 'blank') throw new Error('unexpected kinds');
     expect(raster.source.assetId).toBe('asset-1');
     expect(blank.source.size).not.toBe(pos);
+  });
+
+  it('copies and freezes the frame a snapshot was taken against', () => {
+    const snapshot = toLayerSnapshot(snapshotLayer(), {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      size: { width: 40, height: 20 },
+    });
+
+    // By value first: a snapshot that restated what frame it was captured against
+    // would make every later replay decision unfalsifiable, and the live frame is
+    // a mutable store field the snapshot must not alias.
+    expect(snapshot.frame).toStrictEqual(frame);
+    expect(snapshot.frame).not.toBe(frame);
+    expect(Object.isFrozen(snapshot.frame)).toBe(true);
   });
 });

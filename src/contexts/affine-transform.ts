@@ -235,18 +235,22 @@ export function getLayerAffineTransform(layer: Layer): AffineTransform {
   return transform;
 }
 
+/**
+ * The transformed QUADRILATERAL a layer's content is drawn into, in world space.
+ *
+ * Matrix-only, and that is what distinguishes it from the extent: `ctx.filter` blurs outside the
+ * rectangle it filters, so the corners of a filtered layer's footprint are not the corners of the
+ * footprint. The layer-level extent is therefore NOT this module's to answer — `layerPresentationBounds()`
+ * in `presentation-evaluator.ts` is the one rule for it, and it carries the filters' spread. This
+ * function stays for what the corners alone describe: the outline a marching-ants trace follows,
+ * which is the layer's own geometry.
+ */
 export function getLayerPresentationCorners(layer: Layer, position: Pos = layer.pos): Point[] {
   const transform = getLayerAffineTransform(layer);
   return transformCorners(transform, { width: position.width, height: position.height }).map((point) => ({
     x: point.x + position.x,
     y: point.y + position.y,
   }));
-}
-
-export function getLayerPresentationBounds(layer: Layer, position: Pos = layer.pos): Pos {
-  const transform = getLayerAffineTransform(layer);
-  const bounds = getAffineBounds(transform, { width: position.width, height: position.height });
-  return { x: position.x + bounds.x, y: position.y + bounds.y, width: bounds.width, height: bounds.height };
 }
 
 export function worldPointToLayerLocal(layer: Layer, point: Point): Point | null {

@@ -207,10 +207,17 @@ const Main = () => {
    * re-render lands after the browser has already painted the stale line. A layout effect runs
    * before the paint and React flushes the resulting update synchronously, so the previous
    * document's line is never on screen.
+   *
+   * `documentFrame` goes in beside `totalSize` because `totalSize` cannot answer half the question:
+   * it is `documentFrameSize(frame)`, so a CROP that keeps the width and height and moves the origin
+   * — the same-size band off the top and then the same-size band off the left — leaves it identical
+   * while every frame coordinate the line names now means a different document pixel. Both are read
+   * from the store in one destructure for that reason; keying on `totalSize` alone is the version
+   * that let that line survive.
    */
   useLayoutEffect(() => {
-    syncRulerFrame(documentId, totalSize);
-  }, [documentId, totalSize]);
+    syncRulerFrame(documentId, totalSize, documentFrame);
+  }, [documentId, totalSize, documentFrame]);
 
   useLayoutEffect(() => {
     const { width, height } = totalSize;

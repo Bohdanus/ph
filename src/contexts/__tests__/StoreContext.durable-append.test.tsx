@@ -623,6 +623,74 @@ describe('decideDurableAppend is what the store uses', () => {
   });
 });
 
+/**
+ * The revision half of HANDOFF §10. A `DurableLayerSnapshot` naming the frame it
+ * was authored against is the provenance half; this is what makes a crop actually
+ * refuse durable work — `decideDurableAppend` already compared `documentRevision`
+ * against the live state, and without this a crop left that comparison blind.
+ */
+describe('a frame change moves the document revision', () => {
+  it('bumps the revision on a real crop and stamps the durable document with the same one', () => {
+    const { store, dispatch } = openDocument();
+    const before = store();
+    expect(before.documentFrame).toEqual(defaultFrame);
+
+    const entry = crop();
+    commitCrop(dispatch(), entry, plannedFor(entry));
+
+    const after = store();
+    expect(after.documentFrame).toEqual(croppedFrame);
+    // The revision moved. Without this the store would report the same
+    // `documentRevision` on both sides of a crop, and every gate that compares it
+    // — `decideDurableAppend`'s own precondition above all — would treat a moved
+    // frame as the same document.
+    expect(after.documentRevision).toBe(before.documentRevision + 1);
+    // AND the durable document carries the same revision, which is what keeps the
+    // comparison meaningful: restamping only the store would make every later
+    // append fail its precondition and reconvert forever.
+    expect(after.durableDocument!.documentRevision).toBe(after.documentRevision);
+    expect(after.durableStatus).toBe('current');
+  });
+
+  it('leaves the revision alone when a commit restates the frame it is already on', () => {
+    const { store, dispatch } = openDocument();
+    const before = store().documentRevision;
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          // No frame change at all: a commit that names the current frame must not
+          // spend a revision, or it would invalidate a durable document it left
+          // perfectly faithful.
+          updates: { documentFrame: { ...defaultFrame }, totalSize: initialSize },
+          historyItem: propertyItem('prop-1', RENAME_LAYER_ACTION, { name: 'Renamed' }),
+        },
+      });
+    });
+
+    expect(store().documentRevision).toBe(before);
+    expect(store().durableStatus).toBe('current');
+  });
+
+  it('publishes the durable entry that follows a crop rather than refusing it forever', () => {
+    const { store, dispatch } = openDocument();
+    const cropEntry = crop();
+    commitCrop(dispatch(), cropEntry, plannedFor(cropEntry));
+
+    // The control for the restamp above: the very next append is planned and
+    // decided against the RESTAMPED revision, so the revision bump costs one
+    // reconversion at most and does not wedge the document permanently.
+    const next = propertyItem('prop-after-crop', RENAME_LAYER_ACTION, { name: 'Renamed' });
+    commitProperty(dispatch(), next, deriveSetLayerPropertiesEntry(next), { name: 'Renamed' });
+
+    const after = store();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDiagnostics).toEqual([]);
+    expect(after.durableDocument!.history.map((entry) => entry.id)).toEqual([cropEntry.id, next.id]);
+  });
+});
+
 describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => {
   it.each(propertyActions)('appends the planned %s entry under the legacy id', (actionName, patch) => {
     const { store, dispatch } = openDocument();
