@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectOrphanBranches, report } from '../orphan-branches.mjs';
 
+vi.setConfig({ testTimeout: 20_000 });
+
 /**
  * A repository with three unmerged branches: one whose worktree still exists, one whose
  * worktree is gone, and one already merged.

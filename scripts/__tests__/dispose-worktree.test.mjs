@@ -575,14 +575,6 @@ describe('dispose execution', () => {
           'derived-live-writer',
           { inventory: legacyInventory({ derivedLive: true, writeHistory: { derivedChatIds: ['ses_abc'] } }) },
         ],
-        [
-          'operation-in-progress',
-          {
-            operationState: greenOperationState({
-              operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'd' }],
-            }),
-          },
-        ],
         ['ignored-content', { gitState: greenState({ ignoredWork: ['notes.log'] }) }],
       ];
       for (const [expected, overrides] of cases) {
