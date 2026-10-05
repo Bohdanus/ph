@@ -156,7 +156,7 @@ export const REFUSALS = {
   'not-in-inventory': () =>
     'The inventory has no entry for this worktree, so its action is unknown. Regenerate, or add a curated entry if it is a real finding.',
   'action-not-dispose': (action) =>
-    `The inventory says \`action: "${action}"\`, not \`"${ACTION.DISPOSE}"\`. Per docs/ORCHESTRATION.md that is not a deletion candidate — \`in-use\` means leave it alone, \`land\` means merge it, \`at-risk\` means save it, \`undecided\` means do not remove it.`,
+    `The inventory says \`action: "${action}"\`, not \`"${ACTION.DISPOSE}"\` and not \`"${ACTION.LEGACY}"\`. Per docs/ORCHESTRATION.md that is not a deletion candidate — \`in-use\` means leave it alone, \`land\` means merge it, \`at-risk\` means save it, \`undecided\` means do not remove it. A \`legacy\` action would have said the worktree is removable with the branch kept.`,
   'must-not-prune': () =>
     'A curated finding sets `mustNotPrune`, which vetoes `dispose` as well as `land`. It records work git cannot see in a clean tree.',
   'board-claim': (rows) =>
@@ -423,6 +423,12 @@ export function preflight({
 } = {}) {
   const failures = [];
   const refuse = (code, ...args) => failures.push({ code, message: REFUSALS[code] ? REFUSALS[code](...args) : code });
+  // Read ONCE, beside the inventory checks, and passed to `dispose()`. It is the
+  // difference between removing a directory and removing a branch, and deriving
+  // it twice from two reads of the same field is how the two halves stop
+  // agreeing — the inventory is a regenerable file, so a second read after a
+  // regeneration would be a second answer.
+  const keepBranch = inventory?.record?.action === ACTION.LEGACY;
 
   if (!gitState?.found) {
     refuse('unknown-worktree', target);
@@ -454,7 +460,15 @@ export function preflight({
     if (!Number.isFinite(age) || age > maxAgeMs) refuse('inventory-stale', age, inventory.generatedAt);
     if (!inventory.record) refuse('not-in-inventory');
     else {
-      if (inventory.record.action !== ACTION.DISPOSE) refuse('action-not-dispose', inventory.record.action);
+      // `legacy` IS a disposal candidate, and the check that separates it from
+      // `dispose` is the one below rather than this one. A legacy worktree is
+      // clean by the branch that classified it, so everything here that protects
+      // a live, dirty or in-flight worktree applies to it unchanged; the only
+      // thing that differs is whether the BRANCH goes with the directory, and
+      // `dispose()` answers that.
+      if (inventory.record.action !== ACTION.DISPOSE && inventory.record.action !== ACTION.LEGACY) {
+        refuse('action-not-dispose', inventory.record.action);
+      }
       if (inventory.record.mustNotPrune) refuse('must-not-prune');
       // The liveness arm this guard used to re-derive from two channels that
       // structurally cannot see the chat in question, while the signal was
@@ -566,7 +580,7 @@ export function preflight({
   if ((board?.liveAgents?.length ?? 0) > 0) refuse('board-agent-live', board.liveAgents.length);
   if ((sessions?.live?.length ?? 0) > 0) refuse('live-session', sessions.live.length);
 
-  return { ok: failures.length === 0, failures, record: inventory?.record ?? null };
+  return { ok: failures.length === 0, failures, record: inventory?.record ?? null, keepBranch };
 }
 
 /**
@@ -1202,10 +1216,21 @@ function firstLine(err) {
  * still recoverable either way, so there is nothing to gain by forcing it and a
  * work to lose.
  */
-export function dispose(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaultTar } = {}) {
+export function dispose(
+  cwd,
+  gitState,
+  { run = defaultRun, fs = defaultFs, tar = defaultTar, keepBranch = false } = {}
+) {
   const steps = [];
-  const ref = anchor(cwd, gitState, { run });
+  // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
+  // still reachable; a branch that is deliberately kept is already reachable,
+  // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
+  // evidence of a disposal next to a branch that was never disposed. The
+  // asymmetry is the point: `disposed/` means "this was removed and this is the
+  // only copy", and it must keep meaning that.
+  const ref = keepBranch ? null : anchor(cwd, gitState, { run });
   if (ref) steps.push(`anchored ${gitState.tip} at ${ref}`);
+  else if (keepBranch) steps.push(`no anchor ref: the branch ${gitState.branch} is being kept`);
 
   const saved = salvage(cwd, gitState, { run, fs, tar });
   // NAMES WHAT, or says there was nothing. `salvaged  to /path` — an empty join
@@ -1231,16 +1256,26 @@ export function dispose(cwd, gitState, { run = defaultRun, fs = defaultFs, tar =
   }
 
   let branchDeleted = false;
-  try {
-    run(cwd, ['branch', '-d', gitState.branch]);
-    branchDeleted = true;
-    steps.push(`deleted branch ${gitState.branch}`);
-  } catch (err) {
+  if (keepBranch) {
+    // THE WHOLE POINT OF THE STATUS, IN ONE BRANCH OF ONE FUNCTION. A legacy
+    // worktree's directory goes and its branch stays: git holds a branch with no
+    // worktree, so this costs a ref and saves the checkout, its `node_modules`
+    // and its `dist/`.
     steps.push(
-      `KEPT branch ${gitState.branch}: git refused \`-d\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+      `KEPT branch ${gitState.branch}: the inventory calls this action "legacy", so the ref is the thing being preserved`
     );
+  } else {
+    try {
+      run(cwd, ['branch', '-d', gitState.branch]);
+      branchDeleted = true;
+      steps.push(`deleted branch ${gitState.branch}`);
+    } catch (err) {
+      steps.push(
+        `KEPT branch ${gitState.branch}: git refused \`-d\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+      );
+    }
   }
-  return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved };
+  return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: keepBranch };
 }
 
 function realpathIfExists(p) {
@@ -1271,12 +1306,18 @@ const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [
 
   <worktree>   a path or a name as \`git worktree list\` prints it.
 
-Refuses unless the generated inventory calls this worktree \`action: "dispose"\`,
-no board claim, lock or live agent names it, no session has it as its directory
-inside the live window, and its working tree is clean. Anchors the branch at
+Refuses unless the generated inventory calls this worktree \`action: "dispose"\`
+or \`action: "legacy"\`, no board claim, lock or live agent names it, no session
+has it as its directory inside the live window, and its working tree is clean.
+Anchors the branch at
 ${KEEP_REF_PREFIX}<name> and salvages uncommitted work before removing anything.
 
 There is no --force. A dirty tree is a finding to report, not an obstacle.
+
+\`action: "legacy"\` removes the WORKTREE and keeps the BRANCH: git holds a branch
+with no worktree, so the directory, its node_modules and its dist/ go while the
+ref survives. No anchor ref is written, because the branch is the copy being
+kept. See docs/ORCHESTRATION.md.
 `;
 
 function main(argv) {
@@ -1371,21 +1412,28 @@ function main(argv) {
   if (dryRun) {
     const ref = anchorRefFor(gitState);
     process.stdout.write(
-      `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch -d ${gitState.branch}\n`
+      verdict.keepBranch
+        ? `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose, and the branch will be KEPT because the inventory calls it legacy.\n  would write no anchor ref — the branch itself is the copy being kept\n  would remove ${gitState.absolutePath}\n  would NOT run git branch -d ${gitState.branch}\n`
+        : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch -d ${gitState.branch}\n`
     );
     return 0;
   }
 
-  const result = dispose(cwd, gitState);
+  const result = dispose(cwd, gitState, { keepBranch: verdict.keepBranch });
   for (const step of result.steps) process.stdout.write(`  ${step}\n`);
   if (!result.worktreeRemoved) {
     process.stderr.write('dispose: nothing was deleted.\n');
     return 2;
   }
   process.stdout.write(
-    `dispose: ${gitState.name} disposed. The inventory is now stale; re-run \`node scripts/worktree-inventory.mjs\`.\n`
+    result.branchKept
+      ? `dispose: ${gitState.name} worktree removed, branch ${gitState.branch} kept. The inventory is now stale; re-run \`node scripts/worktree-inventory.mjs\`.\n`
+      : `dispose: ${gitState.name} disposed. The inventory is now stale; re-run \`node scripts/worktree-inventory.mjs\`.\n`
   );
-  return result.branchDeleted ? 0 : 2;
+  // A kept branch is not a failed deletion, so it must not report exit 2 — that
+  // code means "git refused" and is what a caller reads as "nothing was done".
+  // The worktree is gone and the branch survived, which is the whole request.
+  return result.branchDeleted || result.branchKept ? 0 : 2;
 }
 
 /**

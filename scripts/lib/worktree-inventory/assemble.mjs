@@ -66,6 +66,13 @@ export function buildInventory({
   // and a file that says a dead chat owns a worktree is worse than one that says
   // nothing — so the override wins, and everything it overrode is kept beside it.
   liveWritersSuppressed = null,
+  // The curated table is a MODULE, not a parameter, so an injected reader is the
+  // only way a test can place an entry against a worktree that does not exist in
+  // the real table. Without it, `legacy` — a hand-written flag — could only be
+  // exercised by editing `curated.mjs`, and the assertions about the `legacy`
+  // list would be unreachable for any branch this repository has not got.
+  // Every other source above is injected for the same reason.
+  curatedOf = curatedFor,
 }) {
   // `nowMs` is clamped to the newest thing the data can know about, on BOTH
   // sides. `chats.mjs` clamps internally for its own classification, but
@@ -86,7 +93,7 @@ export function buildInventory({
   );
 
   const records = worktrees.map((wt) => {
-    const curated = curatedFor(wt.name) ?? null;
+    const curated = curatedOf(wt.name) ?? null;
     const chatSessions = chatAudit.byDirectory.get(wt.path) ?? [];
     const chatSummary = summariseChats(chatSessions);
     // Declared before `classify` reads it: the board's agent record is the
@@ -329,6 +336,11 @@ export function buildInventory({
   const readyToLand = byActionNames(ACTION.LAND);
   const disposalCandidates = byActionNames(ACTION.DISPOSE);
   const atRisk = byActionNames(ACTION.AT_RISK);
+  // Named because it is the list that answers "what may I remove without losing
+  // anything", and it is a list of its own precisely because a legacy worktree
+  // also appears under no other action: it is disposable AND worth keeping, and
+  // one `action` field can only say one of those at a time. See `ACTION.LEGACY`.
+  const legacy = byActionNames(ACTION.LEGACY);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -437,6 +449,7 @@ export function buildInventory({
     readyToLand,
     disposalCandidates,
     atRisk,
+    legacy,
 
     /**
      * Worktrees that were deleted, and who had written in them.
@@ -512,6 +525,7 @@ export function buildInventory({
       readyToLand: readyToLand.length,
       disposalCandidates: disposalCandidates.length,
       atRisk: atRisk.length,
+      legacy: legacy.length,
       salvage: records.filter((r) => r.recommendation === 'salvage').length,
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,

@@ -463,6 +463,8 @@ salvage branch is landable, read the hunks that touch `src/`, not only the test 
 ## 7 — Classify and act
 
 Run these cases **in order**, and classify the worktree before touching it.
+`(b-quarter)` sits between `(b)` and `(c)`: it is a judgement about the future, so
+it is a decision rather than something git reports.
 
 ### (a) Clean tree — safe to delete
 
@@ -597,6 +599,42 @@ with no tag and no remote-tracking ref. **Never delete both halves of a duplicat
 pair**, and note that `dispose` anchors whatever it removes at
 `refs/keep/disposed/<name>`, so a half you deleted by mistake is one `git branch`
 away.
+
+### (b-quarter) Legacy — keep the branch, drop the worktree
+
+**A stale branch nobody will work on again, kept for the small chance it matters.**
+Set it by hand; nothing derives it, because "nobody will need this" is a judgement
+about the future and no git fact can produce one. Add `legacy: true` and a `note`
+saying which branch, why it is kept, and what would make it worth revisiting, to
+its entry in `scripts/lib/worktree-inventory/curated.mjs`. Then:
+
+```bash
+npm run dispose -- <name> --dry-run     # says the branch will be KEPT
+npm run dispose -- <name>
+node scripts/worktree-inventory.mjs
+```
+
+The worktree goes; the branch stays, reachable with `git branch <name>`. Git holds
+a branch with no worktree, so this costs one ref and saves a checkout, its
+`node_modules` and its `dist/`.
+
+**Do not use it for a branch holding uncommitted work.** `legacy` authorises
+deleting a directory, and uncommitted changes exist in no commit and no ref, so
+`classify` ignores the flag on a dirty worktree and reports `at-risk`. That is the
+right answer and it is not a bug to work around — save the work first, or leave the
+entry off. A `legacy` claim is also refused when `mustNotPrune` is set: one says
+the work is not accounted for, the other says it is and will never be used, and the
+first wins.
+
+**It is not `at-risk`, and that is why it exists.** `at-risk` reads as "a human
+must act before anything can be lost", so a branch nobody intends to act on filed
+there sits on the list a sweep reads first, forever. `legacy` also suppresses a
+clean merge verdict — it says do not merge it either.
+
+**Two things it will not do for you.** It does not keep the worktree, and it does
+not make the branch worth landing later. A branch kept this way has to be _chosen_
+again by a human reading the note, which is the point: the 1% chance is only worth
+paying for if someone can recognise it when it comes up.
 
 ### (c) Hard merge — mark it, move on, come back last
 

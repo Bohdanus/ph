@@ -494,14 +494,46 @@ node scripts/worktree-inventory.mjs --quiet    # totals only
 **Read `action` first.** Every record carries one value, and it is the whole
 answer — which of the six things it is:
 
-| `action`    | meaning                                                                                         | do this           |
-| ----------- | ----------------------------------------------------------------------------------------------- | ----------------- |
-| `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it          |
-| `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it           |
-| `dispose`   | on `main`, clean, nothing protects it                                                           | delete it         |
-| `in-use`    | an agent or a session is active there                                                           | leave it          |
-| `keep`      | the main checkout                                                                               | never a candidate |
-| `undecided` | cannot be told from what is known                                                               | do not remove     |
+| `action`    | meaning                                                                                         | do this                            |
+| ----------- | ----------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it                           |
+| `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it                            |
+| `dispose`   | on `main`, clean, nothing protects it                                                           | delete it                          |
+| `legacy`    | a curated `legacy: true`: clean, and nobody will work on it again                               | drop the worktree, keep the branch |
+| `in-use`    | an agent or a session is active there                                                           | leave it                           |
+| `keep`      | the main checkout                                                                               | never a candidate                  |
+| `undecided` | cannot be told from what is known                                                               | do not remove                      |
+
+**`legacy` is the one status whose instruction is two commands long.** A git branch
+needs no worktree, so `legacy` separates the two halves: the checkout, its
+`node_modules` and its `dist/` are removable, and the ref is not. `npm run dispose
+-- <name>` removes the directory and skips `git branch -d`; it writes **no** anchor
+ref either, because a ref under `refs/keep/disposed/` records "this was removed and
+this is the only copy", and for a kept branch both halves are false. The branch
+survives at the cost of one entry in `.git/refs` and stays recoverable with
+`git branch <name>`.
+
+**`legacy` is a claim about the future, so it needs a `note` saying why.** Which
+branch, kept for what, and what would make it worth revisiting. An entry carrying
+only `legacy: true` asserts an indefinite hold and gives a later reader no way to
+tell a decision from a leftover. **It is refused for a dirty tree**: `legacy`
+authorises deleting a directory, and a directory holding uncommitted changes is
+the only copy of them, so a dirty legacy worktree stays `at-risk` where a human
+has to look.
+
+**It is not `at-risk`, and that distinction is the reason it exists.** `at-risk`
+means a human must act before anything can be lost, and it reads that way in
+every list an operator opens. A legacy branch is the opposite of a pending problem:
+nobody is going to act on it, and filing it as `at-risk` put a permanent entry on
+the list a sweep reads first — so a branch that was never going to be worked on
+kept being re-investigated every pass. `legacy` also suppresses a clean merge
+verdict: it says do not merge this either.
+
+`legacy` is one of two curated fields that may move a verdict. The other is
+`mustNotPrune`, which says the work is **not** accounted for; `legacy` says it is
+and will never be worked on again. They are opposite claims about one tree, and the
+one about losing content wins — `preflight` checks `must-not-prune` before it
+accepts `action: "legacy"`.
 
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as
@@ -534,7 +566,8 @@ re-read this file before the destructive command.
 It refuses, and says which signal refused, unless all of these hold:
 
 - the generated inventory is **less than 15 minutes old** and calls this
-  worktree `action: "dispose"`;
+  worktree `action: "dispose"` — or `action: "legacy"`, which permits removing
+  the worktree while keeping the branch;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
 - its **working tree is clean** — re-read now, not taken from the inventory

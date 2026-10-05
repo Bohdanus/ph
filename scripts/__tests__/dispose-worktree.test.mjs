@@ -530,6 +530,149 @@ describe('dispose execution', () => {
     }
   });
 
+  describe('a legacy worktree: the directory goes, the branch stays', () => {
+    const legacyInventory = (record = {}) =>
+      greenInventory({
+        record: {
+          action: ACTION.LEGACY,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: { derivedChatIds: [] },
+          ...record,
+        },
+      });
+
+    it('permits it, because a legacy worktree IS a disposal candidate', () => {
+      // The asymmetry is the status: `dispose` means "remove this", and for a
+      // legacy worktree what is removed is the directory. Refusing on `legacy`
+      // would leave every such worktree exactly where a sweep found it.
+      const verdict = green({ inventory: legacyInventory() });
+      expect(verdict.failures).toEqual([]);
+      expect(verdict.ok).toBe(true);
+    });
+
+    it('reports keepBranch, because that is what separates it from a disposal', () => {
+      // Read from ONE place and handed to `dispose()`. Derived twice, the
+      // inventory could be regenerated between the two reads and the branch
+      // would go with the directory on a verdict that no longer applied.
+      expect(green({ inventory: legacyInventory() }).keepBranch).toBe(true);
+      expect(green().keepBranch).toBe(false);
+      expect(green({ inventory: greenInventory({ record: null }) }).keepBranch).toBe(false);
+    });
+
+    it('still refuses every signal that protects a live, dirty or in-flight worktree', () => {
+      // `legacy` must not become the soft `--force` this program does not have.
+      // Each of these is the reason a sweep once destroyed live work, and a
+      // status whose only effect is to skip `git branch -d` changes none of them.
+      const cases = [
+        ['dirty-tree', { gitState: greenState({ modified: 1, untracked: 0, dirtyPaths: ['a.ts'] }) }],
+        ['dirty-tree', { gitState: greenState({ modified: 0, untracked: 2, dirtyPaths: ['b.ts'] }) }],
+        ['live-session', { sessions: { available: true, live: [{ id: 's1' }] } }],
+        ['board-claim', { board: { ...greenBoard, claims: [{ agentId: 'a1' }] } }],
+        ['board-lock', { board: { ...greenBoard, fileLocks: [{ path: 'a.ts' }] } }],
+        ['board-agent-live', { board: { ...greenBoard, liveAgents: [{ agentId: 'a1' }] } }],
+        [
+          'derived-live-writer',
+          { inventory: legacyInventory({ derivedLive: true, writeHistory: { derivedChatIds: ['ses_abc'] } }) },
+        ],
+        [
+          'operation-in-progress',
+          {
+            operationState: greenOperationState({
+              operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'd' }],
+            }),
+          },
+        ],
+        ['ignored-content', { gitState: greenState({ ignoredWork: ['notes.log'] }) }],
+      ];
+      for (const [expected, overrides] of cases) {
+        // The legacy inventory goes LAST so a case that supplies its own record —
+        // `derived-live-writer` — is not overwritten by the default one. Written
+        // the other way round the case would pass for the wrong reason: a green
+        // default record refuses nothing, so the assertion would be vacuous.
+        const verdict = green({ ...overrides, inventory: overrides.inventory ?? legacyInventory() });
+        expect(codes(verdict), expected).toContain(expected);
+        expect(verdict.ok).toBe(false);
+      }
+    });
+
+    it('never lets a legacy claim override mustNotPrune, which protects content instead of a ref', () => {
+      // One is a claim that the work is not accounted for; the other is a claim
+      // that it is accounted for and will never be worked on. They are opposite
+      // statements about the same tree, and the one about losing content wins.
+      const verdict = green({
+        inventory: greenInventory({
+          record: {
+            action: ACTION.LEGACY,
+            mustNotPrune: true,
+            derivedLive: false,
+            writeHistory: {},
+          },
+        }),
+      });
+      expect(codes(verdict)).toContain('must-not-prune');
+      expect(verdict.ok).toBe(false);
+    });
+
+    it('removes the worktree and skips git branch -d', () => {
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.branchKept).toBe(true);
+      expect(result.branchDeleted).toBe(false);
+      expect(result.worktreeRemoved).toBe(true);
+      expect(calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
+      // The whole status in one assertion: the command that deletes the ref is
+      // not run at all, so no `-D` fallback can reach it either.
+      expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+    });
+
+    it('writes no anchor ref, because the surviving branch IS the copy', () => {
+      // An anchor under `refs/keep/disposed/` records "this was removed and this
+      // is the only copy". For a kept branch both halves are false, and the ref
+      // would sit beside a branch that was never disposed, implying the opposite.
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState({ tip: 'deadbeef' }), { run, fs, keepBranch: true });
+      expect(calls.some((c) => c[0] === 'update-ref')).toBe(false);
+      expect(result.anchorRef).toBeNull();
+      expect(result.steps.join('\n')).toContain(`KEPT branch fix/task`);
+    });
+
+    it('names the status in the step report, so a reader knows the branch was deliberate', () => {
+      const { run, fs } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.steps.join('\n')).toContain('legacy');
+    });
+
+    it('still salvages before removing the directory', () => {
+      // Ordering, not coverage: the salvage is the only thing standing between a
+      // tree that turned out to hold something and its loss, and skipping it for
+      // legacy would make the status a way to delete a worktree unexamined.
+      const { run, fs, calls } = harness({
+        'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
+        'ls-files --others --exclude-standard -z': 'notes.md\0',
+      });
+      const tars = [];
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true, tar: (...a) => tars.push(a) });
+      const salvageAt = calls.findIndex((c) => c[0] === 'diff');
+      const removeAt = calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
+      expect(salvageAt).toBeGreaterThanOrEqual(0);
+      expect(removeAt).toBeGreaterThan(salvageAt);
+      expect(result.salvage.written.sort()).toEqual(['tracked.patch', 'untracked.tar']);
+      expect(tars).toHaveLength(1);
+    });
+
+    it('keeps the branch even when git would have refused to delete it anyway', () => {
+      // `git branch -d` refusing an unmerged branch is the guard on the last step
+      // of an ordinary disposal. Legacy does not consult it, because the command
+      // is not run — so the two halves of the program cannot be confused for each
+      // other in the step report.
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+      expect(result.steps.join('\n')).toContain('the inventory calls this action "legacy"');
+    });
+  });
+
   it('deletes the branch with -d, and keeps it when git refuses', () => {
     const ok = harness();
     const kept = harness({ 'branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged") });

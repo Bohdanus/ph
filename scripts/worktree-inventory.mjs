@@ -257,6 +257,15 @@ function printSummary(inventory, quiet) {
     process.stdout.write(`\nREADY FOR DISPOSAL (on main, clean, nothing protected):\n`);
     for (const n of inventory.disposalCandidates) process.stdout.write(`${line(n)}\n`);
   }
+  // Printed beside the disposal list and not inside it, because the two answers
+  // are half the same instruction: `npm run dispose -- <name>` on a name from
+  // either list removes the worktree, and on one from THIS list it removes the
+  // worktree and keeps the branch. A reader who only saw `disposalCandidates`
+  // would delete the ref that is the entire point of the status.
+  if (inventory.legacy.length > 0) {
+    process.stdout.write(`\nLEGACY — worktree disposable, BRANCH KEPT (do not merge it either):\n`);
+    for (const n of inventory.legacy) process.stdout.write(`${line(n)}\n`);
+  }
   if (quiet) return;
 
   process.stdout.write('\nALL WORKTREES:\n');
