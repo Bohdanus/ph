@@ -12,16 +12,21 @@
  * **That trap is closed, and it was the colour publish that closed it.** The guard is now
  * `isShapeFamilyToolName()` in `src/components/ToolbarsRight/Figures/Shape.tsx`, and
  * `SHAPE_FAMILY_TOOL_NAMES` admits all six names including `ellipse`, so the early return no
- * longer fires for a figure and the publish proceeds. `Main.tsx`'s interaction-mode arm lists the
- * same six, so all of them mount `ShapeToolArea`. So the colour argument above no longer forces
- * the routing and must not be repeated as the reason for it.
+ * longer fires for a figure and the publish proceeds. `aef65eff` replaced the literal because of
+ * that. `Main.tsx`'s interaction-mode arm lists the same six, so all of them mount
+ * `ShapeToolArea`. So the colour argument above no longer forces the routing, and the `HANDOFF.md`
+ * entry that recorded it is deleted rather than marked fixed.
  *
- * What still forces it is one literal, and it is not in the guard:
- * `ShapeToolArea`'s `editsActiveLayer` tests `args.toolName === 'shape'` to decide whether a
- * commit REPLACES the active layer's source rather than creating a new one. A figure that arrived
- * as `toolName: 'ellipse'` would mount the same panel and still refuse to be dragged or resized
- * in place. The routing therefore stands, on that reason alone, and
- * `toolbar-mapping.test.ts` pins `toolbarMap`'s order and members directly.
+ * What still forces it is not one literal, and the honest count is three sites. `ShapeToolArea`'s
+ * `editsActiveLayer` tests `activeLayer.source.args.toolName === 'shape'` — the committed source's
+ * tool name, not the live args — and, with `source.kind === 'tool'` and an exact `pos` match, it
+ * decides whether a commit REPLACES the active layer's source instead of creating a new one, so a
+ * figure arriving as `ellipse` would mount the same panel and still commit a second layer rather
+ * than edit the first. `saveLastSettings` in `src/util/settings.ts` splits the family across three
+ * buckets — `shape` alone, `triangle`/`polygon`, and `rectangle`/`ellipse`/`line` — so a figure
+ * arriving under its own key also persists somewhere else. Both are why the routing stands, and
+ * neither is the colour publish. `toolbar-mapping.test.ts` pins the shape flyout slice of
+ * `toolbarMap`, its order and members.
  *
  * The other thing this file proved was that the header's tool rows committed a pending
  * text draft before switching, because `goToTool` runs `commitDirtyTool()` against the
@@ -38,10 +43,9 @@
  * `HANDOFF.md` §237 describes — the outgoing tool commits against already-replaced args:
  * `SidebarLeft`'s own `selectTool`, and `AppKeyboardShortcuts`'s `selectShapeTool` at both of
  * its patch sites, reachable from plain `U` and from `Shift+U`. Nothing here pins any of them,
- * and this file cannot: it no longer has a surface that patches. §237 names only
- * `SidebarLeft.tsx`, so its claim that reordering there removes the last place the surfaces can
- * disagree does not hold either. The defect is recorded in `HANDOFF.md`, not enshrined by a test
- * written to match the code.
+ * and this file cannot: it no longer has a surface that patches. `HANDOFF.md` §237 covers all three
+ * sites, and its own earlier claim that the rail was the only one has been corrected there. The
+ * defect is recorded in `HANDOFF.md`, not enshrined by a test written to match the code.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

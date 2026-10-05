@@ -98,7 +98,7 @@ describe('replayHistory document source and frame branches', () => {
     // the same shape the durable converter already refuses as an error
     // (`history-adapter.ts:640`) — so honouring it here is exactly the
     // authority/shadow disagreement that gate closes. Unreachable in production: the
-    // only writer is `REPLACE_DOCUMENT` with `history: [entry]` (`useApp.ts:120`), so
+    // only writer is `REPLACE_DOCUMENT` with `history: [entry]` (`setImageFromUpload()`), so
     // a `documentSource` always lands at index 0.
     expect(Object.keys(result.layers)).toEqual(['layer-1']);
     expect(result.layers['layer-9']).toBeUndefined();

@@ -109,6 +109,31 @@ describe('MobileBottomBar', () => {
     expect(goToToolMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * The clause `isMobileToolOptionsMounted` exists for, and the only assertion that reaches it.
+   *
+   * `isToolSheetOpen` alone is not the panel's existence: `MobileToolSheet` returns null outright
+   * without an image, and this bar is a SIBLING that stays mounted regardless — so with the flag set
+   * and no image the sheet renders nothing while the bar would still advertise an id nothing owns
+   * beside `aria-expanded="true"`. Without this case the predicate is entirely unpinned: reverting
+   * the bar's gate to `isToolSheetOpen`, and reverting the predicate's body to `isOpen`, both leave
+   * the whole suite green.
+   *
+   * The trigger is `disabled={!hasImage}` here, so no user can produce this state — which is why the
+   * predicate is a guard against a future writer rather than a fix for a live bug, and why this test
+   * is a contract rather than a reproduction.
+   */
+  it('names the options panel only while the sheet can actually be mounted', () => {
+    setTool('draw', false);
+
+    render(<MobileBottomBar isToolSheetOpen={true} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
+
+    const optionsToggle = screen.getByRole('button', { name: 'Tool options' });
+    expect(optionsToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(optionsToggle).toBeDisabled();
+    expect(optionsToggle).not.toHaveAttribute('aria-controls');
+  });
+
   it('reflects the open sheet through aria-expanded on the options toggle, and names it only then', () => {
     // Open: the name must be there. This suite renders no `MobileToolSheet`, so resolution is
     // proved in `MobileShell`, which mounts both.

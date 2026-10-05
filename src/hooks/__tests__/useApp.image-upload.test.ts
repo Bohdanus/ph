@@ -268,13 +268,16 @@ describe('useApp setImageFromUpload', () => {
       document: createPsdDocument(['Text is rasterized']),
     });
 
-    // The adoption lands after the replacement: the presentation scope is keyed by the owning
-    // document, so a registration published first would be filed under the outgoing one.
+    // Both land after the replacement, and the resize lands after BOTH. Adoption cannot precede
+    // the replacement — the presentation scope is keyed by the owning document, so a registration
+    // published first would be filed under the outgoing one. The resize cannot precede either: a
+    // throw in the dispatch or in the adoption would leave all three surfaces at the incoming file's
+    // extent with nothing published. This mirrors the raster arm's ordering in the same function.
     expect(harness.events).toEqual([
-      'resizeCanvas:320x480',
-      'resizeCanvas:320x180',
       'REPLACE_DOCUMENT',
       'ADOPT_LAYER_BITMAPS',
+      'resizeCanvas:320x480',
+      'resizeCanvas:320x180',
     ]);
     expect(harness.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -334,7 +334,7 @@ Three judgement calls worth stating, because each could reasonably have gone the
 ### App-side facts the census depends on
 
 - **No processor, by design.** `src/tools/toolProcessors.ts` — `PIXEL_FREE_TOOLS` —
-  `export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[]`. The
+  `export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler'] as const satisfies readonly ToolName[]`. The
   doc comment above it states the reason: rasterizes nothing, commits no pixels, records no
   history state. `src/tools/toolsMap.ts` — the `eyedropper` map entry — is the consequence —
   `eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper }`, no
