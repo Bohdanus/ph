@@ -90,10 +90,16 @@ describe('type guard predicates', () => {
    * Every guard against every other tool name, as one exact matrix rather than a sample.
    *
    * The per-guard "returns true" case already pins each guard's own name, and the sampled
-   * negatives pin each guard's `=== 'x'` comparison. What neither pins is that no two
-   * guards were wired to the SAME name: swapping the string inside `isLevelsToolArgs` for
-   * `'color'` keeps every existing assertion in this file green, because no sampled negative
-   * pairs `isLevelsToolArgs` with `'color'`. This matrix does.
+   * negatives pin each guard's `=== 'x'` comparison. What neither pins is the FULL
+   * off-diagonal: the samples are a handful of pairs, so a guard that accepted a second
+   * tool name nobody happened to sample would pass every one of them. This matrix asserts
+   * all 81 pairs, so that gap is closed by construction rather than by which pairs were
+   * chosen.
+   *
+   * The matrix also catches a GUARD/GUARD cross-wire, which the samples do too but only for
+   * the pairs they cover: swapping the string inside `isLevelsToolArgs` for `'color'` fails
+   * the `'levels'` positive case directly, and fails the `('color', isLevelsToolArgs)`
+   * off-diagonal cell here.
    */
   it('accepts exactly one tool name each, and nothing else', () => {
     const names = ['text', 'draw', 'shape', 'crop', 'transform', 'color', 'blur', 'levels', 'reposition'] as const;

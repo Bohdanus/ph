@@ -125,7 +125,7 @@ describe('containFit', () => {
    * reason the result stays finite. `max` would return `Infinity` for the scale, and every
    * caller divides by it.
    *
-   * The inner width is `0 * 0.5 = 0` rather than NaN, so the whole result is a degenerate
+   * The inner width is `0 * 2 = 0` rather than NaN, so the whole result is a degenerate
    * but well-formed letterbox — the degenerate case the zero-container test above covers on
    * the other axis, and the only input shape where the two ratios are not both finite.
    */
