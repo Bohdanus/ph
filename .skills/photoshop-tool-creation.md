@@ -4284,7 +4284,8 @@ is a diff nobody can review and a collision two agents cannot resolve. **Never h
 list, and treat any you find as a claim about a moment.
 
 **Read `action` first.** It is the whole answer: `land` merge it · `at-risk` save it, it needs a
-human · `dispose` delete it · `in-use` leave it alone · `keep` never a candidate · `undecided` do
+human · `dispose` delete it · `legacy` drop the worktree, keep the branch · `in-use` leave it
+alone · `keep` never a candidate · `undecided` do
 not remove it. Two things that catch people: a **`land` is a point-in-time answer**, only as fresh as
 `generatedAt`, so re-read `dirty` and `mergeConflict` before acting on one you did not generate; and
 **`mustNotPrune` vetoes `land` as well as `dispose`**, so a branch reading `land` with that flag set

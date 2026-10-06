@@ -118,7 +118,8 @@ describe('SidebarLeft workspace placement', () => {
     renderRail();
 
     const rail = screen.getByTestId('left-sidebar');
-    expect(rail).toHaveClass('[grid-area:left]');
+    expect(rail).toHaveClass('[grid-column-start:1]');
+    expect(rail).toHaveClass('[grid-row:3/5]');
     // The border belongs on the side that faces the canvas, or the rail reads as a separate
     // block from the canvas rather than as the edge of it.
     expect(rail).toHaveClass('border-r');
@@ -179,7 +180,8 @@ describe('SidebarLeft workspace placement', () => {
       fireEvent.pointerUp(document, { pointerId: 1 });
 
       const rail = screen.getByTestId('left-sidebar');
-      expect(rail).toHaveClass('[grid-area:right]');
+      expect(rail).toHaveClass('[grid-column-start:3]');
+      expect(rail).toHaveClass('[grid-row:3/5]');
       // The border follows: on the right edge, the canvas-facing side is the LEFT one.
       expect(rail).toHaveClass('border-l');
       expect(rail).not.toHaveClass('border-r');
@@ -219,7 +221,7 @@ describe('SidebarLeft workspace placement', () => {
       expect(screen.queryByTestId('rail-drop-line')).toBeNull();
 
       fireEvent.pointerUp(document, { pointerId: 1 });
-      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:1]');
     } finally {
       restore();
     }
@@ -238,7 +240,7 @@ describe('SidebarLeft workspace placement', () => {
 
       // The gesture moves the rail to the OPPOSITE edge, so committing it after the user has
       // pressed Escape is the one result Escape must never produce.
-      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:1]');
     } finally {
       restore();
     }
@@ -247,10 +249,10 @@ describe('SidebarLeft workspace placement', () => {
   it('swings the drop target to the other edge once the rail is on the right', () => {
     const restore = stubViewportWidth(1024);
     try {
-      localStorage.setItem('panelLayout', JSON.stringify({ dockOnLeft: true }));
+      localStorage.setItem('panelLayout', JSON.stringify({ toolsSide: 'right', dockSide: 'left' }));
       renderRail();
 
-      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:3]');
 
       const grip = screen.getByTestId('rail-re-dock-handle');
       // LEFT this time, because the rail is already in the right column.
@@ -260,7 +262,7 @@ describe('SidebarLeft workspace placement', () => {
       expect(screen.getByTestId('rail-drop-line')).toHaveClass('left-0');
 
       fireEvent.pointerUp(document, { pointerId: 1 });
-      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:1]');
     } finally {
       restore();
     }
@@ -274,7 +276,7 @@ describe('SidebarLeft workspace placement', () => {
     fireEvent.pointerMove(document, { pointerId: 1, clientX: 1000, clientY: 20 });
     fireEvent.pointerUp(document, { pointerId: 1 });
 
-    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
+    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:1]');
   });
 
   it('is operable by keyboard, and by a mouse click, because it is a real button', () => {
@@ -289,10 +291,10 @@ describe('SidebarLeft workspace placement', () => {
     expect(grip).toHaveAccessibleName(/move the toolbar to the other side/i);
 
     fireEvent.click(grip);
-    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:3]');
 
     fireEvent.click(grip);
-    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
+    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:1]');
   });
 
   it('does not also count a completed drag as a click, which would swap it back', () => {
@@ -309,7 +311,7 @@ describe('SidebarLeft workspace placement', () => {
       fireEvent.pointerUp(document, { pointerId: 1 });
       fireEvent.click(grip);
 
-      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:3]');
     } finally {
       restore();
     }
@@ -329,7 +331,7 @@ describe('SidebarLeft workspace placement', () => {
       fireEvent.pointerUp(document, { pointerId: 1 });
       fireEvent.click(grip);
 
-      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-column-start:3]');
     } finally {
       restore();
     }

@@ -35,14 +35,13 @@ class ImageStub {
   onerror: HTMLImageElement['onerror'] = null;
   src = '';
   /**
-   * Deliberately 0 rather than a plausible size, and the sibling stub in `codec-roundtrip.test.ts`
-   * agrees. A real decode always reports a positive natural size by the time `onload` fires, but a
-   * blob URL carries no geometry a stub could read, so every test exercising a branch that consults
-   * it has to state the geometry itself. A valid default would let a new PNG test that forgets to
-   * pass the ceiling assertions silently, which is the failure 0 makes loud.
+   * A real decode always reports a positive natural size, and the ICO fixtures below are declared
+   * as 4×4 entries, so that is the default. A stub that left these `undefined` would be refused by
+   * `assertWithinMaxEdge`'s integer test — which is the point: the PNG branch reads its geometry
+   * from here, so the stub has to answer with one.
    */
-  naturalWidth = 0;
-  naturalHeight = 0;
+  naturalWidth = 4;
+  naturalHeight = 4;
   constructor() {
     recordImage(this as unknown as HTMLImageElement);
   }
@@ -93,21 +92,9 @@ async function resolvePngIco(
   return pending;
 }
 
-/**
- * Drives a load all the way to a settled image. `natural` is the geometry the browser reports, and
- * it has to be passed by any caller on the PNG-entry branch: the stub cannot infer it from a blob
- * URL, and it now defaults to 0 so that a caller which forgets is refused rather than silently
- * passing the ceiling assertions. Callers on the DIB branch may omit it.
- */
-async function resolveIco(
-  ico: Uint8Array<ArrayBuffer>,
-  natural?: { width: number; height: number }
-): Promise<HTMLImageElement> {
+async function resolveIco(ico: Uint8Array<ArrayBuffer>): Promise<HTMLImageElement> {
   const pending = loadIcoFile(new Blob([ico]));
   await vi.waitFor(() => expect(imageStub).not.toBeNull());
-  if (natural) {
-    Object.assign(imageStub!, { naturalWidth: natural.width, naturalHeight: natural.height });
-  }
   imageStub!.onload!.call(imageStub!, new Event('load'));
   return pending;
 }
@@ -604,9 +591,8 @@ describe('ICO PNG-compressed entries', () => {
   it('hands the embedded PNG to the browser through an object URL and revokes it', async () => {
     installImageHarness();
     const png = new Uint8Array([...PNG_SIGNATURE, 0x0a, 0x0a]);
-    // The entry declares 4×4 and the stub has to agree: this test is about the URL's lifecycle, so
-    // the geometry is stated rather than left for a default to supply.
-    const image = await resolveIco(icon(png, 4, 4), { width: 4, height: 4 });
+
+    const image = await resolveIco(icon(png, 4, 4));
 
     expect(image).toBe(imageStub);
     const [source] = vi.mocked(URL.createObjectURL).mock.calls[0] as [Blob];

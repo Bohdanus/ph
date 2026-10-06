@@ -4,12 +4,7 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
-import {
-  isMobileToolOptionsMounted,
-  makeSelectTool,
-  mobileToolGroups,
-  MOBILE_TOOL_OPTIONS_ID,
-} from './mobile-tools.ts';
+import { makeSelectTool, mobileToolGroups } from './mobile-tools.ts';
 
 export interface MobileBottomBarProps {
   onToggleToolSheet: () => void;
@@ -25,7 +20,6 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
   const [{ toolName, hasImage }] = useStore();
   const { goToTool } = useApp();
   const { patchToolArgs } = useCurrentTool();
-  const toolOptionsMounted = isMobileToolOptionsMounted(isToolSheetOpen, toolName, hasImage);
   const selectTool = makeSelectTool(goToTool, patchToolArgs);
 
   return (
@@ -80,20 +74,7 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
         data-testid="mobile-tool-options-toggle"
         aria-label="Tool options"
         aria-expanded={isToolSheetOpen}
-        // Gated for the same reason as the three triggers already fixed, and on the SHARED
-        // predicate rather than `isToolSheetOpen`: the panel this names lives in
-        // `MobileToolSheet`, which `MobileShell` renders as a SIBLING, so the open flag alone is
-        // only one clause of the panel's existence.
-        //
-        // This is a guard against a FUTURE writer, not a live defect, and the difference is worth
-        // stating. `SET_HAS_IMAGE` has no production writer — `hasImage` only becomes true through
-        // `REPLACE_DOCUMENT` — `toolName` is never falsy because the store falls back to
-        // `DEFAULT_TOOL`, and this trigger is `disabled={!hasImage}`, so no user can reach the state
-        // today. It is kept because this repository has removed arms for want of a writer and had to
-        // rebuild them: `MobileHeader`'s own comment records one. A guard costs one expression; a
-        // dangling reference costs an accessibility defect that no test here and no axe rule would
-        // see.
-        aria-controls={toolOptionsMounted ? MOBILE_TOOL_OPTIONS_ID : undefined}
+        aria-controls="mobile-tool-options"
         className={`flex min-w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1 transition-colors ${
           isToolSheetOpen
             ? 'bg-blue-50 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'

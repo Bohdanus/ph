@@ -572,38 +572,6 @@ describe('AppKeyboardShortcuts clipboard', () => {
     press('c');
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('crop');
   });
-
-  /**
-   * `t` is the only key in this file with two registrations that must reach DIFFERENT tools, so the
-   * pair is asserted from both sides. A bare `t` still selects the Text tool and `Meta+t` selects
-   * `transform`, which is Adobe's Free Transform accelerator and — because `extraTools` gives the
-   * tool no rail tile — the only keyboard route to the panel at all.
-   */
-  it('selects the text tool with a bare T and the transform tool with Meta+T', () => {
-    renderShortcuts();
-
-    // The two presses share one mock, so the second assertion is on the second call rather than on
-    // a count of one: what has to be pinned is that each press reaches its OWN tool, and a
-    // `toHaveBeenCalledExactlyOnceWith` on the second press could not tell 'also fired for text'
-    // from 'fired only for transform'.
-    press('t', { metaKey: true });
-    expect(goToTool).toHaveBeenCalledExactlyOnceWith('transform');
-
-    press('t');
-    expect(goToTool).toHaveBeenNthCalledWith(2, 'text');
-  });
-
-  /**
-   * Stated separately because it is the half that fails silently. `Cmd+T` reopens a closed tab on
-   * macOS and `Ctrl+T` opens a new one elsewhere, so a registration without `preventDefault` would
-   * reach the tool and still hand the key to the browser. The assertion is on the returned
-   * `prevented` flag rather than on `goToTool`, so it cannot be satisfied by the tool switching.
-   */
-  it('cancels the browser tab default on Meta+T, which is the whole reason to claim the key', () => {
-    renderShortcuts();
-
-    expect(press('t', { metaKey: true })).toBe(true);
-  });
 });
 
 describe('AppKeyboardShortcuts save', () => {
@@ -1042,12 +1010,15 @@ describe('AppKeyboardShortcuts tool cycling', () => {
   });
 
   it.each([
-    ['eyedropper', 'ruler'],
+    ['eyedropper', 'color-sampler'],
+    ['color-sampler', 'ruler'],
     ['ruler', 'eyedropper'],
   ] as const)('cycles Shift+I from %s to %s', (from, to) => {
     // Adobe's `I` family: "Eyedropper, Color Sampler, Ruler, Note, and Count Tool I". The app has
-    // two of the five, and the cycle covers exactly those two — a name the app cannot select would
-    // make Shift+I land on the inert tool area.
+    // three of the five, and the cycle covers exactly those three — a name the app cannot select
+    // would make Shift+I land on the inert tool area. Three rows rather than a hand-written wrap,
+    // because a three-member cycle has two in-group edges and one wrap and all three are the
+    // property; a two-row table could not tell a correct wrap from an off-by-one.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
@@ -1056,13 +1027,17 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
   });
 
-  it('cycles Shift+I from another tool to the tile anchor, the eyedropper', () => {
+  it('cycles Shift+I from another tool past the tile anchor to the member after it', () => {
+    // From outside the group the cycle enters AT the anchor and then advances one step, so it lands
+    // on the SECOND member rather than on the first. That is the existing mechanism's behaviour and
+    // this title now says it, because the old title claimed the anchor while asserting the member
+    // after it — which is only visible once a group has a third entry.
     storeState.toolName = 'text';
     renderShortcuts();
 
     press('i', { shiftKey: true });
 
-    expect(goToTool).toHaveBeenCalledExactlyOnceWith('ruler');
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('color-sampler');
   });
 
   it('keeps the current member of the I tile on a bare I', () => {

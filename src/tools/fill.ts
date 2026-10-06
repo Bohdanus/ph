@@ -44,6 +44,8 @@ export type FillToolArgs = {
    */
 };
 
+/** Read `bitmap` back at `size`. The same read `src/tools/transform.ts:87-94` performs. */
+
 /** `hexToRgb` returns the `"r, g, b"` triple as a string for `rgba(...)`; a fill needs the numbers. */
 const parseHexColor = (color: string): [number, number, number] => {
   const hex = color.replace('#', '');
@@ -55,7 +57,6 @@ const parseHexColor = (color: string): [number, number, number] => {
   ];
 };
 
-/** Read `bitmap` back at `size`. The same read `readSourcePixels()` in `src/tools/transform.ts` performs. */
 const readSourcePixels = (bitmap: BitmapSource, size: Size): ImageData => {
   const sourceCanvas = new OffscreenCanvas(size.width, size.height);
   const context = sourceCanvas.getContext('2d')!;

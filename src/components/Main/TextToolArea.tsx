@@ -197,7 +197,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
                 : undefined;
             const layer = activeTextLayer ?? (hitLayerId ? layers[hitLayerId] : undefined);
             if (layer) {
-              const target = textLayerEditTarget(layer);
+              const target = textLayerEditTarget(layer, documentFrame);
               if (target) {
                 setActiveLayer(target.layerId);
                 beginTextLayerEdit(target.layerId);

@@ -277,7 +277,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(expectedStops[expectedStops.length - 1]).toHaveFocus();
     });
 
-    it('skips the disabled copy, paste, and Deselect buttons while tabbing', async () => {
+    it('skips the disabled copy, paste, and clear buttons while tabbing', async () => {
       render(<FeatherMagneticLasso />);
       const user = userEvent.setup();
 
@@ -425,7 +425,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(patchToolArgsMock).toHaveBeenLastCalledWith('feather-magnetic-lasso', { previewFeather: false });
     });
 
-    it('activates copy, paste, and Deselect with enter and space', async () => {
+    it('activates copy, paste, and clear with enter and space', async () => {
       const activeSelection = { id: 'sel-1', geometry: 'lasso' };
       setClipboardState({ activeSelection, hasClipboard: true });
       setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);

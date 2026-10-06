@@ -385,7 +385,7 @@ test.describe('Panel workspace (fast)', () => {
     ).toBe(true);
   });
 
-  test('keeps the layout across a reload, and Window > Workspace > Reset Essentials undoes it', async ({ page }) => {
+  test('keeps the layout across a reload, and Window > Reset undoes it', async ({ page }) => {
     const dock = page.locator(DOCK);
     // The default, read off the panel as it opened. Not a constant, and not merely a
     // readability choice: the point of the drag below is that it MOVED the width, and
@@ -411,13 +411,8 @@ test.describe('Panel workspace (fast)', () => {
     await expect(page.locator(RAIL)).toBeVisible();
     expect(await width(dock)).toBeCloseTo(resized, 0);
 
-    // Three clicks, and the middle one is not incidental: Adobe nests the workspace commands
-    // inside `Window > Workspace`, so a two-click path here would be asserting a menu shape
-    // Photoshop does not have. The submenu is a real button rather than a hover, so all three
-    // are reachable by keyboard too.
     await page.getByTestId('header-window-menu-button').click();
-    await page.getByTestId('window-menu-workspace-button').click();
-    await page.getByTestId('window-menu-workspace-reset-essentials-button').click();
+    await page.getByTestId('window-menu-reset-workspace-button').click();
 
     // Back to where it opened, which is the same measurement as above rather than a literal.
     expect(await width(dock)).toBeCloseTo(openedAt, 0);

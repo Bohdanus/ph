@@ -149,44 +149,6 @@ export const TextEditOverlay = () => {
     return before.toString().length;
   }, []);
 
-  /**
-   * The selection's END as an offset into the element's flat text, collapsed or not.
-   *
-   * `readCaretOffset` answers null for a non-collapsed selection, which is right for deciding whether
-   * to reconcile a keystroke but wrong for restoring a position after the element has been rewritten:
-   * that is the case where the position is needed most. Measured the way `insertPlainTextAtCaret`
-   * measures a start — a range over the element's contents, ended at the selection's end node and
-   * offset, whose `toString()` is the character count.
-   */
-  const selectionEndOffset = useCallback((host: HTMLElement): number | null => {
-    const selection = typeof window === 'undefined' ? null : window.getSelection();
-    if (!selection || selection.rangeCount === 0 || !host.contains(selection.focusNode)) return null;
-    const before = document.createRange();
-    before.selectNodeContents(host);
-    before.setEnd(selection.focusNode!, selection.focusOffset);
-    return before.toString().length;
-  }, []);
-
-  /**
-   * Take the focus on the NEXT FRAME, and only if nothing better has it.
-   *
-   * **A focus taken inside an event handler does not survive the event.** The browser resolves a
-   * press's own focus target after every listener for it has run, so `focus()` called from a
-   * `pointerdown` handler is undone by the default action of that same press — and the default target
-   * for a press on a non-focusable layer row is `body`. MEASURED: `el.focus()` inside the handler left
-   * `document.activeElement` as `body`, while the same call from the test's own `evaluate` stuck, which
-   * is the ordering and nothing else. The guard is the same one `reclaim` has always used, so a user who
-   * reached for the Size field keeps their focus and their caret keeps the draft.
-   */
-  const refocusOnNextFrame = useCallback((host: HTMLElement | null) => {
-    if (!host) return;
-    requestAnimationFrame(() => {
-      if (!host.isConnected) return;
-      const active = document.activeElement;
-      if (active === host || active === document.body || active === null) host.focus();
-    });
-  }, []);
-
   const restoreCaretOffset = useCallback((host: HTMLElement, offset: number) => {
     const node = host.firstChild;
     // A CHARACTER offset addresses a text node. Against an element it would be a child index, so
@@ -220,41 +182,19 @@ export const TextEditOverlay = () => {
    * placeholder entry is also what Adobe does when a type layer is entered from its `T` thumbnail, so
    * the two entries will not want different code.
    *
-   * The WRITE is guarded on inequality for a second reason: it runs on EVERY `args.text` change,
+   * The write is guarded on inequality for a second reason: it runs on EVERY `args.text` change,
    * including the ones this component itself publishes, and rewriting `textContent` moves the caret
    * to the end — which would make typing impossible from the second character onward.
-   *
-   * The FOCUS is not behind that guard, and it must not be. Re-entry from a panel control publishes
-   * args whose text the element ALREADY holds, because the overlay was never unmounted: the early
-   * return fired, no focus was taken, the caret stayed wherever the panel click left it, and the
-   * keystrokes that followed went to the document instead of the type layer. MEASURED: double-click a
-   * text row, type, press Escape — the editor closed and the layer still carried the string from
-   * before the edit, with the commit recorded as a no-op. Re-entry must also SELECT, because Adobe's
-   * `T`-thumbnail entry arrives with every character selected, and a user who then types replaces the
-   * text rather than appending to it.
    */
-  useLayoutEffect(() => {
+  useEffect(() => {
     const host = hostRef.current;
     if (!editing || !host) return;
     const seed = args?.text ?? '';
-    const entered = host.textContent !== seed;
-    if (entered) {
-      host.textContent = seed;
-      caretOffsetRef.current = null;
-    }
-    if (entered || document.activeElement !== host) {
-      host.focus();
-      selectAllIn(host);
-      refocusOnNextFrame(host);
-    }
-    // A LAYOUT effect, not a passive one, and that is the whole of this entry. Re-entry arrives from a
-    // panel control — a double-click on a layer row — and the browser resolves that click's own focus
-    // AFTER the handler returns, so a passive effect's `focus()` was undone by the event it was
-    // responding to. MEASURED: double-click a committed text row, and `document.activeElement` was
-    // `body` with the editor open and holding the right characters, so the keystrokes that followed ran
-    // as document shortcuts and the committed layer kept the pre-edit string. A layout effect runs
-    // inside the same task as the state update, before the browser's default action can move the focus
-    // away again.
+    if (host.textContent === seed) return;
+    host.textContent = seed;
+    caretOffsetRef.current = null;
+    host.focus();
+    selectAllIn(host);
   }, [args?.text, editing]);
 
   /**
@@ -278,41 +218,9 @@ export const TextEditOverlay = () => {
       const host = hostRef.current;
       if (host && document.activeElement === document.body) host.focus();
     };
-    /**
-     * A press that lands on something which cannot take focus ends the edit session's keyboard
-     * without saying so.
-     *
-     * The focus-reclaim used to be a `focusin` listener alone, and that is not enough: re-entry
-     * arrives from a LAYER ROW, so the second click of the double-click resolves its own focus after
-     * the handler has already run, and Chromium does not reliably publish a `focusin` for the body.
-     * MEASURED: double-click a committed text row, and `document.activeElement` was `body` with the
-     * editor open and holding the right characters — so the keystrokes that followed ran as document
-     * shortcuts, and the committed layer kept the pre-edit string while the panel reported success.
-     *
-     * `pointerdown` in the capture phase sees every press, including the ones that never move focus,
-     * which is the point. The exemptions are what keep this from being theft: an editable target or a
-     * form control keeps the focus, because reaching for Font Size mid-draft must not kill the caret,
-     * and a press inside the editor is the browser's own business.
-     */
-    const reclaimFromPress = (event: PointerEvent) => {
-      const host = hostRef.current;
-      if (!host) return;
-      const target = event.target;
-      if (target instanceof Node && host.contains(target)) return;
-      if (target instanceof HTMLElement) {
-        if (target.isContentEditable) return;
-        const tag = target.tagName;
-        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
-      }
-      refocusOnNextFrame(host);
-    };
     document.addEventListener('focusin', reclaim);
-    document.addEventListener('pointerdown', reclaimFromPress, true);
-    return () => {
-      document.removeEventListener('focusin', reclaim);
-      document.removeEventListener('pointerdown', reclaimFromPress, true);
-    };
-  }, [editing, refocusOnNextFrame]);
+    return () => document.removeEventListener('focusin', reclaim);
+  }, [editing]);
 
   /**
    * Keep the caret offset honest, because `handleInput` TRUSTS it.
@@ -336,16 +244,11 @@ export const TextEditOverlay = () => {
     if (!editing) return;
     const sync = () => {
       const host = hostRef.current;
-      // Only while the element and the model agree. This is the invariant `handleInput`'s reconcile
-      // branch assumes and never proves, and `selectionchange` is the one writer that can run while
-      // they differ — mid-composition the element holds the candidate and the model the pre-composition
-      // string. Caching an offset measured against the other of the two is how a repair becomes a
-      // corruption.
-      if (host && host.textContent === args?.text) caretOffsetRef.current = readCaretOffset(host);
+      if (host) caretOffsetRef.current = readCaretOffset(host);
     };
     document.addEventListener('selectionchange', sync);
     return () => document.removeEventListener('selectionchange', sync);
-  }, [args?.text, editing, readCaretOffset]);
+  }, [editing, readCaretOffset]);
 
   /**
    * Adopt whatever the browser put in the element, flattened.
@@ -375,13 +278,7 @@ export const TextEditOverlay = () => {
         }
       }
       if (host.children.length > 0) {
-        // The FLAT end of the selection, not a collapsed caret offset. `textContent` removes every
-        // child, so a range whose boundary was inside one of them is retargeted to the host at index 0
-        // and the caret lands at the front of the line — reached by Ctrl+B over a selection, since
-        // `contentEditable="true"` keeps the browser's formatting commands and the app preventDefaults
-        // none of them. `readCaretOffset` returns null for exactly the non-collapsed case that needs
-        // this, so the end offset is measured the same way `insertPlainTextAtCaret` measures a start.
-        const caret = selectionEndOffset(host);
+        const caret = readCaretOffset(host);
         const flat = host.textContent ?? '';
         host.textContent = flat;
         publish(flat);
@@ -396,7 +293,7 @@ export const TextEditOverlay = () => {
       publish(host.textContent ?? '');
       caretOffsetRef.current = readCaretOffset(host);
     },
-    [args?.text, publish, readCaretOffset, restoreCaretOffset, selectionEndOffset]
+    [args?.text, publish, readCaretOffset, restoreCaretOffset]
   );
 
   /**
@@ -451,10 +348,7 @@ export const TextEditOverlay = () => {
           return;
         }
         event.preventDefault();
-        // The LIVE caret decides, and the cache is the fallback. Every other decision in this file
-        // treats the cache as a repair that must never be the thing that decides; reading it first
-        // inverted that and moved the caret to a stale offset before inserting the break.
-        const before = readCaretOffset(event.currentTarget) ?? caretOffsetRef.current;
+        const before = caretOffsetRef.current ?? readCaretOffset(event.currentTarget);
         // A non-collapsed selection means there is no cached offset to restore, and restoring one
         // would clobber the very selection the break is meant to replace.
         if (before !== null) restoreCaretOffset(event.currentTarget, before);

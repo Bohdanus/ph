@@ -50,10 +50,9 @@ The three anchor-point entries used to say each acts "over a tool that has no pr
 the one wording in this family that was strictly false while sounding like a caveat. In this codebase
 **no processor** has a precise meaning and it excludes these three: `toolsMap.ts` — the
 `eyedropper` entry's "No processor" comment — uses the phrase for the eyedropper, whose absence is
-real because the eyedropper and the ruler are the only tools in `PIXEL_FREE_TOOLS` and so
-genuinely carry only an icon and a bar. All six Pen tools are registered in `toolProcessors`, and
-all three anchor-point tools are wired to the same `unimplemented` instance the rest of the family
-uses — the same one this note's
+real because the eyedropper is the only tool in `PIXEL_FREE_TOOLS` and so genuinely carries only an
+icon and a bar. All six Pen tools are registered in `toolProcessors`, and all three anchor-point tools
+are wired to the same `unimplemented` instance the rest of the family uses — the same one this note's
 first fact above already names. The file's own `pen` entry had it right, and it now says so in all
 three, with `toolProcessors.ts` — `unimplemented()` — cited in each entry so the "shared" is checkable
 rather than asserted.

@@ -70,12 +70,14 @@ one. The bar's controls match Photoshop's; the segmentation underneath does not.
 
 ### Selection combination modes
 
-**What Photoshop does.** Every selection tool's options bar carries New / Add To / Subtract From /
-Intersect With, so the next drag combines with the selection already on the canvas, and Shift,
-Alt/Option and Shift+Alt/Option held during the drag set the same four modes.
+**What Photoshop does.** Selection tools can combine a new selection with the existing one using
+New / Add To / Subtract From / Intersect With where those controls are provided. Shift, Alt/Option
+and Shift+Alt/Option can set the same modes during a drag on tools that support them.
 
-**What this app does.** No selection tool's bar renders any of the four. A second selection appends
-and activates. The union is not a missing control over a present model — it is a change to the model.
+**What this app does.** Quick Selection's Mode dropdown offers Add and Subtract. No bar implements
+the complete Photoshop set; the other selection tools do not render combination controls. On tools
+without a mode selector, a second selection appends and activates. The union is not a missing
+control over a present model — it is a change to the model.
 `Selection` is a single point path (`general-types.ts` — `Selection`):
 
 ```ts
@@ -106,20 +108,18 @@ workspace where the result is refined with a Refine Edge Brush, a plain Brush, a
 Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a layer mask, a new layer or
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
-**What this app does.** The `Select` menu exists, and every item in it is disabled. The menu bar
-carries Adobe's ten (`DesktopHeader.tsx` — the `menus` array) and `Select ▸ All`, `Reselect`,
-`Deselect`, `Inverse`, `Select and Mask…`, `Modify ▸`, `Grow`, `Similar`, `Load Selection…` and
-`Save Selection…` are all on screen and inert — a disabled row records a capability as unbuilt,
-which is why `Select and Mask` has somewhere to hang from even though there is nothing behind it.
+**What this app does.** There is no `Select` menu. The menu bar exists and has five menus — File,
+Tools, Image, Edit, Window (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses) — and
+`Select` is not one of them, so there is nothing for Select and Mask to hang from.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
-modes above as its substrate. Building it means giving the disabled `Select ▸ Select and Mask…` row
-its workspace, a per-tool `Select and Mask` button, a Refine Edge Brush with its own edge-detection
-model, and an output dialog. That is a build, not a feature.
+modes above as its substrate. Building it means adding a `Select` menu, a per-tool
+`Select and Mask` button, a Refine Edge Brush with its own edge-detection model, and an output
+dialog. That is a build, not a feature.
 
-**What the app does instead.** Nothing on any selection tool's bar, and the menu row is greyed rather
-than omitted. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
+**What the app does instead.** Nothing, and the app does not pretend otherwise — the controls are
+absent rather than rendered inert. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
 the marquee, lasso, wand and quick-selection bars.
 
 ### Select ▸ Modify, Inverse, Deselect, Grow and Quick Mask
@@ -130,10 +130,9 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. The `Select` menu hosts them — `Modify` with its
-five leaves in Adobe's order, and `Inverse`, `Deselect`, `Grow` and `Similar` beside it
-(`DesktopHeader.tsx` — the `select` entry of the `menus` array) — and every one of those rows is
-disabled, because no selection operation implements them: `src/util/selection.ts`
+**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
+that exist are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`'s five `menuHostRefs` hosts) —
+and no selection operation implements them: `src/util/selection.ts`
 exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
 does compute a feathered alpha, but only on the clipboard copy path
 (`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
@@ -146,7 +145,7 @@ missing substrate as Select and Mask above, and it is the reason the first entry
 type change.
 
 **What the app does instead.** No selection can be inverted, grown, shrunk or feathered after the
-fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
+fact. A selection is what the last tool drew, and the only edits available are copy, paste and clear
 from the marquee's bar.
 
 ### Regions with holes
@@ -225,20 +224,24 @@ Photoshop grouping and naming are the specification, and the stub bar is the deb
 
 ### Custom Shape
 
-**What Photoshop does.** Draws from a library of preset shapes stored in `.csh` files, and the user
-can add to it with Edit ▸ Define Custom Shape and manage it in the Preset Manager. Star is the
-seventh entry in the shape flyout alongside Rectangle, Ellipse, Triangle, Polygon and Line.
+**What Photoshop does.** Draws reusable vector graphics from a built-in library, imported shapes,
+or shapes the user creates and saves. Adobe documents this separately from the Star tool, which is
+its own entry in the shapes group with adjustable points and inner/outer radii:
+[Custom Shape](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html),
+[Star](https://helpx.adobe.com/photoshop/using/create-star-shape.html).
 
 **What this app does.** `commit: 'unimplemented'` at `toolProcessors.ts` — its `'custom-shape'`
 entry — the same null-bitmap stub, and no gesture surface. The tool is in the rail under Adobe's name.
 
 **Why it is too hard.** It is three things, not one: a parser for the shape-preset format, the preset
 library itself, and the authoring and management surfaces. None of the format's structure is present,
-and shipping a hardcoded star would be exactly the fake this policy refuses.
+so drawing a built-in or imported Custom Shape is not implemented by adding a single preset.
 
 **What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the missing one, which `AGENTS.md`
-records as a requirement rather than an omission to be filled by a placeholder.
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), with Custom Shape present and Star absent.
+Star is a separate parametric shape tool, not a Custom Shape preset; its separate implementation
+does not require the `.csh` parser or library described above. Its behavior and options are already
+researched in `src/tools/descriptions/shape.notes.md` and the generated shape documentation.
 
 ### Live type
 
@@ -716,21 +719,19 @@ implements them as if they were engineering judgements.
 ### What an enabled `Image ▸ Adjustments` item may promise
 
 `color`, `levels` and `transform` left the Tools rail on 2026-10-01 — the operator's ruling, recorded
-in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Free Transform`
-**commands** — the `Transform` submenu beside that row carries only disabled rows — and
-`toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
+in `HANDOFF.md` §74 and completed. They are now `Image ▸ Adjustments` and `Edit ▸ Transform`
+**commands**, and `toolbar-mapping.ts`'s `extraTools` lists them as the registered tool ids that have no
 rail entry. **What the two enabled items are called was settled on 2026-10-01 and is implemented:**
 `Brightness/Contrast` and `Desaturate`.
 
 `ADJUSTMENTS_ITEMS` (`DesktopHeader.tsx`) carries Adobe's list in
-a reconstructed order, with **two items enabled and twenty disabled**. A row is enabled by carrying a
+a reconstructed order, with **two items enabled and twenty disabled**. An item is enabled by carrying a
 `toolName` and nothing else, and the rule has two halves rather than one: the optional `toolName?` on
-the `AdjustmentItem` type declares it (`DesktopHeader.tsx` — `AdjustmentItem`), and
-`adjustmentMenuItem` branches on exactly that field (`DesktopHeader.tsx` — `adjustmentMenuItem`), so a
-disabled item is a recorded absence rather than a fake — and it still gets a test id derived from its
-label, which is what keeps a gap something a test can point at. The type alone does not enforce it —
-an optional field states no such rule — and the branch alone does not explain it, which is why the
-claim needs both.
+the `MenuHostItem` type declares it (`DesktopHeader.tsx` — `MenuHostItem`), and the
+`disabled={toolName === undefined}` on each button of the `ADJUSTMENTS_ITEMS` submenu render enforces
+it (`DesktopHeader.tsx` — that submenu's `ADJUSTMENTS_ITEMS.map()`), so a disabled item is a
+recorded absence rather than a fake. The type alone does not enforce it — an optional field states no
+such rule — and the gate alone does not explain it, which is why the claim needs both.
 
 **`levels` is `Brightness/Contrast`, not Levels — and that is honest, not a dodge.**
 `LevelsToolArgs` is `{ brightness, contrast }` (`levels.ts` — `LevelsToolArgs`) and the processor
@@ -826,12 +827,13 @@ that name, at its Selection row.
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
 
-**Star is the notable one**, because it is not a missing tool so much as a missing entry: the
-shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the shape Adobe's list has that the
-flyout does not. It is listed there rather than filed here separately because the same custom-shape
-work is
-recorded as too hard above, and a hardcoded star would be the fake this policy refuses.
+**Star is the strongest documented absent rail entry**, and it is a separate candidate from Custom
+Shape. The flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), while Adobe documents Star as a separate tool
+with its own points and inner/outer radii. The sourced behavior and app-side gap are in
+`src/tools/descriptions/shape.notes.md` and `docs/TOOLS-INVENTORY.md`. The `.csh` parser and preset
+library that block Custom Shape do not block Star; the Star geometry, controls and integration still
+need implementation and verification.
 
 **The rest follow from this file.** The Pen family and Path Type are the work-path object that
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following

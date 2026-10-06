@@ -333,7 +333,7 @@ describe('RectangularSelection toolbar', () => {
       expect(copyButton).toHaveFocus();
     });
 
-    it('allows enter/space to trigger copy, paste, and Deselect buttons', async () => {
+    it('allows enter/space to trigger copy, paste, and clear buttons', async () => {
       const user = userEvent.setup();
       render(<RectangularSelection />);
       const copyButton = screen.getByRole('button', { name: 'Copy' });

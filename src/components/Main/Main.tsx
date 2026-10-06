@@ -17,6 +17,7 @@ import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { RulerToolArea } from './RulerToolArea.tsx';
+import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -134,6 +135,14 @@ const Main = () => {
     // do different things with a pointer — one samples a pixel, the other drags a nonprinting line
     // across the overlay — and one mode mounts one area, so a shared mode would mount one of them.
     interactionMode = 'ruler';
+  } else if (toolName === 'color-sampler') {
+    // Its own mode, and NOT a mode shared with the eyedropper above. The two are one `I`-family
+    // tile and they both read a pixel, but they do different things with the result — one writes it
+    // to the foreground swatch and commits nothing, the other leaves a numbered marker on the
+    // overlay that a later drag can pick up and move — and one mode mounts one area. The Eyedropper's
+    // Shift-click place-a-sampler path calls the same store rather than sharing this mode, which is
+    // why the two can agree about the hit test without one area mounting for both.
+    interactionMode = 'color-sampler';
   } else if (toolName === 'eraser') {
     // A brush, but NOT the `draw` mode: `DrawToolArea` creates a new layer from a
     // `{ ...args, points }` and draws the `DrawToolArgs` preview, where the eraser
@@ -259,6 +268,7 @@ const Main = () => {
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
       | typeof RulerToolArea
+      | typeof ColorSamplerToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
@@ -287,6 +297,7 @@ const Main = () => {
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
       else if (interactionMode === 'ruler') EventHandler = RulerToolArea;
+      else if (interactionMode === 'color-sampler') EventHandler = ColorSamplerToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
@@ -358,6 +369,10 @@ const Main = () => {
               // there is no layer to preview through `tempUpdateLayer`, and the line is chrome that
               // must survive on top of the document rather than be composited into it.
               'ruler',
+              // The Color Sampler paints its markers here for the Ruler's reason: a sampler is
+              // chrome over the document and never part of it, so there is no layer to preview
+              // through `tempUpdateLayer` and the markers must sit on top of the canvas instead.
+              'color-sampler',
             ].includes(interactionMode)
               ? 'block'
               : 'none',

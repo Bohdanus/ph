@@ -38,14 +38,14 @@ import {
  * loss of a user edit unless something reports it, and HANDOFF.md §98 makes the
  * console the app's only error channel. Collected rather than logged at the
  * throw site because `replayHistory` runs on every undo, redo and history-panel
- * click, and these refusals sit inside the per-item loop: logging per item turns
+ * click, and these catches sit inside the per-item loop: logging per item turns
  * one refused entry into one line per navigation, repeated forever. The caller
  * reports the whole set once per replay.
  */
 export type ReplayDiagnostic = Readonly<{
   historyId?: string;
   actionName?: ActionType;
-  code: 'canvas-filter-unsupported' | 'invalid-affine-transform' | 'unhandled-action';
+  code: 'canvas-filter-unsupported' | 'invalid-affine-transform';
   error: unknown;
 }>;
 
@@ -104,7 +104,7 @@ export function replayHistory(
       // A document replacement means to be a WHOLE new document, so it is honoured
       // only as the first entry, which is how one is ever written: the single
       // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
-      // (`setImageFromUpload()`'s PSD arm, `useLayer.ts:195`). Carried mid-history it would replace
+      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
       // the layer record and resize the canvas from anywhere in the timeline, which
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
@@ -214,40 +214,7 @@ export function replayHistory(
       layers = Object.fromEntries(Object.entries(layers).filter(([id]) => id !== layerId));
       continue;
     }
-    if (actionName !== TOOL_ACTION) {
-      // Every remaining `ActionType` member has been handled above, so reaching here
-      // means the union gained a member this loop does not apply, or the entry carries
-      // nothing the handler for its action needs (`OPEN_DOCUMENT_ACTION` is applied by
-      // the `documentSource` branch at the top of the loop, so an entry without one
-      // arrives here too).
-      //
-      // Refusing is right; refusing SILENTLY is not. This is the ONE skip reachable
-      // for an `ActionType` member no arm above applies — not the module's only silent
-      // skip. A `documentSource` carried mid-history, a `NEW_LAYER_ACTION` with no
-      // source, a `MERGE_ACTION` with no source and a `REORDER_ACTION` naming an absent
-      // layer are all refused in silence too, and `history-replay.branches.test.ts`
-      // titles each of them as intended. What separates this branch from those is that
-      // nothing records that the entry was ever seen: the others pin their own
-      // behaviour, this one had no behaviour to pin, so a user edit vanished unnoticed,
-      // which is exactly what `ReplayDiagnostic` exists to prevent.
-      //
-      // Both reasons for arriving are production-unreachable today, which is why this
-      // adds no output on any real timeline: `useApp.ts` is the only writer of an
-      // `OPEN_DOCUMENT_ACTION` entry and always attaches a `documentSource`, and
-      // `LAYER_TRANSPARENCY_ACTION` has no production dispatch site at all. It is also
-      // reachable with no action NAME at all, since nothing enforces the required
-      // `HistoryItem['actionName']` at runtime — and a nameless entry is the most
-      // reportable thing this loop can meet, because `historyId` and timeline position
-      // are then the only trace of it. It is reported rather than guarded for: a
-      // `if (!actionName) continue;` here would restore the silent skip.
-      diagnostics.push({
-        historyId: item.id,
-        actionName,
-        code: 'unhandled-action',
-        error: new Error(`No replay arm applies ${actionName ?? '(no action name)'}`),
-      });
-      continue;
-    }
+    if (actionName !== TOOL_ACTION) continue;
 
     const layer = layers[layerId];
     const toolArgs = args as ToolArgs;

@@ -238,7 +238,7 @@ describe('EllipticalSelection toolbar', () => {
       render(<EllipticalSelection />);
 
       // Photoshop's marquee Ratio field spans 1:20 to 20:1, and the step is the 0.05 the
-      // `resolveUnclampedEllipseRect` constraint is expressed in.
+      // `resolveEllipseRect` constraint is expressed in.
       expect(getRatio()).toHaveAttribute('min', String(MARQUEE_RATIO_MIN));
       expect(getRatio()).toHaveAttribute('max', String(MARQUEE_RATIO_MAX));
       expect(getRatio()).toHaveAttribute('step', String(MARQUEE_RATIO_STEP));
@@ -304,7 +304,7 @@ describe('EllipticalSelection toolbar', () => {
       render(<EllipticalSelection />);
 
       // A half-typed number reaches the handler as `0` or `''`, and a locked ratio of zero is
-      // not a constraint at all: `resolveUnclampedEllipseRect` would silently fall back to a free drag
+      // not a constraint at all: `resolveEllipseRect` would silently fall back to a free drag
       // while the field kept claiming a ratio.
       for (const value of ['0', '']) {
         fireEvent.change(getRatio(), { target: { value } });

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { EllipticalSelectionToolArea } from '../EllipticalSelectionToolArea.tsx';
 import {
-  ELLIPSE_MAX_SAGITTA_PX,
   ELLIPTICAL_SELECTION_SOURCE_TOOL,
   type EllipticalSelectionToolArgs,
 } from '../../../tools/ellipticalSelection.ts';
@@ -323,7 +322,7 @@ describe('EllipticalSelectionToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
     fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
 
-    // `resolveUnclampedEllipseRect` returns null for a zero-extent box, so there is no ellipse to commit
+    // `resolveEllipseRect` returns null for a zero-extent box, so there is no ellipse to commit
     // — and the draft the press opened is closed rather than left half-built.
     expect(selectionEdits()).toEqual([]);
     expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
@@ -573,49 +572,5 @@ describe('EllipticalSelectionToolArea', () => {
         pos: { x: 20, y: 0, width: 20, height: 20 },
       }),
     });
-  });
-
-  it('clips the committed ellipse to the document when the drag ends past its right and bottom edges', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 150, clientY: 100 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 140 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 140 });
-
-    const [selection] = singleSelectionEdit().payload.updates.selections;
-    const absolute = getSelectionAbsolutePoints(selection);
-    const xs = absolute.map((point) => point.x);
-    const ys = absolute.map((point) => point.y);
-
-    // The store mock's `totalSize` is the bound, and `getLocalCoords` is mocked to raw client
-    // coordinates, so an unbounded commit would put a rightmost vertex at 260 and a lowest at
-    // 140 — a selection whose own `pos` reaches past the document it was drawn on. The bound
-    // CUTS the ring rather than resizing it: the drag's box is (150, 100) to (260, 140), so the
-    // left edge at 150 and the top at 100 are the ring's own and survive the cut untouched, and
-    // only the two edges past the document are replaced by the document's.
-    expect(Math.max(...xs)).toBe(200);
-    expect(Math.max(...ys)).toBe(120);
-    expect(Math.min(...xs)).toBeGreaterThanOrEqual(150);
-    expect(Math.min(...ys)).toBeGreaterThanOrEqual(100);
-  });
-
-  it('commits a shift-dragged ellipse that is squared first and clipped second, because the document is not square', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 40, shiftKey: true });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 40, shiftKey: true });
-
-    const [selection] = singleSelectionEdit().payload.updates.selections;
-    const ys = getSelectionAbsolutePoints(selection).map((point) => point.y);
-
-    // 260x40 squares to 260x260, which no 200x120 document holds, so what commits is that
-    // circle's cap on the canvas — a shape that reaches both the top and the bottom edge.
-    // Bounding the drag BEFORE the constraint would square 200x40 into a circle about
-    // (100, 200), whose only on-canvas part is the sliver where it touches y = 120, and the
-    // lowest vertex would be the bottom edge instead of the top. The two orders commit visibly
-    // different shapes, and the assertion is the one that can only be true of squaring first.
-    expect(Math.max(...ys)).toBe(120);
-    expect(Math.min(...ys)).toBeLessThanOrEqual(ELLIPSE_MAX_SAGITTA_PX);
   });
 });

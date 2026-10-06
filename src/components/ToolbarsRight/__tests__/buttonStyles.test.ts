@@ -46,6 +46,7 @@ const DISABLED_CAPABLE: ReadonlyArray<readonly [name: StyleName, base: StyleName
 ];
 
 const classesOf = (name: StyleName) => (buttonStyles[name] as string).trim().split(/\s+/);
+const FOCUS_VISIBLE_BUTTONS = STYLE_NAMES.filter((name) => classesOf(name).includes('focus:outline-none'));
 
 describe('buttonStyles public surface', () => {
   it('exports exactly the documented style constants and nothing else', () => {
@@ -157,5 +158,16 @@ describe('buttonStyles disabled affordance', () => {
         name
       ).toEqual([]);
     }
+  });
+});
+
+describe('buttonStyles keyboard focus affordance', () => {
+  it.each(FOCUS_VISIBLE_BUTTONS)('%s provides a focus-visible ring', (name) => {
+    const tokens = classesOf(name);
+
+    expect(tokens).toContain('focus-visible:ring-2');
+    expect(tokens).toContain('focus-visible:ring-blue-500');
+    expect(tokens).toContain('focus-visible:ring-offset-2');
+    expect(tokens).not.toContain('focus:ring-2');
   });
 });

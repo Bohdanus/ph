@@ -222,6 +222,11 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Samples a color from anywhere in the image and makes it the foreground color, previewing as you drag and confirming on release.',
     implementation: 'partial',
   },
+  'color-sampler': {
+    summary:
+      'Drops numbered markers on the image and reports each one’s color, up to four at a time. Sample Size sets the footprint each marker reads.',
+    implementation: 'partial',
+  },
   draw: {
     summary:
       'This app’s own freehand stroke tool, not a Photoshop tool: a drag becomes a new layer of ink, drawn with a pen, a dashed pen or a spray.',

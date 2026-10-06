@@ -16,28 +16,20 @@ import type { RulerMeasurement } from './ruler.ts';
  * document. Nothing here is history, nothing here is durable, nothing here can be exported, and a
  * measurement that reached `StoreContext` would be a field that undo has no opinion about and that
  * the document-replacement paths would each have to decide about. The `useSyncExternalStore` shape
- * is the one `src/components/SidebarLeft/use-toolbar-overflow.ts` already uses — `toolbar-fit-store.ts`
- * only describes the API in prose — so a second reader of this pattern will recognise it.
+ * is the one `src/components/SidebarLeft/toolbar-fit-store.ts` already uses, so a second reader of
+ * this pattern will recognise it.
  *
  * **Scope of the value.** It outlives the tool area's mount, because Adobe's own sentence is
  * "If your document has an existing measuring line, selecting the Ruler tool causes it to be
  * displayed" — a line that vanished on every tool switch could never satisfy that. It is dropped
- * when the DOCUMENT changes instead, and a crop is covered for the same reason: a line measured
- * against an origin that has moved is worse than no line.
- *
- * The key is `documentId` AND the frame size together, and it has to be both. Size alone was the
- * first version and it was wrong in a way no test caught: two documents of the same size — the
- * common case, since the app's own default is 800×600 and its Blank seed is a fixed size — produced
- * an equal key, so opening the second one left the first one's line standing, painted over it, with
- * the options bar reporting authoritative-looking X/Y/W/H/D1 for a line that does not exist in this
- * document. `documentId` is minted per open in `useApp` and is already in the store, so the
- * identity was available the whole time; the size is kept beside it because a CROP keeps the
- * document and changes the frame, and a line across the old frame is stale for the same reason.
+ * when the document's frame SIZE changes instead, which is the cheapest signal available for "this
+ * is a different document" and also covers a crop, whose line would otherwise be measured against
+ * an origin that has moved.
  */
 const NO_MEASUREMENT: RulerMeasurement | null = null;
 
 let current: RulerMeasurement | null = NO_MEASUREMENT;
-let frameKey = '';
+let frameSize = '';
 let listeners: readonly (() => void)[] = [];
 
 const emit = () => {
@@ -59,39 +51,25 @@ export const setRulerMeasurement = (measurement: RulerMeasurement | null): void 
 export const clearRulerMeasurement = (): void => setRulerMeasurement(null);
 
 /**
- * Drops a line that belongs to a document or a frame this key cannot be describing.
+ * Drops a line that belongs to a document this size cannot be showing.
  *
- * Called from the tool area with the current document and frame on every paint. An unchanged key is
- * the overwhelmingly common case, so the comparison is a string compare and the subscribers are not
- * woken.
- *
- * The FIRST sync only establishes the key, and that is a deliberate asymmetry rather than an
- * oversight. There is no previous document for a line to be stale against, so treating the blank
- * key as "a different document" would drop a line published before the tool area ever mounted —
- * which is reachable from a test that seeds the store, and is a footgun in the API even where the
- * app's own ordering happens to avoid it. A real key is never blank, so the sentinel is safe.
+ * Called from the tool area with the current frame size on every paint. A size that has not
+ * changed is the overwhelmingly common case, so the comparison is a string compare and the
+ * subscribers are not woken.
  */
-export const syncRulerFrame = (documentId: string, size: Size): void => {
-  const key = `${documentId}@${size.width}x${size.height}`;
-  if (key === frameKey) return;
-  const isFirstSync = frameKey === '';
-  frameKey = key;
-  if (isFirstSync || current === NO_MEASUREMENT) return;
+export const syncRulerFrameSize = (size: Size): void => {
+  const key = `${size.width}x${size.height}`;
+  if (key === frameSize) return;
+  frameSize = key;
+  if (current === NO_MEASUREMENT) return;
   current = NO_MEASUREMENT;
   emit();
 };
 
-/**
- * Test seam: the whole module state, so a test can start from a known line.
- *
- * `listeners = []` is safe ONLY because every caller runs this before a component mounts. Called
- * with a subscriber live, its unsubscribe would filter an already-empty array, match nothing, and
- * leave that subscriber holding a snapshot no `emit` can ever reach — so it is named `ForTest` and
- * the tests that call it own a `beforeEach`, not a running tree.
- */
+/** Test seam: the whole module state, so a test can start from a known line. */
 export const resetRulerMeasurementForTest = (): void => {
   current = NO_MEASUREMENT;
-  frameKey = '';
+  frameSize = '';
   listeners = [];
 };
 

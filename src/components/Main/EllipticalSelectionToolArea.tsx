@@ -133,7 +133,6 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       fixedRatio: args.fixedRatio,
       fixedWidth: args.fixedWidth,
       fixedHeight: args.fixedHeight,
-      imageSize: totalSize,
       constrainToCircle: drag.constrainToCircle,
       fromCentre: drag.fromCentre,
     };

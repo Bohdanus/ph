@@ -193,18 +193,19 @@ describe('global canvas environment (src/test/setup.ts)', () => {
     // OffscreenCanvas nor an HTMLCanvasElement gets 100x100 and its own size is never read.
     //
     // This branch IS production-reachable, and the route is NOT through `immutableRaster`.
-    // Both `immutableRaster()` copies (`useLayer.ts`'s and `useApp.ts`'s) open with
+    // Both `immutableRaster` copies (`src/contexts/useLayer.ts:80-86` and
+    // `src/hooks/useApp.ts:24-30`) open with
     // `if (typeof bitmap.close === 'function') return bitmap;`, so a decoded raster
     // early-returns and never reaches `createImageBitmap` — the `transferToImageBitmap()`
     // shape used below is precisely the shape those two functions refuse to forward.
     //
     // The live route is the presentation promotion, which has no such guard:
-    //   `materializePresentationBitmap()` in `src/contexts/layer-presentation.ts` calls
+    //   `src/contexts/layer-presentation.ts:59` `materializePresentationBitmap` calls
     //   `createImageBitmap(canvas)` with its `BitmapSource` argument forwarded unchecked
-    //   <- `promoteLayerPresentation()` in `src/contexts/StoreContext.tsx`, from
-    //   <- `requestPresentations()` in `src/contexts/useLayer.ts`, which forwards
+    //   <- `src/contexts/StoreContext.tsx:1126` `promoteLayerPresentation`, from
+    //   <- `src/contexts/useLayer.ts:158` `requestPresentations`, which forwards
     //      `layer.tmpCanvas` as-is
-    //   <- `src/contexts/useLayer.ts`, where `tmpCanvas` is the FIRST element of
+    //   <- `src/contexts/useLayer.ts:587`, where `tmpCanvas` is the FIRST element of
     //      whatever `processor.imageProcessor(...)(toolArgs)` returned.
     // Two selection creators return the INPUT bitmap rather than a fresh canvas —
     // `src/tools/quickSelection.ts:24-28` and `src/tools/ellipticalSelection.ts:28-32` are

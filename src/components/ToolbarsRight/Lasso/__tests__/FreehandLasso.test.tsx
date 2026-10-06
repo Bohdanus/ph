@@ -180,7 +180,7 @@ describe('FreehandLasso toolbar', () => {
     expect(mockPatchToolArgs).toHaveBeenCalledWith('freehand-lasso', { fill: false });
   });
 
-  it('disables copy and Deselect for a rectangle selection and enables paste only with a clipboard', () => {
+  it('disables copy and clear for a rectangle selection and enables paste only with a clipboard', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'rectangle' }, hasClipboard: true });
     render(<FreehandLasso />);
 
@@ -197,7 +197,7 @@ describe('FreehandLasso toolbar', () => {
     expect(getClearButton()).toBeDisabled();
   });
 
-  it('enables copy and Deselect for a polygon selection', () => {
+  it('enables copy and clear for a polygon selection', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
     render(<FreehandLasso />);
 
@@ -206,7 +206,7 @@ describe('FreehandLasso toolbar', () => {
     expect(getPasteButton()).toBeDisabled();
   });
 
-  it('enables copy and Deselect for a freehand selection', () => {
+  it('enables copy and clear for a freehand selection', () => {
     setSelectionState({ activeSelection: { id: 'sel-2', geometry: 'freehand' } });
     render(<FreehandLasso />);
 
@@ -299,7 +299,7 @@ describe('FreehandLasso toolbar', () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it('appends a selection history entry from the Deselect button', () => {
+  it('appends a selection history entry from the clear button', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
     setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
     render(<FreehandLasso />);

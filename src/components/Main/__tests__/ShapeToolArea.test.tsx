@@ -1308,7 +1308,7 @@ describe('ShapeToolArea', () => {
       expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
     });
 
-    it('clears the preview a committed shape leaves painted, which nothing else removes', () => {
+    it('clears the preview after committing a shape', () => {
       vi.useFakeTimers();
       const { view, toolArea } = renderToolArea();
 
@@ -1325,13 +1325,7 @@ describe('ShapeToolArea', () => {
         fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
       });
 
-      // The commit ran and left the preview on the overlay: `handlePointerUp`'s last
-      // `flushDrawingFrame` redraws it and `createLayerFromTool` does not clear it. The shape is
-      // now a layer AND is painted twice, and the overlay keeps painting over the next tool's
-      // document because toggling `display` never touches a backing store.
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
-      // The queued frame fired, so exactly one paint: it is the payload the commit then leaves on
-      // the overlay, and the layer is committed from the same geometry.
       expect(drawShapeMock).toHaveBeenCalledExactlyOnceWith(
         storeMocks.ctx,
         expect.objectContaining({
@@ -1347,6 +1341,7 @@ describe('ShapeToolArea', () => {
         })
       );
 
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
       vi.mocked(storeMocks.ctx.clearRect).mockClear();
       view.unmount();
 

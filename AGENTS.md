@@ -1,8 +1,20 @@
-Photoshop clone production-grade photo editor
+Photoshop clone
 
-## Worktree FIRST
+#️ CRITICAL: ALL WORK HAPPENS IN WORKTREE — NEVER IN THE MAIN CHECKOUT
 
-Every tracked-file change happens in its own worktree and branch. `main` is for reading
+**Every command you run — git, tests — MUST run inside worktree directory under `.kilo/worktrees/`.**
+
+The main checkout is **READ-ONLY**.
+Running `git status`, `git rev-parse`, `npm test` - will break.
+
+**Before doing ANYTHING, verify you are in your worktree:**
+
+```bash
+git rev-parse --show-toplevel
+# MUST print a path under .kilo/worktrees/
+```
+
+Every tracked-file change happens in worktree. `main` is for reading
 and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
 
 ```bash
@@ -12,13 +24,12 @@ MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
 git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
 ```
 
-`main-worktree-guard.mjs` refuses commits made from `main`, but only after the edit;
-create the worktree before writing. Every commit carries a `Chat: ses_<id>` trailer.
-Every merge into `main` also carries `Branch: <source-branch>`; keep the subject unchanged.
-No gate supplies these values, so resolve the chat id before the first commit. It is also
+Every commit must carry `Chat: ses_<id>` trailer.
+Every merge into `main` must carry `Branch: <source-branch>`.
+Resolve chat id before the first commit. It is also
 the swarm identity used by `npm run swarm -- --agent ses_…`.
 
-There is no `kilo` CLI. Find the id in the session store with a phrase you typed, matching
+Find the id in the session store with a phrase you typed, matching
 words rather than a multi-line literal:
 
 ```bash
@@ -31,21 +42,18 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 
 ## Subagents
 
-### Delegation
-
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
-- Never exceed 9 simultaneous subagents/processes.
-- A task subagent inherits the working directory. Give it the absolute worktree path and never let two agents edit the same file.
-
-### Model policy
-
-**THE DEFAULT MODEL IS `Space Bunny Alpha (retires Oct 5)` ON PROVIDER `kilo`, AT VARIANT `max`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
+- **A task subagent inherits the caller's working directory.** You MUST give it the absolute worktree path in the prompt. Never let two agents edit the same file.
 
 - **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
 - GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
 - `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
 - Findings need evidence. The formatted board message cap is 4096 bytes; its body has about 3840 bytes: 3800 ASCII characters or 1200 characters when non-ASCII may occur. Put longer findings in a file or swarm issue.
+
+### Free-model Git restriction
+
+Nemotron and every other free model can misbehave when handling Git. NEVER assign free-model agents Git operations, branch or worktree creation/deletion, rebases, merges, commits, resets, or conflict resolution. Deny free-model agents Git work; perform Git operations in the coordinator or a trusted non-free agent.
 
 ## Browser rule
 
@@ -60,15 +68,16 @@ repository's browser protections.
 
 ## Commands
 
+**ALL git/npm COMMANDS MUST RUN IN YOUR WORKTREE.**
+
 `npm run tsc` is the only trustworthy typecheck. `npx tsc --noEmit` checks the empty root
 solution and can exit successfully without checking the projects; see [`docs/TESTING.md#running-commands`](docs/TESTING.md#running-commands).
 Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for one headless page load.
 
 ## Worktrees and dev servers
 
-- `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files, reports every path a merge resolution hand-edited after git had merged it cleanly, and refuses a resolution that dropped a test file BOTH sides still carry. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
+- `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
-- `npm run repo:state` reports every worktree with a merge, rebase or bisect in progress. Nothing else in the tree can see that state, and it lives in no commit, branch name or `git status`. Run it before a sweep or a landing. [`docs/ORCHESTRATION.md#what-git-is-doing-right-now`](docs/ORCHESTRATION.md#what-git-is-doing-right-now) is the detailed source.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
 
 ## Test traps
@@ -87,7 +96,7 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
-| `npm run test:staged` | **NOWHERE**         | manual `vitest related` command                                |
+| `npm run test:staged` | nowhere             | manual `vitest related` command                                |
 | `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
@@ -141,3 +150,13 @@ as a **navigation presentation cache**; it remains subordinate to legacy replay,
 export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
+
+## Free subagent models
+
+| Model                   | Provider | Variant  | Notes                                            |
+| ----------------------- | -------- | -------- | ------------------------------------------------ |
+| Nemotron 3 Ultra (free) | kilo     | high     | Best quality; thorough                           |
+| Dots3-Note Preview      | kilo     | thinking | Alternative, good for review and summaries, fast |
+| Step 3.7 Flash          | kilo     | high     | Fast, accurate                                   |
+
+Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.

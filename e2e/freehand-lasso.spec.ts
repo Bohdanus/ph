@@ -18,9 +18,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * ## What is observable, and why it is the ants
  *
- * A freehand selection has no blue outline of its own anywhere. `drawSelectionAnchors` and
- * `findSelectionAnchorAtPoint` both skip `sourceTool` 'freehand-lasso' and 'magic-wand'
- * (`src/util/selection.ts`), so the tool overlay never carries the selection border
+ * A freehand selection has no blue outline of its own anywhere. `drawSelectionOutline` and
+ * `drawSelectionAnchors` both skip `sourceTool` 'freehand-lasso' and 'magic-wand'
+ * (`src/util/selection.ts:198`, `:235`), so the tool overlay never carries the selection border
  * and `getSelectionBounds` cannot see it. The committed selection is the animated black/white ants
  * on `[data-testid="selection-ants-canvas"]`, and nothing else.
  *

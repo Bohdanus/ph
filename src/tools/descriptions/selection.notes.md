@@ -112,8 +112,8 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 - **The app has no `Select` menu.** There is no `Select All`, `Deselect`, `Inverse`,
   `Color Range`, `Modify > Feather/Expand/Contract/Border/Smooth`, `Grow`, `Similar`,
   `Refine Edge`, `Select and Mask` or `Transform Selection` anywhere in the application. The
-  only deselect is the `Deselect` button the rectangular, elliptical, freehand, magnetic, wand,
-  quick-selection and single-row/column marquee bars render, bound to `clearSelections`. This removes Photoshop's two most
+  only deselect is the `Deselect` button the rectangular, elliptical, freehand, magnetic, wand and
+  quick-selection bars render, bound to `clearSelections`. This removes Photoshop's two most
   important follow-ups for the wand and the quick selection outright.
 - **`Select and Mask` is on every bar, not just the wand's.** Adobe's 2022 Select-and-Mask tutorial
   puts it this way: "Open the Select and Mask workspace by choosing Select > Select and Mask, or
@@ -272,7 +272,7 @@ Photoshop's stops at an image _edge_ (see the Quick Selection section below); th
 inverted `Frequency` is the same kind of finding. Both compute a different thing from the one
 Photoshop documents, and both are `partial` on that basis. The elliptical marquee does not:
 `applyRatio()` in `src/tools/ellipticalSelection.ts` is the width-to-height ratio Adobe's
-own worked example states, `resolveUnclampedEllipseRect()` beside it makes `fixed-size` ignore the drag
+own worked example states, `resolveEllipseRect()` beside it makes `fixed-size` ignore the drag
 with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx` — the drag
 record `handlePointerDown()` starts — passes `event.shiftKey` and `event.altKey` as
 `constrainToCircle` and `fromCentre`, which are Photoshop's two modifiers. The tessellation is a
@@ -353,7 +353,7 @@ width-to-height ratio, which is exactly what `applyRatio()` in `src/tools/ellipt
 computes and exactly what the bar's hint tells the user, `Drag at ${args.fixedRatio}:1` (the
 `hint` in `EllipticalSelection.tsx`). What the app loses is expressiveness
 in the field, not fidelity in the geometry: the ratio must be entered as one number with a floor of
-0.05, where a Width/Height pair can take any two decimals. `resolveUnclampedEllipseRect` does implement
+0.05, where a Width/Height pair can take any two decimals. `resolveEllipseRect` does implement
 `fixed-size` the way Photoshop does —
 ignoring the drag, with the press point only supplying the center, so a click is a complete
 gesture — and `EllipticalSelectionToolArea` passes `event.shiftKey` as `constrainToCircle` and
@@ -383,13 +383,10 @@ small gaps between your end point and starting point".
 | Select and Mask                               | on every selection tool's bar | `missing`  | —       |
 
 **App fidelity: partial.** No Photoshop control is on this bar. The one control it does render
-is labelled `Mode` and toggles between `Outline` and `Fill`; that is the app's own invention,
-and nothing reads the value it writes — the commit processor takes the traced points alone, and
-neither the preview nor the committed selection consults it, so the button relabels itself and
-nothing else. It does not describe how a gesture combines with an existing selection either, so
-it shares a name with the thing it is not. `LassoToolArgs` carries `alpha`,
-`lineWidth`, `color` and `fill`, none of which Photoshop puts on this bar, and none of which any
-code on this bar's path reads.
+is labelled `Mode` and toggles between `Outline` and `Fill`; that is the app's own invention
+and it changes how the committed border is painted, not how a gesture combines with an existing
+selection — so it shares a name with the thing it is not. `LassoToolArgs` carries `alpha`,
+`lineWidth`, `color` and `fill`, none of which Photoshop puts on this bar.
 
 **Shortcut gap.** Photoshop binds `Return`/`Enter` to select the tool and focus the `Feather`
 field, so a feather can be typed before the next trace. Nothing in the app binds it.

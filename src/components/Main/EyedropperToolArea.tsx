@@ -3,6 +3,8 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { EyedropperSampleSize, EyedropperToolArgs } from '../../tools/eyedropper.ts';
+import { readColorSampler } from '../../tools/color-sampler-readback.ts';
+import { addColorSampler, colorSamplerAt, removeColorSampler } from '../../tools/color-sampler-store.ts';
 
 type EyedropperToolAreaProps = {
   className?: string;
@@ -25,6 +27,24 @@ export const EYEDROPPER_READBACK_UNAVAILABLE = 'eyedropper-readback-unavailable'
  * canvas and presenting it as the whole document's.
  */
 export const EYEDROPPER_ALL_LAYERS_UNSUPPORTED = 'eyedropper-sample-all-layers-unsupported';
+
+/**
+ * Adobe's second way to place a sampler, and it is on THIS tool's page:
+ * "To add new color samplers, select the Color Sampler tool and click in the image, or select the
+ * Eyedropper tool and Shift-click in the image."
+ * <https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html>
+ *
+ * **Shift-click is this tool's, so Alt still means background colour.** Adobe's two gestures are
+ * distinct on the same key combination: a bare Shift-click places a sampler and an Alt-click samples
+ * to the background, so the check is on `shiftKey` alone and the `altKey` branch below is untouched.
+ *
+ * Adobe's third gesture is the matching delete — "Option + Shift (Mac) | Alt + Shift (Win) -click on
+ * the Color Sampler to delete a Color Sampler (With the Eyedropper tool selected)" — so Shift-Alt
+ * over an existing marker removes it rather than placing a second one on the same pixel. It is
+ * implemented here rather than in `ColorSamplerToolArea` because the tool area is not mounted while
+ * the Eyedropper holds the tile.
+ */
+const shiftClickPlacesSampler = (event: PointerEvent<HTMLDivElement>): boolean => event.shiftKey;
 
 const toHexColor = (red: number, green: number, blue: number): string =>
   `#${[red, green, blue].map((channel) => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, '0')).join('')}`;
@@ -86,6 +106,27 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const canvasSeed = getLocalCoords(event);
     const centerX = Math.floor(canvasSeed.x);
     const centerY = Math.floor(canvasSeed.y);
+
+    // Adobe's Shift-click path, resolved BEFORE the readback below because it does not use this
+    // tool's sample at all: it places a sampler, which is the Color Sampler's store and overlay.
+    // The readback module is shared so the two call sites cannot disagree about which document
+    // pixel a point names.
+    if (shiftClickPlacesSampler(event)) {
+      const hit = colorSamplerAt({ x: centerX, y: centerY });
+      if (hit && event.altKey) {
+        removeColorSampler(hit.id);
+        return;
+      }
+      const samplerReadback = readColorSampler(canvas, { x: centerX, y: centerY }, args.sampleSize);
+      if (!samplerReadback.ok) {
+        console.error(samplerReadback.reason, 'the color sampler cannot read the composited canvas');
+        return;
+      }
+      if (samplerReadback.color === null) return;
+      const placed = addColorSampler({ x: centerX, y: centerY }, samplerReadback.color);
+      if (!placed.ok) console.error(placed.reason, `the color sampler holds ${placed.samplers.length} samples`);
+      return;
+    }
 
     // Sample Size is the side of the square averaged around the click, and all seven values Adobe
     // offers are odd, so the block is centred. The block is then CLIPPED to the canvas rather than

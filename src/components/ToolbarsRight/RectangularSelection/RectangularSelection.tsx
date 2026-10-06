@@ -26,7 +26,7 @@ const RectangularSelection: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleDeselect = () => {
+  const handleClear = () => {
     clearSelections();
   };
 
@@ -42,7 +42,7 @@ const RectangularSelection: React.FC<{}> = () => {
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePaste}>
           Paste
         </button>
-        <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={handleDeselect}>
+        <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={handleClear}>
           Deselect
         </button>
       </div>
