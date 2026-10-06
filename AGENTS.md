@@ -38,21 +38,11 @@ fi
 git worktree add -b "$BRANCH" "$TARGET"
 ```
 
-Every commit must carry `Chat: ses_<id>` trailer.
+Every commit must carry a `Chat: <native-session-id>` trailer; resolve it as described in
+[`docs/CHAT-ID.md`](docs/CHAT-ID.md). Do not infer or translate one host's session ID into another.
 Every merge into `main` must carry `Branch: <source-branch>`.
-Resolve chat id before the first commit. It is also
-the swarm identity used by `npm run swarm -- --agent ses_…`.
-
-Find the id in the session store with a phrase you typed, matching
-words rather than a multi-line literal:
-
-```bash
-sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
-  JOIN message m ON m.session_id=s.id JOIN part p ON p.message_id=m.id
-  WHERE s.parent_id IS NULL AND json_extract(p.data,'\$.type')='text'
-    AND lower(json_extract(p.data,'\$.text')) LIKE '%a%phrase%you%typed%'
-  ORDER BY s.time_updated DESC LIMIT 1;"
-```
+Resolve the session ID before the first commit. `ses_…` is the Kilo format; it is accepted by
+the Kilo swarm command when needed, but swarm identity otherwise defaults to the branch.
 
 ## Subagents
 
