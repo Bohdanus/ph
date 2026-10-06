@@ -3962,41 +3962,6 @@ DELIVERABLE" and its four-violation attribution block — plus `expectNoViolatio
 
 ---
 
-## 162. A failed export tells the user nothing, and `SaveDialog` has nowhere to tell them
-
-`src/components/SaveDialog/SaveDialog.tsx` — the four `useState` calls at the top of `SaveDialog`
-
-`renderExportCanvas` throws when the compositor reports failure, which `useFile.handleImageSave`
-catches in its own `catch` block: it logs and resolves `null`. The dialog is
-deliberately left open so a retry is possible — that teardown placement is itself a documented
-fix, spelled out in the comment above the success branch's `setShowSaveDialog(false)` — but
-`SaveDialog` holds exactly three pieces of state
-(`fileName`, `format`, `jpegQuality`) plus `saving`, has no error state, and no render slot
-for one. Its only visual signal is the submit button's `{saving ? 'Saving...' : 'Save'}` label.
-Its own `catch`, inside `handleSave()`, is unreachable from this path, because `handleImageSave`
-catches internally and always
-resolves.
-
-So a broken layer bitmap — a transferred or detached `ImageBitmap` raises `InvalidStateError`
-inside `drawImage`, which the `catch` in `snapshotVisibleCanvas()` in `layer-renderer.ts` catches
-into a `false` return — produces a
-click with no visible consequence at all. Before the export decouple, the same broken layer left
-the display canvas holding the last good composite (`drawLayer()`'s `save`/`finally` pair states
-that preservation as its contract) and the export encoded a stale-but-real file.
-
-**Fix.** Add an error state to `SaveDialog` and render it in the panel body, above the footer
-button row. This requires a signature change: `onSave` is `(data) => Promise<void>` on
-`SaveDialogProps` and must become in-band, since today the only signal is the in-band `null` every
-caller already guards
-with. Decide the copy and whether the message is dismissible; that is a product judgement, not
-a mechanical edit.
-
-**Files.** `src/components/SaveDialog/SaveDialog.tsx` (its `useState` block, `handleSave()`'s
-`catch`, and the submit button's label),
-`src/contexts/useFile.tsx` (`handleImageSave()`)
-
----
-
 ## 164. No stroke geometry is aligned to the pixel grid, so a 1px line is two half-grey rows
 
 `src/tools/shape.ts` — `setShapeCtx()`, `src/tools/draw.ts` — `setupDrawCtx()`, `src/util/draw.ts` —

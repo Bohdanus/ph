@@ -15,13 +15,17 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
   const [format, setFormat] = useState('image/png');
   const [jpegQuality, setJpegQuality] = useState(DEFAULT_JPEG_QUALITY);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await onSave(format === 'image/jpeg' ? { fileName, format, quality: jpegQuality } : { fileName, format });
     } catch (error) {
       console.error('Failed to save file:', error);
+      const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      setSaveError(detail ? `Unable to save the file: ${detail}` : 'Unable to save the file. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -120,6 +124,15 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 </p>
               )}
             </div>
+            {saveError && (
+              <p
+                className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300"
+                role="alert"
+                data-testid="save-dialog-error"
+              >
+                {saveError}
+              </p>
+            )}
           </div>
           <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
             <button
