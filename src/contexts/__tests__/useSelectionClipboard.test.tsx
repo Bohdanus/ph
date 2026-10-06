@@ -251,7 +251,7 @@ describe('pasteSelectionClipboard', () => {
     // than passing by accident: the 99x99 bitmap would centre at {1, 1} with itself.
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
-        pos: { x: 75, y: 55, width: 30, height: 40 },
+        pos: { x: 35, y: 30, width: 30, height: 40 },
       })
     );
   });
