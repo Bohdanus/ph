@@ -629,16 +629,17 @@ inside the directory:
 | arm         | what it actually is                                                   | window                     | names a chat?      |
 | ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
 | `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
-| `ioLive`    | recent `shellHistory` **and `readHistory`** — a reader counts         | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `ioLive`    | recent `shellHistory` commands; `readHistory` is separate             | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
 | `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
 | `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
 
-So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **reads**. A
-session arm makes it worse than it looks: `writes.mjs` argues in its own header that attributing a
-call to a worktree by the session's directory is wrong in both directions, and this arm then does
-exactly that. `classify()` deliberately keeps `derivedLive` beside the suppressed `live` rather than
-letting `--no-live-writers` erase its own evidence, and `dispose` reads `derivedLive`, so **the
-documented suppression flag does not clear this refusal.**
+So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **recent shell
+commands**, not the separate read-tool history. A session arm makes it worse than it looks:
+`writes.mjs` argues in its own header that attributing a call to a worktree by the session's
+directory is wrong in both directions, and this arm then does exactly that. `classify()` deliberately
+keeps `derivedLive` beside the suppressed `live` rather than letting `--no-live-writers` erase its
+own evidence, and `dispose` reads `derivedLive`, so **the documented suppression flag does not
+clear this refusal.**
 
 The refusal message names a chat only when `derivedChatIds` is non-empty — the write arm. **Every
 other arm prints "a chat"**, so an anonymous refusal is the normal case, not a sign of something
