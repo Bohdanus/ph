@@ -4853,20 +4853,20 @@ making the mask authoritative rather than derived, not before.
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
 loops, classifies them into outer contours and holes, and then keeps exactly one outer contour:
 `selectLargestBoundaryLoop()` returns the single loop with the largest absolute area. Every other
-matched region is dropped, and nothing in `magicWand.ts` warns or logs it.
+matched region is dropped. The utility does not warn or log this reduction; the options bar now
+discloses it when Contiguous is unchecked.
 
 It is not gated on an option. The bar renders `Contiguous`, the checkbox writes `contiguous`, and this
 reduction runs unconditionally on every click — unchecking Contiguous feeds the same call, so the loss
-bites hardest exactly when the user has asked for the whole image rather than one region. No control
-on this bar offers that mode by name.
+bites hardest exactly when the user has asked for the whole image rather than one region.
 
 **Where it is already recorded.** The header comment on `src/util/floodFill.ts` states that the wand
 "keeps only the largest outer loop", for the sibling module's own reasons, and `selectLargestBoundaryLoop()`'s
-own neighbour explains the magnitude comparison that drops the rest. So the behaviour is not undocumented
-in the repository — but it appears only in source comments, with no entry in `docs/` and nothing in the
-wand's own tool record, and the user-visible consequence is stated nowhere. The `floodFill.ts` comment
-also cites the reduction by line range, and those citations have drifted past the end of the file it
-points at.
+own neighbour explains the magnitude comparison that drops the rest. The Magic Wand options bar now
+states the limitation when Contiguous is off, and its `appNotes` records the underlying single-polygon
+constraint. These disclosures mitigate the surprise but do not make the selection include every
+matching region. The `floodFill.ts` comment also cites the reduction by line range, and those citations
+have drifted past the end of the file it points at.
 
 **Distinct from the recorded hole refusal.** The same function also refuses the whole selection when
 any hole is present. That refusal is recorded, but for a different tool: the sentence lives in the
@@ -4880,9 +4880,8 @@ reduction; `classifyBoundaryLoops()` is what separates outer contours from holes
 
 **What would close it.** Keep every outer contour and commit them as subpaths, which needs the
 selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
-declines. Until that exists, the smallest honest change is to make the loss visible rather than
-silent, because a selection that is quietly smaller than the click that made it is the harder bug
-to diagnose later.
+declines. The options-bar warning is an interim mitigation; keep this entry open until the selected
+geometry can represent and commit every matching region.
 
 ## 186. A tool description says the Magic Wand cannot reach the top two thirds of Photoshop's colour range, and the code says it can
 
