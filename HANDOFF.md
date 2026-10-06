@@ -5607,11 +5607,11 @@ requiring that the branch's first-parent line contains no merge commit. `.husky/
 runs in the branch and already has `main...HEAD`. Do **not** solve this by making the merge guard
 refuse more; it is already refusing correctly, and widening it fires on ordinary landings.
 
-## 221. The unit suite still has assertions that cannot fail and certifies locked-layer painting
+## 221. The unit suite still has brittle assertion and fixture gaps
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
-assertions that pass on any non-null value, but six classes of defect remain, and one of them is a
-source bug the new tests now prove.
+assertions that pass on any non-null value, but five classes of test defects remain, each with the
+evidence and concrete fix below.
 
 The remaining test defects, each with the fix that was proven to work:
 
@@ -5647,11 +5647,6 @@ The remaining test defects, each with the fix that was proven to work:
   would misalign every stroke under a crop — is therefore pinned only by
   `src/hooks/__tests__/usePointerPosition.test.ts` and by e2e. Whoever wants a component suite to
   reach it has to give the store a measured rect, not another mock.
-- No tool area in `src/components/Main/` gates on a layer's `locked` flag; only bedrock is refused.
-  Clone stamp is the suite that pins this, and it pins it as behaviour, which means a locked layer
-  still accepts a paint commit. Adobe refuses paint tools on a locked layer, so this is an app-wide
-  gap that a passing test now certifies. The gate belongs where `isBedrock` is already checked, in
-  `CloneStampToolArea.tsx` and its siblings, and the test follows the gate.
 - A hand-copied literal table drifts, and one already did. `src/tools/__tests__/tool-processors.test.ts`
   copied a seven-chip list into every pen-family card; `main` then re-pointed two of those cards at
   their own groups and the table went stale silently, in the same shape four other hand-copied tables
