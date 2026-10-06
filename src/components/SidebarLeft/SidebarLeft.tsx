@@ -652,8 +652,8 @@ const SidebarLeft = () => {
     tool.name === toolName && (!tool.figure || (toolArgs.toolName === 'shape' && toolArgs.figure === tool.figure));
 
   const selectTool = (tool: ToolbarTool) => {
-    if (tool.figure) patchToolArgs('shape', { figure: tool.figure });
     goToTool(tool.name);
+    if (tool.figure) patchToolArgs('shape', { figure: tool.figure });
   };
 
   const renderToolGroup = (group: ToolbarToolGroup, groupIndex: string, identity?: ToolGroupIdentity) => {
