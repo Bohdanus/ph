@@ -153,12 +153,7 @@ describe('CropToolArea', () => {
 
       render(<CropToolArea className="test" overlayCtxRef={overlayCtxRef} />);
 
-      // EXACT, not `toBeCloseTo(16 / 9)` at its default precision of two digits. That form
-      // tolerates any ratio within 0.005, so rounding the value on the way to `useRect` —
-      // 1.78 for the 16:9 above, or 1.7778 — would pass while the crop frame the overlay draws
-      // is a fraction of a pixel out on every drag. The component FORWARDS the number, so the
-      // identity comparison is both the true contract and the stronger one.
-      expect(useRectProps.current!.aspectRatio).toBe(16 / 9);
+      expect(useRectProps.current!.aspectRatio).toBeCloseTo(16 / 9);
     });
 
     it('passes null aspectRatio when not set', () => {

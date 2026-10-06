@@ -13,6 +13,7 @@ import { EllipseShapeIcon } from './icons/EllipseShapeIcon';
 import { EllipticalSelectionIcon } from './icons/EllipticalSelectionIcon';
 import { EraserIcon } from './icons/EraserIcon';
 import { EyedropperIcon } from './icons/EyedropperIcon';
+import { ColorSamplerIcon } from './icons/ColorSamplerIcon';
 import { RulerIcon } from './icons/RulerIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
@@ -78,6 +79,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'magic-eraser': MagicEraserIcon,
   'paint-bucket': PaintBucketIcon,
   eyedropper: EyedropperIcon,
+  'color-sampler': ColorSamplerIcon,
   ruler: RulerIcon,
   pen: PenToolIcon,
   'freeform-pen': FreeformPenIcon,

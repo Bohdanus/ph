@@ -833,7 +833,6 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
     const frozenLayer = Object.freeze({
       ...baselineLayer,
       pos: Object.freeze({ ...baselineLayer.pos }),
-      frame: Object.freeze({ ...baselineFrame }),
       source: Object.freeze({
         kind: 'blank' as const,
         color: '#ffffff',

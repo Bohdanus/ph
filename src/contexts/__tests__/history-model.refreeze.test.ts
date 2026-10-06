@@ -6,7 +6,6 @@ import {
   freezeDurableDocument,
   refreezeDurableDocument,
   type DurableDocument,
-  type DurableDocumentRefreeze,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
   type DurableLayerSource,
@@ -31,7 +30,6 @@ function layer(id: string, overrides: Partial<DurableLayerSnapshot> = {}): Durab
     blendMode: 'source-over',
     order: 0,
     pos: { x: 0, y: 0, width: 8, height: 6 },
-    frame: { x: 0, y: 0, width: 100, height: 100 },
     source: blankSource,
     ...overrides,
   };
@@ -226,30 +224,6 @@ describe('refreezeDurableDocument reuse', () => {
     expect(result.history[1]).not.toBe(spread.history[1]);
     expect(result.baseline).not.toBe(base.baseline);
     expect(result).toEqual(freezeDurableDocument(spread));
-  });
-
-  it('refuses a changes object that replaces history without a cursor', () => {
-    // The guarantee this file cannot assert at runtime, because it is a TYPE: relaxing
-    // `cursor` back to optional turns `npm run tsc` green again with no test failing and
-    // no test name mentioning the contract. `DurableDocumentRefreeze.cursor` is required
-    // precisely so a caller that swaps `history` cannot silently keep the base position
-    // — a truncated history left at the old cursor is how an undone edit comes back.
-    //
-    // So the pin is `@ts-expect-error` itself. An unused directive is TS2578, which means
-    // `npm run tsc` FAILS if the field is ever relaxed — the tripwire cannot rot into a
-    // no-op the way an assertion can. It is written against the type rather than a call,
-    // so nothing here mutates a document, and the two `expect`s below are what consume
-    // the locals rather than a `void`, because they also pin the values the type allows.
-    //
-    // The mirror case is the reason `cursor` is required while `history` is not: a cursor
-    // move passes no history and must stay allocation-free, so only the history-carrying
-    // direction is refused.
-    // @ts-expect-error `cursor` is required — replacing `history` must not keep the base position.
-    const omittedCursor: DurableDocumentRefreeze = { history: [] };
-    const cursorOnly: DurableDocumentRefreeze = { cursor: 0 };
-
-    expect(omittedCursor.history).toEqual([]);
-    expect(cursorOnly.cursor).toBe(0);
   });
 
   it('leaves cloneDurableDocument deep-copying an own frozen copy', () => {

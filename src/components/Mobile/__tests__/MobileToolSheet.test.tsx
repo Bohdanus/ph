@@ -44,16 +44,14 @@ describe('MobileToolSheet', () => {
     setTool('draw');
   });
 
-  it('keeps the options panel unmounted while closed, and names it only once it is open', () => {
+  it('keeps the options panel unmounted while closed and advertises that on the header', () => {
     render(<MobileToolSheet isOpen={false} onToggle={vi.fn()} />);
 
     expect(document.getElementById('mobile-tool-options')).toBeNull();
 
     const header = screen.getByRole('button', { name: /draw options/i });
     expect(header).toHaveAttribute('aria-expanded', 'false');
-    // Closed, the panel is not in the tree, so `aria-controls` would name nothing beside
-    // `aria-expanded="false"` — the same dangling IDREF fixed in `PanelGroup`.
-    expect(header).not.toHaveAttribute('aria-controls');
+    expect(header).toHaveAttribute('aria-controls', 'mobile-tool-options');
   });
 
   it('is reachable by keyboard, because the header is the button rather than a clickable div', async () => {
@@ -77,14 +75,10 @@ describe('MobileToolSheet', () => {
     expect(onToggle).toHaveBeenCalledTimes(2);
   });
 
-  it('reports the open state through aria-expanded and renders the panel it names', () => {
+  it('reports the open state through aria-expanded and renders the panel', () => {
     render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
 
-    const header = screen.getByRole('button', { name: /draw options/i });
-    expect(header).toHaveAttribute('aria-expanded', 'true');
-    // Open, the name must RESOLVE — asserting the attribute alone would pass whether or not the
-    // id it names is in the tree.
-    expect(header.getAttribute('aria-controls')).toBe('mobile-tool-options');
+    expect(screen.getByRole('button', { name: /draw options/i })).toHaveAttribute('aria-expanded', 'true');
     expect(document.getElementById('mobile-tool-options')).not.toBeNull();
     expect(screen.getByText('Custom Draw Settings')).toBeInTheDocument();
   });

@@ -157,10 +157,10 @@ variant or an equivalent atomic history action.
    §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity and a pixel/export
-   differential both exist and the differential is green on every cursor; what
-   is still owed is the two scenarios jsdom cannot render in either direction
-   (§206), history-panel parity (§207), options-bar rehydration, the browser
-   authority seam (§203), and the pinned `args.enabled` divergence.
+   differential both exist; what is still owed is the divergence the differential
+   found (§205), the two scenarios jsdom cannot render in either direction (§206),
+   history-panel parity (§207), options-bar rehydration, the browser authority
+   seam (§203), and the pinned `args.enabled` divergence.
    Do not read the landed operation as a closed requirement; the
    operator's ruling was that the operation and its visible consumer land as one
    slice, and the consumer is still legacy-sourced.

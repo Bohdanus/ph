@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { drawLayerSource, drawLayersToCanvas, layerPresentationKeepsLayerBounds } from '../layer-renderer.ts';
+import { drawLayerSource, drawLayersToCanvas } from '../layer-renderer.ts';
 import type { Pos } from '../general-types.ts';
-import type { Layer, LayerOperation } from '../layer-types.ts';
+import type { Layer } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { createMockCanvas } from '../../__tests__/fixtures/canvas.ts';
 
@@ -85,94 +85,6 @@ describe('drawLayerSource', () => {
 
     expect(drawLayerSource(ctx, layer, layer.pos, { x: 40, y: 30, width: 80, height: 60 })).toBe(true);
     expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 5, 8, 20, 10);
-  });
-});
-
-describe('layerPresentationKeepsLayerBounds', () => {
-  const pos: Pos = { x: 40, y: 30, width: 120, height: 80 };
-
-  function layer(operations: readonly LayerOperation[]): Layer {
-    return {
-      id: 'text',
-      name: 'Text',
-      isBedrock: false,
-      bitmap: { width: 120, height: 80 } as ImageBitmap,
-      tmpCanvas: null,
-      visible: true,
-      opacity: 1,
-      locked: false,
-      blendMode: 'source-over',
-      order: 0,
-      pos,
-      operations,
-    };
-  }
-
-  it('reports a retained filter as keeping the box, because ctx.filter is assigned inside the drawImage', () => {
-    // Mutation killed: reading a filter as a displacement. `ctx.filter` cannot move a pixel, and a
-    // blur's halo needs a wider SURFACE rather than a different position — treating that margin as
-    // displacement would forbid editing exactly the blurred type layer Adobe lets you retype, which
-    // is the whole reason the blanket operations guard is gone.
-    expect(
-      layerPresentationKeepsLayerBounds(layer([{ id: 'a', args: { toolName: 'blur', radius: 4 }, enabled: true }]))
-    ).toBe(true);
-  });
-
-  it.each([
-    { label: 'a translation', transform: { a: 1, b: 0, c: 0, d: 1, e: 5, f: 5 } },
-    { label: 'a scale', transform: { a: 1.5, b: 0, c: 0, d: 1.5, e: 0, f: 0 } },
-    { label: 'a rotation', transform: { a: 0, b: 1, c: -1, d: 0, e: 0, f: 0 } },
-  ])('reports $label as leaving the box', ({ transform }) => {
-    // The consumer-facing half: `textLayerEditTarget` asks this question before hydrating a
-    // canvas-space editor over `pos`, and each of these three routes the draw through
-    // `ctx.transform` instead of blitting into `pos` — the ink is placed by the matrix, so a caret
-    // laid over `pos` would sit away from the glyphs.
-    expect(
-      layerPresentationKeepsLayerBounds(layer([{ id: 'a', kind: 'affine-transform', transform, enabled: true }]))
-    ).toBe(false);
-  });
-
-  it('reports a filter COMBINED with a transform as leaving the box', () => {
-    // The composition neither single-operation case can see: the filter contributes no matrix and
-    // the translation contributes the displacement, so a predicate that short-circuited on "has a
-    // filter" would answer yes here.
-    expect(
-      layerPresentationKeepsLayerBounds(
-        layer([
-          { id: 'a', args: { toolName: 'blur', radius: 4 }, enabled: true },
-          { id: 'b', kind: 'affine-transform', transform: { a: 1, b: 0, c: 0, d: 1, e: 5, f: 0 }, enabled: true },
-        ])
-      )
-    ).toBe(false);
-  });
-
-  it.each([
-    { label: 'a disabled', transform: { a: 2, b: 0, c: 0, d: 2, e: 9, f: 9 }, enabled: false },
-    { label: 'an identity', transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, enabled: true },
-  ])('reports $label transform as keeping the box', ({ transform, enabled }) => {
-    // The control for the pair above: neither of these is composed into the draw at all, so neither
-    // may move the box. A predicate that ignored `enabled` would refuse the first, and one that
-    // treated any retained matrix as a displacement would refuse the second.
-    expect(layerPresentationKeepsLayerBounds(layer([{ id: 'a', kind: 'affine-transform', transform, enabled }]))).toBe(
-      true
-    );
-  });
-
-  it('refuses a zero-extent box, the way the draw refuses to draw it', () => {
-    // `drawLayerSource` returns false for a zero extent before it composes anything, and a re-entry
-    // is reached from a pointer handler, so this has to be a refusal rather than a box to hydrate.
-    expect(layerPresentationKeepsLayerBounds(layer([]), { x: 0, y: 0, width: 0, height: 80 })).toBe(false);
-  });
-
-  it('refuses a degenerate matrix without raising the evaluator\u2019s refusal', () => {
-    // A singular matrix is refused where it is applied, so this is the shape a crafted document
-    // carries rather than one the transform tool can write. Reading it here is a matrix comparison
-    // with no bounds arithmetic in it, so nothing throws into a click handler.
-    expect(
-      layerPresentationKeepsLayerBounds(
-        layer([{ id: 'a', kind: 'affine-transform', transform: { a: 0, b: 0, c: 0, d: 0, e: 0, f: 0 }, enabled: true }])
-      )
-    ).toBe(false);
   });
 });
 

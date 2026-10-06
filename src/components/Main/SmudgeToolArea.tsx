@@ -5,26 +5,23 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
 import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointsToLayerLocal } from '../../util/layer-space.ts';
-import { rasterBoundsForStroke, strokeExitsRasterBounds } from '../../util/raster-bounds.ts';
 import type { SmudgeToolArgs } from '../../tools/smudge.ts';
 
 type smudgeToolAreaProps = {
   className?: string;
   /**
-   * Optional, and accepted for the mount contract and deliberately not read. Two separate
-   * reasons, one for each half of that sentence.
-   *
-   * It is OPTIONAL so every tool area in the union can be rendered with one prop set, and read
-   * from the store rather than the prop when it is needed. `Main` passes only
+   * Accepted for the mount contract and deliberately not read. The Smudge edits the active
+   * layer's own raster through `tempUpdateLayer` / `updateLayerByTool`, which republish the
+   * layer and redraw the document canvas themselves; unlike the Move tool there is no drag
+   * geometry drawn straight onto a context here, so a tool painting into either context by
+   * hand is the un-undoable defect `usePaintStroke`'s JSDoc warns about.
+   */
+  /**
+   * Optional: accepted so every tool area in the union can be rendered with one prop set, and
+   * read from the store rather than the prop when it is needed. `Main` passes only
    * `overlayCtxRef`, so a required declaration here is a type error at the call site and a
    * `undefined` at runtime. `EllipticalSelectionToolArea` and `QuickSelectionToolArea` already
    * declare it this way.
-   *
-   * It is UNREAD because the Smudge edits the active layer's own raster through
-   * `tempUpdateLayer` / `updateLayerByTool`, which republish the layer and redraw the document
-   * canvas themselves; unlike the Move tool there is no drag geometry drawn straight onto a
-   * context here, so a tool painting into either context by hand is the un-undoable defect
-   * `usePaintStroke`'s JSDoc warns about.
    */
   canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
   /** The sibling of `canvasCtxRef`, unused for the same reason. */
@@ -103,16 +100,9 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
          * `tempUpdateLayer` runs the processor synchronously over the copy, so nothing here
          * retains it.
          */
-        const baseBounds = rasterBounds ?? activeLayer!.pos;
-        const widens = strokeExitsRasterBounds(baseBounds, points);
-        const bounds = widens ? rasterBoundsForStroke(baseBounds, points, args.size / 2) : baseBounds;
         tempUpdateLayer({
           id: activeLayerId!,
-          toolArgs: {
-            ...args,
-            points: documentPointsToLayerLocal(points, bounds),
-            ...(widens ? { rasterBounds: bounds } : {}),
-          },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
       onCommit: async (points) => {
@@ -120,16 +110,9 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
         // the hook is about to reset, and the same rebase as the preview, so what history
         // retains is what the processor addresses on replay
         // (`src/contexts/useHistory.ts` — `applyRasterTool`).
-        const baseBounds = rasterBounds ?? activeLayer!.pos;
-        const widens = strokeExitsRasterBounds(baseBounds, points);
-        const bounds = widens ? rasterBoundsForStroke(baseBounds, points, args.size / 2) : baseBounds;
         await updateLayerByTool({
           id: activeLayerId!,
-          toolArgs: {
-            ...args,
-            points: documentPointsToLayerLocal(points, bounds),
-            ...(widens ? { rasterBounds: bounds } : {}),
-          },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
     }

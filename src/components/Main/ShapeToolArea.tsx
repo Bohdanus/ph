@@ -244,6 +244,9 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     } else {
       createLayerFromTool(fullArgs);
     }
+
+    // The committed layer is now the source of truth; remove the preview so it is not painted twice.
+    overlayCtxRef.current?.clearRect(0, 0, overlayCtxRef.current.canvas.width, overlayCtxRef.current.canvas.height);
   };
 
   const handleDialogCreate = ({ width, height, fromCenter, cornerRadius }: CreateShapeParams) => {
@@ -287,17 +290,8 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
         frameRequested.current = null;
       }
 
-      // This area never clears the overlay on pointer up at all: `handlePointerUp`'s last
-      // `flushDrawingFrame` REDRAWS the shape and the commit at :200 leaves it there, so the
-      // teardown below is the only thing that ever removes it. The overlay canvas is shared,
-      // long-lived and only ever `display`-toggled (`Main.tsx:239-284`), which never touches a
-      // backing store, so without it the preview stays painted over the next tool's document — and
-      // over this one, for as long as the shape tool stays selected. Safe for the reason it is safe
-      // in `useRect` and `DrawToolArea`: exactly one tool area is mounted at a time, and React runs
-      // passive destroys before passive creates, so an outgoing area's cleanup cannot wipe the
-      // incoming area's mount paint. The size is read off `ctx.canvas` at call time rather than off
-      // `totalSize` for the same reason as in `useRect`: a render-scope size frozen into this
-      // cleanup under-clears after a document resize.
+      // The overlay is shared, so unmount cleanup still clears any in-flight preview. The size is
+      // read from the canvas at call time to cover a document resize between renders.
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }

@@ -343,14 +343,12 @@ Adobe).
 - `GAP` — the click-count ladder, in the part that needs a committed layer: `HANDOFF.md` carries it.
 - `GAP` — the caret-dependent Kerning/Tracking field swap.
 
-### 3.1 Re-entry reaches every route Adobe documents except the type thumbnail
+### 3.1 Getting back into a committed layer is still open
 
-Adobe offers three routes. This app supports all of the gestures behind them: double-clicking a text
-row, selecting the row while the Type tool is active, clicking inside a committed text layer with the
-Type tool, and double-clicking the layer with the Move tool. All four funnel through one conversion —
-`textLayerEditTarget` — so the hydrated rect is the same whatever the gesture was. What does not exist
-is the options-bar `T`/`Type` THUMBNAIL as a separate control, and the click-count ladder that Adobe's
-double-click inside the text flow selects a word with.
+Adobe offers three routes. This app supports double-clicking a text row and selecting the row while the
+Type tool is active; both re-enter the app's §3.2 overlay with the source arguments hydrated into
+canvas space. Choosing the Type tool and clicking inside a committed text layer is still open and is
+tracked in `HANDOFF.md`; the options-bar `T`/`Type` icon has no separate implementation.
 
 **The source-editing path is implemented, but the layer remains raster at runtime.** A layer keeps
 its `TextToolArgs` in `source.args`, and `replaceLayerSource` records changes through the durable
@@ -1040,12 +1038,12 @@ places paragraph type: the type wraps to the dragged width and the box keeps tha
 and the box grows to fit it')` title), and the overflow indicator (the `test('the overflow icon
 is on the draft overlay only while the type outgrows the box')` title) — and the last two
   are what §21.12 argues below. The contenteditable overlay now supplies the caret and IME path;
-  the click-count ladder remains `GAP` because the type thumbnail does.
+  the click-count ladder remains `GAP` because committed-layer re-entry does.
 - **Rendered output** — a text layer's pixels are the only place wrapping, tracking and
   justification are observable. These need a **pixel** assertion. jsdom `toBeVisible()` is not
   evidence about glyphs. The e2e's ink-bounds assertions (the `test('committed text reaches the
 canvas as foreground pixels inside the dragged rectangle')` title in `e2e/text-tool.spec.ts`)
-  check _position_, not _shaping_. **Twelve of the text-tool e2e tests are pixel assertions** —
+  check _position_, not _shaping_. **Twelve of the sixteen e2e tests are pixel assertions** —
   tracking, both rules, both caps, both B/I, and the two kinds all read back the inked pixels and
   compare them — so **the claim in the previous revision of this paragraph, that no e2e asserted
   that tracking, caps or a rule reaches the canvas at all, is false**, and was false before this
@@ -1704,9 +1702,9 @@ is rediscovered. The current text says so at each site; this table is the index.
 | Adobe documents a click/drag threshold                                                                  | **false** — Adobe states the two gestures by intent and gives no distance, time or tie-break                                                                                                                               | §2, §17, §19.3    |
 | The `TextType` enum is Adobe's current API                                                              | **false** — the current UXP reference has **no** enum; two read-only booleans and two methods. The enum is CS-era ExtendScript, cited to a mirror                                                                          | §2, §19.3, §22    |
 | Alignment applies to the whole layer, and nothing says otherwise                                        | **half false** — the control is paragraph-only, but one field still scopes the whole layer                                                                                                                                 | §6                |
-| "no e2e currently asserts that tracking, caps or a rule reaches the canvas at all"                      | **false** — twelve of the text-tool e2e are pixel assertions                                                                                                                                                               | §15               |
+| "no e2e currently asserts that tracking, caps or a rule reaches the canvas at all"                      | **false** — twelve of sixteen text e2e are pixel assertions                                                                                                                                                                | §15               |
 | §21 said "Four decisions"; there were six                                                               | **false** — now twelve, and the count is enumerated                                                                                                                                                                        | §21               |
-| `Text.tsx` is 336 lines / §0 item 4                                                                     | **false** — the bar has changed shape three times since, and a restated line count drifts again the moment it is written                                                                                                   | §0, §22.1         |
+| `Text.tsx` is 336 lines / §0 item 4                                                                     | **false** — 414, and every §0 line reference moved a second time                                                                                                                                                           | §0, §22.1         |
 | The type tile lives in `toolbar-mapping.ts`'s `toolbarMap`                                              | **false** — the file and the export both exist. `toolbarMap` is the `toolbar-mapping.ts` array whose `Horizontal Type Tool` entry carries this tile; `toolsMap.ts` is the registry of tool definitions and carries no tile | §9                |
 | The §0/§1/§7 citations in `layer-renderer.ts`, `useLayer.ts`, `toolProcessors.ts`, `materialization.ts` | **correct** — re-verified, unchanged; the `vectorToolNames`, `createLayerFromTool`, `text`-entry and `sourceBitmap` citations all still resolve                                                                            | §0, §1, §7        |
 | Size range is 8–500                                                                                     | **false** — Adobe's `0.01..1296`                                                                                                                                                                                           | §5, §19           |

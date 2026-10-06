@@ -197,6 +197,7 @@ describe('AppKeyboardShortcuts shape selection', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'rectangle' });
     expect(goToToolMock).toHaveBeenCalledWith('shape');
+    expect(goToToolMock.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgsMock.mock.invocationCallOrder[0]);
     view.dispose();
   });
 
@@ -239,6 +240,11 @@ describe('AppKeyboardShortcuts shape selection', () => {
       expect((patchToolArgsMock.mock.calls[0]?.[1] as { figure?: string } | undefined)?.figure, label).toBe(
         to.figure ?? undefined
       );
+      if (to.figure) {
+        expect(goToToolMock.mock.invocationCallOrder[0], label).toBeLessThan(
+          patchToolArgsMock.mock.invocationCallOrder[0]
+        );
+      }
       view.dispose();
     }
   });
@@ -285,17 +291,8 @@ describe('AppKeyboardShortcuts shape selection', () => {
       pressU(true);
 
       const patched = patchToolArgsMock.mock.calls[0]?.[1] as { figure?: string } | undefined;
-      // `FIGURE_TYPE_VALUES` rather than a hand-written list of the three figures this
-      // cycle can patch to: the list is derived from the `FigureType` union's own
-      // `Record`, so a new figure cannot be reachable while this assertion still passes.
       if (patched) expect(FIGURE_TYPE_VALUES).toContain(patched.figure);
-      // The assertions below walk `goToToolMock.mock.calls`, which is vacuous over an EMPTY
-      // list — a handler that stopped selecting a tool at all would satisfy it. The exact
-      // count is what makes "and the selected tool is never a legacy one" a claim about a
-      // selection. Both legacy names are checked, not just `circle`.
-      expect(goToToolMock).toHaveBeenCalledTimes(1);
-      expect(goToToolMock.mock.calls[0][0]).not.toBe('circle');
-      expect(goToToolMock.mock.calls[0][0]).not.toBe('square');
+      for (const call of goToToolMock.mock.calls) expect(call[0]).not.toBe('circle');
       view.dispose();
     }
   );

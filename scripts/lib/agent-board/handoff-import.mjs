@@ -44,8 +44,7 @@
  *   file is not one of the three mapped documents — the parser still runs
  *   rather than guessing a label the board would then filter on
  * @property {ImportItem[]} items
- * @property {(string|number)[]} dead    the item ids the document records as finished:
- *   numbers as numbers and shas as strings
+ * @property {number[]} dead    the item numbers the document records as finished
  */
 
 /**
@@ -187,49 +186,6 @@ const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed
 const NUMBERED = /^(?:item\s+)?#?(\d+)\b/i;
 
 /**
- * A leading short sha, the id a NEW entry carries instead of a number.
- *
- * A number is a shared allocator with no owner. Two sessions that each append
- * an entry to the same document both read the same highest number and both
- * claim it, and the merge is what arbitrates — a collision that reaches `main`
- * as a conflict over prose, resolved by whoever renumbers last. A sha derived
- * from the entry itself needs no allocator, so two sessions cannot pick the same
- * one, which is the whole reason for the change.
- *
- * The shape is a git short sha: 7 to 40 lowercase hex characters. Two
- * constraints keep prose out of it, and both are load-bearing:
- *
- * - **At least one digit.** Without it every English word made only of the
- *   letters `a`–`f` matches: `## Defaced shapes`, `## Decade old caches`,
- *   `## Facade module` would each open an item titled after the rest of the
- *   line. A real sha carries digits in any run long enough to matter.
- * - **The same `(?:item\\s+)?#?` prefix and a word boundary**, so the sha form
- *   is spelled exactly like the numeric one and `## a1b2c3d4 trailing prose`
- *   reads as the id `a1b2c3d4` plus its title, the way `## 12 trailing prose`
- *   does.
- *
- * 40 is git's full object name, so a full sha is accepted alongside a short one.
- */
-const SHA_ID = /^(?:item\s+)?#?(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*\d)([0-9a-f]{7,40})\b/i;
-
-/**
- * The item id a heading carries: a legacy number, a sha, or neither.
- *
- * Returned as a STRING for both, so `origin` is built one way and a document may
- * mix the two during the migration. The numeric form is tried first because a
- * pure-digit run also satisfies `SHA_ID` once it reaches seven digits, and a
- * seven-digit item number must keep its number rather than be re-read as a sha.
- *
- * @returns {string|null} the id, or null when the heading opens no item
- */
-function itemIdIn(text) {
-  const numbered = NUMBERED.exec(text);
-  if (numbered) return numbered[1];
-  const sha = SHA_ID.exec(text);
-  return sha ? sha[1].toLowerCase() : null;
-}
-
-/**
  * A leading severity tag, as in `## P2 — an empty CDP capture ...`. This is the
  * item marker the documents that do not number their entries use, and it has to
  * be recognised or every entry in such a document is skipped: the requirement is
@@ -284,15 +240,6 @@ const SEVERITY_TOKEN = /\bP\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/gi;
 const NUMBER_OR_RANGE = /(\d{1,6})\s*(?:[-–—]\s*(\d{1,6}))?/g;
 
 /**
- * A sha inside a dead heading's list of retired ids — `### Items 5, a1b2c3d,
- * d4e5f6a — deleted`. Same shape and the same at-least-one-digit rule as
- * `SHA_ID`, but unanchored because a retirement list names ids anywhere in the
- * line. Ordered before `NUMBER_OR_RANGE` so a numeric id is never split by the
- * number matcher.
- */
-const SHA_IN_TEXT = /(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/gi;
-
-/**
  * A range wider than this is treated as its endpoints rather than expanded. It
  * exists to bound a single malformed heading, not to describe a real entry
  * range, and the documents' widest is `21-29`.
@@ -340,7 +287,7 @@ function scan(text) {
         line,
         from: inline.index,
         to: inline.index + inline[0].length,
-        id: String(inline[1] ?? inline[2] ?? inline[3]),
+        number: Number(inline[1] ?? inline[2] ?? inline[3]),
       });
     }
   }
@@ -370,18 +317,8 @@ function scan(text) {
 function retiredNumbersIn(record) {
   if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return [];
   const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
-  /**
-   * Shas are lifted out before the numbers are read, and replaced with spaces
-   * rather than deleted, so the digits inside one cannot be harvested as item
-   * numbers: `a1b2c3d` would otherwise retire items 1, 2 and 3 as well.
-   */
-  const shas = new Set();
-  const withoutShas = withoutSeverities.replace(SHA_IN_TEXT, (sha) => {
-    shas.add(sha.toLowerCase());
-    return ' '.repeat(sha.length);
-  });
   const numbers = new Set();
-  for (const match of withoutShas.matchAll(NUMBER_OR_RANGE)) {
+  for (const match of withoutSeverities.matchAll(NUMBER_OR_RANGE)) {
     const from = Number(match[1]);
     const to = match[2] === undefined ? from : Number(match[2]);
 
@@ -392,37 +329,15 @@ function retiredNumbersIn(record) {
     }
     for (let value = from; value <= to; value += 1) numbers.add(value);
   }
-  /**
-   * Numbers stay numbers and shas stay strings, so a document that has not
-   * migrated is returned exactly as before. A consumer matching an `origin` must
-   * therefore compare a numeric id as a number and a sha id as a string; both
-   * forms are what `planImport` below does.
-   *
-   * Shas sort after numbers because that is the order a migrating document holds
-   * them in: every legacy entry, then every sha entry. Sorting them as strings
-   * alone would interleave `9` between `a1b2c3d` and `12` and read as a
-   * renumbering.
-   */
-  return [...[...numbers].sort((a, b) => a - b), ...[...shas].sort()];
+  return [...numbers].sort((a, b) => a - b);
 }
 
-function deadIdsIn(records) {
-  const ids = new Set();
+function deadNumbersIn(records) {
+  const numbers = new Set();
   for (const record of records) {
-    for (const value of retiredNumbersIn(record)) ids.add(value);
+    for (const value of retiredNumbersIn(record)) numbers.add(value);
   }
-  /**
-   * Numbers ascending first, then shas. `retiredNumbersIn` returns them in that
-   * order per heading, and this is the de-duplicating union across headings, so
-   * the comparator is the same rule rather than a plain string sort.
-   */
-  const byKind = (a, b) => {
-    const aNumber = typeof a === 'number';
-    const bNumber = typeof b === 'number';
-    if (aNumber !== bNumber) return aNumber ? -1 : 1;
-    return aNumber ? a - b : a < b ? -1 : 1;
-  };
-  return [...ids].sort(byKind);
+  return [...numbers].sort((a, b) => a - b);
 }
 
 /**
@@ -435,7 +350,7 @@ function deadIdsIn(records) {
 function titleOf(text) {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   const stripped = collapsed
-    .replace(/^(?:item\s+)?#?(?:\d+|(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*\d)[0-9a-f]{7,40})\s*[.)]?\s*/i, '')
+    .replace(/^(?:item\s+)?#?\d+\s*[.)]?\s*/i, '')
     .replace(/^[-–—:]+\s*/, '')
     .trim();
   return stripped === '' ? collapsed : stripped;
@@ -519,18 +434,17 @@ function slugOf(title, run) {
 /**
  * Builds the item and its `origin`.
  *
- * `id` is the number or sha the heading carries, already a string, or null for a
- * heading that opens no item by id. A repeated id in one document is a document
- * defect, and the first occurrence wins: two entries cannot share an `origin`
- * without one of them being unfileable on every later run. Two entries that slug
- * identically get a run suffix instead, because a slug is derived from prose and
- * two entries can legitimately open the same way.
+ * A repeated number in one document is a document defect, and the first
+ * occurrence wins: two entries cannot share an `origin` without one of them
+ * being unfileable on every later run. Two entries that slug identically get a
+ * run suffix instead, because a slug is derived from prose and two entries can
+ * legitimately open the same way.
  */
-function makeItem(base, id, rawTitle, body, seen, runs) {
+function makeItem(base, number, rawTitle, body, seen, runs) {
   const title = titleOf(rawTitle);
   const files = filesOf(`${title}\n${body}`);
 
-  if (id === null) {
+  if (number === null) {
     const run = (runs.get(slugOf(title, 1)) ?? 0) + 1;
     runs.set(slugOf(title, 1), run);
     const origin = `${base}#${slugOf(title, run)}`;
@@ -539,7 +453,7 @@ function makeItem(base, id, rawTitle, body, seen, runs) {
     return { origin, title, body, files };
   }
 
-  const origin = `${base}#${id}`;
+  const origin = `${base}#${number}`;
   if (seen.has(origin)) return null;
   seen.add(origin);
   return { origin, title, body, files };
@@ -561,7 +475,7 @@ function assemble(base, { lines, records }) {
 
   const close = (endLine, endColumn) => {
     if (!open) return;
-    const item = makeItem(base, open.id, open.title, bodyOf(lines, open, endLine, endColumn), seen, runs);
+    const item = makeItem(base, open.number, open.title, bodyOf(lines, open, endLine, endColumn), seen, runs);
     if (item) items.push(item);
     open = null;
   };
@@ -584,16 +498,16 @@ function assemble(base, { lines, records }) {
       // item: the next live entry may legitimately be marked inline.
       inDeadSection = false;
 
-      const id = itemIdIn(record.text);
-      if (id !== null) {
+      const number = NUMBERED.exec(record.text);
+      if (number) {
         close(record.line, 0);
-        open = { id, title: record.text, level: record.level, startLine: record.line + 1 };
+        open = { number: Number(number[1]), title: record.text, level: record.level, startLine: record.line + 1 };
         continue;
       }
 
       if (SEVERITY.test(record.text)) {
         close(record.line, 0);
-        open = { id: null, title: record.text, level: record.level, startLine: record.line + 1 };
+        open = { number: null, title: record.text, level: record.level, startLine: record.line + 1 };
         continue;
       }
 
@@ -617,8 +531,8 @@ function assemble(base, { lines, records }) {
     const remainder = titleOf(line.slice(record.to));
     close(record.line, record.from);
     open = {
-      id: record.id,
-      title: remainder === '' ? `Item ${record.id}` : remainder,
+      number: record.number,
+      title: remainder === '' ? `Item ${record.number}` : remainder,
       level: ambient,
       startLine: record.line,
       startColumn: record.to,
@@ -647,10 +561,10 @@ function scopeOf(file) {
  * without a second parse.
  *
  * @param {string} text the raw document
- * @returns {(string|number)[]}
+ * @returns {number[]}
  */
 export function deadNumbers(text) {
-  return deadIdsIn(scan(text).records);
+  return deadNumbersIn(scan(text).records);
 }
 
 /**
@@ -669,7 +583,7 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
   const parsed = scan(text);
   const base = path.split('/').filter(Boolean).pop() || 'unknown.md';
 
-  return { scope: scopeOf(path), items: assemble(base, parsed), dead: deadIdsIn(parsed.records) };
+  return { scope: scopeOf(path), items: assemble(base, parsed), dead: deadNumbersIn(parsed.records) };
 }
 
 /**
@@ -715,20 +629,11 @@ export function planImport(results, known) {
   const planned = new Set();
 
   for (const document of documents) {
-    const dead = new Set(document?.dead ?? []);
+    const dead = new Set((document?.dead ?? []).map(Number).filter(Number.isInteger));
 
     for (const item of document?.items ?? []) {
-      /**
-       * The id an `origin` carries, in the type `dead` holds it: a numeric id as
-       * a number and a sha id as a string. Matching on the whole origin instead
-       * would need the document base, and matching with one type against the
-       * other would silently stop retiring sha entries — a retired entry filed
-       * as open work, which is the failure this check exists to prevent.
-       */
-      const origin = String(item.origin);
-      const numeric = /#(\d+)$/.exec(origin);
-      const id = numeric ? Number(numeric[1]) : origin.slice(origin.indexOf('#') + 1);
-      if (dead.has(id)) continue;
+      const number = /#(\d+)$/.exec(String(item.origin));
+      if (number && dead.has(Number(number[1]))) continue;
       if (planned.has(item.origin)) {
         skip.push(item.origin);
         continue;

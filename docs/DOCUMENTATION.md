@@ -205,24 +205,6 @@ because `scripts/lib/worktree-inventory/curated.mjs` keys on their paths.
 **A citation is a claim about the tree you are standing in.** Re-derive it from the
 sentence that needs it. Never copy one forward from a document you just read.
 
-**Re-derive a fix's baseline from the parent blob.** A claim about what a fix changed
-is checked against the state the fix replaced, and that state is the parent's blob:
-`git show <fix>^:<path>`. `^` is the first parent, so a merge needs `^2` to reach its
-other side. Two things that look like exceptions are not. `git log -p` on the fix prints
-the lines it removed, so it does recover a pre-fix value — but for a file the fix never
-touched there is nothing to recover, because the parent blob and the fix's blob are the
-same bytes, and `git log -p` under that pathspec walks back to some earlier commit and
-prints those bytes under it, which is a wrong answer wearing the right value. And a
-squashed commit has one parent like any other, so `git show <squash>^:<path>` is the
-baseline for the whole series; what git cannot do is recover that series' individual
-commits once they are unreachable, so anything that needs one of them has to be named.
-Two questions do belong to
-`git log`: `-S'<string>'` and `-G` locate the commit that changed a string, and
-`git log -M --diff-filter=R --name-status` names the old path of a rename, because the
-post-fix path does not exist in the parent and `git show` fails on it rather than
-guessing. `--follow` reaches that old path too, and follows a chain across merges, but it
-is single-path, so a chain spanning more than one file takes one invocation per file.
-
 **Cite the unit, never the line.** A line number is a position in a file that
 everything above it moves. An audit of `HANDOFF.md` found 36% of its hand-checked
 `file.ts:NNN` citations pointing at the wrong code — mostly off by one or two, some

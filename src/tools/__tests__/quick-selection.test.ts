@@ -185,18 +185,14 @@ describe('quickSelection type contract', () => {
     expect(settings.toolName).toBe('quick-selection');
   });
 
-  it('registers as a selection creator whose processor hands the source bitmap straight back', () => {
+  it('registers as a selection pass-through whose processor hands the source bitmap straight back', () => {
     const result = toolProcessors['quick-selection'].imageProcessor({ size: { width: 40, height: 24 }, bitmap })(
       defaultSettings['quick-selection'] as never
     );
 
     expect(toolProcessors['quick-selection'].commit).toBe('selection');
-    expect(toolProcessors['quick-selection'].creator).toBe(true);
+    expect(toolProcessors['quick-selection'].creator).toBeUndefined();
     expect(result[0]).toBe(bitmap);
-    // A creator has no pixels to produce, so a canvas here would be a rasterizer that does
-    // not exist. Asserted on the recorded instances rather than on the return value,
-    // because `[bitmap]` is what both a pass-through and a wrong rasterizer can be made
-    // to look like.
     expect(RecordingOffscreenCanvas.instances).toEqual([]);
   });
 
@@ -205,27 +201,6 @@ describe('quickSelection type contract', () => {
     expect(isQuickSelectionMode('add')).toBe(true);
     expect(isQuickSelectionMode('subtract')).toBe(true);
     expect(isQuickSelectionMode('intersect')).toBe(false);
-  });
-
-  it('hands a creator-param call no source bitmap, and yields the undefined that throws', () => {
-    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true` processor as
-    // `imageProcessor({ size })(args)`, with no `bitmap` at all. The processor reads that member
-    // straight out of the params and returns it, so on the creator path it yields `undefined`.
-    //
-    // `undefined` is a LATENT THROW, not a handled case: `materialization.ts:172` rejects it with
-    // `Source tool … produced no raster`. So this is pinned so the `creator: true` registry
-    // entry and the `ProcessorToolParams` the processor declares stay VISIBLE as a mismatch —
-    // the assertion records the current behaviour and does not claim it is correct.
-    expect(toolProcessors['quick-selection'].creator).toBe(true);
-
-    const result = toolProcessors['quick-selection'].imageProcessor({ size: { width: 40, height: 24 } })(
-      defaultSettings['quick-selection'] as never
-    );
-
-    expect(result).toEqual([undefined]);
-    // The pass-through must not quietly acquire a canvas: a creator that rasterized here
-    // would be a rasterizer `commit: 'selection'` has nowhere to commit.
-    expect(RecordingOffscreenCanvas.instances).toEqual([]);
   });
 });
 

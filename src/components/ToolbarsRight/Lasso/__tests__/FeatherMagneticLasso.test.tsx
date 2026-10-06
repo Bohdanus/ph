@@ -242,51 +242,6 @@ describe('FeatherMagneticLasso toolbar', () => {
     });
   });
 
-  /**
-   * The five sliders `Frequency` above did not cover. Each of these bounds is a hardcoded literal
-   * in `FeatherMagneticLasso.tsx` (`:275-277`, `:288-290`, `:301-303`, `:328-330`, `:341-343`)
-   * rather than a shared constant, so they are the cheapest thing in this file to edit by accident
-   * and — before this table — the only ones nothing would have reported.
-   *
-   * `Snap` is the one whose payload and readout disagree: the range is `0..1` and the tool arg is
-   * the raw fraction, while the label prints `Math.round(snapStrength * 100)%` (`Shape`-style
-   * scaling, `:325`). A test that asserted the percentage would pass against a handler that wrote
-   * the percent into `snapStrength`, so the exact emitted fraction is what is pinned here.
-   */
-  describe.each([
-    ['Feather', /^Feather/, '0', '100', '1'],
-    ['Width', /^Width/, '1', '64', '1'],
-    ['Contrast', /^Contrast/, '0', '100', '1'],
-    ['Snap', /^Snap/, '0', '1', '0.01'],
-    ['Smooth', /^Smooth/, '0', '10', '0.5'],
-  ])('%s', (_label, name, min, max, step) => {
-    it(`spans ${min}..${max} in steps of ${step}`, () => {
-      render(<FeatherMagneticLasso />);
-
-      const slider = getSlider(name);
-      expect(slider).toHaveAttribute('min', min);
-      expect(slider).toHaveAttribute('max', max);
-      expect(slider).toHaveAttribute('step', step);
-    });
-  });
-
-  it('emits the Snap slider as the raw 0..1 fraction, not the percentage its label prints', () => {
-    render(<FeatherMagneticLasso />);
-
-    const snap = getSlider(/^Snap/);
-    fireEvent.change(snap, { target: { value: '0.42' } });
-
-    // The label reads `Math.round(snapStrength * 100)%`, so a seeded `0.85` is `85` on screen and a
-    // raw `0.42` into the handler is `0.42` in the args. Writing `42` instead would satisfy a
-    // percentage-based oracle and weaken the snap by two orders of magnitude; `patchNumber` sends
-    // the value through untouched.
-    expect(patchToolArgsMock).toHaveBeenCalledExactlyOnceWith('feather-magnetic-lasso', { snapStrength: 0.42 });
-    // The ×100 and the rounding, pinned from the seeded value. The mocked store republishes no
-    // args, so the label cannot be re-read after the change — which is exactly why the payload
-    // above is the load-bearing half.
-    expect(snap.closest('label')?.textContent).toBe('Snap 85%');
-  });
-
   describe('keyboard navigation', () => {
     it('moves focus through every enabled control in visual order', async () => {
       setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
@@ -322,7 +277,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(expectedStops[expectedStops.length - 1]).toHaveFocus();
     });
 
-    it('skips the disabled copy, paste, and Deselect buttons while tabbing', async () => {
+    it('skips the disabled copy, paste, and clear buttons while tabbing', async () => {
       render(<FeatherMagneticLasso />);
       const user = userEvent.setup();
 
@@ -470,7 +425,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(patchToolArgsMock).toHaveBeenLastCalledWith('feather-magnetic-lasso', { previewFeather: false });
     });
 
-    it('activates copy, paste, and Deselect with enter and space', async () => {
+    it('activates copy, paste, and clear with enter and space', async () => {
       const activeSelection = { id: 'sel-1', geometry: 'lasso' };
       setClipboardState({ activeSelection, hasClipboard: true });
       setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);

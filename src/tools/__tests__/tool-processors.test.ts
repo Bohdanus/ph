@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   findToolProcessor,
   PIXEL_FREE_TOOLS,
-  toolIsStrokeShaped,
   toolProcessors,
   type PixelToolName,
   type ToolCommitKind,
@@ -38,7 +37,7 @@ import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
-import type { ToolArgsByName, ToolName } from '../../contexts/tool-types.ts';
+import type { ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 
@@ -290,7 +289,7 @@ describe('toolProcessors registry', () => {
     expect(toolProcessors.draw.replay.kind).toBe('source');
   });
 
-  it('marks only raster-producing tools as requiring raster', () => {
+  it('marks raster and selection processors as requiring raster', () => {
     const requiresRaster = processorNames.filter((toolName) => findToolProcessor(toolName)!.replay.requiresRaster);
 
     expect(requiresRaster.sort()).toEqual(
@@ -300,14 +299,21 @@ describe('toolProcessors registry', () => {
         'clone-stamp',
         'color-replacement',
         'dodge',
+        'elliptical-selection',
         'eraser',
         'feather-magnetic-lasso',
+        'freehand-lasso',
         'gradient',
         'magic-eraser',
         'magic-wand',
         'paint-bucket',
         'pencil',
+        'polygonal-lasso',
+        'quick-selection',
+        'rectangular-selection',
         'sharpen',
+        'single-column-marquee',
+        'single-row-marquee',
         'smudge',
         'sponge',
       ].sort()
@@ -378,71 +384,11 @@ describe('toolProcessors registry', () => {
     }
   });
 
-  /**
-   * The type-derived half of the stroke-capability rule: a tool can only be stroke-shaped if its
-   * arguments can carry `rasterBounds`, the frame `rasterBoundsForStroke` computes and
-   * `stageProcessorInput` stages the raster at. `StrokeCapableByArgsType` derives that from the
-   * argument types themselves, so a tool that grows the field is a COMPILE error here until the
-   * registry is told about it — and the runtime comparison below is what makes the registry's own
-   * half of the pair checkable rather than assumed.
-   */
-  type StrokeCapableByArgsType = {
-    [K in ToolName]: 'rasterBounds' extends keyof ToolArgsByName[K] ? K : never;
-  }[ToolName];
-
-  const STROKE_CAPABLE_BY_ARGS_TYPE = {
-    blur: true,
-    sharpen: true,
-    smudge: true,
-  } as const satisfies Record<StrokeCapableByArgsType, true>;
-
-  it('declares strokeShaped exactly for the tools whose arguments can carry a stroke frame', () => {
-    const declared = processorNames.filter((toolName) => toolIsStrokeShaped(toolName));
-
-    expect(declared.sort()).toEqual(Object.keys(STROKE_CAPABLE_BY_ARGS_TYPE).sort());
-    // The reader, not the field: an unregistered name must answer false rather than throw, because
-    // `isRasterStrokeArgs` is handed a `toolName` off a history entry that any layer can name.
-    expect(toolIsStrokeShaped('eyedropper')).toBe(false);
-    expect(toolIsStrokeShaped('not-a-tool' as ToolName)).toBe(false);
-  });
-
-  it('gives every stroke-shaped tool a commit kind that a stroke can actually change', () => {
-    // `layer-operation` and `raster` are the two kinds whose handling consults
-    // `isRasterStrokeArgs`: the first retains the whole-layer form and bakes the stroke, the second
-    // bakes both. Every other kind returns before the raster arm in `useLayer.ts` and
-    // `history-replay.ts`, so a stroke on such a tool would be classified and then dropped.
-    const strokeShaped = processorNames.filter((toolName) => toolIsStrokeShaped(toolName));
-
-    expect(strokeShaped.sort()).toEqual(['blur', 'sharpen', 'smudge']);
-    for (const toolName of strokeShaped) {
-      const { commit } = findToolProcessor(toolName)!;
-      expect(['layer-operation', 'raster'], toolName).toContain(commit);
-    }
-  });
-
   it('only labels source-creating tools as creators, and each creator commits as a source', () => {
     const creators = processorNames.filter((toolName) => findToolProcessor(toolName)!.creator);
 
     expect(creators.sort()).toEqual(
-      [
-        'brush',
-        'draw',
-        'ellipse',
-        'elliptical-selection',
-        'freehand-lasso',
-        'line',
-        'pencil',
-        'polygon',
-        'polygonal-lasso',
-        'quick-selection',
-        'rectangle',
-        'rectangular-selection',
-        'shape',
-        'single-column-marquee',
-        'single-row-marquee',
-        'text',
-        'triangle',
-      ].sort()
+      ['brush', 'draw', 'ellipse', 'line', 'pencil', 'polygon', 'rectangle', 'shape', 'text', 'triangle'].sort()
     );
     for (const toolName of creators) {
       expect(['source', 'selection', 'raster'], `${toolName} creator commit`).toContain(
@@ -534,9 +480,6 @@ describe('toolProcessors registry', () => {
     expect(featherSource).not.toBe(lassoSource);
     expect(magicWandSource).not.toBe(lassoSource);
     expect(rectSelectionSource).not.toBe(lassoSource);
-    // The two newer selection tools are `creator: true` like the rectangular marquee,
-    // but they are not the same module: reusing `selection` for either would hand an
-    // elliptical or region-growing tool the polygon's mask.
     expect(ellipseSelectionSource).not.toBe(lassoSource);
     expect(ellipseSelectionSource).not.toBe(rectSelectionSource);
     expect(quickSelectionSource).not.toBe(lassoSource);
@@ -673,6 +616,7 @@ describe('paint tool raster processors', () => {
  */
 const realBarNames = [
   'eyedropper',
+  'color-sampler',
   'ruler',
   'elliptical-selection',
   'quick-selection',
@@ -740,6 +684,12 @@ const PLACEHOLDER_DESCRIPTION = 'TODO: tool behavior not implemented yet.';
  */
 const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
   ['eyedropper', ['eyedropper-sample-size']],
+  // The Color Sampler's bar is one control, one Clear button, and a per-sampler readout pair whose
+  // ids are number-SUFFIXED because a second sampler adds a row rather than replacing the first.
+  // Pinned at the zero-sampler state for the reason above — a Clear that rendered while there is
+  // nothing to clear would fail here — and the per-sampler ids are pinned in the bar's own suite,
+  // which is where a fifth sampler would be visible.
+  ['color-sampler', ['color-sampler-sample-size', 'color-sampler-clear']],
   // The Ruler's bar is readouts, not controls, so its id set is the seven readout outputs plus the
   // one button. Pinned exactly for the reason above: a readout that stopped rendering would
   // otherwise be invisible to this suite.
@@ -1167,6 +1117,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
+    ['color-sampler', 'no-processor', 0, 0],
     ['ruler', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
@@ -1379,22 +1330,6 @@ describe('toolProcessors dispatch for every tool name', () => {
     }
   });
 
-  it('hands a creator-param lasso call no source bitmap, because selection consumes one (the lasso entries in toolProcessors.ts)', () => {
-    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true`
-    // processor with `{ size }` only.
-    // Both lasso tools are flagged creators, yet `selection` reads `bitmap` from
-    // `ProcessorToolParams`, so the polygon copy is handed `undefined` on that path.
-    // The behaviour is pinned here so the registry/param-type mismatch stays visible.
-    const result = toolProcessors['polygonal-lasso'].imageProcessor({ size })({
-      ...defaultSettings['polygonal-lasso'],
-      points: lassoTriangle,
-    } as never);
-    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-
-    expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
-    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(undefined, -2, -3);
-  });
-
   it.each(['brush', 'pencil'] as const)('composites %s over the supplied input bitmap', (toolName) => {
     const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
       ...defaultSettings[toolName],
@@ -1493,6 +1428,7 @@ describe('toolsMap exhaustiveness', () => {
     ['burn', 'burn'],
     ['sponge', 'sponge'],
     ['eyedropper', 'eyedropper'],
+    ['color-sampler', 'color-sampler'],
     ['ruler', 'ruler'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],

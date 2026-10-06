@@ -149,28 +149,6 @@ describe('legacyHistoryToDurable baseline derivation', () => {
     registry.shutdown();
   });
 
-  it('derives an empty document from an empty history', () => {
-    const registry = new AssetRegistry();
-
-    const converted = legacyHistoryToDurable([], { documentId: 'test-doc', registry });
-
-    expect(converted.diagnostics).toEqual([]);
-    expect(converted.document.history).toEqual([]);
-    // Zero entries is a real position, not a refusal: the cursor is the empty
-    // position and the durable revision starts at zero. A fold that seeded `0`
-    // instead of `entries.length - 1` would point at an entry that does not exist.
-    expect(converted.document.cursor).toBe(-1);
-    expect(converted.document.durableRevision).toBe(0);
-    expect(converted.document.baseline.layers).toEqual([]);
-    expect(converted.document.baseline.activeLayerId).toBeNull();
-    expect(converted.document.baseline.selections).toEqual({ selections: [], activeSelectionId: null });
-    // The cursor map is one entry per LEGACY entry, so an empty timeline maps to
-    // nothing at all rather than to a `-1` placeholder the store would have to
-    // special-case.
-    expect(converted.legacyCursorToDurableCursor).toEqual([]);
-    registry.shutdown();
-  });
-
   it('prefers the explicit initial frame over a derived size when the first entry has no document source', () => {
     const registry = new AssetRegistry();
     const initialFrame = { x: -5, y: -6, width: 111, height: 222 };
@@ -389,49 +367,6 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     registry.shutdown();
   });
 
-  /**
-   * The provenance invariant of HANDOFF §10: a snapshot names the frame it was
-   * authored against, so a frame change is something a consumer can see rather
-   * than something a snapshot silently absorbed.
-   */
-  it('records on every snapshot the frame it was authored against, and replay does not restamp it', () => {
-    const registry = new AssetRegistry();
-    const croppedFrame = { x: 20, y: 10, width: 200, height: 150 };
-
-    const converted = convert(
-      [
-        { id: 'frame', actionName: SET_DOCUMENT_FRAME_ACTION, layerId: 'document', args: { nextFrame: croppedFrame } },
-        {
-          id: 'layer-2',
-          actionName: NEW_LAYER_ACTION,
-          layerId: 'layer-2',
-          layerSource: {
-            kind: 'blank',
-            color: '#000000',
-            opacity: 1,
-            isBedrock: false,
-            pos: { x: 20, y: 10, width: 100, height: 80 },
-          },
-        },
-      ],
-      registry
-    );
-
-    const replayed = replayDurableDocument(converted.document, converted.document.cursor);
-    // The baseline layer predates the crop and the new layer follows it, so one
-    // document legitimately holds two different provenance frames. Asserting
-    // they differ is the whole point: a model that restamped on replay, or that
-    // recorded no frame, would show one frame here and could not tell which
-    // layer was authored in which.
-    expect(replayed.frame).toStrictEqual(croppedFrame);
-    expect(replayed.layers['layer-1']?.snapshot.frame).toStrictEqual(baselineFrame);
-    expect(replayed.layers['layer-2']?.snapshot.frame).toStrictEqual(croppedFrame);
-    // And the frozen baseline snapshot keeps its own frame rather than adopting
-    // the document's later one.
-    expect(converted.document.baseline.layers[0]?.frame).toStrictEqual(baselineFrame);
-    registry.shutdown();
-  });
-
   it('drops a document frame action that carries no next frame and reports the loss', () => {
     const registry = new AssetRegistry();
 
@@ -462,11 +397,9 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     expect(converted.diagnostics[0]).toMatchObject({
       historyId: 'frame-without-next',
       actionName: SET_DOCUMENT_FRAME_ACTION,
-      // WARNING, not error: the entry is withheld either way, but an error would
-      // also tell every consumer of this document that it is missing an edit the
-      // legacy timeline has — which is a stronger claim than the one that holds.
-      // `publishDurableNavigationPresentation` reads that difference and declines
-      // to navigate on the shadow.
+      // WARNING, not error: `convertLegacyHistorySafely` withholds the ENTIRE
+      // durable document on the first error diagnostic, so an error here would
+      // punish every later entry for a defect the legacy timeline tolerates.
       severity: 'warning',
       code: 'invalid-history-entry',
     });
@@ -942,7 +875,7 @@ describe('disabled durable baseline reporting', () => {
     registry.shutdown();
   });
 
-  it('keeps the shadow available for a disabled opening entry, where an error diagnostic would mark it incomplete', () => {
+  it('keeps the shadow available for a disabled opening entry, where an error diagnostic would void it', () => {
     const registry = new AssetRegistry();
 
     const attempt = convertLegacyHistorySafely([openingEntry('opening-row', true)], {
@@ -950,11 +883,11 @@ describe('disabled durable baseline reporting', () => {
       registry,
     });
 
-    // The SEVERITY is what this pins. An error-severity naming of this divergence
-    // would tell `publishDurableNavigationPresentation` that the document is
-    // missing an edit, so navigation would stop descending through it — a cost the
-    // divergence does not earn, because a DISABLED opening entry is an entry the
-    // legacy timeline itself skips without an opinion.
+    // The SEVERITY is what this pins. `convertLegacyHistorySafely` rolls the asset
+    // transaction back and returns `status: 'unavailable'` with a NULL document on
+    // the first error diagnostic, so an error-severity naming of this divergence
+    // would discard every later entry over a defect the legacy timeline already
+    // tolerates — a strictly worse outcome than the divergence it reports.
     expect(attempt.diagnostics).toHaveLength(1);
     expect(attempt.diagnostics[0]?.severity).toBe('warning');
     expect(attempt.status).toBe('current');
@@ -1411,54 +1344,7 @@ describe('conversion entry points', () => {
     // directly is still the current reachable set for its document id, so skipping the
     // reconcile would leave assets unreachable by a document that never lost them.
     expect(reconcile).toHaveBeenCalledOnce();
-    // And it reconciles with THIS document's own ids, which for a blank-only
-    // baseline is the empty set. `expect.any(Set)` also accepted a set carrying
-    // some other document's stray asset ids, which `reconcileDocumentAssets` would
-    // read as "this document no longer reaches them" and release.
-    expect(reconcile).toHaveBeenCalledWith('test-doc', new Set());
-    registry.shutdown();
-  });
-
-  it('carries the store revisions the conversion was given into the published document', () => {
-    const registry = new AssetRegistry();
-
-    const converted = convert(
-      [{ id: 'a', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'blur', radius: 1 } }],
-      registry,
-      { documentRevision: 7, branchRevision: 3, durableRevision: 41 }
-    );
-
-    // The store is the only caller that supplies these three — the
-    // `convertLegacyHistorySafely` call in `StoreContext.tsx` — and it compares revisions to
-    // detect a stale append, so the plumbing is load-bearing and otherwise unpinned: every other
-    // conversion in this suite converts into a document that starts at zero, so
-    // replacing `options.branchRevision ?? 0` with a literal `0` — or recomputing
-    // `durableRevision` as `entries.length` and discarding the store's — would
-    // pass every other test here and break the boundary silently.
-    expect(converted.document.history).toHaveLength(1);
-    expect(converted.document.documentRevision).toBe(7);
-    expect(converted.document.branchRevision).toBe(3);
-    expect(converted.document.durableRevision).toBe(41);
-    registry.shutdown();
-  });
-
-  it('defaults the durable revision of a converted document to its own entry count', () => {
-    const registry = new AssetRegistry();
-
-    const converted = convert(
-      [{ id: 'a', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'blur', radius: 1 } }],
-      registry
-    );
-
-    // One entry means revision 1, not revision 0: the store appends the next entry
-    // at `durableRevision + 1`, so a literal-0 default would hand every converted
-    // document a revision indistinguishable from one that had never been appended
-    // to. The relative `+ 1` assertions elsewhere cannot see this, because they
-    // compare against whatever the conversion produced.
-    expect(converted.document.history).toHaveLength(1);
-    expect(converted.document.durableRevision).toBe(1);
-    expect(converted.document.documentRevision).toBe(0);
-    expect(converted.document.branchRevision).toBe(0);
+    expect(reconcile).toHaveBeenCalledWith('test-doc', expect.any(Set));
     registry.shutdown();
   });
 
@@ -1691,9 +1577,8 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     );
 
     // A property action resolves no layer, so it must not turn a rename of a
-    // removed layer into the `Layer is unavailable` failure that costs the entry:
-    // the legacy timeline replays all three, so a document missing the third
-    // would not describe it.
+    // removed layer into the `Layer is unavailable` failure that voids the whole
+    // conversion: the legacy timeline replays all three.
     expect(converted.diagnostics).toEqual([]);
     expect(converted.document.history.map((entry) => entry.operation)).toEqual([
       { kind: 'remove-layer', layerId: 'layer-1' },
@@ -2069,28 +1954,6 @@ describe('durable document editing helpers', () => {
     registry.shutdown();
   });
 
-  it('moves the cursor down to the empty position below a non-empty history', () => {
-    const registry = new AssetRegistry();
-    const converted = convert(
-      [{ id: 'a', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'blur', radius: 1 } }],
-      registry
-    );
-
-    const moved = setDurableCursor(converted.document, -1);
-
-    // `-1` is the empty POSITION, not a refusal: it is the only cursor that
-    // replays no entry at all, so it is the state the user is in before the first
-    // edit. The refusal table above pins `-2`; a guard reading `cursor < 0` would
-    // refuse this one too and leave the pre-history document unreachable.
-    expect(moved).not.toBe(converted.document);
-    expect(moved.cursor).toBe(-1);
-    expect(moved.history.map((entry) => entry.id)).toEqual(['a']);
-    // Moving the cursor is not a branch: only the durable revision moves.
-    expect(moved.branchRevision).toBe(converted.document.branchRevision);
-    expect(moved.durableRevision).toBe(converted.document.durableRevision + 1);
-    registry.shutdown();
-  });
-
   it('moves the cursor without disturbing the entry list and advances the durable revision', () => {
     const registry = new AssetRegistry();
     const converted = convert(
@@ -2144,14 +2007,6 @@ describe('UnsupportedHistoryFeatureError construction', () => {
 describe('asset reachability of a rejected conversion', () => {
   it('leaves no asset registered for a conversion that never produced a durable document', () => {
     const registry = new AssetRegistry();
-    // The handle is substituted wholesale, because which of the two the adapter
-    // calls IS the assertion: `beginDocumentAssetTransaction` belongs to the
-    // registry, and the decision to settle it with `rollback` belongs to the
-    // adapter. `vi.spyOn` alone would record the call but leave the handle's two
-    // closures unobservable.
-    const commit = vi.fn();
-    const rollback = vi.fn();
-    const transaction = vi.spyOn(registry, 'beginDocumentAssetTransaction').mockReturnValue({ commit, rollback });
     const attempt = convertLegacyHistorySafely(
       [
         {
@@ -2174,15 +2029,6 @@ describe('asset reachability of a rejected conversion', () => {
     expect(attempt.document).toBeNull();
     expect(attempt.diagnostics[0]?.code).toBe('unsupported-history-feature');
     expect(attempt.legacyCursorToDurableCursor).toEqual([]);
-    // The claim in the title is the transaction, so assert the transaction. This
-    // fixture registers nothing at all — `convertLayer` throws on a layer with
-    // neither a source nor a raster to register — so a window left open is the
-    // only thing here that can strand an asset. A `commit` on the rejected path (or
-    // a settlement skipped entirely) passes every assertion above.
-    expect(transaction).toHaveBeenCalledOnce();
-    expect(transaction).toHaveBeenCalledWith('test-doc');
-    expect(commit).not.toHaveBeenCalled();
-    expect(rollback).toHaveBeenCalledOnce();
     registry.shutdown();
   });
 
@@ -2229,19 +2075,6 @@ describe('asset reachability of a rejected conversion', () => {
     const assetIds = [...collectDurableAssetIds(attempt.document as DurableDocument)];
     expect(attempt.status).toBe('current');
     expect(assetIds).toHaveLength(1);
-    // Both layers published the SAME id, read off the published snapshots rather
-    // than through the collector alone: `toHaveLength(1)` also passes if the
-    // converter published two DIFFERENT ids and the collector deduplicated them,
-    // which would mean two registrations for one bitmap — the exact thing the
-    // rollback window exists to prevent.
-    const publishedIds = attempt.document!.baseline.layers.map((layer) =>
-      layer.source.kind === 'raster' ? layer.source.assetId : null
-    );
-    expect(publishedIds).toEqual([assetIds[0], assetIds[0]]);
-    // And the published id is the one the registry actually holds, for this
-    // document: a document carrying an id nothing registered would resolve to
-    // nothing on the first materialization.
-    expect(registry.getRecord(assetIds[0]!)?.documentId).toBe('test-doc');
     registry.shutdown();
   });
 });

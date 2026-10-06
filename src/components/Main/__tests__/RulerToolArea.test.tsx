@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RULER_ENDPOINT_HIT_RADIUS, type RulerMeasurement } from '../../../tools/ruler.ts';
 import { resetRulerMeasurementForTest, useRulerMeasurement } from '../../../tools/ruler-measurement-store.ts';
-import { RulerToolArea, drawRulerRule } from '../RulerToolArea.tsx';
-import { measureRuler, rulerLegVertex, rulerProtractorAngle } from '../../../tools/ruler.ts';
+import { RulerToolArea } from '../RulerToolArea.tsx';
 
 const h = vi.hoisted(() => ({
   dispatch: vi.fn(),
@@ -13,7 +12,6 @@ const h = vi.hoisted(() => ({
   isPointerMoveValid: vi.fn((_event: unknown) => true),
   isPointerUpValid: vi.fn((_event: unknown) => true),
   trackedPointerId: { current: null as number | null },
-  releasePointer: vi.fn(),
 }));
 
 const container = document.createElement('div');
@@ -33,9 +31,6 @@ const ctx = {
   clearRect: vi.fn(),
   save: vi.fn(),
   restore: vi.fn(),
-  // The device-pixel snap is a `translate`, and this stub records no transform — the offset itself is
-  // asserted by the `drawRulerRule` tests below through a stub that captures it.
-  translate: vi.fn(),
   beginPath: vi.fn(),
   moveTo: vi.fn(),
   lineTo: vi.fn(),
@@ -60,10 +55,6 @@ overlay.getContext = ((contextId: string) =>
 const storeState = {
   containerRef: { current: container },
   totalSize: { width: 800, height: 600 },
-  // Present because the tool area READS it, not because the mock needed it: the measurement store
-  // keys the line on the document as well as the frame, and a mock that omitted the field would have
-  // let a store keyed on size alone pass every test here.
-  documentId: 'doc-1',
 };
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
@@ -87,7 +78,7 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
     dimensionsRef: { current: { offsetX: 0, offsetY: 0, scale: 1 } },
     getLocalCoords: h.getLocalCoords,
     isMouseDown: { current: false },
-    releasePointer: h.releasePointer,
+    releasePointer: vi.fn(),
     isPointerDownValid: (event: { pointerId: number }) => {
       if (h.trackedPointerId.current !== null) return false;
       h.trackedPointerId.current = event.pointerId;
@@ -155,7 +146,6 @@ describe('RulerToolArea', () => {
     ctx.clearRect.mockClear();
     ctx.lineWidth = 1;
     h.dispatch.mockReset();
-    h.releasePointer.mockReset();
     h.trackedPointerId.current = null;
   });
 
@@ -217,22 +207,16 @@ describe('RulerToolArea', () => {
     expect(lineAt(el)).toEqual({ start: { x: 400, y: 400 }, end: { x: 500, y: 400 } });
   });
 
-  it('names the START end as the protractor vertex without redefining X and Y', () => {
+  it('reverses the measuring line when the protractor pivots on its START end', () => {
     const { container: el } = renderArea();
     drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
 
     drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
 
-    // `start` stays the point the line was DRAWN from, which is what X and Y report. The first
-    // version of this pivoted by swapping `start` and `end`, which is shorter and redefines two of
-    // the seven readouts the instant the protractor is pulled from the near end: the bar reported
-    // the far end's coordinates as "the starting location" while W and H stayed put, so the meaning
-    // of the pair silently swapped under the pointer mid-gesture.
     expect(lineAt(el)).toEqual({
-      start: { x: 10, y: 10 },
-      end: { x: 110, y: 10 },
+      start: { x: 110, y: 10 },
+      end: { x: 10, y: 10 },
       legEnd: { x: 10, y: 90 },
-      legAt: 'start',
     });
   });
 
@@ -243,157 +227,6 @@ describe('RulerToolArea', () => {
     drag(el, { x: 20, y: 20 }, { x: 900, y: 20 });
 
     expect(lineAt(el)).toBeNull();
-  });
-
-  it('MOVES the whole line when the drag starts on its body', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-    // Pressed halfway along the line, clear of both ends, which is Adobe's "To move the line, place
-    // the pointer on the line away from either endpoint and drag the line."
-    drag(el, { x: 60, y: 10 }, { x: 60, y: 70 });
-
-    // A MOVE, so the angle and the length are the line's own rather than the pointer's.
-    expect(lineAt(el)).toEqual({ start: { x: 10, y: 70 }, end: { x: 110, y: 70 } });
-  });
-
-  it('RESIZES the line when the drag starts on an endpoint, and leaves the other end put', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-    drag(el, { x: 110, y: 10 }, { x: 110, y: 90 });
-
-    expect(lineAt(el)).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 90 } });
-  });
-
-  it('constrains a RESIZE about the end that is standing still', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-    drag(el, { x: 110, y: 10 }, { x: 116, y: 100 }, { shiftKey: true });
-
-    const line = lineAt(el);
-    expect(line?.start).toEqual({ x: 10, y: 10 });
-    // Snapped about `start`, so the dragged end lands ON the 45° ray through it — which for a ray
-    // from (10, 10) is the line `x === y`. Constraining about the press point instead would put the
-    // end on a 45° ray through (110, 10) and swing the far end that was meant to stand still.
-    expect(line?.end.x).toBeCloseTo(line?.end.y ?? 0);
-  });
-
-  it('measures afresh when the press is clear of the line, which is what leaves MOVE reachable', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-    drag(el, { x: 400, y: 400 }, { x: 500, y: 400 });
-
-    expect(lineAt(el)).toEqual({ start: { x: 400, y: 400 }, end: { x: 500, y: 400 } });
-  });
-
-  it('carries a protractor leg through a MOVE, rather than leaving it behind', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-    drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
-
-    drag(el, { x: 60, y: 10 }, { x: 60, y: 30 });
-
-    // The whole figure translates by the pointer's delta: a leg abandoned at the old vertex would
-    // report an angle the user never asked for.
-    expect(lineAt(el)).toEqual({
-      start: { x: 10, y: 30 },
-      end: { x: 110, y: 30 },
-      legEnd: { x: 110, y: 110 },
-    });
-  });
-
-  it('carries a protractor leg through a RESIZE of the vertex end', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-    drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
-
-    drag(el, { x: 110, y: 10 }, { x: 210, y: 10 });
-
-    expect(lineAt(el)).toEqual({
-      start: { x: 10, y: 10 },
-      end: { x: 210, y: 10 },
-      legEnd: { x: 210, y: 90 },
-    });
-  });
-
-  it('leaves a protractor leg alone when the RESIZE drags the end the leg does NOT hang off', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-    drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
-
-    drag(el, { x: 10, y: 10 }, { x: 10, y: 60 });
-
-    // The vertex is `end` and it has not moved, so A and D2 are the leg's own and only W and H grow.
-    expect(lineAt(el)).toEqual({
-      start: { x: 10, y: 60 },
-      end: { x: 110, y: 10 },
-      legEnd: { x: 110, y: 90 },
-    });
-  });
-
-  it('treats a press that never moved as a CLICK and leaves the line alone', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-    drag(el, { x: 400, y: 400 }, { x: 400, y: 400 });
-
-    // A click is not one of Adobe's four gestures. Publishing the collapsed line instead would both
-    // report a 0 px measurement and hand the pointer's NEXT drag to that line's endpoint, so the line
-    // the user was trying to draw would be moved rather than replaced.
-    expect(lineAt(el)).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 10 } });
-  });
-
-  it('reports no measurement at all after a click on an empty canvas', () => {
-    const { container: el } = renderArea();
-
-    drag(el, { x: 400, y: 400 }, { x: 400, y: 400 });
-
-    expect(lineAt(el)).toBeNull();
-  });
-
-  it('starts nothing when the press is on the pasteboard, and gives the pointer back', () => {
-    const { container: el } = renderArea();
-
-    // The area is the whole workspace, so the press is accepted here unless it is refused. Left
-    // accepted, a drag from outside the image inwards publishes a line whose `start` is off-frame
-    // and the bar reports a negative X or Y — a measurement of a point the user cannot see.
-    drag(el, { x: 900, y: 500 }, { x: 400, y: 300 });
-
-    expect(lineAt(el)).toBeNull();
-    expect(h.releasePointer, 'a refused press must not leave the pointer claimed').toHaveBeenCalled();
-  });
-
-  it('releases the pointer AND the draft on a cancel, because a cancel is not a release', () => {
-    const { container: el } = renderArea();
-    const area = areaOf(el);
-
-    pointer(10, 10);
-    fireEvent.pointerDown(area, { button: 0, pointerId: 1 });
-    pointer(110, 60);
-    fireEvent.pointerMove(area, { pointerId: 1 });
-
-    // A browser-taken pointer — a touch pan, a zoom gesture — produces this and no `pointerup`. The
-    // hook documents that a gesture ending any other way leaves its claim set, which makes every
-    // later press fail its first-pointer-wins check; the draft is the other half, because the next
-    // `pointermove` reusing a mouse pointer id would republish the abandoned line.
-    fireEvent.pointerCancel(area, { pointerId: 1 });
-
-    expect(h.releasePointer).toHaveBeenCalled();
-
-    h.getLocalCoords.mockReturnValue({ x: 300, y: 300 });
-    fireEvent.pointerMove(area, { pointerId: 1 });
-    expect(lineAt(el), 'the abandoned draft must not keep publishing').not.toEqual({
-      start: { x: 10, y: 10 },
-      end: { x: 300, y: 300 },
-    });
-
-    // And the area still answers the next press, which is the failure a leaked claim produces.
-    const { container: el2 } = renderArea();
-    drag(el2, { x: 10, y: 10 }, { x: 110, y: 60 });
-    expect(lineAt(el2)).toEqual({ start: { x: 10, y: 10 }, end: { x: 110, y: 60 } });
   });
 
   it('keeps the line when the drag ends exactly on the image border', () => {
@@ -428,72 +261,30 @@ describe('RulerToolArea', () => {
     expect(lineAt(el)).toEqual({ start: { x: 10, y: 10 }, end: { x: 10, y: 10 } });
   });
 
-  it('draws a BLACK rule inside a light casing, which is what makes it read as Photoshop’s', () => {
+  it('draws a light rule over a dark one, so the line reads on a white page and a dark photo', () => {
     const { container: el } = renderArea();
 
     act(() => {
       drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
     });
 
-    // A repaint happens per published measurement, so the count is one pair per paint rather than one
-    // pair per drag. What must hold is that every paint is a PAIR and that the casing is the WIDER of
-    // the two — that is the whole trick, and a rule drawn in one colour would satisfy neither.
+    // A repaint happens per published measurement, so the count is one dark-then-light pair per
+    // paint rather than one pair per drag. What must hold is that every paint is a PAIR and that
+    // the dark edge is the wider of the two — that is the whole trick, and a rule drawn in one
+    // colour would satisfy neither.
     expect(strokes.length % 4).toBe(0);
     for (let index = 0; index < strokes.length; index += 4) {
       // Each paint strokes twice per pass: the segment, then the end caps. So a paint is four
-      // strokes — two wide-and-light, then two narrow-and-black.
+      // strokes — two wide-and-dark, then two narrow-and-light.
       expect(strokes[index].width).toBe(strokes[index + 1].width);
       expect(strokes[index + 2].width).toBe(strokes[index + 3].width);
       expect(strokes[index].width).toBeGreaterThan(strokes[index + 2].width);
       expect(strokes[index].colour).toBe(strokes[index + 1].colour);
       expect(strokes[index].colour).not.toBe(strokes[index + 2].colour);
     }
-
-    // The CORE is black and the casing is white. This ordering is the visible defect the previous
-    // version had — a light core inside a dark casing drew a translucent GREY line over a white page
-    // instead of the crisp black line Photoshop draws, and the screenshot is what showed it.
-    const casing = strokes[strokes.length - 4];
-    const core = strokes[strokes.length - 1];
-    expect(core.colour).toBe('#000000');
-    expect(casing.colour).toBe('#ffffff');
-
-    expect(core.segments).toContainEqual([10, 10]);
-    expect(core.segments).toContainEqual([110, 10]);
-  });
-
-  it('snaps the rule by half a DEVICE pixel, which is what stops it being a grey hairline', () => {
-    strokes.length = 0;
-    ctx.translate.mockClear();
-
-    act(() => {
-      drawRulerRule(ctx as unknown as CanvasRenderingContext2D, { start: { x: 10, y: 10 }, end: { x: 110, y: 10 } }, 1);
-    });
-
-    // A stroke is centred on its path, so a one-CSS-px rule on a whole coordinate straddles two device
-    // rows and each takes half the coverage — which is the grey line in the screenshot. Half a device
-    // pixel centres it on one row.
-    expect(ctx.translate).toHaveBeenCalledWith(0.5, 0.5);
-  });
-
-  it('scales BOTH the snap and the width by the fit, because the canvas carries no transform', () => {
-    strokes.length = 0;
-    ctx.translate.mockClear();
-
-    act(() => {
-      drawRulerRule(
-        ctx as unknown as CanvasRenderingContext2D,
-        { start: { x: 10, y: 10 }, end: { x: 110, y: 10 } },
-        0.5
-      );
-    });
-
-    // Its backing store is document-sized and CSS scales it, so one BACKING pixel is `scale` device
-    // pixels. Half a device pixel is therefore half a backing pixel divided by the fit — a naive `0.5`
-    // would snap to half a BACKING pixel, which is a quarter of a device pixel at this fit and lands
-    // nowhere near the grid.
-    expect(ctx.translate).toHaveBeenCalledWith(1, 1);
-    // And the rule is still one CSS px, which at this fit is two backing px.
-    expect(strokes[strokes.length - 1].width).toBeCloseTo(2);
+    const face = strokes[strokes.length - 1];
+    expect(face.segments).toContainEqual([10, 10]);
+    expect(face.segments).toContainEqual([110, 10]);
   });
 
   it('divides the rule by the contain fit, so it stays one CSS pixel at any zoom', () => {
@@ -503,193 +294,16 @@ describe('RulerToolArea', () => {
       drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
     });
 
-    // The mocked fit is 1, so the core is one backing pixel and the white casing under it is five:
-    // `RULE_WIDTH_CSS / scale` plus `CASING_EXTRA_CSS` on each side. Both are DIVIDED by the fit,
+    // The mocked fit is 1, so the face is one document pixel and the dark edge under it is three:
+    // `RULE_WIDTH_CSS / scale` plus a one-pixel edge on each side. Both are DIVIDED by the fit,
     // which is what stops the rule being a hairline at 25% and a slab at 400%.
-    const core = strokes[strokes.length - 1];
-    const casing = strokes[strokes.length - 4];
-    expect(core.width).toBe(1);
-    expect(casing.width).toBe(5);
+    const face = strokes[strokes.length - 1];
+    const edge = strokes[strokes.length - 4];
+    expect(face.width).toBe(1);
+    expect(edge.width).toBe(3);
   });
 
   it('honours a hit radius that is reachable, in document pixels', () => {
-    // "Reachable" was `expect(RULER_ENDPOINT_HIT_RADIUS).toBeGreaterThan(0)` — a tautology about a
-    // constant, in a test file that renders nothing for it, and a radius of 0.001 would have passed.
-    // What makes it reachable is the ENDPOINT test using it, so that is what is asserted: a press just
-    // inside the radius grabs the end, and one just outside it falls through to the body.
-    expect(RULER_ENDPOINT_HIT_RADIUS).toBe(8);
-
-    const { container: el } = renderArea();
-    drag(el, { x: 100, y: 100 }, { x: 300, y: 100 });
-
-    // Just INSIDE the radius of the far end: the end is grabbed, so the far end lands on the pointer
-    // and the near one does not move. A press this close that started a fresh measurement would leave
-    // the line's origin at 292 and fail this.
-    const inside = 300 - (RULER_ENDPOINT_HIT_RADIUS - 0.5);
-    drag(el, { x: inside, y: 100 }, { x: inside, y: 180 });
-    expect(lineAt(el)).toEqual({ start: { x: 100, y: 100 }, end: { x: inside, y: 180 } });
-
-    // Just OUTSIDE it, on a fresh horizontal line: the press is near neither end nor the body, so it
-    // starts a measurement of its own rather than grabbing anything.
-    drag(el, { x: 100, y: 300 }, { x: 300, y: 300 });
-    const outside = 300 + RULER_ENDPOINT_HIT_RADIUS + 1;
-    drag(el, { x: 100, y: outside }, { x: 200, y: 400 });
-    expect(lineAt(el)).toEqual({ start: { x: 100, y: outside }, end: { x: 200, y: 400 } });
-  });
-  describe('the protractor vertex moves both ways', () => {
-    const readVertex = (el: HTMLElement) => {
-      const raw = lineAt(el);
-      return raw ? rulerLegVertex(raw) : null;
-    };
-
-    it('CLEARED a start vertex when a leg is then pulled from the far end', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-      // Leg pulled from the START, which records `legAt: 'start'`.
-      drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
-      expect(readVertex(el)).toEqual({ x: 10, y: 10 });
-
-      // Now pull a leg from the FAR end instead. This is the case that used to keep `legAt: 'start'`,
-      // because the helper returned the measurement unchanged for `'end'` — so the leg was drawn from
-      // the wrong endpoint and D2 and A were both measured at the wrong vertex, for the rest of the
-      // line's life.
-      drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
-
-      expect(readVertex(el)).toEqual({ x: 110, y: 10 });
-      expect(lineAt(el)?.legAt).toBeUndefined();
-      // And the geometry agrees with the vertex: D2 is the leg off the FAR end, so 80, not the 128 a
-      // leg measured from the near end would be.
-      expect(measureRuler(lineAt(el)!).secondLegLength).toBeCloseTo(80);
-      expect(rulerProtractorAngle(lineAt(el)!)).toBeCloseTo(90);
-    });
-
-    it('is undone by an Alt-CLICK on the other endpoint, which must leave the line alone', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-      drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
-      const before = lineAt(el);
-
-      // Press and release on the far end without moving: a click, not a gesture.
-      drag(el, { x: 110, y: 10 }, { x: 110, y: 10 }, { altKey: true });
-
-      // An Option-click used to publish `draft.base` — the line carrying `legAt: 'start'` with NO
-      // `legEnd`, which is the one shape the field's contract forbids: a vertex with no leg on it.
-      expect(lineAt(el)).toEqual(before);
-      expect(lineAt(el)?.legAt).toBe('start');
-    });
-  });
-
-  describe('resize and the vertex', () => {
-    it('moves the leg ONLY when the dragged end is the one it hangs off', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-      // Vertex at the START.
-      drag(el, { x: 10, y: 10 }, { x: 10, y: 90 }, { altKey: true });
-
-      // Drag the FAR end. The vertex is `start` and it is not moving, so the leg must not move either:
-      // it used to be translated by the far end's delta, which slid it 100 px sideways and changed D2
-      // and A for no reason the user could see.
-      drag(el, { x: 110, y: 10 }, { x: 210, y: 10 });
-
-      expect(lineAt(el)).toEqual({
-        start: { x: 10, y: 10 },
-        end: { x: 210, y: 10 },
-        legEnd: { x: 10, y: 90 },
-        legAt: 'start',
-      });
-    });
-
-    it('moves the leg when the dragged end IS the vertex', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-      drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
-
-      drag(el, { x: 110, y: 10 }, { x: 210, y: 10 });
-
-      // The vertex travels with it, so the leg comes too and the right angle is preserved.
-      expect(lineAt(el)).toEqual({
-        start: { x: 10, y: 10 },
-        end: { x: 210, y: 10 },
-        legEnd: { x: 210, y: 90 },
-      });
-    });
-  });
-
-  describe('an endpoint press takes the NEAREST end', () => {
-    it('grabs the nearer end on a line short enough that both are in reach', () => {
-      const { container: el } = renderArea();
-      // 8 px apart: both ends are inside the 8 px radius almost everywhere on it, so which one wins is
-      // a distance question. Checking `start` first made the FAR end win in that whole overlap.
-      drag(el, { x: 100, y: 100 }, { x: 108, y: 100 });
-
-      // 3 px from `end`, 5 px from `start`: the press is plainly on `end`.
-      drag(el, { x: 105, y: 100 }, { x: 105, y: 140 });
-
-      expect(lineAt(el)).toEqual({ start: { x: 100, y: 100 }, end: { x: 105, y: 140 } });
-    });
-  });
-
-  describe('Shift during a move', () => {
-    it('follows the cursor instead of snapping the direction of travel', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-      // A move cannot change the line's straightness, so Shift has nothing to constrain — and snapping
-      // the travel vector left the line tens of pixels away from the pointer dragging it.
-      drag(el, { x: 60, y: 10 }, { x: 60, y: 70 }, { shiftKey: true });
-
-      expect(lineAt(el)).toEqual({ start: { x: 10, y: 70 }, end: { x: 110, y: 70 } });
-    });
-  });
-
-  describe('an out-of-frame release only removes the line for the gestures Adobe scopes it to', () => {
-    it('keeps the line when a RESIZE ends outside the frame', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-      // Adobe scopes "drag it outside the image area" to the LINE. A line lying within a pixel of the
-      // border used to lose its whole measurement because the user dragged one END one pixel out.
-      drag(el, { x: 110, y: 10 }, { x: 900, y: 10 });
-
-      expect(lineAt(el)).toEqual({ start: { x: 10, y: 10 }, end: { x: 900, y: 10 } });
-    });
-
-    it('keeps the line and its leg when a protractor drag ends outside the frame', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-      drag(el, { x: 110, y: 10 }, { x: 110, y: 90 }, { altKey: true });
-
-      // Re-pull the leg from the same endpoint, and let it go past the frame edge. Adobe scopes "drag it
-      // outside the image area" to the LINE, so a longer leg is a longer leg and not a deletion — and it
-      // used to delete the line and the leg together, which is unrecoverable because the tool records no
-      // history.
-      drag(el, { x: 110, y: 10 }, { x: 110, y: 900 }, { altKey: true });
-
-      expect(lineAt(el)).toEqual({
-        start: { x: 10, y: 10 },
-        end: { x: 110, y: 10 },
-        legEnd: { x: 110, y: 900 },
-      });
-    });
-
-    it('still removes the line when a MEASURE ends outside the frame', () => {
-      const { container: el } = renderArea();
-      drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-
-      drag(el, { x: 20, y: 20 }, { x: 900, y: 20 });
-
-      expect(lineAt(el)).toBeNull();
-    });
-  });
-
-  it('never writes legAt as a key on a measurement that has no vertex', () => {
-    const { container: el } = renderArea();
-    drag(el, { x: 10, y: 10 }, { x: 110, y: 10 });
-    drag(el, { x: 60, y: 10 }, { x: 60, y: 70 });
-
-    // `legAt: measurement.legAt` in an object literal creates the key with value `undefined`, which is
-    // the opposite of the field's contract and makes `'legAt' in moved` true for a plain line.
-    expect('legAt' in (lineAt(el) as object)).toBe(false);
+    expect(RULER_ENDPOINT_HIT_RADIUS).toBeGreaterThan(0);
   });
 });

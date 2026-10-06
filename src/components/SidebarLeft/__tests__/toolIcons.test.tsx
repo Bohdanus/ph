@@ -34,6 +34,7 @@ const toolIconNames = [
   'magic-wand',
   'quick-selection',
   'eyedropper',
+  'color-sampler',
   'ruler',
   'eraser',
   'clone-stamp',

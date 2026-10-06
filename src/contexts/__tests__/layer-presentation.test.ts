@@ -19,15 +19,6 @@ function staged(): BitmapSource {
   return createMockOffscreenCanvas(20, 10) as unknown as BitmapSource;
 }
 
-afterEach(() => {
-  // Every stub in this file is installed inside the case that needs it and none of
-  // them is process-wide state worth keeping: a stubbed `createImageBitmap` or a
-  // console spy that survived a failing assertion would make the NEXT case's
-  // platform-refusal assertion pass or fail for the wrong reason.
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
 /**
  * Stands in for the store's liveness answer, which is not exported. It is the
  * fixture that makes a test's SCENARIO real; the assertions are about how the

@@ -4,6 +4,7 @@ import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
 import CloneStamp from '../components/ToolbarsRight/CloneStamp/CloneStamp.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
+import ColorSampler from '../components/ToolbarsRight/ColorSampler/ColorSampler.tsx';
 import ColorReplacement from '../components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
@@ -147,6 +148,10 @@ export const toolsMap: ToolsMap = {
   // No processor: the eyedropper rasterizes nothing (see `PIXEL_FREE_TOOLS` in toolProcessors.ts),
   // so this entry carries only the icon and the options bar.
   eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper },
+  // No processor for the third time in a row, and the reason is Adobe's rather than the previous
+  // entries': "Displays color values for up to four areas" is a readout, so placing a sampler changes
+  // no pixel and has nothing to replay. See `PIXEL_FREE_TOOLS` in toolProcessors.ts.
+  'color-sampler': { icon: 'color-sampler', toolboxComponent: ColorSampler },
   // No processor, for the same reason as the eyedropper above and not by affinity with it: a
   // measuring line is a nonprinting overlay, so it commits no pixels and has no durable operation
   // to replay. The bar is readouts rather than controls, which is what Adobe's Ruler page describes.

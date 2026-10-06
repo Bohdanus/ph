@@ -43,11 +43,6 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       selections: [],
       toolName: 'zoom',
       totalSize: { width: 800, height: 600 },
-      // `Main`'s ruler layout effect reads the frame ORIGIN as well as its size, so this mock has
-      // to describe a frame rather than only the size `totalSize` was already carrying. It is a
-      // real document origin here for the same reason as the size: `documentFrameFromSize` is what
-      // every document writer seeds, and a mock at some other origin would not be a document.
-      documentFrame: { x: 0, y: 0, width: 800, height: 600 },
     },
   ],
 }));

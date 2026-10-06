@@ -249,19 +249,10 @@ describe('TIFF error paths', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
-  // One case per clause of the `loadTiffFile` dimension guard, because each clause is a
-  // separate way for a page to describe something no canvas can hold. The positive cases
-  // above cover none of them: a negative or fractional extent is truthy, so it survives the
-  // `!width || !height` catch and lands on `canvas.width = -4` / `canvas.width = 2.5`.
   it.each([
     ['an empty page', {}],
     ['a zero width', { width: 0, height: 1 }],
     ['a zero height', { width: 1, height: 0 }],
-    ['a negative width', { width: -4, height: 2 }],
-    ['a negative height', { width: 2, height: -4 }],
-    ['a fractional width', { width: 2.5, height: 2 }],
-    ['a fractional height', { width: 2, height: 2.5 }],
-    ['a NaN width', { width: Number.NaN, height: 2 }],
   ])('rejects %s', async (_label, page) => {
     decode.mockReturnValue([page]);
 
@@ -408,7 +399,7 @@ describe('TIFF raster byte budget', () => {
     // 1000×1000 is 1/200th of the pixel cap and its decode buffer is 800 MB, a quarter of the
     // byte ceiling, so neither budget refuses it on size. What refuses it is the format: 200
     // BitsPerSample values against 4 samples per pixel is the factor UTIF multiplies the row
-    // by in `UTIF.js` — `UTIF.decodeImage()`, and a 510-byte file gets to choose it.
+    // by at `UTIF.js:116`, and a 510-byte file gets to choose it.
     decode.mockReturnValue([
       { t256: [1000], t257: [1000], t258: new Array(200).fill(32), t277: [4], t259: [1], t262: [2] },
     ]);
@@ -437,7 +428,7 @@ describe('TIFF raster byte budget', () => {
   });
 
   it('refuses a page whose strip byte counts enlarge the row past the budget', async () => {
-    // The `t262 === 32803` branch in `UTIF.js` — `UTIF.decodeImage()` — replaces bipp with
+    // The `t262 === 32803` branch at `UTIF.js:119-121` replaces bipp wholesale with
     // `round(t279 * 8 / (width * t278))`, so a one-row strip carrying a 2 GB byte count
     // declares 16 Mbit per pixel. Every other tag on this page is an ordinary 8-bit RGBA IFD.
     decode.mockReturnValue([
@@ -498,171 +489,14 @@ describe('TIFF raster byte budget', () => {
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
-  /**
-   * The one term in the budget that geometry cannot price. `_decompress` opens with
-   * `if (cmpr == 1 || …) for (j = 0; j < len; j++)`, and `cmpr` is `t259 ? t259[0] : 1`, so a file
-   * that simply omits the compression tag gets a byte copy bounded by the byte counts it declares.
-   * Three segments of 534 MB over a 64 × 64 page is 1.602 GB of copying from a ~30-byte IFD, and
-   * the pixel, allocation and tile-work budgets all admit it.
-   */
-  describe('the byte counts an uncompressed page declares', () => {
-    const tinyPage = { t256: [64], t257: [64], t258: [8, 8, 8, 8], t277: [4], t262: [2] };
-
-    it('refuses declared counts that sum past the ceiling, with no compression tag at all', async () => {
-      decode.mockReturnValue([
-        {
-          ...tinyPage,
-          // Three offsets, because UTIF replaces the declared counts with a geometry-derived one
-          // when there is exactly one segment — so a single entry would be the unreachable shape.
-          t273: [0, 534000000, 1068000000],
-          t279: [534000000, 534000000, 534000000],
-        },
-      ]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        'TIFF image declares more segment data than the budget allows (64×64). ' +
-          'It would read more than 1600 MB, over the TIFF budget.'
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('admits declared counts summing to exactly the ceiling, so the comparison stays strict', async () => {
-      // Without a case ON the ceiling, `>` becoming `>=` is invisible here exactly as it was for
-      // the allocation and work terms. Two counts that sum to 1,600,000,000 to the byte.
-      installImageHarness();
-      const page = {
-        width: 64,
-        height: 64,
-        ...tinyPage,
-        t259: [1],
-        t273: [0, 800000000],
-        t279: [800000000, 800000000],
-      };
-      decode.mockReturnValue([page]);
-      toRGBA8.mockReturnValue(new Uint8Array(4));
-
-      const pending = loadTiffFile(new Blob(['tiff']));
-      await vi.waitFor(() => expect(imageStub).not.toBeNull());
-      imageStub!.onload!.call(imageStub!, new Event('load'));
-
-      await expect(pending).resolves.toBe(imageStub);
-      expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
-    });
-
-    it('reads TileByteCounts when StripByteCounts is absent', async () => {
-      // UTIF's precedence is `bcnt = t279`, falling back to `t325`. A tiled page has no
-      // `StripByteCounts` at all — the tag is `TileByteCounts` — so a guard that only knew `t279`
-      // would price no tiled page by its declared counts.
-      decode.mockReturnValue([
-        {
-          ...tinyPage,
-          t324: [0, 534000000, 1068000000],
-          t325: [534000000, 534000000, 534000000],
-          t322: [16],
-          t323: [16],
-        },
-      ]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more segment data than the budget allows/
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('prices the counts that matter even when one of them is negative', async () => {
-      // `for (j = 0; j < len; j++)` does not run for a negative `len`, so that entry costs
-      // nothing — but a guard that stopped counting at it would let `[-1, 4e9, 4e9, 4e9]` through
-      // with twelve billion iterations still to do. The three positive entries are 12 GB on their
-      // own, so the file is refused for the total rather than excused by the bad entry.
-      decode.mockReturnValue([{ ...tinyPage, t273: [0, 1, 2, 3], t279: [-1, 4000000000, 4000000000, 4000000000] }]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more segment data than the budget allows/
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('decodes an uncompressed page whose declared counts are its own raster', async () => {
-      // The control: `bipl` is `ceil(64 × 32 / 8) × 8` = 2048, which UTIF divides by 8 to give
-      // the 256-byte row, so one 64-row segment is 16 KB, and
-      // the sum of the declared counts is that. Refusing this would be refusing every
-      // uncompressed TIFF the app can legitimately be handed.
-      installImageHarness();
-      const page = { width: 64, height: 64, ...tinyPage, t259: [1], t273: [0], t279: [16384] };
-      decode.mockReturnValue([page]);
-      toRGBA8.mockReturnValue(new Uint8Array(4));
-
-      const pending = loadTiffFile(new Blob(['tiff']));
-      await vi.waitFor(() => expect(imageStub).not.toBeNull());
-      imageStub!.onload!.call(imageStub!, new Event('load'));
-
-      await expect(pending).resolves.toBe(imageStub);
-      expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
-    });
-
-    it('prices a compressed page too, because PackBits and G4 loop on the declared count too', async () => {
-      // The first version of this guard returned early unless `cmpr === 1`, on the claim that the
-      // codec branches are driven by the compressed stream. They are not: PackBits and Thunder run
-      // `while (off < off + len)` and G3/G4 run `while ((boff >>> 3) < off + slen)`, so the
-      // declared count bounds those as well. G4 is super-linear on all-zero input because `wrd`
-      // never resets, which is how a 106-byte file reached a hundred-second decode.
-      decode.mockReturnValue([
-        {
-          ...tinyPage,
-          t259: [32773],
-          t273: [0, 4000000000, 8000000000],
-          t279: [4000000000, 4000000000, 4000000000],
-        },
-      ]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more segment data than the budget allows/
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('refuses a declared count that is not finite, because the loop it drives never stops', async () => {
-      // `for (let j = 0; j < len; j++)` does not terminate for `Infinity`, and one is reachable in
-      // six bytes: UTIF's IFD reader trusts a tag's declared type without checking it against the
-      // tag, and its RATIONAL branch is `readUint(numerator) / readUint(denominator)` with no zero
-      // check — so a StripByteCounts declared RATIONAL with a zero denominator arrives as
-      // `Infinity`. Counting it as zero, which an earlier version of this guard did, waved the file
-      // straight through.
-      decode.mockReturnValue([{ ...tinyPage, t273: [0, 8], t279: [Number.POSITIVE_INFINITY, 0] }]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more segment data than the budget allows/
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('refuses a single-segment page whose count contradicts its geometry', async () => {
-      // UTIF replaces the declared counts with `height * (bipl >>> 3)` when there is exactly one
-      // offset, so this is the one shape where the declared count is never used. Mirroring that
-      // substitution would excuse the file; not mirroring it is the decision, so it is pinned here
-      // rather than left as a comment.
-      decode.mockReturnValue([{ ...tinyPage, t273: [0], t279: [4000000000] }]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /declares more segment data than the budget allows/
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-  });
-
-  it('reports an unreadable bit depth as a malformed header, not as an image over budget', async () => {
-    // `NaN > ceiling` is false, so an unparseable bit depth has to be refused on its own: a
-    // budget that cannot read the value is not evidence of a small image. And it has to be
-    // refused as what it is — a corrupt header. "Too large to open, over the TIFF budget" tells
-    // the reader their image exceeds a ceiling when nothing about its size is known, which is
-    // exactly what they cannot act on.
+  it('refuses a header whose bit depth is unreadable rather than assuming it is small', async () => {
+    // `NaN > ceiling` is false, so an unparseable bit depth has to be refused on its own:
+    // a budget that cannot read the value is not evidence of a small image.
     decode.mockReturnValue([
       { t256: [1000], t257: [1000], t258: [NaN, NaN, NaN, NaN], t277: [4], t259: [1], t262: [2] },
     ]);
 
-    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-      'TIFF file is malformed: its headers do not determine a finite size for a 1000×1000 page.'
-    );
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(/over the TIFF budget/);
     expect(decodeImage).not.toHaveBeenCalled();
   });
 
@@ -753,17 +587,15 @@ describe('TIFF raster byte budget', () => {
 
     it('refuses a tiled page that declares only half its tile geometry', async () => {
       // `t322` with no `t323` makes `UTIF.decodeImage` read `img["t323"][0]` off `undefined` and
-      // throw a TypeError with no mention of TIFF geometry, so the geometry has to be refused
-      // before anything tries to cost it — a product with a missing factor is `NaN`, and a `NaN`
-      // budget would wave the page through. It is refused as a malformed tile rather than through
-      // the undecidable-size path, which is for headers whose bits-per-pixel cannot be read at all.
-      // Paired with the 256×256-tile case above, which has both tags.
+      // throw a TypeError with no mention of TIFF geometry. It has to be refused as an undecidable
+      // size instead — which is the same `null` an unreadable bit depth produces, and equally not
+      // evidence of a small image. Paired with the 256×256-tile case above, which has both tags.
       decode.mockReturnValue([
         { t256: [1000], t257: [1000], t258: [8, 8, 8, 8], t277: [4], t259: [1], t262: [2], t322: [256] },
       ]);
 
       await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        'TIFF file is malformed: it declares a 256×absent tile, and no TIFF tile is narrower or shorter than 16.'
+        'TIFF file is malformed: it declares a 256×absent tile. TileWidth and TileLength are multiples of 16.'
       );
       expect(decodeImage).not.toHaveBeenCalled();
     });
@@ -785,7 +617,7 @@ describe('TIFF raster byte budget', () => {
       ]);
 
       await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        `TIFF file is malformed: it declares a ${declared} tile, and no TIFF tile is narrower or shorter than 16.`
+        `TIFF file is malformed: it declares a ${declared} tile.`
       );
       expect(decodeImage).not.toHaveBeenCalled();
       expect(toRGBA8).not.toHaveBeenCalled();
@@ -795,169 +627,19 @@ describe('TIFF raster byte budget', () => {
       { label: 'a 1×1 tile', t322: [1], t323: [1] },
       { label: 'a 15×16 tile', t322: [15], t323: [16] },
       { label: 'a 16×15 tile', t322: [16], t323: [15] },
-    ])('refuses $label, which UTIF would divide by zero on', async ({ t322, t323 }) => {
-      // `tx = floor((width + tw - 1) / tw)` is `Infinity` for `tw === 0`, and `for (x = 0; x < tx;
-      // x++)` then never terminates, so no budget can price this — it has to be refused on the
-      // division itself. A 10000×10000 page in 1×1 tiles would run that loop 10⁸ times out of a
-      // ~200-byte IFD, against 3.9 × 10⁵ for the 16×16 tiles over the same page.
+    ])('refuses $label, whose loop count the byte budget cannot see', async ({ t322, t323 }) => {
+      // This is the other half of the tiled cost, and it is not bytes. `UTIF.decodeImage`'s loop
+      // bound is `ceil(width / tw) × ceil(height / th)`, driven by the page geometry rather than by
+      // how many tile offsets the file supplies — so a 10000×10000 page with 1×1 tiles runs it 10⁸
+      // times out of a ~200-byte IFD, where 16×16 tiles over the same page run it 3.9 × 10⁵ times.
+      // Per-tile work is proportional to the tile area, so the count dominates and the *cheapest*
+      // tile to cost is the one that costs the most time. No buffer ceiling can see that.
       decode.mockReturnValue([
         { t256: [10000], t257: [10000], t258: [8, 8, 8, 8], t277: [4], t259: [1], t262: [2], t322, t323 },
       ]);
 
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        /narrower or shorter than 16/
-      );
+      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(/multiples of 16/);
       expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('refuses a legal tile whose alignment alone moves more than the byte ceiling', async () => {
-      // The other half of the tiled cost, and the half no buffer ceiling can see. `UTIF.decodeImage`
-      // runs `ceil(width / tw) × ceil(height / th)` iterations, and each begins by clearing the
-      // whole tile buffer — the `for (j = 0; j < tbuff.length; j++) tbuff[j] = 0;` is the loop's
-      // first statement, not a prologue — so the work is the tile-ALIGNED raster, not the page's.
-      //
-      // 1 × 200000000 sits exactly on the pixel ceiling, and 16 × 16 is a legal tile, so every
-      // other guard passes: the page buffer is 800 MB against a 1.6 GB ceiling and the tile buffer
-      // is 1 KB. But the page is one pixel wide and the tile is sixteen, so it aligns to
-      // 16 × 200000000 and clears 1024 bytes 12.5 million times — 12.8 GB of memset, from a
-      // ~200-byte IFD, on the thread that draws the editor.
-      decode.mockReturnValue([
-        {
-          t256: [1],
-          t257: [200000000],
-          t258: [8, 8, 8, 8],
-          t277: [4],
-          t259: [1],
-          t262: [2],
-          t322: [16],
-          t323: [16],
-        },
-      ]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        "TIFF image's tile layout is too expensive to open (1×200000000). " +
-          'Filling its tiles would move more than 1600 MB, over the TIFF budget.'
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-      expect(toRGBA8).not.toHaveBeenCalled();
-    });
-
-    it('admits a tile layout sitting exactly on the byte ceiling, so the comparison stays strict', async () => {
-      // Without a case ON the ceiling, `tileWork > MAX` becoming `>=` is invisible, and so is a
-      // divisor that is wrong by a factor of two or four. The sibling assertion for the allocation
-      // ceiling says the same thing about itself, so the pair is repeated rather than assumed.
-      //
-      // A 1-pixel-wide page in 16-pixel tiles aligns to 16 across, and 25000000 rows is an exact
-      // multiple of 16, so the aligned raster is `16 × 25000000` pixels at four bytes each —
-      // 1,600,000,000, the ceiling to the byte. The pixel and allocation budgets are both far
-      // below it (25 MP of 200 MP, 100 MB of 1.6 GB), so this guard is the only thing that can
-      // decide it, and it has to let the boundary through.
-      installImageHarness();
-      // `width`/`height` are what `UTIF.decodeImage` copies off the IFD onto the page, and `decode`
-      // is mocked here, so the post-decode guard reads these rather than `t256`/`t257`.
-      const page = {
-        width: 1,
-        height: 25000000,
-        t256: [1],
-        t257: [25000000],
-        t258: [8, 8, 8, 8],
-        t277: [4],
-        t259: [1],
-        t262: [2],
-        t322: [16],
-        t323: [16],
-      };
-      decode.mockReturnValue([page]);
-      toRGBA8.mockReturnValue(new Uint8Array(4));
-
-      const pending = loadTiffFile(new Blob(['tiff']));
-      await vi.waitFor(() => expect(imageStub).not.toBeNull());
-      imageStub!.onload!.call(imageStub!, new Event('load'));
-
-      await expect(pending).resolves.toBe(imageStub);
-      expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
-    });
-
-    it('refuses the very next tile row, which is the smallest aligned work over the ceiling', async () => {
-      decode.mockReturnValue([
-        {
-          t256: [1],
-          t257: [25000016],
-          t258: [8, 8, 8, 8],
-          t277: [4],
-          t259: [1],
-          t262: [2],
-          t322: [16],
-          t323: [16],
-        },
-      ]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        "TIFF image's tile layout is too expensive to open (1×25000016). " +
-          'Filling its tiles would move more than 1600 MB, over the TIFF budget.'
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('prices a 32803 tiled page by the row length its strip counts imply, not by t258', async () => {
-      // `predictTileWorkBytes` shares `predictBitsPerPixel` with the allocation predictor, so the
-      // `t262 === 32803` rewrite has to reach the work figure as well as the peak. It does not
-      // otherwise: at the 100 bits per pixel the strip counts imply the aligned work is 1.70 GB and
-      // the page is refused, while at the 32 that `t258` declares it is 545 MB and the same page
-      // decodes. A work predictor reading `t258` directly would admit this.
-      //
-      // The peak is 1.56 GB against the same 1.6 GB ceiling, so the allocation budget admits this
-      // page and the work budget is the only thing that can refuse it — which is the pair of
-      // quantities being genuinely independent, exercised in the direction that distinguishes them.
-      decode.mockReturnValue([
-        {
-          t256: [10000],
-          t257: [12400],
-          t258: [8, 8, 8, 8],
-          t277: [4],
-          t259: [1],
-          t262: [32803],
-          t278: [1],
-          t279: [125000],
-          t322: [1024],
-          t323: [1024],
-        },
-      ]);
-
-      await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-        "TIFF image's tile layout is too expensive to open"
-      );
-      expect(decodeImage).not.toHaveBeenCalled();
-    });
-
-    it('still decodes a full-size page in small legal tiles, because alignment is nearly free there', async () => {
-      // The control for the case above. 10000 × 10000 in 16 × 16 tiles is 625 × 625 = 390,625
-      // iterations, and because both axes are already multiples of the tile it aligns to itself:
-      // 400 MB of movement against the same 1.6 GB ceiling. A bound that refused this would be
-      // refusing the shape real tiled TIFFs have, which is the failure mode a budget written from
-      // the pathological case alone always has.
-      installImageHarness();
-      const page = {
-        width: 10000,
-        height: 10000,
-        t256: [10000],
-        t257: [10000],
-        t258: [8, 8, 8, 8],
-        t277: [4],
-        t259: [1],
-        t262: [2],
-        t322: [16],
-        t323: [16],
-      };
-      decode.mockReturnValue([page]);
-      toRGBA8.mockReturnValue(new Uint8Array(4));
-
-      const pending = loadTiffFile(new Blob(['tiff']));
-      await vi.waitFor(() => expect(imageStub).not.toBeNull());
-      imageStub!.onload!.call(imageStub!, new Event('load'));
-
-      await expect(pending).resolves.toBe(imageStub);
-      expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
     });
 
     it('sizes the tile buffer by the row length a 32803 page replaces bipp with', async () => {

@@ -166,13 +166,7 @@ describe('StoreContext durable diagnostic contract', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Commit unsupported edit' }));
 
-    // `current` alongside an `error` diagnostic, not `unavailable`: the entry that
-    // did not convert is absent from the document the store holds and the
-    // diagnostic is what says so. Before the diagnostic partition this verdict was
-    // `unavailable` with no document at all, so the shape a reader of the store has
-    // to understand was a status that meant "discard everything" rather than
-    // "present, and here is what it is missing".
-    expect(screen.getByTestId('durable-status').textContent).toBe('current');
+    expect(screen.getByTestId('durable-status').textContent).toBe('unavailable');
     const diagnostics: unknown = JSON.parse(screen.getByTestId('durable-diagnostics').textContent ?? '[]');
     expect(Array.isArray(diagnostics)).toBe(true);
     expect(diagnostics).toHaveLength(1);

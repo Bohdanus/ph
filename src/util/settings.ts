@@ -86,6 +86,17 @@ export function saveLastSettings(args: ToolArgs) {
     // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
     // choice, and the bare group exists for tools whose only setting is that they exist.
     lastSavedSettings.eyedropper = cloneDeep({ ...args });
+  } else if (toolName === 'color-sampler') {
+    // Typed rather than bare for the Eyedropper's reason: Sample Size is a real user choice here
+    // too, and this tool shares that one control rather than owning a second copy of it.
+    //
+    // The SAMPLERS are deliberately not persisted, for the reason the `ruler` arm below gives for the
+    // measuring line: they are view state rather than document state (see `PIXEL_FREE_TOOLS`), and
+    // persisting points would re-arm the tool with samplers the user placed in a previous session on
+    // a document that may no longer exist. Photoshop's DO survive closing and reopening the image —
+    // "These samplers are saved in the image" — and that gap is recorded in the tool's description
+    // rather than papered over with a field the app has no document to hang it on.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args });
   } else if (
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||

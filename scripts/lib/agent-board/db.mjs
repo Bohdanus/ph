@@ -1779,18 +1779,13 @@ export class Board {
      * outside a repository, where git has nothing to enumerate.
      */
     try {
-      // `-z`, not the newline form: `--porcelain` does not quote paths, so a worktree
-      // whose path contains a newline was truncated to a root that does not exist, and
-      // this set is what the board treats as real checkout roots.
-      const listed = execFileSync('git', ['worktree', 'list', '--porcelain', '-z'], {
+      const listed = execFileSync('git', ['worktree', 'list', '--porcelain'], {
         cwd: this.identity?.worktree ?? process.cwd(),
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
       });
-      for (const line of listed.split('\0')) {
-        // No `.trim()`: `--porcelain` does not quote paths, so a trailing space is part
-        // of the path. This set is what the board treats as real checkout roots.
-        if (line.startsWith('worktree ')) roots.add(line.slice('worktree '.length));
+      for (const line of listed.split('\n')) {
+        if (line.startsWith('worktree ')) roots.add(line.slice('worktree '.length).trim());
       }
     } catch {
       // Not a repository, or git refused: what is left is enough.

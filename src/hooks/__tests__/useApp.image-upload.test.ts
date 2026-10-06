@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
 import type { Layer } from '../../contexts/layer-types.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
-import type { ImageUploadResponse } from '../../contexts/file-types.ts';
+import type { ImageUploadResponse } from '../../contexts/useFile.tsx';
 
 const harness = vi.hoisted(() => {
   const events: string[] = [];
@@ -145,15 +145,15 @@ describe('useApp setImageFromUpload', () => {
     vi.restoreAllMocks();
   });
 
-  it('creates the bedrock layer, then gives the canvas the image size, then renames the document', async () => {
+  it('sizes the canvas, creates the bedrock layer, and renames the document only afterwards', async () => {
     const image = createImage(80, 40);
 
     await useApp().setImageFromUpload({ fileName: 'photo.png', image });
 
     expect(harness.events).toEqual([
-      'createLayerFromBitmap',
       'resizeCanvas:80x480',
       'resizeCanvas:80x40',
+      'createLayerFromBitmap',
       'SET_FILE_NAME',
     ]);
     expect(layerMocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith(
@@ -169,45 +169,19 @@ describe('useApp setImageFromUpload', () => {
     expect(harness.canvasSize).toEqual({ width: 80, height: 40 });
   });
 
-  it('still holds the previous canvas size while the layer creation is in flight', async () => {
-    // Parked INSIDE the awaited layer creation, not merely pending: a mock that resolved at once
-    // could not tell a resize that happens before the replacement is published from one that
-    // happens after, because both would have run by the time the call returns.
-    let release: () => void = () => {};
-    const parked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+  it('has already resized the canvas to the image size when the layer creation starts', async () => {
     layerMocks.createLayerFromBitmap.mockImplementation(async () => {
-      harness.events.push('createLayerFromBitmap');
-      await parked;
+      harness.events.push(`createLayerFromBitmap(canvas=${harness.canvasSize.width}x${harness.canvasSize.height})`);
     });
 
-    const upload = useApp().setImageFromUpload({ fileName: 'sized.png', image: createImage(120, 90) });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    // The layer creation has started and has not resolved, so this IS the in-flight canvas.
-    // It must not have taken the image's geometry: `createLayerFromBitmap` can reject, and a
-    // canvas resized before the replacement is published is sized for a document that was never
-    // adopted. Reading the geometry is what separates a resize placed before the await from one
-    // placed after it — the final event-order assertion below cannot, because both record the
-    // same sequence.
-    expect(harness.events).toEqual(['createLayerFromBitmap']);
-    expect(harness.canvasSize).toEqual({ width: 640, height: 480 });
-
-    release();
-    await act(async () => {
-      await upload;
-    });
+    await useApp().setImageFromUpload({ fileName: 'sized.png', image: createImage(120, 90) });
 
     expect(harness.events).toEqual([
-      'createLayerFromBitmap',
       'resizeCanvas:120x480',
       'resizeCanvas:120x90',
+      'createLayerFromBitmap(canvas=120x90)',
       'SET_FILE_NAME',
     ]);
-    expect(harness.canvasSize).toEqual({ width: 120, height: 90 });
   });
 
   it('renames the rendered document once the image layer exists', async () => {
@@ -234,15 +208,10 @@ describe('useApp setImageFromUpload', () => {
       await expect(upload).rejects.toBe(failure);
     });
 
-    expect(harness.events).toEqual(['createLayerFromBitmap']);
+    expect(harness.events).toEqual(['resizeCanvas:80x480', 'resizeCanvas:80x40', 'createLayerFromBitmap']);
     expect(layerMocks.createLayerFromBitmap).toHaveBeenCalledOnce();
     expect(harness.dispatch).not.toHaveBeenCalled();
     expect(screen.getByTestId('document-name')).toHaveTextContent('untitled.png');
-    // The canvas keeps the OUTGOING document's geometry. A decode failure replaces nothing, and a
-    // canvas already resized to the incoming file's extent is sized for a document that was never
-    // adopted — the retained document then renders through a canvas of the wrong size until
-    // something redraws it, while the tool overlays keep the geometry they had.
-    expect(harness.canvasSize).toEqual({ width: 640, height: 480 });
   });
 
   it('returns before resizing, creating a layer, or renaming when PSD warnings are declined', async () => {
@@ -268,16 +237,13 @@ describe('useApp setImageFromUpload', () => {
       document: createPsdDocument(['Text is rasterized']),
     });
 
-    // Both land after the replacement, and the resize lands after BOTH. Adoption cannot precede
-    // the replacement — the presentation scope is keyed by the owning document, so a registration
-    // published first would be filed under the outgoing one. The resize cannot precede either: a
-    // throw in the dispatch or in the adoption would leave all three surfaces at the incoming file's
-    // extent with nothing published. This mirrors the raster arm's ordering in the same function.
+    // The adoption lands after the replacement: the presentation scope is keyed by the owning
+    // document, so a registration published first would be filed under the outgoing one.
     expect(harness.events).toEqual([
-      'REPLACE_DOCUMENT',
-      'ADOPT_LAYER_BITMAPS',
       'resizeCanvas:320x480',
       'resizeCanvas:320x180',
+      'REPLACE_DOCUMENT',
+      'ADOPT_LAYER_BITMAPS',
     ]);
     expect(harness.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({

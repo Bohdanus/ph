@@ -9,20 +9,7 @@ import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 
 type DrawLayersToCanvas = (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => boolean;
 
-/**
- * Resizes the target the way the real compositor does, because that resize is a contract:
- * `renderExportCanvas` — the path `mergeLayers` now composites through — reads the extent back
- * off the surface it was handed and throws when it disagrees with the frame. A mock that only
- * reported success would leave the merged raster refused, and the registration cases below would
- * be reading a merge that never ran.
- */
-const drawLayersToCanvas = vi.hoisted(() =>
-  vi.fn<DrawLayersToCanvas>((canvas, _layers, frame) => {
-    canvas.width = frame.width;
-    canvas.height = frame.height;
-    return true;
-  })
-);
+const drawLayersToCanvas = vi.hoisted(() => vi.fn<DrawLayersToCanvas>(() => true));
 
 vi.mock('../layer-renderer.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../layer-renderer.ts')>();

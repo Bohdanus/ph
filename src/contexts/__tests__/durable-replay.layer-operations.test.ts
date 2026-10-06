@@ -328,127 +328,6 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     const atResize = replayDurableDocument(document, 1);
     // After both move and resize, the snapshot reflects resize geometry.
     expect(atResize.layers[layerId]?.snapshot.pos).toEqual({ x: 10, y: 20, width: 300, height: 200 });
-    // And still nothing retained: a reposition that precedes the layer's first
-    // pixel operation is already in the snapshot the fold starts from, so a
-    // marker for it would ask the fold to re-assert the box it was handed. The
-    // converse — a reposition AFTER a pixel operation — is the case that needs
-    // one, and it is what the next test pins.
-    expect(atResize.layers[layerId]?.operations).toHaveLength(0);
-
-    void registry;
-  });
-
-  it('retains a reposition that follows a raster operation, in order, and materializes the layer there', async () => {
-    // The stroke republishes the layer at its own frame, so from that commit the
-    // fold — not the snapshot — holds the box, and a move after it is a move of
-    // a box the snapshot has never been told about. The retained list is
-    // therefore ordered `[fold origin, stroke, move]`, and the origin is the box
-    // the stroke was drawn over: no entry in the document states it, and it is
-    // the one number a reposition cannot restate.
-    const registry = new AssetRegistry();
-    const start = { x: 20, y: 30, width: 120, height: 80 };
-    const strokeFrame = { x: 0, y: 10, width: 160, height: 120 };
-    const document = legacyHistoryToDurable(
-      [
-        {
-          id: 'baseline',
-          actionName: OPEN_DOCUMENT_ACTION,
-          layerId,
-          documentSource: {
-            layers: { [layerId]: createBaselineLayer(layerId, start) },
-            size: initialSize,
-            frame: baselineFrame,
-          },
-        },
-        {
-          id: 'stroke',
-          actionName: TOOL_ACTION,
-          layerId,
-          args: {
-            toolName: 'blur',
-            radius: 4,
-            points: [{ x: 60, y: 60 }],
-            rasterBounds: strokeFrame,
-          },
-        },
-        { id: 'move', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 40, y: 40 } } },
-      ],
-      { documentId: 'stroke-then-move', registry }
-    ).document;
-
-    const layer = replayDurableDocument(document).layers[layerId];
-    expect(layer?.operations.map((operation) => operation.kind)).toEqual([
-      'reposition-layer',
-      'apply-raster-processor',
-      'reposition-layer',
-    ]);
-    // The head marker is the box before the stroke, verbatim, and it is derived:
-    // the document carries no such entry.
-    expect(layer?.operations[0]).toEqual({ kind: 'reposition-layer', layerId, resize: start });
-    // The snapshot is still the pre-stroke box at the moved origin — a stroke
-    // never rewrote it, and it is the fold that publishes the frame.
-    expect(layer?.snapshot.pos).toEqual({ x: 40, y: 40, width: 120, height: 80 });
-
-    const materialized = await materializeLayer(layer!, {
-      documentId: 'stroke-then-move',
-      baselineAssetGeneration: registry.getDocumentGeneration('stroke-then-move'),
-      operationSetRevision: document.durableRevision,
-      assetRegistry: registry,
-    });
-    // What legacy replay publishes for the same history: the stroke's frame
-    // `{0,10,160,120}`, moved to `{40,40}` and keeping the frame's size, because
-    // a reposition's `move` states the origin and inherits the size.
-    expect(materialized.bounds).toEqual({ x: 40, y: 40, width: 160, height: 120 });
-    materialized.lease.release();
-    registry.shutdown();
-  });
-
-  it('retains every reposition after a pixel operation, and the fold origin only once', () => {
-    const registry = new AssetRegistry();
-    const start = { x: 20, y: 30, width: 120, height: 80 };
-    const document = legacyHistoryToDurable(
-      [
-        {
-          id: 'baseline',
-          actionName: OPEN_DOCUMENT_ACTION,
-          layerId,
-          documentSource: {
-            layers: { [layerId]: createBaselineLayer(layerId, start) },
-            size: initialSize,
-            frame: baselineFrame,
-          },
-        },
-        {
-          id: 'stroke',
-          actionName: TOOL_ACTION,
-          layerId,
-          args: {
-            toolName: 'blur',
-            radius: 4,
-            points: [{ x: 60, y: 60 }],
-            rasterBounds: { x: 0, y: 10, width: 160, height: 120 },
-          },
-        },
-        { id: 'move-1', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 40, y: 40 } } },
-        { id: 'move-2', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition', move: { x: 10, y: 10 } } },
-      ],
-      { documentId: 'two-moves', registry }
-    ).document;
-
-    const layer = replayDurableDocument(document).layers[layerId];
-    // One origin, two moves, in timeline order. A second origin would re-assert
-    // the pre-stroke box in the middle of the list and move the layer back.
-    expect(layer?.operations.map((operation) => operation.kind)).toEqual([
-      'reposition-layer',
-      'apply-raster-processor',
-      'reposition-layer',
-      'reposition-layer',
-    ]);
-    expect(layer?.operations[0]).toEqual({ kind: 'reposition-layer', layerId, resize: start });
-    expect(layer?.operations[2]).toMatchObject({ move: { x: 40, y: 40 } });
-    expect(layer?.operations[3]).toMatchObject({ move: { x: 10, y: 10 } });
-    // The LAST position assignment is the snapshot's, as it always was.
-    expect(layer?.snapshot.pos).toEqual({ x: 10, y: 10, width: 120, height: 80 });
 
     void registry;
   });
@@ -765,7 +644,6 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 100, height: 100 },
-        frame: { ...baselineFrame },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId,
@@ -849,7 +727,6 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
         blendMode: 'source-over' as GlobalCompositeOperation,
         order: 0,
         pos: { x: 0, y: 0, width: 0, height: 0 },
-        frame: { ...baselineFrame },
         source: Object.freeze({
           kind: 'raster' as const,
           assetId,

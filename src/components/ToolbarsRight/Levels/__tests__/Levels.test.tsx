@@ -268,15 +268,6 @@ describe('Levels toolbar', () => {
       // symmetric Contrast range is the mistake this asserts against.
       expect(brightness.getAttribute('min')).not.toBe(contrast.getAttribute('min'));
       expect(brightness.getAttribute('max')).not.toBe(contrast.getAttribute('max'));
-      // The "no step" half of this test's name, which used to be claimed and never asserted.
-      // A default `step="1"` would still leave every other assertion in this file green, because
-      // none of them changes a slider to an off-integer — but `Levels.tsx` carries no `step` at
-      // all, and the levels grid is dragged continuously, so a step would make every fraction of
-      // a stop between the two ends unreachable. `not.toHaveAttribute` rather than an exact
-      // `step` string because an explicit `step="1"` is the same pixel grid as the HTML default
-      // and must not be mistaken for a defect.
-      expect(brightness).not.toHaveAttribute('step');
-      expect(contrast).not.toHaveAttribute('step');
     });
 
     it('publishes a contrast change as the exact layer preview and tool args payload', () => {

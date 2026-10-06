@@ -9,18 +9,17 @@ it was being written.
 
 Every command in this file is one that was actually run, and its output is what was observed.
 
-## 1. One git operation is still open in another worktree
+## 1. Three git operations are still open in other worktrees
 
 **This is the whole hazard class in one place.** A worktree with `MERGE_HEAD` set or a rebase in
 progress holds resolution state that no commit records, no branch names, and `git status` in the main
 checkout cannot see.
 
-| worktree           | branch                        | state            | unmerged paths |
-| ------------------ | ----------------------------- | ---------------- | -------------- |
-| `land-header-menu` | `land/header-menu-2026-10-04` | `MERGE_HEAD` set | **3**          |
-
-**One such worktree remains open; the three this audit first listed have since been resolved or
-removed.**
+| worktree                 | branch                      | state                      | unmerged paths |
+| ------------------------ | --------------------------- | -------------------------- | -------------- |
+| `sweep-land`             | `integration/sweep-land`    | `MERGE_HEAD` set           | **5**          |
+| `migration-review-sweep` | detached                    | `rebase-merge` in progress | **12**         |
+| `header-menu-structure`  | `fix/header-menu-structure` | `MERGE_HEAD` set           | 0              |
 
 ```bash
 find .git/worktrees -maxdepth 2 \( -name MERGE_HEAD -o -name rebase-merge \) -print
@@ -45,63 +44,48 @@ discarding the other branch's committed work.
 `git merge --abort` or `git rebase --abort`. Do not resolve or repair any of them from the main
 checkout.
 
-## 2. An orphan branch collides with `main` on 112 of its 128 handoff numbers, and 11 of those are different entries
+## 2. An orphan branch collides with `main` on 117 of its 128 handoff numbers
 
 `docs/handoff-reconcile-landed-and-new` is a whole-file rewrite of `HANDOFF.md`, not a patch to it:
-it carries 128 `## N.` headings, and **112 of those numbers are live entries on `main`**. 101 of the
-112 are the _same_ entry on both sides, so only **11** are genuine subject-collisions. Every number the
-branch alone carries — `47`, `67`, `73`, `87`, `88`, `89`, `91`, `92`, `112`, `128`, `175`, `191`,
-`192`, `196`, `200` and `204` — is in this file's deleted-numbers registry, so **the branch holds no
-entry that `main` lacks**.
+it carries 128 `## N.` headings, and **117 of those numbers are live entries on `main`** — including
+`1`, `10`, and every number from `101` through `205` that main still owns. `204` is in the
+deleted-numbers registry.
 
 ```bash
-comm -12 \
-  <(rg -o --no-filename '^## [0-9]+\.' HANDOFF.md | rg -o '[0-9]+' | sort -u) \
-  <(git show docs/handoff-reconcile-landed-and-new:HANDOFF.md | rg -o '^## [0-9]+\.' | rg -o '[0-9]+' | sort -u)
+sort -u <(rg -o --no-filename '^## [0-9]+\.' HANDOFF.md | rg -o '[0-9]+') > /tmp/live.txt
+comm -12 /tmp/live.txt <(git show docs/handoff-reconcile-landed-and-new:HANDOFF.md \
+  | rg -o '^## [0-9]+\.' | rg -o '[0-9]+' | sort -u)
 ```
 
 **Why a collision is silent rather than loud.** `scripts/lib/agent-board/handoff-import.mjs`'s
 `makeItem` is first-occurrence-wins, so a colliding merge keeps main's entry and drops the incoming
-one without a conflict, a marker, or a failing gate. At 11 collisions the result is not a partially
-merged document; it is main's document, and the branch's 16 remaining numbers are tombstones that
-merging would resurrect.
+one without a conflict, a marker, or a failing gate. At 117 collisions the result is not a partially
+merged document; it is main's document with the branch's few genuinely-new numbers grafted on.
 
 The branch also carries a live defect filed under the tombstoned number 204: seven selection bars
-label a deselect `Clear` where Adobe says `Deselect`. That entry is no longer at risk of loss —
-`HANDOFF.md` §230 now carries it on a number of its own.
+label a deselect `Clear` where Adobe says `Deselect`. The entry text is still true; only its number
+is wrong.
 
-**Fix.** Read the branch's 11 colliding entries and keep main's version of each; none of them is a
-defect main is missing. **Do not merge it at all** — it would resurrect 16 tombstoned numbers. Its
-whole-file-rewrite shape is the hazard, not its content.
+**Fix.** Extract the branch's genuinely-new entries and re-file them on fresh numbers from `main`.
+Do not merge it as-is, and do not renumber it inside its own worktree — the collision is with `main`,
+so the resolution has to be made against `main`.
 
-## 3. HANDOFF numbering is gated; what is not gated is a suffixed heading
+## 3. No gate detects duplicate HANDOFF section numbers
 
-An earlier draft of this section claimed no gate detects duplicate `HANDOFF` section numbers, and
-prescribed adding one. **That was wrong**, and adding the gate would have been redundant.
-`scripts/__tests__/handoff-import.test.mjs` asserts all three properties against the real
-`HANDOFF.md`, not a fixture:
+Today's collisions passed `tsc`, `build`, the full suite and the e2e unit suite. Nothing in the
+repository asserts that live `## N.` headings are unique, ascending, or disjoint from the deleted
+registry. `handoff-import.test.mjs` derives its corpus from the document and would not notice.
 
-| property                            | assertion                                                                 | why it is not blind                                                                                                                |
-| ----------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| a duplicate `## N.`                 | `produces one item per numbered heading, and no item for a prose section` | it counts headings in the **raw text** and compares to the parser's item count, so a number `makeItem` drops makes the two diverge |
-| ascending order                     | `keeps HANDOFF.md's own numbering, so every origin there is a number`     | asserts the parsed numbers are already sorted, and document order is preserved                                                     |
-| live number in the deleted registry | `does not file a number the document records as finished`                 | asserts no parsed item's number is in the document's own dead set                                                                  |
+This is the check that was run by hand during this audit, and it is cheap:
 
-Verified by injecting a live `## 47.` (a tombstoned number): it parses to one item keyed
-`HANDOFF.md#47` while `47` is in the dead set, so the third assertion fails as intended. All three
-properties are therefore enforced, and this section records no work.
+```bash
+rg -o --no-filename '^## [0-9]+\.' HANDOFF.md | rg -o '[0-9]+' > /tmp/live.txt
+sort /tmp/live.txt | uniq -d                            # duplicates — must print nothing
+awk 'NR>1 && $1<=p {print p" -> "$1} {p=$1}' /tmp/live.txt   # ordering — must print nothing
+```
 
-Two assertions in the tree _look_ like duplicate detectors and are not, which is why this was
-mislabelled for a while: `agents-citations.test.mjs`'s `liveHandoffNumbers` builds a `Set` from the
-headings, which collapses a duplicate before any assertion reads it, and
-`expect(new Set(parsed.items.map((item) => item.origin)).size).toBe(parsed.items.length)` holds by
-construction because the parser already removed the duplicate. Neither is load-bearing.
-
-**The one real gap is a suffixed heading.** The count test's pattern is `\d+\b`, which does not match
-`## 15a.`, while the citation gate's `(\d+[a-z]?)` does. So a suffixed heading is excluded from the
-count that would catch a duplicate, and `## 15a.` on this file produces **no board item at all** —
-`NUMBERED` maps `15a` onto `15`, which live `## 15.` already claimed. Live entry `## 77.` is the
-entry for that; it is not covered here.
+**Fix.** Add both as assertions in `scripts/__tests__/`, next to the existing handoff-import and
+citation gates. This is the one item on this list that prevents a whole class rather than one instance.
 
 ## 4. The primary checkout is exempt from the rule its own test states
 
@@ -139,31 +123,30 @@ unparseable from that message — so the merge cannot be traced back to its bran
 
 Recorded so nobody re-derives them:
 
-| branch                                                                                                                  | why not                                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `fix/append-boundary-preconditions`                                                                                     | the branch exists at `75be2fa3`, but this row's own evidence does not: `17be38f4` is not a valid object in this repository and no branch named `history/migration-s0-s1-2026-10-04` exists, so neither the base it moved to nor the branch it duplicated can be checked. The do-not-land verdict stands on the head being a duplicate of the landed append work, not on the citation |
-| `fix/paste-document-space`                                                                                              | the exact inverse of the landed paste fix — asserts `{35, 30}` where the code now produces `{47, 37}`                                                                                                                                                                                                                                                                                |
-| `test/infra-suite-hardening`                                                                                            | tip tree is byte-identical to its merge base; merging yields an empty commit                                                                                                                                                                                                                                                                                                         |
-| `docs/review-architecture-fixes-2026-10-04`, `docs/review-e2e-fixes-2026-10-04`, `docs/review-handoff-fixes-2026-10-04` | patch-id identical to commits already on `main`                                                                                                                                                                                                                                                                                                                                      |
-| `docs/citation-anchors`                                                                                                 | its own commit message says SUPERSEDED, do not land                                                                                                                                                                                                                                                                                                                                  |
-| `refactor/store-safe-high-roi-task`, `refactor/history-shadow-immutability-task`                                        | hold commits already on `main` under different shas (`682f1119`→`a190ed4e`, `17c71ce2`→`487a1922`, `2f071bcc`/`7f193c16`→`84d77de5`); they can never be "landed"                                                                                                                                                                                                                     |
+| branch                                                                                                                  | why not                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fix/append-boundary-preconditions`                                                                                     | head `5` was dropped when its base moved to `17be38f4`; superseded duplicate of `history/migration-s0-s1-2026-10-04`                                             |
+| `fix/paste-document-space`                                                                                              | the exact inverse of the landed paste fix — asserts `{35, 30}` where the code now produces `{47, 37}`                                                            |
+| `test/infra-suite-hardening`                                                                                            | tip tree is byte-identical to its merge base; merging yields an empty commit                                                                                     |
+| `docs/review-architecture-fixes-2026-10-04`, `docs/review-e2e-fixes-2026-10-04`, `docs/review-handoff-fixes-2026-10-04` | patch-id identical to commits already on `main`                                                                                                                  |
+| `docs/citation-anchors`                                                                                                 | its own commit message says SUPERSEDED, do not land                                                                                                              |
+| `refactor/store-safe-high-roi-task`, `refactor/history-shadow-immutability-task`                                        | hold commits already on `main` under different shas (`682f1119`→`a190ed4e`, `17c71ce2`→`487a1922`, `2f071bcc`/`7f193c16`→`84d77de5`); they can never be "landed" |
 
-## 7. Three test blocks from `a05607c8`, dropped by a merge, were restored by `15252a4a`
+## 7. Three test blocks from `a05607c8` are still unasserted
 
-`a05607c8` added three `it()` blocks to `durable-replay.layer-operations.test.ts`; a merge dropped
-all three, and `15252a4a` restored all three byte-identically on `main`:
+`a05607c8` landed 19 of its 22 test blocks. Three were dropped in the merge and nothing replaced them:
 
-- `create-layer numbers the first layer of an empty document at 1, not 0` — asserts order `1` and name
-  `'Blank 1'` on a baseline carrying no layers;
-- `merge-document names and places its result by the runtime rule, against the pre-merge stack` —
-  asserts name `'Blank 2'` at order 2 against a pre-merge maximum of 1, and that only the result
-  survives;
-- `create-layer truncates a long image name through the runtime rule` — asserts `'x'.repeat(17)... 1`
-  from a 40-character name.
+- **empty-fold layer order** — a document whose fold leaves one layer gets order `1`, not `0`;
+- **merge naming** — two layers that merge onto the same name get `dupe1` / `dupe2`;
+- **ellipsify** — a long middle segment abbreviates to `src/…/out.png`.
 
-**Fix.** None. `deriveLayerNameAndOrder` owns the derivation and both `createLayerSource` and the
-converter read it, so the blocks cannot drift from it. `ellipsify` is covered for the helper in
-`src/util/__tests__/string.test.ts` and for the layer name by the third block.
+The runtime rule for the first two lives in `createLayerSource` in `src/contexts/layer-utils.ts`;
+`ellipsify` lives in `src/util/string.ts` and is covered for the string helper but not for the layer
+name that uses it.
+
+**Fix.** Re-derive the three cases against `createLayerSource` rather than restoring the dropped
+blocks, so they test the rule that production uses. This is the same correction that was applied to
+the parity oracle: that test had carried its own second copy of the naming rule and drifted from it.
 
 ## What was resolved, for contrast
 
@@ -174,21 +157,11 @@ deleted with their tests and their citations retired; a post-publication failure
 of dispatched twice; the two frozen-entry-reuse implementations were reconciled onto one API; and
 `suite-budgets.test.mjs`'s miscount of the live-fleet tests was corrected to three.
 
-## Three findings this audit got wrong first
+## Two findings this audit got wrong first
 
-Recorded because the corrections are the useful part.
-
-1. It claimed the orphan branch collided on three numbers; a `comm` over two differently-sorted files
-   produced a fabricated list.
-2. It then claimed `117` of `128`, which its own `comm` recipe does not produce — the real
-   number-collision count is **112**, and the number a reader should act on is the **11** whose subject
-   differs. 101 of the 112 are the same entry on both sides. Separately, it described the branch as
-   holding "a few genuinely-new numbers"; there are none, and every one of its 16 remaining numbers
-   is a tombstone.
-3. It claimed no gate detects duplicate `HANDOFF` section numbers and prescribed adding one. Three
-   assertions already enforce uniqueness, ascending order, and disjointness from the deleted registry;
-   see §3. Two other assertions look like duplicate detectors and are not, which is what made the gap
-   look real.
-
-All three were caught by re-running each command against the tree immediately before landing, which is
-the whole argument for §1.
+Recorded because the corrections are the useful part. An earlier draft claimed the orphan branch
+collided on three numbers; a `comm` over two differently-sorted files produced a fabricated list, and
+the real figure is 117 of 128. It also listed a fourth open merge and a miscounted comment that
+another session had already fixed between the measurement and the write-up. Neither would have been
+caught by anything except re-running the command against the tree immediately before landing — which
+is the whole argument for items 1 and 3.

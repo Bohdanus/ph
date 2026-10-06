@@ -17,10 +17,10 @@ import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { RulerToolArea } from './RulerToolArea.tsx';
+import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
-import { BlurToolArea } from './BlurToolArea.tsx';
 import { SmudgeToolArea } from './SmudgeToolArea.tsx';
 import { DodgeToolArea } from './DodgeToolArea.tsx';
 import { BurnToolArea } from './BurnToolArea.tsx';
@@ -38,7 +38,6 @@ import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
-import { syncRulerFrame } from '../../tools/ruler-measurement-store.ts';
 
 /**
  * The interaction modes whose tool owns a selection, which is every mode that can have a
@@ -69,18 +68,7 @@ export const SELECTION_INTERACTION_MODES: ReadonlySet<string> = new Set([
 
 const Main = () => {
   const [
-    {
-      canvasRef,
-      containerRef,
-      toolOverlayRef,
-      rectOverlayRef,
-      hasImage,
-      layers,
-      toolName,
-      totalSize,
-      documentFrame,
-      documentId,
-    },
+    { canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize, documentFrame },
   ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
@@ -147,6 +135,14 @@ const Main = () => {
     // do different things with a pointer — one samples a pixel, the other drags a nonprinting line
     // across the overlay — and one mode mounts one area, so a shared mode would mount one of them.
     interactionMode = 'ruler';
+  } else if (toolName === 'color-sampler') {
+    // Its own mode, and NOT a mode shared with the eyedropper above. The two are one `I`-family
+    // tile and they both read a pixel, but they do different things with the result — one writes it
+    // to the foreground swatch and commits nothing, the other leaves a numbered marker on the
+    // overlay that a later drag can pick up and move — and one mode mounts one area. The Eyedropper's
+    // Shift-click place-a-sampler path calls the same store rather than sharing this mode, which is
+    // why the two can agree about the hit test without one area mounting for both.
+    interactionMode = 'color-sampler';
   } else if (toolName === 'eraser') {
     // A brush, but NOT the `draw` mode: `DrawToolArea` creates a new layer from a
     // `{ ...args, points }` and draws the `DrawToolArgs` preview, where the eraser
@@ -155,8 +151,6 @@ const Main = () => {
     interactionMode = 'eraser';
   } else if (toolName === 'smudge') {
     interactionMode = 'smudge';
-  } else if (toolName === 'blur') {
-    interactionMode = 'blur';
   } else if (toolName === 'dodge') {
     interactionMode = 'dodge';
   } else if (toolName === 'burn') {
@@ -184,40 +178,6 @@ const Main = () => {
   useEffect(() => {
     drawAllLayers();
   }, [documentFrame, drawAllLayers, layers]);
-
-  /**
-   * Keeps the Ruler's measuring line tied to the document it was measured on.
-   *
-   * `src/tools/ruler-measurement-store.ts` holds the line in module state, so the line OUTLIVES any
-   * one mount — which is what makes Adobe's "selecting the Ruler tool causes it to be displayed"
-   * work at all. The cost of outliving mounts is that something has to notice when the document
-   * under the line is no longer the document on screen, and the honest place to notice is HERE,
-   * where `documentId` changes.
-   *
-   * It was in `RulerToolArea` and that was wrong, because `RulerToolArea` is mounted for exactly
-   * one of the registry's tools. Measure a line, switch to Move, open another document, and the
-   * Ruler tool area was never mounted to hear about the open, so the store kept the old line and
-   * carried it over: select the Ruler on the new document and the bar describes a line that does
-   * not exist in it. `REPLACE_DOCUMENT` spreads its payload over the state and that payload
-   * carries no `toolName`, so the Ruler stays selected across a document open.
-   *
-   * `useLayoutEffect`, not `useEffect`, and that is load-bearing rather than stylistic: `Main`
-   * renders the tool area as a CHILD, so a child's paint effect runs before this one, and the
-   * clear this effect makes is an `emit()` that schedules a re-render. In a passive effect that
-   * re-render lands after the browser has already painted the stale line. A layout effect runs
-   * before the paint and React flushes the resulting update synchronously, so the previous
-   * document's line is never on screen.
-   *
-   * `documentFrame` goes in beside `totalSize` because `totalSize` cannot answer half the question:
-   * it is `documentFrameSize(frame)`, so a CROP that keeps the width and height and moves the origin
-   * — the same-size band off the top and then the same-size band off the left — leaves it identical
-   * while every frame coordinate the line names now means a different document pixel. Both are read
-   * from the store in one destructure for that reason; keying on `totalSize` alone is the version
-   * that let that line survive.
-   */
-  useLayoutEffect(() => {
-    syncRulerFrame(documentId, totalSize, documentFrame);
-  }, [documentId, totalSize, documentFrame]);
 
   useLayoutEffect(() => {
     const { width, height } = totalSize;
@@ -308,6 +268,7 @@ const Main = () => {
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
       | typeof RulerToolArea
+      | typeof ColorSamplerToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
@@ -315,7 +276,6 @@ const Main = () => {
       | typeof SpongeToolArea
       | typeof CloneStampToolArea
       | typeof SharpenToolArea
-      | typeof BlurToolArea
       | typeof GradientToolArea
       | typeof FillToolArea
       | typeof ColorReplacementToolArea;
@@ -337,6 +297,7 @@ const Main = () => {
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
       else if (interactionMode === 'ruler') EventHandler = RulerToolArea;
+      else if (interactionMode === 'color-sampler') EventHandler = ColorSamplerToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
@@ -344,7 +305,6 @@ const Main = () => {
       else if (interactionMode === 'sponge') EventHandler = SpongeToolArea;
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
-      else if (interactionMode === 'blur') EventHandler = BlurToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
       else if (interactionMode === 'gradient') EventHandler = GradientToolArea;
       else EventHandler = DummyToolArea;
@@ -409,6 +369,10 @@ const Main = () => {
               // there is no layer to preview through `tempUpdateLayer`, and the line is chrome that
               // must survive on top of the document rather than be composited into it.
               'ruler',
+              // The Color Sampler paints its markers here for the Ruler's reason: a sampler is
+              // chrome over the document and never part of it, so there is no layer to preview
+              // through `tempUpdateLayer` and the markers must sit on top of the canvas instead.
+              'color-sampler',
             ].includes(interactionMode)
               ? 'block'
               : 'none',

@@ -35,7 +35,7 @@ import {
  * pixels below are produced and how to re-derive them.
  */
 const FIXTURE_PATH_FROM_ROOT = 'fixtures/split-half-red-blue.png';
-/** 64x64: the image's pixel size becomes the opened document's size (`setImageFromUpload()`). */
+/** 64x64: the image's pixel size becomes the opened document's size (src/hooks/useApp.ts:143-147). */
 const FIXTURE_DOCUMENT_SIZE = 64;
 /** Columns [0, 31] of the fixture: rgb(255, 0, 0), alpha 255. */
 const FIXTURE_LEFT_RGB = { red: 255, green: 0, blue: 0 };
@@ -93,7 +93,7 @@ function isExactly(actual: Rgb | null, expected: Rgb): boolean {
  *
  * The canvas element is `h-full w-full object-contain` (src/components/Main/Main.tsx:177)
  * over a backing store resized to the document's own pixel size
- * (`handleImageCreate()`, reached from `setImageFromUpload()`). A replaced element
+ * (src/hooks/useApp.ts:62-64, reached from `setImageFromUpload`). A replaced element
  * with `object-contain` scales its content to fit and centres it, so the document is
  * scaled by `min(box.w / doc.w, box.h / doc.h)` and letterboxed on the slack axis.
  *
@@ -353,7 +353,7 @@ test.describe('File round trip', () => {
     // The control: reloading really does discard the document, so the pixels that
     // appear below came from the file and not from a canvas that was never cleared.
     // Nothing has to answer an unload prompt here, because this document is CLEAN: the
-    // save above dispatched `hasUnsavedChanges: false` (`handleImageSave()`), which is
+    // save above dispatched `hasUnsavedChanges: false` (`src/hooks/useApp.ts:70`), which is
     // the one path that makes the `beforeunload` guard silent, and the same reason `File >
     // New` would not prompt here. Were it dirty, this reload would still need no handler —
     // an unregistered `beforeunload` is accepted, so the navigation proceeds. The in-app

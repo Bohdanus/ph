@@ -213,11 +213,9 @@ async function remeasureCanvasBox(page: Page): Promise<BoundingBox> {
  *
  * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
- * is clicked. `levels` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile, and the
- * `[Colors, Levels, Transform]` flyout that used to hold it is gone from `toolbarMap`. The header
- * has no `Tools` menu either — Photoshop reaches the tool set through its Tools panel, not
- * a menu — so `Image ▸ Adjustments` is the one surface left, and that is why this path is a
- * three-click sequence rather than a tile click.
+ * is clicked. `levels` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
+ * and no `tools-menu-levels-button`, and the `[Colors, Levels, Transform]` flyout that used to
+ * hold it is gone from `toolbarMap`.
  *
  * NOT `image-menu-adjustments-levels-button`. That button exists, it carries the label
  * `Levels`, and it is `disabled` — the real `Levels` adjustment is unbuilt, so the item

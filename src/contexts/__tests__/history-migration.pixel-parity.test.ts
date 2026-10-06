@@ -451,13 +451,27 @@ const everyCursorCase: readonly CursorCase[] = allScenarios.flatMap((scenario) =
  * a pin instead of a fix. A cursor that is neither in this list nor in the hard matrix is a
  * coverage hole, and the matrix test below fails on one.
  *
- * IT IS EMPTY, because the hard matrix above it is green on every cursor. That is the state this
- * list has to be re-entered from: a pin outliving its fix is a lie that hides a regression, and a
- * NEW divergence has to be MEASURED here and named before it can be pinned — `it.fails` on a green
- * case fails the suite, so the list cannot quietly absorb a defect that no longer exists, and the
- * coverage test cannot quietly drop a cursor that does.
+ * `reposition and affine transform` at the transform cursor: the two authorities resample the
+ * transformed layer a different number of times. `drawLayerSource()` draws the retained affine
+ * straight into the document surface, ONE `drawImage` with the matrix applied. `materializeLayer()`
+ * — `renderRetainedSegment()` — draws it into a surface sized `Math.ceil(localBounds)` and the
+ * compositor then stamps THAT surface at `bounds.width`/`bounds.height`, which are the
+ * un-rounded `getAffineBounds()` numbers. So the durable side runs a second resample with a
+ * fractional scale factor and the legacy side runs none. Measured here: 764 of 480000 bytes
+ * differ, first at (45, 41) where the legacy presentation is opaque white and the durable one is
+ * transparent. The two-step composition is the durable model's own arrangement and the
+ * un-rounded bounds are its own output, so the difference is structural rather than a defect of
+ * this double — a browser's filtered resample would differ too, by different amounts. Which of
+ * the two is right is S3's question; until it is answered the honest record is a pin.
  */
-const DECLARED_DIVERGENCES: ReadonlyArray<{ scenario: string; cursor: number; reason: string }> = [];
+const DECLARED_DIVERGENCES: ReadonlyArray<{ scenario: string; cursor: number; reason: string }> = [
+  {
+    scenario: 'reposition and affine transform',
+    cursor: 2,
+    reason:
+      'the durable composition stamps its intermediate surface at un-rounded bounds while the legacy renderer draws the retained affine once, so the transformed layer is resampled twice on one side and once on the other',
+  },
+];
 
 const declaredDivergenceFor = (cursorCase: CursorCase) =>
   DECLARED_DIVERGENCES.find(

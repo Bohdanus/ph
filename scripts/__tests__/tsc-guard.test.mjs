@@ -98,7 +98,7 @@ const TSC_BIN = BIN_DIR ? join(BIN_DIR, 'tsc') : null;
  * red in 36 of this repository's 59 worktrees, every one of which has a working
  * guard. So expectations are derived from the OWNER, not from here.
  */
-const OWNER_ROOT = BIN_DIR ? resolve(BIN_DIR, '..', '..') : null;
+const OWNER_ROOT = BIN_DIR ? resolve(realpathSync(BIN_DIR), '..', '..') : null;
 const OWNER_GUARD = OWNER_ROOT ? join(OWNER_ROOT, 'scripts', 'tsc-guard.mjs') : null;
 
 /** The real compiler, reached past the guard on purpose, by two tests. */
