@@ -107,7 +107,7 @@ const MagicWand: React.FC<{}> = () => {
           Paste
         </button>
         <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleClear}>
-          Clear
+          Deselect
         </button>
       </div>
 

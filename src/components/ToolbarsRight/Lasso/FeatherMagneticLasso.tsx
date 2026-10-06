@@ -365,7 +365,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
             Paste
           </button>
           <button className={SECONDARY_BUTTON} disabled={!hasActiveSelection} onClick={handleClear}>
-            Clear
+            Deselect
           </button>
         </div>
       </div>

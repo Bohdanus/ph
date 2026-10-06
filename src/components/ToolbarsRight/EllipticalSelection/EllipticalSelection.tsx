@@ -167,7 +167,7 @@ const EllipticalSelection: React.FC<{}> = () => {
           Paste
         </button>
         <button className={SECONDARY_BUTTON} disabled={!activeSelection} onClick={clearSelections}>
-          Clear
+          Deselect
         </button>
       </div>
 
