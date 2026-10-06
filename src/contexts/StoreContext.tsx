@@ -35,6 +35,7 @@ import {
 import {
   convertLegacyHistorySafely,
   deriveReplaceLayerSourceEntry,
+  durableSourceKindForTool,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
@@ -560,16 +561,9 @@ function sourceBackedEntryContext(
   }
   const candidate = historyItem.layerSource ?? historyItem.args;
   const candidateRecord = candidate as { kind?: unknown; args?: unknown } | undefined;
-  if (
-    candidateRecord &&
-    candidateRecord.kind === 'tool' &&
-    !['text', 'shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(
-      (candidateRecord.args as ToolArgs).toolName
-    )
-  ) {
-    // Raster creator tools have no durable source representation yet. They are
-    // intentionally conversion-only; do not enter the planner only to throw.
-    return null;
+  if (candidateRecord?.kind === 'tool') {
+    const toolName = (candidateRecord.args as { toolName?: unknown } | undefined)?.toolName;
+    if (typeof toolName !== 'string' || !durableSourceKindForTool(toolName)) return null;
   }
   return {
     documentId: state.documentId,
