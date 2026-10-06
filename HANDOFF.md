@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-9, 11-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -133,149 +133,6 @@ so the existing comparison covers it. The first durable scheduler must take a to
 restoring the deleted module.
 
 **Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
-
----
-
-## 15. `reorder-layers` is published; a self-anchored move is a real converter defect
-
-**Status.** The append-boundary publication landed on `history/reorder-durable-append`. A reorder
-is planned, validated and published by the same
-`published` / `preconditions` / `mismatch` decision the frame, selection and layer-property appends
-use. What remains here is one real defect the slice found, and the conversion-only inventory.
-
-### The remaining conversion-only writers
-
-**Re-derive this inventory; it shrank hard.** The store, not the writer, derives most source-backed
-plans now. `sourceBackedEntryContext()` (`StoreContext.tsx`) admits any `NEW_LAYER_ACTION` or
-`MERGE_ACTION`, and the `COMMIT_DOCUMENT_EDIT` branch then plans it with
-`deriveCreateLayerEntry()` or `deriveMergeDocumentEntry()` (`history-adapter.ts`); a
-`REPLACE_LAYER_SOURCE_ACTION` goes through `deriveReplaceLayerSourceEntry()`. So a writer that passes
-no `durableEntry` is no longer evidence of a reconversion — `updateLayerByTool`, `commitDirtyTool`,
-`mergeAllLayers`, `appendSelectionClear` and `commitSelection` all still pass none, and all five are
-planned by the store. Passing a `durableEntry` remains necessary but not sufficient in the other
-direction: the store publishes only on `outcome === 'published'` and otherwise reconverts.
-
-Two writers still have no `durableEntry` concept at all and reconvert unconditionally:
-`resetHistoryTo` in `useHistory.ts` (`APPLY_HISTORY_REPLAY`) and `setImageFromUpload` in `useApp.ts`
-(`REPLACE_DOCUMENT`). `createBlankLayer` is only that on its `replaceDocument` path, because
-`_addLayer` then dispatches `REPLACE_DOCUMENT`; on its ordinary path the store plans it. The
-`addHistoryEntry` row this table used to carry is **deleted**: that symbol no longer exists anywhere
-in `src/`, and "see item 14" pointed at a reader that no longer had a referent.
-
-**Asset boundary.** Every append family is published with the registry transaction around it, and `remove-layer` and the
-`TOOL_ACTION` operations are asset-neutral regardless: a `remove-layer` carries only a `layerId`
-(the `'remove-layer'` case in `history-model.ts`), and a `TOOL_ACTION` carrying no layer source is
-derived by `operationForTool` (`history-adapter.ts`), whose every arm returns an operation with no
-raster snapshot — `apply-raster-processor`, `apply-affine-transform`, `apply-filter` and
-`reposition-layer` all live in that same function — reached from the `TOOL_ACTION` caller arm in
-`legacyHistoryToDurable`. `collectDurableAssetIds` walks the whole replayable history but collects
-only raster-bearing kinds, so a removal or an in-place pixel edit changes no reachable asset and
-needs neither registration nor retirement.
-
-**Files.** `src/contexts/StoreContext.tsx` — `sourceBackedEntryContext()`,
-`src/contexts/history-adapter.ts` — `durableSourceKindForTool()`, `deriveCreateLayerEntry()`,
-`deriveMergeDocumentEntry()`; `src/contexts/useLayer.ts` — `createLayerFromTool()`
-
-### How the reorder publication is proved, and what it costs
-
-The blocker was that a reorder's durable operation cannot be derived from the history item: it names
-the resulting order of **every** layer, and the item carries only intent. The store now plans it
-from `state.layers` read at the boundary (`layerOrderBottomFirst` in `StoreContext.tsx`), which is
-the same record `reorderLayers` is about to mutate. Three things make that safe:
-
-- **`reorderOrderAfterIntent` (`history-append.ts`) is a second implementation, not a call into
-  the converter's.** The converter's copy is an inline arm inside `legacyHistoryToDurable`, so
-  calling it would reproduce a bug in it rather than catch one. Two copies can drift, so
-  `history-append.reorder.test.ts` pins them against each other against a real converter run over
-  a matrix of orders and intents, plus a table of hand-written literal maps so a wrong rule on
-  _both_ sides still fails. The store test pins the published document against a full conversion,
-  which is the end-to-end oracle.
-- **The shadow's own layer ORDER is a precondition, compared as a sequence.** Durable replay skips
-  ids it does not know (the `'reorder-layers'` case in `durable-replay.ts`), and a published map is
-  a fresh normalisation of the
-  order, so it overwrites whatever order the shadow had. Publishing while the two models
-  already disagree about the order launders that disagreement into a durable document no
-  reconversion will produce. Membership is not enough: the models can name exactly the same layers
-  in a different sequence, and only the sequence check sees it.
-- **A refusal is a `preconditions` outcome, never a diagnostic.** A missing mover, a missing anchor
-  and a self-anchor produce no order map and no `durable-append-mismatch`, because a fabricated map
-  for a no-op is worse than a fallback. The store test asserts the refusal shape directly.
-
-**Cost, stated plainly: the published path is cheaper, not constant.** It replaces a full
-_legacy_ conversion with one `replayDurableDocument` over the _durable_ history (`StoreContext.tsx`
-`REORDER_LAYERS` branch) plus an appended entry. The durable replay is materially cheaper — no asset
-transaction, no arg parsing, no diagnostics, and it clones only the layers each entry touches —
-but it is still O(durable history), so calling this "a fast path with no walk" would be false.
-
-### The self-anchored move: a converter defect, deliberately not fixed here
-
-`reorderOrderAfterIntent` **refuses** a move whose anchor is the mover itself, and the boundary
-falls back to conversion. That is not caution about an edge case; it is because the two
-implementations genuinely disagree, which was measured, not assumed:
-
-- `reorderLayers` (`layer-utils.ts`) anchors on the mover's own order, shifts everything
-  above it, then re-assigns the mover. On a three-layer stack the **visible sequence is unchanged**
-  — `{bottom:0, middle:2, top:4}` still reads bottom, middle, top.
-- The converter's inline arm drops the mover from `remaining` **first**, so `remaining.indexOf`
-  is `-1` and `+ 1` is `0`: it records a **move to the bottom**.
-
-So the shadow and the document describe different orders from that entry forward, and an undo/redo
-through it will not restore the stack the user was looking at. The same `indexOf(...) + 1` shape is
-what the absent-anchor bug was, one case further in: the fix for that case checked `anchorPresent`
-but never checked that the anchor was _not the mover_. Note the disagreement is a function of the
-stack, not a blanket one — when the mover is already the bottom layer the two **agree**, so the
-boundary's refusal is deliberately over-broad there, in the safe direction.
-
-**Fix.** Decide which answer is correct — the sequence-preserving one is what the document does, so
-the identity-on-`preOrder` map is the honest one — then change the converter's arm and
-`reorderOrderAfterIntent` **together**, and extend the parity matrix. Changing only the boundary
-would make a published shadow differ from a reconverted one for the same history, which is the
-exact failure this item exists to prevent.
-
-**Unreachable in production today, and both UIs guard it.** `LayersTab.tsx` computes
-`isDropTarget` as `dropTargetId === layer.id && dropTargetId !== draggedLayerId && …` and the drop
-handler returns before dispatching when it is false, so a row cannot be dropped on
-itself; the other `animateMove` call site in `LayersTab.tsx` passes no anchor at all, and
-`handleMoveUp` / `handleMoveDown` in `MobileLayersDrawer.tsx` anchor on a neighbouring index.
-`git grep moveLayerAfter` returns
-only those two components. This was asserted as reachable on an earlier read of this section and
-that was wrong — the drop guard is the reason, and it is a guard, not a coincidence. It is still a
-real defect: a disabled entry, a replayed history, or any future writer that names its own anchor
-reaches it, and the shadow is the production replay authority's shadow either way.
-
-**A related pre-existing hazard, not introduced here and not fixed here.** The dispatcher reorders
-the record from the intent unconditionally, without consulting `isEntryEnabled`, so a caller that
-supplied a `disabled: true` reorder item would reorder the visible record while the durable entry
-— published or converted — is `enabled: false` and replays as a no-op. `da5f719` has the identical
-unconditional call, so this slice neither caused nor worsened it, and it is unreachable today: no
-production writer supplies an item at all, and `toggleDisabled` routes through `resetHistoryTo` →
-`APPLY_HISTORY_REPLAY`, which rebuilds the record by legacy replay. It is recorded because the
-new publication makes the mismatch more consequential — a published `enabled: false` entry is
-written onto a shadow the next append then trusts.
-
-**The refusal alone does not contain it.** An earlier version of this slice refused the self-anchor
-and claimed that kept the boundary and the converter agreeing. It does not: the refusal makes the
-append fall back to conversion, which leaves the shadow ordered the converter's way and the
-document ordered its own, and the **next** reorder then found matching layer sets and published a
-normalisation of the runtime order — a third answer, in a durable document no reconversion would
-reproduce. The `durableLayerOrder` sequence precondition is what actually stops it; the refusal is
-the first line. `StoreContext.reorder.test.tsx` pins the two-append sequence specifically, because
-the single-append case passes either way.
-
----
-
-## 15a. A self-anchored reorder is refused, and the refusal is load-bearing
-
-Retained as a tripwire. `reorderOrderAfterIntent` returns `null` for a self-anchored move, and
-`history-append.reorder.test.ts` asserts the refusal **and** asserts the two disagreeing answers it
-exists to avoid choosing between. Two tripwires, because either can fail silently:
-
-- If the test ever starts passing because the two implementations were made to agree, the refusal
-  becomes removable and this entry is deleted with the fix in §15 — that is, together, not before.
-- If the `durableLayerOrder` sequence precondition is ever relaxed to a membership check, the
-  refusal stops containing the defect: the shadow and the document keep disagreeing, and the next
-  reorder publishes a third answer. `StoreContext.reorder.test.tsx` pins that two-append sequence
-  and is the test that would catch it; it passes either way if only the single append is exercised.
 
 ---
 
@@ -953,15 +810,16 @@ namespace and left an unguarded regex in the test. Half-finished is worse than f
 **The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
 there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
-`if (open && record.level <= open.level) close(...)`. `HANDOFF.md` §15a is a **level-2**
+`if (open && record.level <= open.level) close(...)`. At filing time, `HANDOFF.md` §15a was a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
-`## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md` §15a occupies is **876 raw characters**, or **874** once the span's leading and
+`## 15.` — so it **closed item 15's body there** and opened nothing itself. The span
+`HANDOFF.md` §15a occupied is **876 raw characters**, or **874** once the span's leading and
 trailing blank lines are trimmed — 874 is the trimmed count, and the raw count is the one
 that includes them. The first `---` rule inside that span is one `bodyOf` drops as layout, so the
-prose the parser actually strands is everything between the `## 15a.` heading and that rule. All of
-it is unreachable from any item title or body.
-Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
+prose the parser actually stranded was everything between the `## 15a.` heading and that rule. All of
+it was unreachable from any item title or body. These measurements describe the document before
+the reorder issue and its tripwire heading were deleted.
+Item 15's stored body at that revision was 3994 chars and ended mid-sentence; the 15a prose was not in it. The
 entry is a load-bearing tripwire, so this is live work loss, not latent.
 
 **Both counts were wrong on the way in, and the correction is self-stable.** The span's text is
@@ -970,8 +828,8 @@ change when the line numbers move** — and two earlier revisions "corrected" `8
 `870 → 871` for a span that measured the same both times. `comm` over the region's bytes, not a
 re-read of the number in the prose, is the only check that catches this: the raw count includes
 the digits of the count itself, so replacing three digits with three digits leaves it unchanged
-and needs no second pass. **Item 15's stored body is left alone** at 3994: it sits upstream of
-every hunk in this entry, and it is the one number here that cannot be measured without the
+and needs no second pass. **The measured item 15 body was 3994 characters**: it sat upstream of
+every hunk in this entry, and it was the one number here that could not be measured without the
 parser, which is exactly why an unmeasured number must not be edited.
 
 **The same root cause, opposite direction, and worse: a suffixed retirement retires the parent.**
@@ -983,8 +841,9 @@ and a fix that only widens `NUMBERED` does not address it.
 **Why the test suite cannot see either.** The `it('produces one item per numbered heading, and no
 item for a prose section')` title's own heading-count regex
 carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`,
-`## 15b.` and `## 16a.` simultaneously. Both sides miss it; the equality stays green. The corpus
-has exactly one such heading today, `## 15a`. Proven: with `NUMBERED` fixed and the count regex
+`## 15b.` and `## 16a.` simultaneously. Both sides miss it; the equality stays green. At the time
+this was measured, the corpus had exactly one such heading, `## 15a`; that heading was later removed
+with the resolved reorder defect. Proven: with `NUMBERED` fixed and the count regex
 left alone, the count test fails. **The quoted output `expected 38 to be 37` was measured at
 `a3f1dcc`**, the campaign branch tip, against that branch's `HANDOFF.md` — 37 headings under the
 count regex, 38 items once the suffix is accepted. On `main` the same projection reads
