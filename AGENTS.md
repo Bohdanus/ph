@@ -1,8 +1,20 @@
-Photoshop clone, production-grade photo editor
+Photoshop clone
 
-## Work on WORKTREE
+#️ CRITICAL: ALL WORK HAPPENS IN WORKTREE — NEVER IN THE MAIN CHECKOUT
 
-Every tracked-file change happens in worktree and branch. `main` is for reading
+**Every command you run — git, tests — MUST run inside worktree directory under `.kilo/worktrees/`.**
+
+The main checkout is **READ-ONLY**.
+Running `git status`, `git rev-parse`, `npm test` - will break.
+
+**Before doing ANYTHING, verify you are in your worktree:**
+
+```bash
+git rev-parse --show-toplevel
+# MUST print a path under .kilo/worktrees/
+```
+
+Every tracked-file change happens in worktree. `main` is for reading
 and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
 
 ```bash
@@ -12,10 +24,9 @@ MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
 git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
 ```
 
-`main-worktree-guard.mjs` refuses commits made from `main`, but only after the edit;
-create the worktree before writing. Every commit carries a `Chat: ses_<id>` trailer.
-Every merge into `main` also carries `Branch: <source-branch>`.
-No gate supplies these values, so resolve chat id before the first commit. It is also
+Every commit must carry `Chat: ses_<id>` trailer.
+Every merge into `main` must carry `Branch: <source-branch>`.
+Resolve chat id before the first commit. It is also
 the swarm identity used by `npm run swarm -- --agent ses_…`.
 
 Find the id in the session store with a phrase you typed, matching
@@ -31,15 +42,8 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 
 ## Subagents
 
-### Delegation
-
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
-- Never exceed 9 simultaneous subagents/processes.
-- A task subagent inherits the working directory. Give it the absolute worktree path and never let two agents edit the same file.
-
-### Model policy
-
-**THE DEFAULT MODEL IS `Space Bunny Alpha (retires Oct 5)` ON PROVIDER `kilo`, AT VARIANT `max`. USE THAT EXACT PAIR ON EVERY `task` AND `agent_manager` CALL UNLESS THE OPERATOR NAMES ANOTHER. It is free, and it is nearly as good as GPT Luna.**
+- **A task subagent inherits the caller's working directory.** You MUST give it the absolute worktree path in the prompt. Never let two agents edit the same file.
 
 - **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
@@ -49,7 +53,7 @@ sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
 
 ### Free-model Git restriction
 
-Nemotron and every other free model can misbehave when handling Git. Never assign free-model agents Git operations, branch or worktree creation/deletion, rebases, merges, commits, resets, or conflict resolution. Deny free-model agents Git work; perform Git operations in the coordinator or a trusted non-free agent.
+Nemotron and every other free model can misbehave when handling Git. NEVER assign free-model agents Git operations, branch or worktree creation/deletion, rebases, merges, commits, resets, or conflict resolution. Deny free-model agents Git work; perform Git operations in the coordinator or a trusted non-free agent.
 
 ## Browser rule
 
@@ -63,6 +67,8 @@ and `--out`; headless mode is hardcoded. Do not add a browser MCP server: it byp
 repository's browser protections.
 
 ## Commands
+
+**ALL git/npm COMMANDS MUST RUN IN YOUR WORKTREE.**
 
 `npm run tsc` is the only trustworthy typecheck. `npx tsc --noEmit` checks the empty root
 solution and can exit successfully without checking the projects; see [`docs/TESTING.md#running-commands`](docs/TESTING.md#running-commands).
@@ -90,7 +96,7 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
-| `npm run test:staged` | **NOWHERE**         | manual `vitest related` command                                |
+| `npm run test:staged` | nowhere             | manual `vitest related` command                                |
 | `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
