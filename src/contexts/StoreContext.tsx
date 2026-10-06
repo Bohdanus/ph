@@ -22,7 +22,13 @@ import type {
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
-import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import {
+  cloneDocumentFrame,
+  documentFrameEquals,
+  documentFrameFromSize,
+  documentFrameSize,
+  type DocumentFrame,
+} from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
@@ -1039,7 +1045,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (
         latest.documentId !== state.documentId ||
         latest.historyIndex !== state.historyIndex ||
-        latest.branchRevision !== state.branchRevision
+        latest.documentRevision !== document.documentRevision ||
+        latest.branchRevision !== document.branchRevision ||
+        latest.durableStatus !== 'current' ||
+        latest.durableDocument?.durableRevision !== document.durableRevision ||
+        !documentFrameEquals(latest.documentFrame, replay.frame)
       ) {
         throw new Error('Durable navigation presentation became stale before publication');
       }
