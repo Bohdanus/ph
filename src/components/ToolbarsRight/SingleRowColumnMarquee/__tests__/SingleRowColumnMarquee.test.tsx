@@ -133,12 +133,11 @@ describe('SingleRowColumnMarquee toolbar', () => {
       expect(screen.queryByLabelText(/Feather/i)).toBeNull();
     });
 
-    it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them', () => {
+    it('does not render selection-combination buttons in this bar', () => {
       render(<SingleRowColumnMarquee />);
 
-      // The selection combination modes are absent for EVERY selection tool here, so shipping
-      // them for the two newest ones and not for the other five would be a worse inconsistency
-      // than the one that exists.
+      // Quick Selection has Add and Subtract in its Mode dropdown; this marquee bar has no
+      // combination-mode buttons of its own.
       expect(screen.queryByRole('button', { name: /New/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /Add/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /Subtract/i })).toBeNull();

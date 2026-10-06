@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 191-192, 194-196, 200, 204, 208, 210-211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4953,38 +4953,6 @@ names against `PAINT_BLEND_MODES` — the same technique the three `readFileSync
 list nor a canvas value fails instead of quietly making the comment wrong. That is a check on prose,
 which is unusual, and it is worth it only because the alternative is a comment whose whole value is
 that a reader can trust its count.
-
-## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
-
-**Problem.** The
-`it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them')`
-title in `src/components/ToolbarsRight/SingleRowColumnMarquee/__tests__/SingleRowColumnMarquee.test.tsx`
-carries a comment asserting the modes are "absent for EVERY selection tool here". `QuickSelection.tsx`
-renders Add and Subtract in a `Mode` dropdown over `QUICK_SELECTION_MODES`, so the universal claim is
-false — and the falsehood is in the `it()` title as well as the comment, so it survives a reader who
-skips the body.
-
-**Why the test does not already fail on it.** The file imports and renders only
-`SingleRowColumnMarquee`, so Quick Selection is never in the tree and no query strategy would surface
-its dropdown. The assertion is true of what it mounts; only its stated reason is wrong.
-
-**The same falsehood is recorded in prose, twice over.** `docs/TOOLS-TOO-HARD.md` — Selection
-combination modes says "No selection tool's bar renders any of the four". And the per-tool data
-repeats it in two records of its own: the single-row and single-column marquee notes in
-`src/tools/descriptions/selection.ts` each explain their `missing` modes with "they are absent for
-every selection tool in the application", while the Quick Selection record in the same file correctly
-states that its dropdown offers Add and Subtract. So the capability is not new, and the contradiction
-is not confined to a test — it is in the data that generated document is built from, which makes the
-per-tool documentation propagate it too.
-
-**Affected.** The single test file above, for the title and the comment; the two marquee records in
-`src/tools/descriptions/selection.ts` for the prose; and `docs/TOOLS-TOO-HARD.md` — Selection
-combination modes, which owns the capability and states the overreach.
-
-**What would close it.** Narrow the title and the comment to what the assertion proves — that this bar
-renders the four as neither buttons nor a select — and narrow the two per-tool records to the tools
-they actually describe. Deleting the pin is not the fix and would be a gate being weakened: the
-combination buttons are still absent from every selection bar.
 
 ## 189. Three fields on a tool's replay declaration are read by tests and by nothing else
 

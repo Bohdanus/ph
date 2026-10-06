@@ -18,11 +18,10 @@ import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
  *
  * Nothing is declared as a setting here, and that is a claim about Photoshop rather than a
  * shortcut: the bar below is three buttons and a sentence, exactly as
- * `RectangularSelection.tsx` is, because both of those tools' bars carry no
- * New/Add/Subtract/Intersect, no Feather and no Select and Mask in this application. The
- * selection combination modes are absent for every selection tool in the app, so shipping
- * them for the two newest ones and not for the other five would be a worse inconsistency
- * than the one that exists. `docs/TOOLS-INVENTORY.md` and the family notes record it.
+ * `RectangularSelection.tsx` is, because neither marquee bar renders New/Add/Subtract/Intersect,
+ * Feather or Select and Mask. Quick Selection has its own Mode dropdown for Add and Subtract, so
+ * these omissions are specific to the single-row/column marquee tools, not universal.
+ * `docs/TOOLS-INVENTORY.md` and the family notes record the Photoshop controls for these tools.
  */
 const SingleRowColumnMarquee: React.FC<{}> = () => {
   const [{ toolName, selections, activeSelectionId }] = useStore();

@@ -70,12 +70,14 @@ one. The bar's controls match Photoshop's; the segmentation underneath does not.
 
 ### Selection combination modes
 
-**What Photoshop does.** Every selection tool's options bar carries New / Add To / Subtract From /
-Intersect With, so the next drag combines with the selection already on the canvas, and Shift,
-Alt/Option and Shift+Alt/Option held during the drag set the same four modes.
+**What Photoshop does.** Selection tools can combine a new selection with the existing one using
+New / Add To / Subtract From / Intersect With where those controls are provided. Shift, Alt/Option
+and Shift+Alt/Option can set the same modes during a drag on tools that support them.
 
-**What this app does.** No selection tool's bar renders any of the four. A second selection appends
-and activates. The union is not a missing control over a present model — it is a change to the model.
+**What this app does.** Quick Selection's Mode dropdown offers Add and Subtract. No bar implements
+the complete Photoshop set; the other selection tools do not render combination controls. On tools
+without a mode selector, a second selection appends and activates. The union is not a missing
+control over a present model — it is a change to the model.
 `Selection` is a single point path (`general-types.ts` — `Selection`):
 
 ```ts
