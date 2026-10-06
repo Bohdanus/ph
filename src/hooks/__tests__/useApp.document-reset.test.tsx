@@ -253,19 +253,16 @@ async function seedOutgoingDocument(result: Result) {
   // The selection fields are re-established AFTER the replay, because
   // `APPLY_HISTORY_REPLAY` replaces them with the timeline's own derivation — and a
   // document whose only selection evidence is a `documentSource` baseline has none.
-  // Without this the seed would arrive with `selections: []`, which is the very state
-  // the kill assertions demand, and clearing the field in production would go unnoticed.
+  // Use selection-specific actions: `BATCH_UPDATES` is metadata-only in production
+  // and conservatively marks the durable projection stale.
   act(() => {
+    result.current.dispatch({ type: 'SET_SELECTIONS', payload: [OUTGOING_SELECTION] });
+    result.current.dispatch({ type: 'SET_ACTIVE_SELECTION', payload: OUTGOING_SELECTION_ID });
     result.current.dispatch({
-      type: 'BATCH_UPDATES',
-      payload: {
-        selections: [OUTGOING_SELECTION],
-        activeSelectionId: OUTGOING_SELECTION_ID,
-        selectionDraft: OUTGOING_DRAFT,
-        selectionCleared: OUTGOING_CLEARED,
-        selectionClipboard: OUTGOING_CLIPBOARD,
-      },
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: OUTGOING_DRAFT.sourceTool },
     });
+    result.current.dispatch({ type: 'SET_SELECTION_CLIPBOARD', payload: OUTGOING_CLIPBOARD });
   });
 
   const { store, history: nav } = result.current;
