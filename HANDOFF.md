@@ -5742,23 +5742,25 @@ conjunct. The colour half is not the blocker: `Shape.tsx` adopts the store's `ba
 `StoreContext.tsx`'s `initialState` carries `#ffffff`, so ticking `Filled` does fill. The default is
 the whole of the question.
 
-Whether Adobe's own shape tools fill by default was **not established** while filing this. A search
-of Adobe's published default-keyboard-shortcut reference settled a different question — whether a
-Draw tool has a letter — and returned no row either way for shapes. So this entry states the app's
-behaviour and records the divergence as unresolved; it does not assert what Photoshop does, and no
-document in `docs/` may be corrected on the strength of this paragraph.
+Whether Adobe's own shape tools fill by default was **not established** while filing this. Adobe's
+current [Shape, Path, and Pixel mode options](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html)
+page says Fill Color controls the center of shapes, but does not say whether Fill starts enabled.
+The default-keyboard-shortcut reference settles a different question — whether a Draw tool has a
+letter — and returns no row either way for shapes. So this entry records the app's behaviour without
+asserting what Photoshop does.
 
 **Affected.** `src/tools/settings.ts` — the `shape` default; `src/components/ToolbarsRight/Figures/Shape.tsx`
 — `filled-toggle` and `handleFillToggle()`; `src/tools/shape.ts` — `drawShape()`'s `hasFill`
 conjunct; `src/tools/__tests__/tool-settings.test.ts` pins the seeded table with `toEqual`, so it
 refuses a flip until it is re-derived.
 
-**What would close it.** Take the ruling from Adobe's own shape-options documentation. If shapes are
-meant to fill, seed `hasFill: true` beside the existing `backgroundColor` seed, re-derive the
-tool-settings pin, and expect the e2e baselines that draw a shape to move. If they are meant to stay
-unfilled, record the divergence in `docs/OVERRIDES.md` — the tile is kept there under OVR-2, so the
-override is where a deliberate divergence belongs. Either way the `!!args.backgroundColor` half of
-the gate must survive the change: it is what stops a filled figure with no colour from painting with
-whatever `fillStyle` the shared overlay last carried.
+**Blocker.** The Adobe page documents Fill Color's purpose but not the enabled state of a newly
+created shape. The component's unfilled default also prevents the Filled checkbox from changing
+from uncontrolled to controlled; keep that default for this technical reason, not as a claim about
+Photoshop, until a version-specific Photoshop observation or an operator ruling settles the UX. If
+the eventual ruling differs from this app, add a shape-specific decision to `docs/OVERRIDES.md`:
+OVR-2 is about the Draw tool, not shapes. Preserve the `!!args.backgroundColor` half of the fill
+gate either way; it prevents a filled figure without a colour from painting with whatever
+`fillStyle` the shared overlay last carried.
 
 ---
