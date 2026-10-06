@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -804,52 +804,6 @@ settle it is a `console.warn` carrying the reason at each of the four early
 returns, which is a product decision rather than a test one.
 
 ---
-
-## 68. A committed shape is painted twice, and nothing removes the overlay
-
-**Problem.** `src/components/Main/ShapeToolArea.tsx` never clears the tool overlay during a gesture,
-not even on a successful commit. `handlePointerUp` ends with a `flushDrawingFrame()`
-(in `ShapeToolArea.tsx` — `handlePointerUp()` calling `flushDrawingFrame()`), whose last act is
-clear-and-**redraw** (the `clearRect` then `setShapeCtx`/`drawShape` inside `flushDrawingFrame()`),
-and `createLayerFromTool(fullArgs)`
-then commits it as a layer while the overlay keeps the painted shape. For as long as the
-shape tool stays selected the same shape exists twice: once in the document, once on the overlay
-above it. Only the unmount `useEffect` cleanup in `ShapeToolArea.tsx` clears it, so it disappears on
-a tool switch, which
-is not the same thing as not painting it.
-
-The file says so itself, in the comment above that same unmount cleanup: "This area never clears the
-overlay on pointer up at all:
-`handlePointerUp`'s last `flushDrawingFrame` REDRAWS the shape and the commit leaves it
-there … without it the preview stays painted over the next tool's document — and over this one, for
-as long as the shape tool stays selected."
-
-**A unit test now pins the double paint**, which is a finding in its own right:
-`ShapeToolArea.test.tsx` — the `it('clears the preview a committed shape leaves painted, which nothing
-else removes')` title, its own
-comment reads "The shape is now a layer AND is painted
-twice", and it asserts `clearRect` is called **exactly once** — only at unmount. **A
-fix must delete that test in the same change**, per `AGENTS.md`: a pin left behind turns the fix
-into a red suite.
-
-**Fix.** Clear the overlay as part of the commit, after `createLayerFromTool`, so the committed layer
-is the only copy. Do not add a second `clearRect` inside `flushDrawingFrame` — it is the batched
-draw path and clearing there would blank a frame that has not been committed yet
-(`ShapeToolArea.tsx` — `handlePointerMove()`'s `requestAnimationFrame(flushDrawingFrame)` re-arms
-it).
-
-**The coordinate-space half of the earlier version of this entry was wrong, and the suite already
-covers what it claimed was uncovered.** `ShapeToolArea.test.tsx`'s deliberately non-zero `DOCUMENT_FRAME`
-constant, which `beforeEach` installs onto the store state, so every test in the file runs
-under a frame. The `it('computes the committed bounds from the same geometry the preview draws')`
-title asserts that the committed `start`/`end` equal the preview's **plus** `DOCUMENT_FRAME`
-minus `pos` — preview in canvas space, commit the same geometry in document space. §132 derives that
-same division of labour, and §68's "they can disagree" claim is refuted by a passing test.
-
-**Files.** `src/components/Main/ShapeToolArea.tsx` — `flushDrawingFrame()`, `handlePointerUp()` and
-the unmount `useEffect` cleanup,
-`src/components/Main/__tests__/ShapeToolArea.test.tsx` — the `it('clears the preview a committed
-shape leaves painted, which nothing else removes')` title
 
 ---
 
