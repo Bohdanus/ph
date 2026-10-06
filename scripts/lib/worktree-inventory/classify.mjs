@@ -329,6 +329,15 @@ export function classify(
   // that may only exist in this directory.
   const curatedBlocksPrune = Boolean(curated?.mustNotPrune);
   const curatedLegacy = Boolean(curated?.legacy);
+  const legacyUnknown = curatedLegacy
+    ? treeUnreadable
+      ? 'the working tree could not be read'
+      : gitFactsUnreadable
+        ? 'the branch relationship to the base could not be established'
+        : wt.detached
+          ? 'the worktree has no branch to keep'
+          : null
+    : null;
   const mergeState = mergeVerdict(wt);
   let recommendation;
   if (wt.isPrimary) {
@@ -361,6 +370,7 @@ export function classify(
   } else if (
     curatedLegacy &&
     !curatedBlocksPrune &&
+    legacyUnknown === null &&
     !uncommitted &&
     !treeUnreadable &&
     !wt.detached &&
