@@ -97,6 +97,16 @@ should return `unavailable`. `b027de3` already establishes the vocabulary for th
 offending entry rather than failing the conversion — so the pattern exists; apply it to the
 severity check too.
 
+**Status contract to resolve before implementation.** `src/contexts/history-adapter.ts` defines only
+`current` and `unavailable`, while `src/contexts/StoreContext.tsx` documents `current` as an exact,
+transactionally converted shadow. `buildDurableDocument()` forwards the converter's status, and
+`normalizeDurableProjection()` plus the `SET_DURABLE_STATUS` branch clear the document for any status
+other than `current`; navigation and reorder consumers likewise read only a current document.
+Therefore, simply returning a partial document as `current` would violate the store contract, while
+introducing a partial status without tracing these paths could either discard the retained document or
+let an incomplete shadow appear exact. Represent partial availability explicitly and keep it out of
+paths that require an exact projection; do not remove the severity gate alone.
+
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/StoreContext.tsx`
 
 ---
