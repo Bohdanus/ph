@@ -2,43 +2,108 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!--    <link rel="icon" type="image/svg+xml" href="/todo.svg" />-->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>photo</title>
 
-    <!-- Google Tag Manager -->
-    <script>
-      (function (w, d, s, l, i) {
-        w[l] = w[l] || [];
-        w[l].push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
-        var f = d.getElementsByTagName(s)[0],
-          j = d.createElement(s),
-          dl = l != 'dataLayer' ? '&l=' + l : '';
-        j.async = true;
-        j.src = 'https://www.googletagmanager.com/gtm.js?id=' + i + dl;
-        f.parentNode.insertBefore(j, f);
-      })(window, document, 'script', 'dataLayer', 'GTM-WBWSB9XS');
-    </script>
-    <!-- End Google Tag Manager -->
+    <!--
+      This head used to load two third-party origins before the app could paint, and both
+      are gone. Nothing here is restored casually — the reasoning is below, and the two
+      removals are separable if you want one of them back.
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap"
-      rel="stylesheet"
-    />
+      REMOVED: the Google Tag Manager snippet (`GTM-WBWSB9XS`) and its `<noscript>` iframe.
+
+      It was pure telemetry and it is dead weight, on four counts:
+
+      - Nothing in the application reads it. `grep -rIn -iE 'datalayer|gtag|googletag|GTM-'
+        src/` returns nothing. There is no tag, no trigger and no `dataLayer.push` outside
+        the snippet's own bootstrap, so the container collected page views that nothing
+        consumed. The only other hits on the whole tree are this paragraph, `HANDOFF.md`
+        §140 (the open entry filed about exactly this container), and two comments that
+        DESCRIBE the beacon rather than consume it —
+        `e2e/global-setup.ts:366` and `e2e/helpers/console-police.ts:37`.
+      - Every page load beaconed to a Google Analytics property. Measured on one navigation here:
+        7 third-party requests, two of them POSTs to `region1.google-analytics.com/g/collect`
+        carrying `en=gtm.js` and `en=page_view`, under measurement id `G-7F5V72YQ4K` — an id that
+        appears nowhere in this repository, because the Tag Manager script injects it at runtime.
+        The beacon also carries `dl=http%3A%2F%2Flocalhost%2F`, a client id and `sr=1280x720`.
+        The e2e suite makes hundreds of navigations per run, so a test suite was generating
+        analytics traffic against a production property, from whatever machine ran it, with no
+        way to see or stop it.
+      - It cost the suite a real, bounded failure mode. `page.goto`'s default `waitUntil` is
+        `'load'`, and `load` waits for the document's sub-resources — so a slow or hung
+        `googletagmanager.com` delayed every navigation and surfaced as a 30s `beforeEach`
+        timeout with nothing else wrong. That has been worked around per-spec by passing
+        `waitUntil: 'domcontentloaded'`, which hides the coupling instead of removing it.
+      - There is nothing to deploy it to. `npm run build` produces `dist/`, and the only
+        publishing in CI is `actions/upload-artifact` for coverage and test results
+        (`.github/workflows/ci.yml:104,168,259`) — nothing deploys this bundle anywhere, so
+        the container was pointing at a property nobody is running.
+
+      REVERSIBLE, and the operator's call: if this repo is ever deployed somewhere you want
+      analytics on, restore the GTM container here. To keep it from ever gating readiness
+      again, load it off the critical path — the snippet's own `j.async = true` only makes
+      `gtm.js` itself async, not the `window.dataLayer` bootstrap's own network round trip
+      through `load`.
+
+      REMOVED: the render-blocking Google Fonts stylesheet for Roboto (14 faces), and the
+      two `rel="preconnect"` hints that fed it.
+
+      Nothing renders differently without it, which is the part worth stating precisely:
+
+      - The app never asks for Roboto. The UI's stack is Tailwind's default `--font-sans`
+        (`node_modules/tailwindcss/theme.css:2`), which `@import 'tailwindcss'` pulls into
+        `src/index.scss:1`:
+        `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', …`. Roboto
+        is the FOURTH entry, behind two that always resolve — `-apple-system` on Apple
+        platforms, `BlinkMacSystemFont`/`system-ui` everywhere else — so the webfont was
+        fetched and then never selected. Measured on this tree before removal, 5 fresh-context
+        navigations, headless: `document.fonts.check('400 64px Roboto')` is `false`, and the
+        computed `--font-sans` stack on `<body>` is unchanged by this edit — it still resolves
+        `-apple-system` / `system-ui` first, so the face that was downloaded was never the one
+        selected.
+      - The one place that does name Roboto is the Text tool's font list
+        (`src/components/ToolbarsRight/Text/FontSelect.tsx:15`), which passes the chosen name
+        straight to `ctx.font` in `src/tools/text.ts:49`. That is a font-NAME passthrough,
+        and all thirteen of its other entries — Arial, Helvetica, Times New Roman, Trebuchet
+        MS — are plain operating-system families the app does not ship and cannot ship
+        without a bundling strategy it does not have. Roboto was the odd one out, the single
+        entry silently upgraded to a webfont, and what it bought was timing-dependent: canvas
+        `fillText` does not wait on a font download, so `Roboto` in the Text bar could paint
+        a fallback and repaint itself moments later. It is now consistent with its thirteen
+        siblings — "use Roboto if this machine has it", which is a true statement about all
+        fourteen.
+
+      REVERSIBLE, and the operator's call, with the constraint measured rather than assumed:
+      restoring the stylesheet as a plain `<link rel="stylesheet">` puts a third party back on
+      the critical path AND back on the `load` event. The usual
+      `media="print" onload="this.media='all'"` escape does NOT fix the second half, and it was
+      measured here rather than argued: with only the stylesheet put back that way, 5
+      fresh-context navigations still made 3 third-party requests per page load to
+      `fonts.googleapis.com` and `fonts.gstatic.com`, and `load` still fired a median of 61ms
+      after `DOMContentLoaded` — against 1ms with the stylesheet gone entirely. It moves the
+      barrier off first paint and leaves the e2e hazard exactly where it was. If Roboto must be
+      guaranteed, self-host it — that is the only version with no third party in it — and this
+      repository has no `public/` directory, no vendored fonts and no `@fontsource` dependency
+      today, so that is a real change with a real cost rather than a link to paste back.
+
+      THE NUMBER THAT DECIDED IT, measured the same way on this tree. Third-party requests per
+      navigation go 7 -> 0, across `fonts.googleapis.com`, `fonts.gstatic.com`,
+      `www.googletagmanager.com` and `region1.google-analytics.com`; and `load` stops waiting:
+      the `load`-minus-`DOMContentLoaded` gap goes a median of 160ms -> 1ms. That last row is the
+      structural one and the rest is bookkeeping. `page.goto`'s default `waitUntil` is `'load'`,
+      so this is the difference between a navigation that can only be as slow as the local dev
+      server this run started, and one that can be as slow as Google.
+
+      RESIDUE, deliberately left for the operator rather than silently rewritten here:
+      `HANDOFF.md` §140 is the open entry filed about this container, and it names
+      `e2e/helpers/console-police.ts:34-40` as where the beacon is recorded. Removing the tags
+      is the fix that entry asks for; deleting the entry, and rewriting the two comments above
+      that describe a beacon which no longer happens, are edits to files this change does not
+      own.
+    -->
   </head>
   <body>
-    <!-- Google Tag Manager (noscript) -->
-    <noscript>
-      <iframe
-        src="https://www.googletagmanager.com/ns.html?id=GTM-WBWSB9XS"
-        height="0"
-        width="0"
-        style="display: none; visibility: hidden"
-      ></iframe>
-    </noscript>
-    <!-- End Google Tag Manager (noscript) -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

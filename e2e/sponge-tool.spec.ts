@@ -680,37 +680,43 @@ test.describe('Sponge tool', () => {
   });
 
   /**
-   * 6. A BEDROCK-ONLY DOCUMENT REFUSES THE GESTURE.
-   *
-   * The only layer on a fresh document is the bedrock one from `DEFAULT_BLANK_IMAGE`
-   * (`src/App.tsx:16-21`), and `SpongeToolArea.tsx:54` computes `enabled` as
-   * `args && activeLayerId && activeLayer && !activeLayer.isBedrock`, which `usePaintStroke`
-   * turns into every handler being a no-op. So the drag must change no pixels AND write no history
-   * item: the second half is the half a tool that merely repainted the same colour would pass,
-   * and the undo button is disabled on a fresh document for exactly that reason.
+   * The refusal is intentional: a tonal tool never silently converts the backing layer or writes a
+   * history entry. Conversion is a separate Layers-panel action, covered by the next test.
    */
-  test('a drag on a bedrock-only document changes no pixels and writes no history entry', async ({ page }) => {
-    const geometry = await workspaceGeometry(page);
-    const before = await readWindow(page, geometry, { x: 400, y: 300 });
+  test('refuses a Sponge stroke on the Background without changing pixels or history', async ({ page }) => {
+    const geometry = await selectSponge(page, 'desaturate');
+    const before = await readWindow(page, geometry, { x: BAND_MID_X, y: BAND_Y });
+
+    await spongeStroke(page, geometry);
+
+    await expectWindow(
+      page,
+      geometry,
+      { x: BAND_MID_X, y: BAND_Y },
+      before,
+      'a bedrock stroke must leave the backing pixels unchanged'
+    );
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+  });
+
+  /**
+   * 6. A BEDROCK-ONLY DOCUMENT HAS AN EXPLICIT EDITABLE-LAYER ROUTE.
+   *
+   * The tonal tools keep refusing the backing image. The Layers panel's conversion action is the
+   * Photoshop-faithful route out of that state, and it must be a history edit rather than an
+   * implicit merge triggered by a refused pointer gesture.
+   */
+  test('converts a lone Background into an editable layer before a tonal gesture', async ({ page }) => {
+    const convert = page.getByTestId('layers-convert-background-button');
+    await expect(convert, 'a fresh document exposes the Background conversion route').toBeVisible();
+    await expect(page.getByTestId('undo-button')).toBeDisabled();
+
+    await convert.click();
+    await expect(convert).toHaveCount(0);
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
 
     await selectTonal(page, SPONGE_ITEM);
-    await expect(modeSelect(page), 'the Sponge is selectable with no editable layer').toBeVisible();
-    await setMode(page, 'desaturate');
-    await setSlider(page, 'Flow', FLOW_FULL);
-    await setSlider(page, 'Size', SPONGE_SIZE);
-
-    const armed = await workspaceGeometry(page);
-    await strokeDocument(page, armed, { x: STROKE_FROM_X, y: BAND_Y }, { x: STROKE_TO_X, y: BAND_Y }, 20);
-
-    expect
-      .soft(await readWindow(page, armed, { x: 400, y: 300 }), 'a bedrock drag must not move a pixel')
-      .toEqual(before);
-    expect
-      .soft(
-        await page.getByTestId('undo-button').isDisabled(),
-        'a refused gesture must not have written a TOOL_ACTION history item'
-      )
-      .toBe(true);
+    await expect(modeSelect(page), 'the converted layer keeps the Sponge available').toBeVisible();
   });
 
   /**
@@ -775,8 +781,28 @@ test.describe('Sponge tool', () => {
     }
     await expect(page.getByRole('checkbox', { name: 'Vibrance' })).toBeVisible();
     // `Range` and `Exposure` are the Tonal bar's controls, and the Sponge has neither.
+    //
+    // An absence is only a statement if the thing could have been there, so each locator is
+    // resolved against the bar that DOES carry it first. `Range` is anchored by the reachability
+    // test above, which asserts the Burn's `Range` combobox is visible; `Exposure` had no
+    // positive anywhere in this file, so it gets one here. The Tonal bar is the sibling in the
+    // SAME `O` flyout and `Tonal()` labels its own range input with exactly this word, so these
+    // are the same locator in the two bars rather than two unrelated names. Without the Dodge
+    // round trip below, a build whose Tonal bar stopped minting `Exposure` — or one that
+    // renamed it — would pass the Sponge's absence forever.
+    await selectTonal(page, DODGE_ITEM);
+    await expect(
+      page.getByRole('slider', { name: 'Exposure' }),
+      'the Tonal bar carries an Exposure slider: the positive both absences below are stated against'
+    ).toBeVisible();
+
+    await selectTonal(page, SPONGE_ITEM);
+    await expect(modeSelect(page), "the Sponge's own bar is back up, so the absences are about it").toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Range' })).toHaveCount(0);
-    await expect(page.getByRole('slider', { name: 'Exposure' })).toHaveCount(0);
+    await expect(
+      page.getByRole('slider', { name: 'Exposure' }),
+      'the Sponge has neither Tonal control, and the locator was shown to resolve on the Dodge'
+    ).toHaveCount(0);
 
     const options = await modeSelect(page).locator('option').allTextContents();
     expect

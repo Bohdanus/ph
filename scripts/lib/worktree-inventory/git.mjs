@@ -119,17 +119,100 @@ function isMergedInto(cwd, base) {
 }
 
 /**
+ * Of the paths a worktree reports as modified, how many the base branch does
+ * NOT already hold byte-for-byte.
+ *
+ * WHY THIS IS A SEPARATE NUMBER, NOT A REPLACEMENT
+ * -------------------------------------------------
+ * `git status` compares the working tree against the worktree's own HEAD. On a
+ * branch 100 commits behind `main` that reports every file `main` has since
+ * rewritten as "modified", so a worktree holding nothing of its own can report
+ * a dirty count in the dozens. A sweep that reads `modified` as "uncommitted
+ * work at risk" then overstates the risk roughly fourfold: on 2026-10-02,
+ * `history/migration-finalisation` reported 70 modified and 35 of them were
+ * byte-identical to `main`, and `fix/header-menu-structure` reported 13 with 7
+ * already on `main`. The work was already on `main`; only the branch tip was
+ * behind.
+ *
+ * So `modified` stays exactly as it was — it is what the strict disposal test
+ * needs, and making that test more permissive is the wrong direction — and this
+ * answers the question a reader actually has: of the paths that differ from the
+ * tip, how many differ from the BASE too, and are therefore content no commit
+ * on the base holds?
+ *
+ * An untracked path counts here on its own: the base branch cannot hold a file
+ * the branch never tracked, so every untracked path is content only this
+ * directory has. That is the shape `git worktree remove --force` destroys.
+ *
+ * Failure is counted as `notOnBase`. A path whose blob cannot be hashed — a
+ * filename `git status` quoted because it contains a space or a newline, a file
+ * deleted mid-scan — cannot be proven to be on the base either, and the safe
+ * direction to be wrong in is the one that keeps the work.
+ */
+function notOnBase(cwd, base, { modifiedPaths, untracked }) {
+  const onBase = new Set();
+
+  if (modifiedPaths.length > 0) {
+    // Two batched calls rather than two per path: a worktree can report
+    // hundreds of modified paths and this runs for every worktree in the
+    // repository.
+    //
+    // `hash-object` prints one hash per argument, in order, which pairs with
+    // `modifiedPaths` positionally. `ls-tree` prints only the paths that DO
+    // exist on the base, so a missing path is absent from the set below and
+    // counts as not-on-base, which is the correct reading: the base has no such
+    // path at all.
+    const hashes = git(cwd, ['hash-object', '--', ...modifiedPaths]);
+    const tree = git(cwd, ['ls-tree', base, '--', ...modifiedPaths]);
+
+    if (hashes !== null && tree !== null) {
+      const worktreeHashes = hashes.split('\n').filter(Boolean);
+      const baseBlobs = new Map();
+      for (const line of tree.split('\n')) {
+        if (!line.trim()) continue;
+        const tab = line.indexOf('\t');
+        if (tab === -1) continue;
+        const [meta] = [line.slice(0, tab)];
+        const path = line.slice(tab + 1);
+        const blob = meta.split(/\s+/)[2];
+        if (blob) baseBlobs.set(path, blob);
+      }
+      modifiedPaths.forEach((path, i) => {
+        const mine = worktreeHashes[i];
+        const theirs = baseBlobs.get(path);
+        if (mine && theirs && mine === theirs) onBase.add(path);
+      });
+    }
+  }
+
+  return modifiedPaths.filter((p) => !onBase.has(p)).length + untracked;
+}
+
+/**
  * Everything the working tree holds that no commit does.
  *
  * Split into modified vs untracked because they are recovered differently: a
  * modified file is `git diff` away from a commit, an untracked file is on no
  * ref at all and is destroyed by `git worktree remove --force`.
+ *
+ * `notOnBase` is the subset of `modified` whose content the base branch does
+ * not already hold, plus every untracked path — see `notOnBase` above for why
+ * it is reported next to the count rather than instead of it.
  */
-function workingTreeState(cwd) {
+function workingTreeState(cwd, base) {
   const out = git(cwd, ['status', '--porcelain']);
-  if (out === null) return { modified: 0, untracked: 0, paths: [] };
+  // `read: false` SAYS THE COUNTS ARE NOT A FINDING. Returning zeros on failure
+  // is indistinguishable from a genuinely empty tree to every caller, and a
+  // corrupt index or a missing git state file produces exactly that. `prunable`
+  // already required `modified === 0 && untracked === 0` and so already read an
+  // unreadable tree as an empty one; that hole is older than the flag consuming
+  // it, and it is recorded rather than fixed here because changing what `prunable`
+  // means reaches every action. A caller that is about to AUTHORISE A REMOVAL
+  // needs the distinction this field carries.
+  if (out === null) return { modified: 0, untracked: 0, notOnBase: 0, paths: [], read: false };
 
   const paths = [];
+  const modifiedPaths = [];
   let modified = 0;
   let untracked = 0;
 
@@ -137,10 +220,15 @@ function workingTreeState(cwd) {
     if (!line.trim()) continue;
     paths.push(line.slice(3));
     if (line.startsWith('??')) untracked += 1;
-    else modified += 1;
+    else {
+      modified += 1;
+      modifiedPaths.push(line.slice(3));
+    }
   }
 
-  return { modified, untracked, paths };
+  const offBase = base ? notOnBase(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
+
+  return { modified, untracked, notOnBase: offBase, paths, read: true };
 }
 
 /** Subject line and dates of the branch's tip commit. */
@@ -249,7 +337,7 @@ export function collectWorktrees(cwd, { base = 'main' } = {}) {
 
   return worktrees.map((w) => {
     const { ahead, behind } = aheadBehind(w.path, base);
-    const tree = workingTreeState(w.path);
+    const tree = workingTreeState(w.path, base);
     const unmerged = typeof ahead === 'number' && ahead > 0;
 
     return {

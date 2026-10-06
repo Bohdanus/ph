@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
+import { TextEditOverlay } from './TextEditOverlay.tsx';
 import { DummyToolArea } from './DummyToolArea.tsx';
 
 import './Main.scss';
@@ -15,6 +16,8 @@ import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
 import { SingleRowColumnMarqueeToolArea } from './SingleRowColumnMarqueeToolArea.tsx';
 import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
+import { RulerToolArea } from './RulerToolArea.tsx';
+import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -33,33 +36,44 @@ import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
-import { hasPendingText } from '../../util/typeGuards.ts';
+import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
 
-// The tools that commit a polygon selection, and so the only modes with a border
-// to march. The rectangular selection tool is absent on purpose: `useRect` strokes
-// its own rect, with handles, and marching it as well would double the outline.
-const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'magic-wand'];
+/**
+ * The interaction modes whose tool owns a selection, which is every mode that can have a
+ * marching-ants border — the ants ARE the selection border in this editor, for all of them.
+ *
+ * This replaces a narrower list that named only the polygon modes and left the rectangular
+ * selection out on the stated ground that `useRect` strokes a border of its own. That reason
+ * has two halves and only one of them was ever true. `useRect` still owns the four handles,
+ * and they are the resize hit area, so they stay; but Adobe documents the ants as the display
+ * of a selection and not as a per-tool option
+ * (`helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html`
+ * lists all nine marquee and lasso tools as making selections, and none of them as producing a
+ * different kind of border), and nothing in `useRect`'s own API makes its static stroke the
+ * selection border rather than a draft preview of it.
+ *
+ * Exported so the tool-area test asserts the list itself rather than a copy of it that can
+ * drift.
+ */
+export const SELECTION_INTERACTION_MODES: ReadonlySet<string> = new Set([
+  'lasso',
+  'feather-magnetic-lasso',
+  'magic-wand',
+  'quick-selection',
+  'elliptical-selection',
+  'single-row-column-marquee',
+  'rectangular-selection',
+]);
 
 const Main = () => {
   const [
-    {
-      canvasRef,
-      containerRef,
-      toolOverlayRef,
-      rectOverlayRef,
-      hasImage,
-      hasUnsavedChanges,
-      currentArgs,
-      layers,
-      toolName,
-      totalSize,
-      documentFrame,
-    },
+    { canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize, documentFrame },
   ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
   const { openLoadImageDialog, openNewImageDialog } = useFile();
+  const { confirmDiscard } = useUnsavedChanges();
   const { drawAllLayers } = useLayers();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -116,6 +130,19 @@ const Main = () => {
     interactionMode = 'quick-selection';
   } else if (toolName === 'eyedropper') {
     interactionMode = 'eyedropper';
+  } else if (toolName === 'ruler') {
+    // Its own mode, not a mode shared with the Eyedropper: the two are one `I`-family tile but they
+    // do different things with a pointer — one samples a pixel, the other drags a nonprinting line
+    // across the overlay — and one mode mounts one area, so a shared mode would mount one of them.
+    interactionMode = 'ruler';
+  } else if (toolName === 'color-sampler') {
+    // Its own mode, and NOT a mode shared with the eyedropper above. The two are one `I`-family
+    // tile and they both read a pixel, but they do different things with the result — one writes it
+    // to the foreground swatch and commits nothing, the other leaves a numbered marker on the
+    // overlay that a later drag can pick up and move — and one mode mounts one area. The Eyedropper's
+    // Shift-click place-a-sampler path calls the same store rather than sharing this mode, which is
+    // why the two can agree about the hit test without one area mounting for both.
+    interactionMode = 'color-sampler';
   } else if (toolName === 'eraser') {
     // A brush, but NOT the `draw` mode: `DrawToolArea` creates a new layer from a
     // `{ ...args, points }` and draws the `DrawToolArgs` preview, where the eraser
@@ -142,6 +169,11 @@ const Main = () => {
     // A drag, unlike the bucket it shares an options bar with.
     interactionMode = 'gradient';
   }
+
+  // One read, because the canvas's `display` and the loop's `enabled` gate the same question and
+  // have to answer it identically: the canvas is the ants' only output, so a `display: none`
+  // beside a running loop would run 60 frames a second into a canvas nobody can see.
+  const selectionToolActive = SELECTION_INTERACTION_MODES.has(interactionMode);
 
   useEffect(() => {
     drawAllLayers();
@@ -206,12 +238,12 @@ const Main = () => {
       setIsDragging(false);
       const file = event.dataTransfer.files?.[0];
       if (!file) return;
-      if (
-        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
-        !confirm('Discard unsaved changes and open another file?')
-      )
-        return;
+      // The one destructive entry point a bare gesture reaches on a populated document:
+      // unlike the empty-state buttons below, the drop handler is not gated on `!hasImage`.
+      // Inside the `try`, so a rejection from the guard is reported through the same channel
+      // as a decode failure rather than escaping as an unhandled rejection.
       try {
+        if (!(await confirmDiscard('open-document'))) return;
         await setImageFromUpload(await loadDocumentFile(file));
       } catch (error) {
         console.error('Failed to open file:', error);
@@ -235,6 +267,8 @@ const Main = () => {
       | typeof SingleRowColumnMarqueeToolArea
       | typeof QuickSelectionToolArea
       | typeof EyedropperToolArea
+      | typeof RulerToolArea
+      | typeof ColorSamplerToolArea
       | typeof EraserToolArea
       | typeof SmudgeToolArea
       | typeof DodgeToolArea
@@ -262,6 +296,8 @@ const Main = () => {
       else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
       else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
+      else if (interactionMode === 'ruler') EventHandler = RulerToolArea;
+      else if (interactionMode === 'color-sampler') EventHandler = ColorSamplerToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
       else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
@@ -303,8 +339,8 @@ const Main = () => {
             // paints and is missing here renders a blank preview with no error, and a
             // mode listed here that paints nothing just shows an already-clear canvas.
             // Painted: clone-stamp (the Alt source marker, CloneStampToolArea.tsx:249),
-            // and the two selection tools (EllipticalSelectionToolArea.tsx:107,
-            // QuickSelectionToolArea.tsx:99). NOT painted, and so deliberately absent:
+            // and the two selection tools (EllipticalSelectionToolArea.tsx:113,
+            // QuickSelectionToolArea.tsx:120). NOT painted, and so deliberately absent:
             // eraser, smudge, dodge, burn, sharpen, paint-bucket, gradient and the
             // eyedropper — every one of them previews through `tempUpdateLayer`, which
             // republishes the layer and redraws the document canvas, and the eyedropper
@@ -329,6 +365,14 @@ const Main = () => {
               'single-row-column-marquee',
               'quick-selection',
               'clone-stamp',
+              // The Ruler paints its measuring line here and nowhere else: it commits no pixels, so
+              // there is no layer to preview through `tempUpdateLayer`, and the line is chrome that
+              // must survive on top of the document rather than be composited into it.
+              'ruler',
+              // The Color Sampler paints its markers here for the Ruler's reason: a sampler is
+              // chrome over the document and never part of it, so there is no layer to preview
+              // through `tempUpdateLayer` and the markers must sit on top of the canvas instead.
+              'color-sampler',
             ].includes(interactionMode)
               ? 'block'
               : 'none',
@@ -352,14 +396,25 @@ const Main = () => {
           data-testid="selection-ants-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
-            display: POLYGON_SELECTION_MODES.includes(interactionMode) ? 'block' : 'none',
+            display: selectionToolActive ? 'block' : 'none',
           }}
         />
-        <SelectionMarchingAnts
-          overlayRef={selectionAntsOverlayRef}
-          enabled={POLYGON_SELECTION_MODES.includes(interactionMode)}
-        />
+        <SelectionMarchingAnts overlayRef={selectionAntsOverlayRef} enabled={selectionToolActive} />
         <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+        {/*
+         * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so
+         * the last child paints on top. The in-place editor has to receive the pointer, because
+         * placing a caret is a click INSIDE the box — which is the `absolute inset-0` tool area's
+         * territory — so it cannot sit below `EventHandler`. It covers exactly the type box and
+         * nothing else, so every canvas gesture outside it still reaches the tool area.
+         *
+         * Gated on the text mode for the same reason `EventHandler` gates the tool areas: the
+         * editor reads `useCurrentTool`, and a hook that throws outside its provider takes the whole
+         * canvas region down with it through the `Canvas` ErrorBoundary. Measuring the workspace
+         * fit for every one of the twenty-odd tools would also be work no tool but this one needs.
+         * See `TextEditOverlay.tsx`.
+         */}
+        {interactionMode === 'text' && <TextEditOverlay />}
       </div>
     );
   };

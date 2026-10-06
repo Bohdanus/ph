@@ -3,6 +3,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointsToLayerLocal } from '../../util/layer-space.ts';
 import type { SpongeToolArgs } from '../../tools/sponge.ts';
 
@@ -38,8 +39,8 @@ type SpongeToolAreaProps = {
  *
  * The canvas-to-document conversion is `usePaintStroke`'s job, so `points` arrives in
  * document space; the layer-local conversion is this file's, for the reason
- * `DodgeToolArea.tsx:67-70` states — the processor addresses the layer's OWN raster, whose
- * pixel (0, 0) is `activeLayer.pos`.
+ * `DodgeToolArea.tsx` states — the processor addresses the PRESENTED layer's own raster,
+ * whose pixel (0, 0) is `rasterBounds`.
  *
  * Bedrock is refused for the same reason it is on the Dodge: it is the document background,
  * there is no layer to commit onto, and a stroke over it would have nowhere to go.
@@ -52,6 +53,9 @@ export const SpongeToolArea = ({ className }: SpongeToolAreaProps) => {
   const args = getToolArgs('sponge') as SpongeToolArgs | null;
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
   const enabled = Boolean(args && activeLayerId && activeLayer && !activeLayer.isBedrock);
+  // The origin of the raster the processor is handed: `pos` for a layer that presents
+  // nothing, its EVALUATED extent for one carrying a transform or a filter.
+  const rasterBounds = activeLayer ? processorPresentationBounds(activeLayer) : null;
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
     { imageSize: totalSize, containerRef, enabled },
@@ -60,14 +64,14 @@ export const SpongeToolArea = ({ className }: SpongeToolAreaProps) => {
         if (!args || !activeLayerId) return;
         tempUpdateLayer({
           id: activeLayerId,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, activeLayer?.pos) },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
       onCommit: (points) => {
         if (!args || !activeLayerId) return;
         void updateLayerByTool({
           id: activeLayerId,
-          toolArgs: { ...args, points: documentPointsToLayerLocal(points, activeLayer?.pos) },
+          toolArgs: { ...args, points: documentPointsToLayerLocal(points, rasterBounds) },
         });
       },
     }

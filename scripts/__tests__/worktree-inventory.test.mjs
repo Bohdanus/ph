@@ -21,7 +21,7 @@
  * `node:sqlite` is only exercised where a real temporary database is cheap.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
@@ -49,6 +49,7 @@ import {
 } from '../lib/worktree-inventory/writes.mjs';
 import { resolveReadsReleasedBefore } from '../worktree-inventory.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
+import { Board } from '../lib/agent-board/db.mjs';
 
 /**
  * This file's budget, and the reason it is not Vitest's default 5s.
@@ -285,7 +286,12 @@ function wt(overrides = {}) {
     ahead: 1,
     behind: 2,
     mergedIntoBase: false,
-    workingTree: { modified: 0, untracked: 0, paths: [] },
+    // `read: true` IS PART OF THE SHAPE, NOT A DETAIL. `git.mjs` sets it on both
+    // return paths of `workingTreeState`, and `classify`'s legacy arm requires it to
+    // be `true`. A fixture that omits it builds the UNREADABLE tree, which no
+    // production path can produce — so the omission silently exercised the failure
+    // shape while every legacy assertion passed on it.
+    workingTree: { modified: 0, untracked: 0, paths: [], read: true },
     commitsAhead: [],
     ...overrides,
   };
@@ -440,6 +446,64 @@ describe('git.mjs against a real repository', () => {
     }
   });
 
+  it('separates "the branch is behind" from "this content is on no ref"', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      // The shape that produced the false alarm: main moves `one.txt` on to
+      // content the side branch has never seen, and then the side worktree is
+      // given those same bytes. `one.txt` is `modified` — side's tip still
+      // holds the old ones — while the content on disk is exactly what main
+      // already has. Deleting that worktree loses nothing, and reporting it as
+      // uncommitted work at risk is wrong by the only measure that matters.
+      writeFileSync(join(dir, 'one.txt'), 'same-on-both');
+      g('commit', '--quiet', '-am', 'main moves one');
+      g('checkout', '--quiet', 'side');
+      writeFileSync(join(dir, 'one.txt'), 'same-on-both');
+
+      const behind = __testables.workingTreeState(dir, 'main');
+      expect(behind.modified).toBe(1);
+      expect(behind.paths).toEqual(['one.txt']);
+      // The point of the field: main already holds these exact bytes.
+      expect(behind.notOnBase).toBe(0);
+
+      // An edit main does NOT have is content no commit anywhere holds.
+      writeFileSync(join(dir, 'two.txt'), 'only-on-side');
+      const real = __testables.workingTreeState(dir, 'main');
+      expect(real.modified).toBe(2);
+      expect(real.notOnBase).toBe(1);
+
+      // An untracked file cannot be on the base branch by definition: the
+      // branch never tracked it. It is the shape `remove --force` destroys.
+      writeFileSync(join(dir, 'loose.txt'), 'untracked');
+      const withUntracked = __testables.workingTreeState(dir, 'main');
+      expect(withUntracked.untracked).toBe(1);
+      expect(withUntracked.notOnBase).toBe(2);
+
+      // A path the base branch does not have AT ALL counts as not-on-base:
+      // side added `four.txt`, main never did, and it is in side's tip so it
+      // is not even reported as modified — the risk is `main` deleting nothing
+      // here, and this asserts the field does not claim otherwise.
+      expect(withUntracked.notOnBase).toBeLessThanOrEqual(withUntracked.modified + withUntracked.untracked);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a base branch that cannot be resolved as not-on-base rather than as clean', () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'edited');
+      // The direction to be wrong in is the one that keeps the work: an
+      // unresolvable base cannot prove anything is on it.
+      const tree = __testables.workingTreeState(dir, 'no-such-branch');
+      expect(tree.modified).toBe(1);
+      expect(tree.notOnBase).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reports whether the commit list was cut off at the cap', () => {
     const dir = makeRepo();
     try {
@@ -501,28 +565,44 @@ describe('resolveBoardDb', () => {
 
 describe('readBoard: liveness of claims and locks', () => {
   /**
-   * A board database with the CURRENT schema and one row of each kind.
+   * The CURRENT schema, hand-written — and the DDL is COPIED FROM THE PRODUCT
+   * (`db.mjs`, `CREATE TABLE IF NOT EXISTS`), constraints and all, because a
+   * loose hand-written schema is the same defect wearing a different hat.
    *
-   * `file_locks` deliberately has NO `issue_id` column. That is v1 residue:
-   * attribution moved to the `issue_locks` pairing table, and the migration
-   * copies rows into it without dropping the old column — so every board created
-   * before v2 still carries it and every board created AT v2 does not. This
-   * fixture used to build the v1 shape, which is precisely why `readBoard`
-   * selecting `file_locks.issue_id` passed here and threw
-   * `no such column: issue_id` on a fresh clone. A fixture must be the shape a
-   * real new database has, or it certifies the bug.
+   * It used to declare `file_locks` with a v1 `issue_id` column, which made every
+   * test below pass against a board the product stopped creating — the one shape
+   * in which the lock query does not throw. `file_locks` has carried no `issue_id`
+   * since schema v2: attribution moved to the `issue_locks` pairing table, and
+   * `migrateFileLockAttribution` copies rows into it without ever dropping the
+   * old column, so every board created before v2 still carries it and every board
+   * created AT v2 does not — which is why selecting it worked on the only
+   * database anyone tested against and threw `no such column: issue_id` on every
+   * fresh clone. A fixture must be the shape a real new database has, or it
+   * certifies the bug.
+   *
+   * The tests that must run against a board the PRODUCT creates, rather than one
+   * this file describes, use `Board` itself — see "readBoard against a board the
+   * product creates" below.
    */
+  const CURRENT_SCHEMA = `
+    CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
+    CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
+                         lease_until TEXT, released_at TEXT);
+    CREATE TABLE file_locks (path TEXT NOT NULL, agent_id TEXT NOT NULL, worktree TEXT,
+                             acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+                             released_at TEXT, PRIMARY KEY (path, agent_id));
+    CREATE TABLE issue_locks (issue_id TEXT NOT NULL, path TEXT NOT NULL, agent_id TEXT NOT NULL,
+                              created_at TEXT NOT NULL, PRIMARY KEY (issue_id, path));
+    CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
+                        session_id TEXT, last_seen TEXT);`;
+
+  const iso = (ms) => new Date(ms).toISOString();
+
+  /** A board database with the real schema and one row of each kind. */
   function makeBoard({ leaseUntil, releasedAt = null, expiresAt }) {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
     const db = new DatabaseSync(join(dir, 'board.db'));
-    db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
-             CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
-                                  lease_until TEXT, released_at TEXT);
-             CREATE TABLE file_locks (path TEXT NOT NULL, agent_id TEXT NOT NULL, worktree TEXT,
-                                     acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-                                     released_at TEXT, PRIMARY KEY (path, agent_id));
-             CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
-                                 session_id TEXT, last_seen TEXT);`);
+    db.exec(CURRENT_SCHEMA);
     db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', 'x');
     db.prepare('INSERT INTO claims VALUES (?,?,?,?,?,?)').run(
       'ph-1',
@@ -536,15 +616,18 @@ describe('readBoard: liveness of claims and locks', () => {
       'src/a.ts',
       'agent-a',
       '/repo/.kilo/worktrees/x',
-      '2026-09-28T12:00:00.000Z',
+      iso(NOW),
       expiresAt,
       releasedAt
     );
+    // The pairing, in the table that holds it — a second insert with the same
+    // column count in a different order would be the v1 bug wearing a costume.
+    if (releasedAt === null) {
+      db.prepare('INSERT INTO issue_locks VALUES (?,?,?,?)').run('ph-1', 'src/a.ts', 'agent-a', iso(NOW));
+    }
     db.close();
     return { dir, dbPath: join(dir, 'board.db') };
   }
-
-  const iso = (ms) => new Date(ms).toISOString();
 
   it('keeps a claim whose ISO-8601 lease has not expired', () => {
     // `lease_until` is TEXT. A bare `Number(x) > nowMs` is `NaN > n` — false
@@ -598,13 +681,7 @@ describe('readBoard: liveness of claims and locks', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
     const db = new DatabaseSync(join(dir, 'board.db'));
     try {
-      db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
-               CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
-                                    lease_until TEXT, released_at TEXT);
-               CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
-                                       expires_at TEXT, released_at TEXT);
-               CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
-                                   session_id TEXT, last_seen TEXT);`);
+      db.exec(CURRENT_SCHEMA);
       db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
         'chore/x',
         'kilo',
@@ -661,6 +738,167 @@ describe('readBoard: liveness of claims and locks', () => {
     expect(board.available).toBe(false);
     expect(board.claims.size).toBe(0);
     expect(board.issues).toEqual([]);
+  });
+});
+
+/**
+ * The board half of the inventory, against a board the PRODUCT creates.
+ *
+ * Everything above hand-writes its schema, which is exactly how the defect this
+ * block exists for survived: the fixture declared the v1 `file_locks.issue_id`
+ * that schema v2 removed, so the suite was green against the only board shape on
+ * which the query cannot fail, while a real fresh board threw `no such column`
+ * out of a command AGENTS.md makes mandatory. A hand-written schema is a claim
+ * about the product that nothing checks; `Board` is the product.
+ */
+describe('readBoard against a board the product creates', () => {
+  let dir;
+  let worktree;
+  let board;
+
+  const identity = (agentId) => ({
+    agentId,
+    kind: 'kilo',
+    worktree,
+    branch: `feat/${agentId}`,
+    sessionId: `run-${agentId}`,
+    pid: 4242,
+    meta: {},
+  });
+
+  const openBoard = (agentId) => new Board({ dir, identity: identity(agentId) }).open();
+
+  /** `readBoard` on the board just written, with the worktree's own path. */
+  const read = (nowMs) => readBoard(process.cwd(), { nowMs, dbPath: join(dir, 'board.db') });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'wtinv-real-board-'));
+    worktree = join(dir, 'wt-a');
+    board = openBoard('agent-a');
+  });
+
+  afterEach(() => {
+    board.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads a lock taken with an issue off a board the current schema created', () => {
+    // The failing case, restated as a test: on a board the current code creates,
+    // `file_locks` has no `issue_id`, and selecting it throws out of an
+    // un-guarded `readBoard` in a command with one caller and no catch.
+    const { id } = board.createIssue({ title: 'paired' });
+    board.holdFiles(['src/a.ts'], { issueId: id });
+
+    const result = read(Date.now());
+
+    expect(result.available).toBe(true);
+    expect(result.lockIssueAttribution).toBe('issue_locks');
+    const locks = result.fileLocks.get(worktree);
+    expect(locks).toHaveLength(1);
+    expect(locks[0].path).toBe('src/a.ts');
+    expect(locks[0].agentId).toBe('agent-a');
+    expect(locks[0].issueIds).toEqual([id]);
+  });
+
+  it('reads a lock taken with NO issue as no attribution, not as a crash', () => {
+    // `hold <path>` with no `--issue` is the form AGENTS.md prescribes, and it
+    // writes no `issue_locks` row at all. Reporting an issue here would be a
+    // guess, so the answer is an empty set and the reader still says where the
+    // attribution came from.
+    board.holdFiles(['src/unpaired.ts']);
+
+    const result = read(Date.now());
+
+    expect(result.lockIssueAttribution).toBe('issue_locks');
+    const locks = result.fileLocks.get(worktree);
+    expect(locks).toHaveLength(1);
+    expect(locks[0].path).toBe('src/unpaired.ts');
+    expect(locks[0].issueIds).toEqual([]);
+  });
+
+  it('reports every issue one lock is being used for', () => {
+    // `issue_locks` is keyed (issue_id, path), so ONE lock can serve as many
+    // issues as there are legitimate uses of it — which is the whole reason the
+    // attribution moved out of a column. A single-valued field has no honest
+    // answer here: it must drop one of these or name the wrong one, and the
+    // inventory is what a human reads to decide who is in which file.
+    const first = board.createIssue({ title: 'first' });
+    const second = board.createIssue({ title: 'second' });
+    board.holdFiles(['src/shared.ts'], { issueId: first.id });
+    board.holdFiles(['src/shared.ts'], { issueId: second.id });
+
+    const result = read(Date.now());
+
+    const locks = result.fileLocks.get(worktree);
+    // ONE lock, not two rows: the unit is the lock, and a join that multiplied
+    // the lock by its pairings would report the same file held twice.
+    expect(locks).toHaveLength(1);
+    expect(locks[0].issueIds).toEqual([first.id, second.id]);
+  });
+
+  it("does not attribute another agent's issue to this agent's lock on the same path", () => {
+    // Attribution is keyed (path, agent): two agents may hold the same file, and
+    // a key of path alone would hand each of them the other's issue.
+    const other = new Board({ dir, identity: { ...identity('agent-b'), worktree } }).open();
+    try {
+      const { id } = board.createIssue({ title: 'mine' });
+      board.holdFiles(['src/contended.ts'], { issueId: id });
+      other.holdFiles(['src/contended.ts'], { force: true });
+
+      const result = read(Date.now());
+      const locks = result.fileLocks.get(worktree);
+
+      expect(locks.map((l) => l.agentId).sort()).toEqual(['agent-a', 'agent-b']);
+      expect(locks.find((l) => l.agentId === 'agent-a').issueIds).toEqual([id]);
+      expect(locks.find((l) => l.agentId === 'agent-b').issueIds).toEqual([]);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("reports a v1 board's unreadable attribution instead of throwing or faking it", () => {
+    // The third on-disk shape, and the one the read-only open makes reachable:
+    // `readBoard` never migrates, so a v1 board file that nothing has opened
+    // since the upgrade still has the v1 column and NO `issue_locks` table. The
+    // query for attribution throws there, and an unguarded throw on a board this
+    // old would be a defect introduced by the fix. The payload has to say so,
+    // because "this lock has no issue" and "this lock's issue could not be read"
+    // are different answers and only one of them is true.
+    const v1Dir = mkdtempSync(join(tmpdir(), 'wtinv-v1-board-'));
+    try {
+      const db = new DatabaseSync(join(v1Dir, 'board.db'));
+      db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
+               CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
+                                    lease_until TEXT, released_at TEXT);
+               CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
+                                       acquired_at TEXT, expires_at TEXT, released_at TEXT,
+                                       PRIMARY KEY (path, agent_id));
+               CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
+                                   session_id TEXT, last_seen TEXT);`);
+      db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', null);
+      const at = Date.now();
+      db.prepare('INSERT INTO file_locks VALUES (?,?,?,?,?,?,?)').run(
+        'src/legacy.ts',
+        'agent-a',
+        'ph-1',
+        worktree,
+        new Date(at).toISOString(),
+        new Date(at + 600_000).toISOString(),
+        null
+      );
+      db.close();
+
+      const result = readBoard(process.cwd(), { nowMs: at, dbPath: join(v1Dir, 'board.db') });
+
+      expect(result.available).toBe(true);
+      expect(result.lockIssueAttribution).toBe('unavailable');
+      const locks = result.fileLocks.get(worktree);
+      expect(locks).toHaveLength(1);
+      expect(locks[0].path).toBe('src/legacy.ts');
+      expect(locks[0].issueIds).toEqual([]);
+    } finally {
+      rmSync(v1Dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -870,7 +1108,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
   });
 
   it('never calls a worktree with uncommitted work ready to land', () => {
-    const v = classify(unmergedClean({ workingTree: { modified: 2, untracked: 0, paths: [] } }), args());
+    const v = classify(unmergedClean({ workingTree: { modified: 2, untracked: 0, paths: [], read: true } }), args());
     expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
     expect(v.action).toBe(ACTION.AT_RISK);
   });
@@ -896,7 +1134,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.SALVAGE, wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: true } }), {}],
       [
         RECOMMENDATION.SALVAGE,
-        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [] } }),
+        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [], read: true } }),
         {},
       ],
       // Never checked at all: absent, not null. Must not read as a licence.
@@ -904,6 +1142,21 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE, wt({ ahead: 0, mergedIntoBase: true }), { curated: { mustNotPrune: true } }],
       [RECOMMENDATION.IN_USE, wt({ ahead: 0, mergedIntoBase: true }), { boardAgents: [{ live: true, agentId: 'a' }] }],
       [RECOMMENDATION.KEEP, wt({ isPrimary: true }), {}],
+      // A curated `legacy` on a branch git already calls disposable. The shape is
+      // the ordinary one so the ONLY thing producing the verdict is the flag.
+      [
+        RECOMMENDATION.LEGACY,
+        wt({ ahead: 0, mergedIntoBase: true }),
+        { curated: { legacy: true, note: 'kept for the off chance' } },
+      ],
+      // And the same flag on a branch that would otherwise be offered for merge:
+      // `legacy` says do not merge it either, which is why it cannot sit below
+      // `ready-to-land` in the ladder.
+      [
+        RECOMMENDATION.LEGACY,
+        wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: false } }),
+        { curated: { legacy: true, note: 'kept for the off chance' } },
+      ],
       // Detached and not in use: there is no branch identity to report, so
       // nothing can be decided about it. With a live agent it would be
       // `in-use` first, which is correct but not what this case is about.
@@ -916,6 +1169,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE]: ACTION.AT_RISK,
       [RECOMMENDATION.IN_USE]: ACTION.IN_USE,
       [RECOMMENDATION.KEEP]: ACTION.KEEP,
+      [RECOMMENDATION.LEGACY]: ACTION.LEGACY,
       [RECOMMENDATION.UNKNOWN]: ACTION.UNDECIDED,
     };
     const seen = new Set();
@@ -940,10 +1194,168 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
   });
 });
 
+describe('classify: a curated legacy claim', () => {
+  const LEGACY = { legacy: true, note: 'kept for the off chance' };
+  const of = (worktree, curated) =>
+    classify(worktree, { chatSummary: noChats, chatSessions: noSessions, curated, nowMs: NOW });
+
+  it('marks a clean branch git would otherwise dispose legacy', () => {
+    const v = of(wt({ ahead: 0, mergedIntoBase: true }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    // The two halves must not be read from one field. `legacy` says the
+    // DIRECTORY may go and the BRANCH may not, and `prunable` asserts both at
+    // once, so a record where `action === DISPOSE` is the only truth is the one
+    // where `npm run dispose` would have deleted the ref.
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain('legacy');
+  });
+
+  it('suppresses a clean merge verdict, because legacy means do not merge it either', () => {
+    const v = of(wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: false } }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    expect(v.reasons.join(' ')).toContain('kept on the branch and not proposed for merge');
+  });
+
+  it('is ignored for a DIRTY tree, because that directory is the only copy of the files', () => {
+    // The load-bearing case. `legacy` authorises removing a worktree, and
+    // uncommitted changes exist in no commit and no ref — so a claim about the
+    // BRANCH says nothing about them, and honouring it here would let a prose
+    // field authorise the loss this whole program exists to prevent. It has to
+    // stay `at-risk`, which is where a human is required.
+    const v = of(
+      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [], read: true } }),
+      LEGACY
+    );
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('is ignored for a detached worktree, because there is no branch to keep', () => {
+    const v = of(wt({ detached: true, ahead: 0, mergedIntoBase: true }), LEGACY);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+  });
+
+  it('loses to a live agent, because somebody is working here right now', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: LEGACY,
+      boardAgents: [{ live: true, agentId: 'a' }],
+      nowMs: NOW,
+    });
+    expect(v.action).toBe(ACTION.IN_USE);
+  });
+
+  it('ranks below every other verdict, because nothing about it is work', () => {
+    // The sort order IS the triage order: `legacy` is the least work in the
+    // repository, and a status with a 1% chance of mattering belongs last.
+    expect(riskScore({ recommendation: RECOMMENDATION.LEGACY })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.PRUNE })
+    );
+    expect(riskScore({ recommendation: RECOMMENDATION.LEGACY })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })
+    );
+  });
+
+  it('refuses to apply the claim when git could not read the tree or resolve the base', () => {
+    // THE THIRD UNKNOWN, AND THE ONE NO REFUSAL LAYER CAUGHT BEFORE. `git status`
+    // failing and an unresolvable base both arrive as zeros and nulls, which is
+    // what "clean" and "0 commits ahead" look like. So `legacy` — the first status
+    // that turns a cleanliness reading into a licence to delete a directory — read
+    // an unreadable tree as an empty one.
+    //
+    // It also WIDENED an older hole rather than creating it: `prunable` already
+    // read an unreadable tree as empty, but only for a branch already on `main`. An
+    // unreadable worktree with a conflicting merge was `at-risk`; with this flag it
+    // became `legacy`, which prints "worktree disposable, BRANCH KEPT".
+    const unknown = [
+      [
+        'the working tree could not be read',
+        wt({ workingTree: { modified: 0, untracked: 0, paths: [], read: false } }),
+      ],
+      // A MISSING `read` is the same unknown, not evidence of a clean tree. The arm
+      // requires `read === true`, so an absent field is the absence of evidence — and
+      // this is the polarity that matters: `read === false` would pass this test while
+      // letting a caller that builds a `workingTree` without the field get a verdict
+      // it never earned, which is the exact inversion of the documented rule.
+      ['the working tree could not be read', wt({ workingTree: { modified: 0, untracked: 0, paths: [] } })],
+      ['the base branch could not be resolved', wt({ ahead: null, mergedIntoBase: false, merge: { conflict: null } })],
+      ['the worktree has no branch to keep', wt({ branch: '(unknown)' })],
+    ];
+    for (const [said, shape] of unknown) {
+      const v = of(shape, LEGACY);
+      expect(v.action, `${said} must not become a removal`).not.toBe(ACTION.LEGACY);
+      // `undecided` is the answer that keeps the directory.
+      expect(v.action, `${said}`).toBe(ACTION.UNDECIDED);
+      expect(v.prunable, `${said}`).toBe(false);
+      // AND IT MUST NOT FABRICATE THE CLEANLINESS FACT. This is the half that was
+      // wrong even after the verdict was fixed: the status block publishes "the
+      // branch is an ancestor of main and the working tree is clean" from the
+      // absence of a complaint, so a record read that sentence beside a removal
+      // instruction for a tree git had refused to open.
+      expect(v.reasons.join(' '), `${said} must name the unknown`).toContain(said);
+      expect(v.reasons.join(' '), `${said} must not claim the tree is clean`).not.toContain('working tree is clean');
+    }
+  });
+
+  it('names a conflicting merge as the reason a legacy branch is not being reconciled', () => {
+    // A stale branch that no longer merges is the COMMON case for legacy, so the
+    // conflict is expected rather than news — but a reader seeing "not proposed for
+    // merge" on a branch with three conflicting files would otherwise have to guess
+    // whether the conflict had been considered at all.
+    const v = of(wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: true, files: ['a', 'b', 'c'] } }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    expect(v.reasons.join(' ')).toContain('conflicts on 3 path(s)');
+  });
+
+  it('loses to mustNotPrune, because that one is about content', () => {
+    // THE PRECEDENCE IS ASSERTED HERE, NOT AT `preflight`.
+    //
+    // Both flags on one entry is a self-contradictory entry — `mustNotPrune`
+    // says the directory is the only copy, `legacy` says it may go — and the
+    // ladder checks `legacy` above both `curatedBlocksPrune` arms. Without this
+    // guard the pair classified as `legacy`: printed as "worktree disposable,
+    // BRANCH KEPT", listed under no protection at all, while the record still
+    // carried `mustNotPrune` for `preflight` to catch downstream.
+    //
+    // `preflight` DOES refuse that record, so no directory was lost — which is
+    // exactly why the defect survived the existing test at the disposal layer.
+    // A second line of defence was doing the work of the first, on the surface a
+    // human reads. The flag pair must resolve to `at-risk` wherever the verdict
+    // is formed.
+    const both = { mustNotPrune: true, legacy: true, note: 'contradictory entry' };
+    for (const shape of [
+      wt({ name: 'landed', ahead: 0, mergedIntoBase: true }),
+      wt({ name: 'to-land', ahead: 4, mergedIntoBase: false, merge: { conflict: false } }),
+    ]) {
+      const v = of(shape, both);
+      expect(v.action, `${shape.name}: mustNotPrune must win over legacy`).toBe(ACTION.AT_RISK);
+      expect(v.prunable, `${shape.name}: a legacy verdict must not be reachable here`).toBe(false);
+      // And the flag pair is visibly inert rather than silently overriding:
+      // the verdict is the one `mustNotPrune` alone produces.
+      expect(v.action, `${shape.name}: the two flags must agree`).toBe(
+        of(shape, { mustNotPrune: true, note: 'a finding' }).action
+      );
+    }
+  });
+
+  it('changes nothing when the branch is already disposable and no flag is set', () => {
+    // Guards the negative direction: adding a field to `classify` must not make
+    // every clean merged branch legacy by accident.
+    const v = of(wt({ ahead: 0, mergedIntoBase: true }), null);
+    expect(v.action).toBe(ACTION.DISPOSE);
+  });
+});
+
 describe('classify: the 0-ahead trap', () => {
   it('calls a branch at an old main commit with no commits of its own UNCOMMITTED_ONLY, not landed', () => {
     const v = classify(
-      wt({ ahead: 0, mergedIntoBase: true, head: 'main-old', workingTree: { modified: 3, untracked: 2, paths: [] } }),
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        head: 'main-old',
+        workingTree: { modified: 3, untracked: 2, paths: [], read: true },
+      }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
     expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
@@ -1027,7 +1439,7 @@ describe('classify: the 0-ahead trap', () => {
 
   it('reports a dirty tree on a merged branch as uncommitted-only, not landed', () => {
     const v = classify(
-      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: ['a.ts'] } }),
+      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: ['a.ts'], read: true } }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
     expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
@@ -1077,7 +1489,7 @@ describe('classify: the 0-ahead trap', () => {
         isPrimary: true,
         ahead: 0,
         mergedIntoBase: true,
-        workingTree: { modified: 3, untracked: 1, paths: [] },
+        workingTree: { modified: 3, untracked: 1, paths: [], read: true },
       }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
@@ -1282,7 +1694,12 @@ describe('buildInventory', () => {
     const inv = buildInventory({
       worktrees: [
         wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
-        wt({ name: 'b', ahead: 2, mergedIntoBase: false, workingTree: { modified: 1, untracked: 0, paths: [] } }),
+        wt({
+          name: 'b',
+          ahead: 2,
+          mergedIntoBase: false,
+          workingTree: { modified: 1, untracked: 0, paths: [], read: true },
+        }),
         wt({ name: 'main', isPrimary: true, ahead: 0, mergedIntoBase: true }),
       ],
       root: '/repo',
@@ -1308,7 +1725,12 @@ describe('buildInventory', () => {
     const inv = buildInventory({
       worktrees: [
         wt({ name: 'safe', ahead: 0, mergedIntoBase: true }),
-        wt({ name: 'risky', ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [] } }),
+        wt({
+          name: 'risky',
+          ahead: 0,
+          mergedIntoBase: true,
+          workingTree: { modified: 4, untracked: 0, paths: [], read: true },
+        }),
       ],
       root: '/repo',
       base: 'main',
@@ -1419,7 +1841,12 @@ describe('the headline lists and totals', () => {
   const worktrees = [
     wt({ name: 'landable', ahead: 2, mergedIntoBase: false, merge: { conflict: false } }),
     wt({ name: 'conflicting', ahead: 1, mergedIntoBase: false, merge: { conflict: true, files: ['a.ts'] } }),
-    wt({ name: 'uncommitted', ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [] } }),
+    wt({
+      name: 'uncommitted',
+      ahead: 0,
+      mergedIntoBase: true,
+      workingTree: { modified: 2, untracked: 0, paths: [], read: true },
+    }),
     wt({ name: 'disposable', ahead: 0, mergedIntoBase: true }),
     wt({ name: 'primary', isPrimary: true, ahead: 0, mergedIntoBase: true }),
   ];
@@ -1447,6 +1874,31 @@ describe('the headline lists and totals', () => {
     }
   });
 
+  it('lists a legacy worktree under legacy and under nothing else', () => {
+    // A legacy record is disposable AND worth keeping, and one `action` field can
+    // only say one of those. `disposalCandidates` must therefore NOT hold it —
+    // `npm run dispose` reads that list, and an operator reading it would delete
+    // the ref that is the entire reason the status exists.
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'old-branch', ahead: 0, mergedIntoBase: true })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: emptyChats,
+      nowMs: NOW,
+      curatedOf: (name) =>
+        name === 'old-branch'
+          ? { legacy: true, summary: 'kept for the off chance', note: 'why it is kept' }
+          : undefined,
+    });
+    expect(inv.legacy).toEqual(['old-branch']);
+    expect(inv.disposalCandidates).toEqual([]);
+    expect(inv.atRisk).toEqual([]);
+    expect(inv.readyToLand).toEqual([]);
+    expect(inv.totals.legacy).toBe(1);
+  });
+
   it('recomputes every total from the records it contains', () => {
     const inv = build();
     const t = inv.totals;
@@ -1472,7 +1924,12 @@ describe('the headline lists and totals', () => {
     const shapes = [
       wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
       wt({ name: 'b', ahead: 0, mergedIntoBase: false, merge: { conflict: false } }),
-      wt({ name: 'c', ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [] } }),
+      wt({
+        name: 'c',
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 1, untracked: 0, paths: [], read: true },
+      }),
       wt({ name: 'd', isPrimary: true, ahead: 0, mergedIntoBase: true }),
       wt({ name: 'e', ahead: 3, mergedIntoBase: false, merge: { conflict: true } }),
       wt({ name: 'f', detached: true, ahead: 0, mergedIntoBase: true }),
@@ -1842,7 +2299,9 @@ describe('the read and computed chat views together', () => {
       ]),
     };
     const inv = buildInventory({
-      worktrees: [wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [] } })],
+      worktrees: [
+        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [], read: true } }),
+      ],
       root: '/repo',
       base: 'main',
       mainHead: 'deadbeef',
@@ -1956,6 +2415,68 @@ describe('the curated table', () => {
         if (w) expect(w.branch, `${name} claims landed but is detached`).not.toBe('(detached)');
       }
     }
+  });
+
+  it('gives every `legacy` entry a note, because the reason IS the entry', () => {
+    // `legacy` is the only field here that authorises deleting a directory while
+    // promising the branch survives, and what it promises is a claim about the
+    // future: this branch, kept for this reason, worth revisiting if that happens.
+    // An entry carrying only `legacy: true` asserts an indefinite hold on a ref
+    // and gives a later reader no way to tell a decision from a leftover — which
+    // is the failure mode the `landed` assertion exists to prevent.
+    //
+    // VACUOUS OVER AN EMPTY SET, AND THE COMMENT SAYS SO RATHER THAN PRETENDING
+    // OTHERWISE. Both halves run over `CURATED`, and no entry sets `legacy` yet, so
+    // they iterate nothing and pass without testing anything. A synthetic predicate
+    // was tried here and removed: it asserted a rule that exists nowhere but the test
+    // file, so it passed even with the whole legacy arm of `classify` deleted. The
+    // honest state is that these rules are written down and not yet exercised, and
+    // they start biting the moment the first entry carries the field.
+    const silent = Object.entries(CURATED)
+      .filter(([, e]) => e.legacy && !(typeof e.note === 'string' && e.note.trim().length > 20))
+      .map(([n]) => n);
+    expect(
+      silent,
+      `these entries mark a branch legacy with no note saying why it is kept: ${silent.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('marks no dirty worktree legacy, because the directory is the only copy', () => {
+    // The same condition `classify` enforces, asserted over the REAL table rather
+    // than over the shape `classify` is handed. A unit test proves the branch in
+    // `classify`; this proves no entry in `curated.mjs` relies on the branch not
+    // existing — a dirty legacy worktree would be at-risk, so an entry could hold
+    // the flag and get the wrong answer without anything here noticing.
+    //
+    // NO WORKTREE-NAMED RECYCLING ASSERTION HERE, AND THAT IS DELIBERATE. An earlier
+    // version of this test asserted that every `legacy` entry names a live worktree.
+    // It is wrong: the documented workflow is `legacy: true`, then
+    // `npm run dispose -- <name>`, which removes the worktree and KEEPS the branch —
+    // so the moment anyone uses the feature as designed the entry names nothing, and
+    // the test failed on the feature's own end state. Its message told the operator to
+    // "remove the entry when the branch is finally deleted", which for a legacy branch
+    // is never, and following it would delete the `note` that `curated.mjs` calls the
+    // whole content of the entry, leaving a kept ref with no record anywhere.
+    //
+    // The hazard it was reaching for is real — `legacy` attaches by directory basename,
+    // so a stale flag would attach itself to whatever is created at that path next, and
+    // `legacy` is the one curated field that errs toward DELETION. Checking it properly
+    // needs the entry keyed by BRANCH rather than by worktree name, because after
+    // disposal the worktree is gone and the ref is what remains. That is a change to the
+    // curated table's shape and is not this branch's to make; it is recorded in
+    // `curated.mjs` beside the field. What this test can honestly assert today is the
+    // half that is decidable from live state.
+    const live = listWorktrees(process.cwd());
+    const dirty = Object.entries(CURATED)
+      .filter(([name]) => CURATED[name].legacy)
+      .map(([name]) => name)
+      .filter((name) => {
+        const w = live.find((x) => x.name === name);
+        return w ? w.workingTree.modified + w.workingTree.untracked > 0 : false;
+      });
+    expect(dirty, `these entries are legacy but their worktree holds uncommitted work: ${dirty.join(', ')}`).toEqual(
+      []
+    );
   });
 
   it('keeps the main worktree and this one out of the curated table on purpose', () => {
@@ -2335,7 +2856,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     ).toEqual([]);
   }, 60_000);
 
-  it('lets the curated table move a verdict only by vetoing a disposal', () => {
+  it('lets the curated table move a verdict only by vetoing a disposal or marking a branch legacy', () => {
     // The reason the coverage rule could not simply be dropped: a curated entry
     // that changed a verdict would be a hand-written claim overriding git, and
     // `curated.mjs` is prose maintained by agents under time pressure. `classify`
@@ -2388,6 +2909,17 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         `curated.mustNotPrune no longer changes the verdict for ${shape.name} (${bare}), so the assertions above ` +
           'prove nothing: the table has stopped being able to veto anything'
       ).not.toBe(bare);
+      // The SECOND field that may, and it moves the verdict the other way:
+      // `mustNotPrune` says this work is unaccounted for and must be saved, while
+      // `legacy` says it is accounted for and will never be worked on again.
+      // Both are claims about intent that git cannot make, so both are allowed to
+      // move a verdict — and both are pinned in `describe('classify: a curated
+      // legacy claim')` for what they do.
+      expect(
+        verdictOf(shape, { legacy: true, note: PROSE.note }),
+        `curated.legacy no longer changes the verdict for ${shape.name} (${bare}), so the prose assertions ` +
+          'above no longer describe the whole table'
+      ).not.toBe(bare);
     }
   });
 
@@ -2410,7 +2942,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
           ahead: 0,
           behind: 0,
           mergedIntoBase: true,
-          workingTree: { modified: 2, untracked: 1, paths: [] },
+          workingTree: { modified: 2, untracked: 1, paths: [], read: true },
         }),
       ],
       root: '/repo',
@@ -3091,6 +3623,81 @@ describe('the call history', () => {
     });
     expect(verdict.live).toBe(true);
     expect(verdict.reasons.join(' ')).toContain('wrote a file');
+  });
+
+  it('calls a worktree live on recent command I/O alone, with no session and no board record', () => {
+    // The case this exists for: an agent opened in the MAIN checkout drove into
+    // this worktree and ran commands there. Its `session.directory` is the main
+    // checkout, so `chatSummary` cannot see it, and the board is keyed on the
+    // branch, so it cannot see it either. Every git fact about the worktree can
+    // be correct — clean, merged, nothing ahead — and it is still occupied.
+    const verdict = classify(
+      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 0, untracked: 0, read: true } }),
+      {
+        chatSummary: { count: 0, lastActivity: null },
+        chatSessions: [],
+        nowMs: NOW,
+        shellHistory: { lastAtMs: NOW - 40 * 60_000, derivedChatIds: [], activeNow: false },
+      }
+    );
+    expect(verdict.live).toBe(true);
+    expect(verdict.derivedLive).toBe(true);
+    expect(verdict.liveSignals.io).toBe(true);
+    expect(verdict.liveSignals.chat).toBe(false);
+    expect(verdict.liveSignals.board).toBe(false);
+    // The reason has to name the timestamp, because "in-use" with no stated cause
+    // is what a reader cannot act on.
+    expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
+  });
+
+  it('counts a reader as occupying the worktree, and honours the read release', () => {
+    // A read is weaker evidence than a write and is admitted on the same window,
+    // because the skill treats a read as grounds for LIVE unless the hit can be
+    // shown to be an inventory row. Without this, a worktree whose agent only
+    // read its spec — and then went quiet for the rest of its task — read as
+    // empty while its owner was still live.
+    const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      readHistory: { lastAtMs: NOW - 90 * 60_000 },
+    });
+    expect(reading.live).toBe(true);
+    expect(reading.liveSignals.io).toBe(true);
+
+    // A released reader must read as no signal rather than as a standing claim,
+    // or every worktree any agent ever inspected becomes permanently in-use.
+    const released = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      readHistory: { lastAtMs: null, releasedBefore: NOW - 60_000 },
+    });
+    expect(released.derivedLive).toBe(false);
+  });
+
+  it('stops calling a worktree live once its I/O falls outside the window', () => {
+    const stale = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      shellHistory: { lastAtMs: NOW - 5 * 60 * 60_000, derivedChatIds: [] },
+    });
+    expect(stale.derivedLive).toBe(false);
+    expect(stale.liveSignals.io).toBe(false);
+
+    // `prunable` must not become reachable through this. A worktree with
+    // uncommitted work stays un-prunable whatever its I/O looks like.
+    const held = classify(
+      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 3, untracked: 0, read: true } }),
+      {
+        chatSummary: { count: 0, lastActivity: null },
+        chatSessions: [],
+        nowMs: NOW,
+        shellHistory: { lastAtMs: NOW - 60_000 },
+      }
+    );
+    expect(held.prunable).toBe(false);
   });
 
   it('lets a declared hard state outrank every liveness signal, and says so', () => {

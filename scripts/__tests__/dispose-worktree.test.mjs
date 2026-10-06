@@ -22,8 +22,8 @@
  * case with every other arm green.
  */
 
-import { describe, expect, it } from 'vitest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { describe, expect, it, afterEach, beforeEach } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -34,14 +34,17 @@ import {
   isRegenerableIgnored,
   locateInventory,
   preflight,
+  protectedContentOnDisk,
+  REFUSALS,
   readGitState,
+  readOperationState,
   rebuildCommand,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
 // Imported from its own module, not re-exported: the test asserts against the
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
-import { ACTION } from '../lib/worktree-inventory/classify.mjs';
+import { ACTION, LIVE_WINDOW_MS } from '../lib/worktree-inventory/classify.mjs';
 
 const NOW = 1_800_000_000_000;
 
@@ -100,11 +103,24 @@ const greenBoard = {
 };
 const greenSessions = { available: true, dbPath: '/home/x/kilo.db', error: null, live: [] };
 
+/**
+ * A worktree git is not doing anything to.
+ *
+ * Supplied by `green()` rather than defaulted inside `preflight`, because the refusal
+ * for an ABSENT signal is itself a case below: a helper that filled this in would
+ * make that case unreachable, and the check it guards is the one whose absence is
+ * unrecoverable if it is ever wrong.
+ */
+function greenOperationState(overrides = {}) {
+  return { gitDir: '/repo/.git/worktrees/task', operations: [], unmerged: [], readError: null, ...overrides };
+}
+
 function green(overrides = {}) {
   return preflight({
     target: 'task',
     nowMs: NOW,
     gitState: greenState(),
+    operationState: greenOperationState(),
     inventory: greenInventory(),
     board: greenBoard,
     sessions: greenSessions,
@@ -126,6 +142,44 @@ describe('dispose preflight', () => {
     const cases = [
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
+      [
+        'a merge is in progress in it',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+          }),
+        },
+        'operation-in-progress',
+      ],
+      [
+        'a rebase is in progress in it',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'rebase', marker: 'rebase-merge', value: null }],
+          }),
+        },
+        'operation-in-progress',
+      ],
+      [
+        'its index holds unmerged paths and no operation marker',
+        { operationState: greenOperationState({ unmerged: ['f.txt', 'g.ts'] }) },
+        'operation-in-progress',
+      ],
+      [
+        'its git state could not be read at all',
+        { operationState: greenOperationState({ readError: 'exit 128' }) },
+        'operation-state-unreadable',
+      ],
+      ['no git state was supplied for it', { operationState: undefined }, 'operation-state-absent'],
+      [
+        'a squash is in progress, which has no abandon command at all',
+        {
+          operationState: greenOperationState({
+            operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+          }),
+        },
+        'operation-in-progress',
+      ],
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
@@ -259,6 +313,7 @@ describe('dispose preflight', () => {
     const verdict = preflight({
       target: 'stale-citations',
       nowMs: NOW,
+      operationState: greenOperationState(),
       gitState: greenState({
         name: 'stale-citations',
         branch: 'fix/stale-citations',
@@ -293,6 +348,7 @@ describe('dispose preflight', () => {
       target: 'task',
       nowMs: NOW,
       gitState: greenState({ isPrimary: true, modified: 2, dirtyPaths: ['a', 'b'] }),
+      operationState: greenOperationState(),
       inventory: { ok: false, reason: 'missing' },
       board: { ...greenBoard, claims: [{ agentId: 'x' }] },
       sessions: { available: true, live: [{ id: 's' }] },
@@ -474,6 +530,198 @@ describe('dispose execution', () => {
     }
   });
 
+  describe('a legacy worktree: the directory goes, the branch stays', () => {
+    const legacyInventory = (record = {}) =>
+      greenInventory({
+        record: {
+          action: ACTION.LEGACY,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: { derivedChatIds: [] },
+          ...record,
+        },
+      });
+
+    it('permits it, because a legacy worktree IS a disposal candidate', () => {
+      // The asymmetry is the status: `dispose` means "remove this", and for a
+      // legacy worktree what is removed is the directory. Refusing on `legacy`
+      // would leave every such worktree exactly where a sweep found it.
+      const verdict = green({ inventory: legacyInventory() });
+      expect(verdict.failures).toEqual([]);
+      expect(verdict.ok).toBe(true);
+    });
+
+    it('reports keepBranch, because that is what separates it from a disposal', () => {
+      // Read from ONE place and handed to `dispose()`. Derived twice, the
+      // inventory could be regenerated between the two reads and the branch
+      // would go with the directory on a verdict that no longer applied.
+      expect(green({ inventory: legacyInventory() }).keepBranch).toBe(true);
+      expect(green().keepBranch).toBe(false);
+      expect(green({ inventory: greenInventory({ record: null }) }).keepBranch).toBe(false);
+    });
+
+    it('still refuses every signal that protects a live, dirty or in-flight worktree', () => {
+      // `legacy` must not become the soft `--force` this program does not have.
+      // Each of these is the reason a sweep once destroyed live work, and a
+      // status whose only effect is to skip `git branch -d` changes none of them.
+      const cases = [
+        ['dirty-tree', { gitState: greenState({ modified: 1, untracked: 0, dirtyPaths: ['a.ts'] }) }],
+        ['dirty-tree', { gitState: greenState({ modified: 0, untracked: 2, dirtyPaths: ['b.ts'] }) }],
+        ['live-session', { sessions: { available: true, live: [{ id: 's1' }] } }],
+        ['board-claim', { board: { ...greenBoard, claims: [{ agentId: 'a1' }] } }],
+        ['board-lock', { board: { ...greenBoard, fileLocks: [{ path: 'a.ts' }] } }],
+        ['board-agent-live', { board: { ...greenBoard, liveAgents: [{ agentId: 'a1' }] } }],
+        [
+          'derived-live-writer',
+          { inventory: legacyInventory({ derivedLive: true, writeHistory: { derivedChatIds: ['ses_abc'] } }) },
+        ],
+        ['ignored-content', { gitState: greenState({ ignoredWork: ['notes.log'] }) }],
+      ];
+      for (const [expected, overrides] of cases) {
+        // The legacy inventory goes LAST so a case that supplies its own record —
+        // `derived-live-writer` — is not overwritten by the default one. Written
+        // the other way round the case would pass for the wrong reason: a green
+        // default record refuses nothing, so the assertion would be vacuous.
+        const verdict = green({ ...overrides, inventory: overrides.inventory ?? legacyInventory() });
+        expect(codes(verdict), expected).toContain(expected);
+        expect(verdict.ok).toBe(false);
+      }
+    });
+
+    it('never lets a legacy claim override mustNotPrune, which protects content instead of a ref', () => {
+      // One is a claim that the work is not accounted for; the other is a claim
+      // that it is accounted for and will never be worked on. They are opposite
+      // statements about the same tree, and the one about losing content wins.
+      const verdict = green({
+        inventory: greenInventory({
+          record: {
+            action: ACTION.LEGACY,
+            mustNotPrune: true,
+            derivedLive: false,
+            writeHistory: {},
+          },
+        }),
+      });
+      expect(codes(verdict)).toContain('must-not-prune');
+      expect(verdict.ok).toBe(false);
+    });
+
+    it('removes the worktree and skips git branch -d', () => {
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.branchKept).toBe(true);
+      expect(result.branchDeleted).toBe(false);
+      expect(result.worktreeRemoved).toBe(true);
+      expect(calls.some((c) => c.join(' ') === 'worktree remove /repo/.kilo/worktrees/task')).toBe(true);
+      // The whole status in one assertion: the command that deletes the ref is
+      // not run at all, so no `-D` fallback can reach it either.
+      expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+    });
+
+    it('writes no anchor ref, because the surviving branch IS the copy', () => {
+      // An anchor under `refs/keep/disposed/` records "this was removed and this
+      // is the only copy". For a kept branch both halves are false, and the ref
+      // would sit beside a branch that was never disposed, implying the opposite.
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState({ tip: 'deadbeef' }), { run, fs, keepBranch: true });
+      expect(calls.some((c) => c[0] === 'update-ref')).toBe(false);
+      expect(result.anchorRef).toBeNull();
+      expect(result.steps.join('\n')).toContain(`KEPT branch fix/task`);
+    });
+
+    it('names the status in the step report, so a reader knows the branch was deliberate', () => {
+      const { run, fs } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.steps.join('\n')).toContain('legacy');
+    });
+
+    it('says the no-anchor step, because it is the whole difference between the two modes', () => {
+      // Unpinned before this test: deleting the line that reports the skipped anchor
+      // left every other assertion green, which is how a step that exists to explain
+      // a missing ref can be removed without anything noticing.
+      const { run, fs } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(result.steps.join('\n')).toContain('no anchor ref');
+      // And an ordinary disposal says nothing of the kind, because it anchors.
+      const ordinary = harness();
+      const plain = dispose('/repo', greenState(), { run: ordinary.run, fs: ordinary.fs });
+      expect(plain.steps.join('\n')).not.toContain('no anchor ref');
+      expect(plain.anchorRef).not.toBeNull();
+    });
+
+    it('does not send a failed legacy disposal to an anchor that was never written', () => {
+      // `ref ?? 'no anchor'` was unreachable while `ref` was null only on a refusal
+      // path. `keepBranch` makes a null ref the NORMAL state, so the fallback turned
+      // a routine legacy failure into "its branch is still anchored at no anchor" —
+      // self-contradicting, and pointing at a ref this module documents as the only
+      // recovery point for a DISPOSED branch. It is the last line printed before exit 2.
+      const { run, fs } = harness({
+        'worktree remove /repo/.kilo/worktrees/task': new Error('use `remove -f -f` to override'),
+      });
+      const legacy = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(legacy.worktreeRemoved).toBe(false);
+      const said = legacy.steps.join('\n');
+      expect(said).toContain('is untouched');
+      expect(said, 'must not point at an anchor a legacy disposal never writes').not.toContain('anchored at no anchor');
+      // An ordinary disposal still names the anchor it actually wrote.
+      const ordinary = harness({
+        'worktree remove /repo/.kilo/worktrees/task': new Error('use `remove -f -f` to override'),
+      });
+      const plain = dispose('/repo', greenState(), { run: ordinary.run, fs: ordinary.fs });
+      expect(plain.steps.join('\n')).toContain(`anchored at refs/keep/disposed/fix-task`);
+    });
+
+    it('reports the same result shape whichever refusal ended the preflight', () => {
+      // The early return for an unknown target had a different key set from the
+      // final one, so a caller destructuring the result got `undefined` here and a
+      // boolean there — and this is the return a new caller hits first.
+      const unknown = preflight({ target: 'nope', gitState: { found: false } });
+      const refused = green({ inventory: legacyInventory() });
+      expect(Object.keys(unknown).sort()).toEqual(Object.keys(refused).sort());
+      expect(unknown.keepBranch).toBe(false);
+    });
+
+    it('reports keepBranch even when the verdict refuses the record it came from', () => {
+      // It is a CLAIM, not an outcome, until `ok`. It is computed before the
+      // freshness, action, `mustNotPrune`, live and ownership checks, so it reads
+      // `true` beside `ok: false` for any refused record. Nothing destructive
+      // follows — `main()` gates on `ok` — but the pairing is the contract.
+      const verdict = green({ inventory: legacyInventory({ mustNotPrune: true }) });
+      expect(codes(verdict)).toContain('must-not-prune');
+      expect(verdict.ok).toBe(false);
+      expect(verdict.keepBranch).toBe(true);
+    });
+
+    it('still salvages before removing the directory', () => {
+      // Ordering, not coverage: the salvage is the only thing standing between a
+      // tree that turned out to hold something and its loss, and skipping it for
+      // legacy would make the status a way to delete a worktree unexamined.
+      const { run, fs, calls } = harness({
+        'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
+        'ls-files --others --exclude-standard -z': 'notes.md\0',
+      });
+      const tars = [];
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true, tar: (...a) => tars.push(a) });
+      const salvageAt = calls.findIndex((c) => c[0] === 'diff');
+      const removeAt = calls.findIndex((c) => c[0] === 'worktree' && c[1] === 'remove');
+      expect(salvageAt).toBeGreaterThanOrEqual(0);
+      expect(removeAt).toBeGreaterThan(salvageAt);
+      expect(result.salvage.written.sort()).toEqual(['tracked.patch', 'untracked.tar']);
+      expect(tars).toHaveLength(1);
+    });
+
+    it('keeps the branch even when git would have refused to delete it anyway', () => {
+      // `git branch -d` refusing an unmerged branch is the guard on the last step
+      // of an ordinary disposal. Legacy does not consult it, because the command
+      // is not run — so the two halves of the program cannot be confused for each
+      // other in the step report.
+      const { run, fs, calls } = harness();
+      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
+      expect(calls.some((c) => c[0] === 'branch')).toBe(false);
+      expect(result.steps.join('\n')).toContain('the inventory calls this action "legacy"');
+    });
+  });
+
   it('deletes the branch with -d, and keeps it when git refuses', () => {
     const ok = harness();
     const kept = harness({ 'branch -d fix/task': new Error("error: the branch 'fix/task' is not fully merged") });
@@ -601,6 +849,110 @@ describe('a signal that could not be read is not an empty signal', () => {
     expect(codes(green({ gitState: greenState({ statusError: null }) }))).toEqual([]);
   });
 
+  it('names no command to run when git has none, rather than naming a wrong one', () => {
+    // Measured: `git merge --abort` answers "fatal: There is no merge to abort
+    // (MERGE_HEAD missing)" during a squash, and `git squash` is not a command. An
+    // earlier version substituted `git status` — a report, not a remedy — so the
+    // refusal read "Finish or abandon it deliberately — git status".
+    const squash = green({
+      operationState: greenOperationState({ operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }] }),
+    });
+    const message = squash.failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toMatch(/no command that abandons a squash|No operation marker is set/);
+    expect(message).not.toMatch(/git status/);
+    expect(message).not.toMatch(/git squash --abort/);
+  });
+
+  it('names `git am --abort` for a rebase-apply, which `git rebase --abort` cannot do', () => {
+    // Both rebase rows are operation `rebase`, and taking the operation NAME produced
+    // `git rebase --abort` for `git am` — which fatals with "It looks like 'git am' is
+    // in progress".
+    const am = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'rebase', marker: 'rebase-apply', value: null }],
+      }),
+    });
+    expect(am.failures.find((f) => f.code === 'operation-in-progress').message).toContain('git am --abort');
+  });
+
+  it('tells the operator who else is in the worktree before they read an abort command', () => {
+    // The refusal names a command that DISCARDS work, and `preflight` already holds
+    // the ownership facts. It used to run ahead of every ownership check and drop
+    // them, so the advice to consider `git merge --abort` arrived with no hint that a
+    // live session was mid-merge in it.
+    const message = green({
+      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress')?.message;
+    // With no operation there is no refusal at all, which is the first thing to check.
+    expect(message).toBeUndefined();
+
+    const withMerge = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+      board: { ...greenBoard, claims: [{ agentId: 'x' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(withMerge).toContain('1 board claim(s)');
+    expect(withMerge).toContain('1 live session(s)');
+    expect(withMerge).toMatch(/before you abort anything/);
+  });
+
+  it('adds no ownership sentence when nothing is live, because that is absence of evidence', () => {
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).not.toContain('Others are recorded');
+    expect(message).toContain('deadbee');
+  });
+
+  it('reads an operation state as no-operation rather than as no-answer', () => {
+    // The reader's whole contract with `preflight`: a worktree git is not touching
+    // reads as an empty ANSWER, and only a read that actually failed reads as a
+    // question. Conflating them would put the new refusal on every clean worktree,
+    // which is how a guard gets switched off.
+    const dir = join(TMP, 'op-state-clean');
+    mkdirSync(dir, { recursive: true });
+    expect(readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: () => [] })).toMatchObject({
+      gitDir: dir,
+      operations: [],
+      unmerged: [],
+      readError: null,
+      unmergedError: null,
+    });
+  });
+
+  it('records a failed read as readError instead of throwing, so the refusal can name it', () => {
+    // `git diff` exiting non-zero has to arrive at `preflight` as a FIELD. A throw
+    // here would escape `preflight`, which is a pure decision function with no
+    // try/catch of its own, and the operator would see a stack trace instead of the
+    // refusal that says which command failed.
+    const dir = join(TMP, 'op-state-failed');
+    mkdirSync(dir, { recursive: true });
+    const boom = () => {
+      throw new Error('Command failed: git diff');
+    };
+    const state = readOperationState(dir, { gitDirOf: () => dir, readOps: () => [], unmergedOf: boom });
+    expect(state.readError).toMatch(/git diff/);
+    expect(state.unmerged).toEqual([]);
+
+    const verdict = green({ operationState: state });
+    expect(codes(verdict)).toEqual(['operation-state-unreadable']);
+    expect(verdict.failures[0].message).toMatch(/UNKNOWN rather than no/);
+  });
+
+  it('treats a worktree whose git directory cannot be resolved as unreadable, not clean', () => {
+    // The shape that would otherwise pass every check: `gitDirOf` returns null, which
+    // a `?? []` would read as "no operations". A disposal on that answer removes
+    // `.git/worktrees/<name>/` and with it the only record of a merge.
+    const state = readOperationState('/nowhere', { gitDirOf: () => null });
+    expect(state.readError).toMatch(/absolute-git-dir/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
   it('refuses on gitignored content that no command rebuilds', () => {
     // `git status --porcelain` honours .gitignore, and `ls-files --others
     // --exclude-standard` — which is what salvage() reads — honours it too. So a
@@ -631,13 +983,10 @@ describe('a signal that could not be read is not an empty signal', () => {
 describe('the regenerable-ignored rule', () => {
   it('treats every ignore pattern it does not name as content', () => {
     // The allowlist is the exception, not the rule: an unlisted path is work.
-    for (const path of [
-      '.serena/index.db',
-      '.vscode/settings.json',
-      'playwright/.auth/state.json',
-      'run.log',
-      'scratch.local',
-    ]) {
+    // `.serena/index.db` was here and is not any more — `.serena/` is allowlisted
+    // now, because it held seven finished worktrees hostage on its own. The
+    // memory subtree it must never swallow replaced it.
+    for (const path of ['.vscode/settings.json', 'playwright/.auth/state.json', 'run.log', 'scratch.local']) {
       expect(isRegenerableIgnored(path), `${path} must not be treated as regenerable`).toBe(false);
     }
   });
@@ -654,6 +1003,67 @@ describe('the regenerable-ignored rule', () => {
     // would quietly widen what a disposal is allowed to destroy.
     expect(isRegenerableIgnored('dist-secrets/keys.txt')).toBe(false);
     expect(isRegenerableIgnored('node_modules/.cache/x')).toBe(true);
+  });
+
+  it('treats a protected subtree as content even though its parent is allowlisted', () => {
+    // `.serena/` is regenerable — serena rewrites it on its next activation — and
+    // `.serena/memories/` is not, because an agent's notes to itself exist on no
+    // ref and no command reproduces them. The parent being allowed must not carry
+    // the child with it.
+    expect(isRegenerableIgnored('.serena/project.yml')).toBe(true);
+    expect(isRegenerableIgnored('.serena/cache/typescript/document_symbols.pkl')).toBe(true);
+    expect(isRegenerableIgnored('.serena/memories/')).toBe(false);
+    expect(isRegenerableIgnored('.serena/memories/plan.md')).toBe(false);
+    expect(rebuildCommand('.serena/memories/plan.md')).toBeNull();
+  });
+});
+
+/**
+ * The half of the `.serena` rule that cannot be a path test.
+ *
+ * `ls-files --others --ignored --exclude-standard --directory` collapses a fully
+ * ignored directory to its own name, so on a worktree holding only what serena
+ * writes it reports `.serena/` and never names a memory — verified on a real
+ * worktree, with and without a file under `memories/`. So the exception cannot be
+ * found in git's output and has to be looked for on disk, and THAT is the only
+ * thing standing between a cleanup sweep and the only copy of a dead session's
+ * notes. These run against a real temp directory for that reason.
+ */
+describe('a protected subtree inside a collapsed allowlisted directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'serena-protected-'));
+
+  beforeEach(() => {
+    mkdirSync(join(root, '.serena'), { recursive: true });
+    writeFileSync(join(root, '.serena', 'project.yml'), 'project_name: "x"\n');
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('finds nothing when the subtree is absent or empty', () => {
+    expect(protectedContentOnDisk(root, ['.serena/'])).toEqual([]);
+    mkdirSync(join(root, '.serena', 'memories'));
+    expect(protectedContentOnDisk(root, ['.serena/'])).toEqual([]);
+  });
+
+  it('finds it when the subtree holds a file, which is what git did not report', () => {
+    mkdirSync(join(root, '.serena', 'memories'));
+    writeFileSync(join(root, '.serena', 'memories', 'plan.md'), 'notes\n');
+    expect(protectedContentOnDisk(root, ['.serena/'])).toEqual(['.serena/memories/']);
+  });
+
+  it('ignores a reported FILE, which cannot hold a nested subtree', () => {
+    writeFileSync(join(root, '.serena', 'project.yml'), 'project_name: "x"\n');
+    mkdirSync(join(root, '.serena', 'memories'));
+    writeFileSync(join(root, '.serena', 'memories', 'plan.md'), 'notes\n');
+    expect(protectedContentOnDisk(root, ['.serena/project.yml'])).toEqual([]);
+  });
+
+  it('does not walk a directory the allowlist already covers elsewhere', () => {
+    // `node_modules` is reported as one collapsed entry too. Nothing is exempt
+    // beneath it, so the walk must not enumerate 18,901 files to learn that.
+    expect(protectedContentOnDisk(root, ['node_modules/', 'coverage/', 'dist/'])).toEqual([]);
   });
 });
 
@@ -789,6 +1199,7 @@ describe('readGitState reads the ignored content it is supposed to refuse on', (
       target: 'task',
       nowMs: NOW,
       gitState: state,
+      operationState: greenOperationState(),
       inventory: greenInventory(),
       board: greenBoard,
       sessions: greenSessions,
@@ -902,6 +1313,10 @@ describe('salvage archives the ignored content a rebuild cannot replace', () => 
     const h = harnessWith({
       'diff HEAD --binary': '',
       'ls-files --others --exclude-standard -z': '',
+      // `.serena/index.db` WAS the third entry here, and `.serena/` being
+      // allowlisted is why it is not any more. The rule being pinned is the FILTER,
+      // and it is still pinned by `.env` and `run.log`; the case below is the one
+      // that has to survive the change.
       'ls-files --others --ignored --exclude-standard -z --directory':
         'node_modules\0dist\0.env\0.serena/index.db\0run.log\0',
     });
@@ -911,13 +1326,38 @@ describe('salvage archives the ignored content a rebuild cannot replace', () => 
     expect(result.salvage.written).toContain('ignored.tar');
     expect(result.salvage.failed).toEqual([]);
     // Exactly the two that matter: the regenerable entries are filtered here too,
-    // and archiving 20k of node_modules would be its own problem.
+    // and archiving 20k of node_modules would be its own problem. `.serena/` is in
+    // the feed as a single collapsed path, is regenerable, and is correctly dropped.
     expect(tars).toHaveLength(1);
     const listed = tars[0][2].split('\0').filter(Boolean);
-    expect(listed).toEqual(['.env', '.serena/index.db', 'run.log']);
+    expect(listed).toEqual(['.env', 'run.log']);
     // And the list is NUL-TERMINATED, which is what `tar --null -T -` needs.
     // A path containing a newline is why the delimiter is load-bearing at all.
     expect(tars[0][2].endsWith('\0')).toBe(true);
+  });
+
+  it('archives the protected subtree a collapsed allowlisted directory hides', () => {
+    // The filter above is a second copy of the allowlist rule, and the copy that
+    // would lose data if the rule alone were wrong: `preflight` refuses a tree
+    // holding a memory, so through the CLI this never runs. Through the direct
+    // `dispose()` caller it does, and the memory is then archived by nothing.
+    const root = mkdtempSync(join(tmpdir(), 'serena-salvage-'));
+    try {
+      mkdirSync(join(root, '.serena', 'memories'), { recursive: true });
+      writeFileSync(join(root, '.serena', 'memories', 'plan.md'), 'notes\n');
+      const h = harnessWith({
+        'diff HEAD --binary': '',
+        'ls-files --others --exclude-standard -z': '',
+        'ls-files --others --ignored --exclude-standard -z --directory': 'node_modules\0.serena/\0',
+      });
+      const tars = [];
+      dispose(root, greenState({ absolutePath: root }), { run: h.run, fs: h.fs, tar: (...a) => tars.push(a) });
+
+      expect(tars).toHaveLength(1);
+      expect(tars[0][2].split('\0').filter(Boolean)).toEqual(['.serena/memories/']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('reports a failed ignored archive instead of reporting a partial salvage as success', () => {
@@ -1009,5 +1449,126 @@ describe('locating the inventory', () => {
     });
     expect(asked).toHaveLength(1);
     expect(asked[0]).toContain('--git-common-dir');
+  });
+});
+
+describe("the third review's findings, pinned on the disposal side", () => {
+  it('reads the operation state of a worktree whose own directory is gone', () => {
+    // The largest hole the third review found. `resolveGitDir` runs git INSIDE the
+    // worktree, so for a worktree that has been removed by hand it answers null — and
+    // the state was never read, while the `prunable` refusal told the operator there was
+    // "nothing to salvage and no state to verify. Run `git worktree prune`". That is
+    // precisely the state `prune` deletes, with no reflog entry and nothing for
+    // `git fsck` to recover. So the git directory is matched by content when the
+    // directory cannot be asked.
+    const dir = join(TMP, 'gone-worktree');
+    mkdirSync(dir, { recursive: true });
+    const state = readOperationState('/nowhere', {
+      gitDirOf: () => null,
+      fallbackGitDir: '/repo/.git/worktrees/gone',
+      readOps: (gitDir) => [{ operation: 'merge', marker: 'MERGE_HEAD', value: `sha-of-${gitDir}` }],
+      unmergedOf: () => [],
+    });
+    expect(state.readError).toBeNull();
+    expect(state.operations).toEqual([
+      { operation: 'merge', marker: 'MERGE_HEAD', value: 'sha-of-/repo/.git/worktrees/gone' },
+    ]);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-in-progress']);
+  });
+
+  it('still refuses when there is no fallback either, rather than reporting clean', () => {
+    const state = readOperationState('/nowhere', { gitDirOf: () => null, fallbackGitDir: null });
+    expect(state.readError).toMatch(/no administrative directory/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
+  it('reports an unmerged read that failed only when the operations were empty', () => {
+    // A merge whose index cannot be diffed because its directory is gone is still a
+    // merge in progress. Reporting only the read failure would hide the finding.
+    const boom = () => {
+      throw new Error('spawnSync git ENOENT');
+    };
+    expect(
+      readOperationState('/w', {
+        gitDirOf: () => '/d',
+        readOps: () => [{ operation: 'merge', marker: 'MERGE_HEAD' }],
+        unmergedOf: boom,
+      })
+    ).toMatchObject({
+      readError: null,
+      unmergedError: expect.stringMatching(/ENOENT/),
+    });
+    expect(readOperationState('/w', { gitDirOf: () => '/d', readOps: () => [], unmergedOf: boom }).readError).toMatch(
+      /ENOENT/
+    );
+  });
+
+  it('guards the operations reader too, because preflight has no try/catch of its own', () => {
+    const boom = () => {
+      throw new Error('EACCES');
+    };
+    const state = readOperationState('/w', { gitDirOf: () => '/d', readOps: boom, unmergedOf: () => [] });
+    expect(state.readError).toMatch(/EACCES/);
+    expect(codes(green({ operationState: state }))).toEqual(['operation-state-unreadable']);
+  });
+
+  it('leaves no empty slot where a command would be, when one operation has no remedy', () => {
+    // `.filter(Boolean)` on the remedy list was unpinned: removing it failed zero tests
+    // and printed "Finish or abandon it deliberately —  / git merge --abort". A squash
+    // beside a merge is what produces the null, so that is the shape asserted here.
+    const message = green({
+      operationState: greenOperationState({
+        operations: [
+          { operation: 'squash', marker: 'SQUASH_MSG', value: null },
+          { operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' },
+        ],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toMatch(/— git merge --abort —/);
+    expect(message).not.toMatch(/—\s+\/|—\s+—|\/\s+\//);
+  });
+
+  it('names the operation git cannot abandon, instead of claiming no marker is set', () => {
+    // The self-contradicting sentence: a refusal whose own detail read
+    // "squash (SQUASH_MSG)" and which then said "No operation marker is set".
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'squash', marker: 'SQUASH_MSG', value: null }],
+        unmerged: ['f.txt'],
+      }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('SQUASH_MSG');
+    expect(message).toMatch(/no command that abandons a squash/);
+    expect(message).not.toContain('No operation marker is set');
+  });
+
+  it('still says no marker is set when there is genuinely no marker', () => {
+    const message = green({
+      operationState: greenOperationState({ unmerged: ['f.txt'] }),
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).toContain('No operation marker is set');
+  });
+
+  it('states the recency window instead of claiming the sessions are there right now', () => {
+    // Every one of these sources is a window, so "RIGHT NOW" asserted a strength the
+    // data does not have, and the refusal printed beside it stated the same fact
+    // correctly.
+    const message = green({
+      operationState: greenOperationState({
+        operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbee' }],
+      }),
+      board: { ...greenBoard, liveAgents: [{ id: 'a' }] },
+      sessions: { available: true, dbPath: 'k', error: null, live: [{ id: 's' }] },
+    }).failures.find((f) => f.code === 'operation-in-progress').message;
+    expect(message).not.toContain('RIGHT NOW');
+    expect(message).toContain(`inside the last ${LIVE_WINDOW_MS / 60000} min`);
+  });
+
+  it('no longer tells the operator to prune a worktree whose state may still exist', () => {
+    // `git worktree prune` deletes `.git/worktrees/<name>/`, which is where a merge's
+    // state lives. The refusal recommended it unconditionally, in the same run that
+    // could not rule out a merge being there.
+    expect(REFUSALS.prunable('')).toMatch(/repo:state/);
+    expect(REFUSALS.prunable('')).toMatch(/DELETES it with no reflog entry/);
   });
 });

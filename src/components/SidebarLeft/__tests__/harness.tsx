@@ -96,6 +96,8 @@ vi.mock('../toolIcons.tsx', () => {
       'magic-wand': Icon,
       'quick-selection': Icon,
       eyedropper: Icon,
+      'color-sampler': Icon,
+      ruler: Icon,
       eraser: Icon,
       'clone-stamp': Icon,
       'paint-bucket': Icon,

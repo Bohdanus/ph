@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { DEFAULT_THRESHOLD, compareScreenshots } from '../image-comparison';
-import type { CompareOptions, CompareResult } from '../image-comparison';
+import type { ChannelDelta, ChannelName, CompareOptions, CompareResult } from '../image-comparison';
 
 type Rgba = { r: number; g: number; b: number; alpha: number };
 type Rect = { left: number; top: number; width: number; height: number };
@@ -9,7 +9,20 @@ type Size = { width: number; height: number };
 
 const OPAQUE_RED: Rgba = { r: 255, g: 0, b: 0, alpha: 1 };
 const OPAQUE_GREEN: Rgba = { r: 0, g: 255, b: 0, alpha: 1 };
-const NEAR_RED: Rgba = { r: 255, g: 10, b: 0, alpha: 1 };
+/**
+ * Red carrying 10 more green than `#ff0000` has. It is named for what it is rather than
+ * for how near it is to red, because at the default threshold the word "near" is the
+ * overstatement this file exists to correct: 10 steps is forgiven, and so are 93.
+ */
+const RED_WITH_TEN_GREEN: Rgba = { r: 255, g: 10, b: 0, alpha: 1 };
+/** The size of that green shift, which several assertions below quote rather than recompute. */
+const TEN_GREEN_STEPS = 10;
+/** A red shift `diffPixels` forgave outright, so `channelDelta` is the only place it appears. */
+const FOUR_RED_STEPS = 4;
+/** The `threshold` the one live call site, `e2e/export/visual-regression.spec.ts`, passes. */
+const EXPORT_CALL_SITE_THRESHOLD = 0.01;
+/** The widest possible per-channel step, which a black-to-opaque patch reaches exactly. */
+const OPAQUE_CHANNEL_MAX = 255;
 const SEMI_TRANSPARENT_RED: Rgba = { r: 255, g: 0, b: 0, alpha: 0.5 };
 const SEMI_TRANSPARENT_GREEN: Rgba = { r: 0, g: 255, b: 0, alpha: 0.5 };
 
@@ -42,11 +55,27 @@ const RATIO_STEP = 1 / SQUARE_100_PIXELS;
 const RATIO_AT_DEFAULT_LIMIT = PIXELS_AT_DEFAULT_ALLOWANCE / SQUARE_100_PIXELS;
 const RATIO_ONE_STEP_BELOW_DEFAULT = RATIO_AT_DEFAULT_LIMIT - RATIO_STEP;
 const RATIO_ONE_STEP_BELOW_HALF = HALF_SQUARE_10_RATIO - 1 / SQUARE_10_PIXELS;
+/**
+ * Half a 10x10 image moved by the full 255 of green-over-red: 50 * 255 / 100 pixels. A
+ * half-integer on purpose, so a mean rounded or truncated to an integer fails.
+ */
+const HALF_GREEN_PATCH_MEAN = (HALF_SQUARE_10_PIXELS * OPAQUE_CHANNEL_MAX) / SQUARE_10_PIXELS;
 
 const solidPng = (size: Size, background: Rgba): Promise<Buffer> =>
   sharp({ create: { width: size.width, height: size.height, channels: 4, background } })
     .png()
     .toBuffer();
+
+/** The four channel names `CompareResult.channelDelta` is keyed by, in a fixed order. */
+const CHANNEL_NAMES: readonly ChannelName[] = ['r', 'g', 'b', 'a'];
+
+/** What `channelDelta` must report for two byte-identical images. */
+const NO_MOVEMENT: Record<ChannelName, ChannelDelta> = {
+  r: { mean: 0, max: 0 },
+  g: { mean: 0, max: 0 },
+  b: { mean: 0, max: 0 },
+  a: { mean: 0, max: 0 },
+};
 
 const patchedPng = async (size: Size, background: Rgba, patches: Rect[]): Promise<Buffer> => {
   const base = await solidPng(size, background);
@@ -67,6 +96,15 @@ const green10x10 = () => solidPng(SQUARE_10, OPAQUE_GREEN);
 const halfGreen10x10 = () => patchedPng(SQUARE_10, OPAQUE_RED, [HALF_PATCH]);
 const patched100 = (...patches: Rect[]) => patchedPng(SQUARE_100, OPAQUE_RED, patches);
 
+/** A solid image whose named colour channels are all lifted `steps` above black, uniformly. */
+const shiftedBlack = (steps: number, channels: readonly ('r' | 'g' | 'b')[] = ['r']): Promise<Buffer> => {
+  const lifted: Rgba = { r: 0, g: 0, b: 0, alpha: 1 };
+  for (const channel of channels) {
+    lifted[channel] = steps;
+  }
+  return solidPng(SQUARE_10, lifted);
+};
+
 describe('Image Comparison Helpers', () => {
   describe('DEFAULT_THRESHOLD', () => {
     it('is 0.2', () => {
@@ -75,13 +113,73 @@ describe('Image Comparison Helpers', () => {
 
     it('is the threshold compareScreenshots applies when no override is given', async () => {
       const base = await redPng100();
-      const nearIdentical = await solidPng(SQUARE_100, NEAR_RED);
+      const shifted = await solidPng(SQUARE_100, RED_WITH_TEN_GREEN);
 
-      const implicit = await compareScreenshots(nearIdentical, base);
-      const explicit = await compareScreenshots(nearIdentical, base, { threshold: DEFAULT_THRESHOLD });
+      const implicit = await compareScreenshots(shifted, base);
+      const explicit = await compareScreenshots(shifted, base, { threshold: DEFAULT_THRESHOLD });
 
       expect(implicit).toEqual(explicit);
       expect(implicit.diffPixels).toBe(0);
+    });
+  });
+
+  /**
+   * WHAT THE DEFAULT THRESHOLD FORGIVES, measured rather than asserted.
+   *
+   * `DEFAULT_THRESHOLD` is 0.2 and its name reads as "loose but sane". It is not: pixelmatch
+   * counts a pixel different only when its YIQ distance exceeds `35215 * threshold²`, and the
+   * YIQ metric weights blue at 0.0565 and red at 0.1601, so the per-channel forgiveness is
+   * wildly unequal. The previous single pin in this file was a 10-step green shift on red,
+   * labelled "near-identical" — 7.5x tighter than the truth, in the one direction that made
+   * the constant look better than it is.
+   *
+   * Every boundary below was derived from pixelmatch@7.2.0's own `colorDelta` and then
+   * confirmed through `compareScreenshots` on real PNGs, one entry per row. The scale is
+   * 10x10 so a whole-image shift is exactly 100 differing pixels when it is not forgiven.
+   */
+  describe('what the default threshold forgives over a whole image', () => {
+    const forgivenRows: [string, number, readonly ('r' | 'g' | 'b')[]][] = [
+      ['10 red steps', 10, ['r']],
+      ['75 red steps', 75, ['r']],
+      ['93 red steps — the last forgiven value', 93, ['r']],
+      ['75 green steps — the last forgiven value', 75, ['g']],
+      ['157 blue steps — the last forgiven value', 157, ['b']],
+      ['52 steps on red, green and blue together — the last forgiven value', 52, ['r', 'g', 'b']],
+    ];
+
+    it.each(forgivenRows)('reports zero diff pixels for %s', async (_label, steps, channels) => {
+      const result = await compareScreenshots(await shiftedBlack(steps, channels), await shiftedBlack(0));
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+    });
+
+    const rejectedRows: [string, number, readonly ('r' | 'g' | 'b')[]][] = [
+      ['94 red steps — one past the red boundary', 94, ['r']],
+      ['96 red steps', 96, ['r']],
+      ['76 green steps — one past the green boundary', 76, ['g']],
+      ['158 blue steps — one past the blue boundary', 158, ['b']],
+      ['53 steps on red, green and blue together — one past the achromatic boundary', 53, ['r', 'g', 'b']],
+    ];
+
+    it.each(rejectedRows)('counts every pixel different for %s', async (_label, steps, channels) => {
+      const result = await compareScreenshots(await shiftedBlack(steps, channels), await shiftedBlack(0));
+
+      expect(result.diffPixels).toBe(SQUARE_10_PIXELS);
+      expect(result.diffRatio).toBe(1);
+      expect(result.matches).toBe(false);
+    });
+
+    it('measures a 157-step blue shift as looser than a 94-step red shift of the same count', async () => {
+      // The unequal weighting, stated as a comparison rather than as a coefficient: 157 blue
+      // steps and 93 red steps are BOTH forgiven, so an oracle tuned on red alone is 1.7x
+      // looser on blue without anything in the suite saying so.
+      const blue = await compareScreenshots(await shiftedBlack(157, ['b']), await shiftedBlack(0));
+      const red = await compareScreenshots(await shiftedBlack(94, ['r']), await shiftedBlack(0));
+
+      expect(blue.diffPixels).toBe(0);
+      expect(red.diffPixels).toBe(SQUARE_10_PIXELS);
     });
   });
 
@@ -101,7 +199,12 @@ describe('Image Comparison Helpers', () => {
       const second = await redPng100();
 
       expect(first.equals(second)).toBe(true);
-      expect(await compareScreenshots(first, second)).toEqual({ matches: true, diffPixels: 0, diffRatio: 0 });
+      expect(await compareScreenshots(first, second)).toEqual({
+        matches: true,
+        diffPixels: 0,
+        diffRatio: 0,
+        channelDelta: NO_MOVEMENT,
+      });
     });
 
     it('reports zero diff for identical semi-transparent images', async () => {
@@ -148,7 +251,22 @@ describe('Image Comparison Helpers', () => {
   });
 
   describe('compareScreenshots - size mismatches use the sentinel verdict', () => {
-    const sentinelVerdict = { matches: false, diffPixels: Number.MAX_SAFE_INTEGER, diffRatio: 1 };
+    /**
+     * `channelDelta` is part of the sentinel, not absent from it: every channel reports
+     * `Infinity`, so a caller gating on `channelDelta.r.max` fails here instead of reading a
+     * size mismatch as a perfect colour match.
+     */
+    const sentinelVerdict = {
+      matches: false,
+      diffPixels: Number.MAX_SAFE_INTEGER,
+      diffRatio: 1,
+      channelDelta: {
+        r: { mean: Infinity, max: Infinity },
+        g: { mean: Infinity, max: Infinity },
+        b: { mean: Infinity, max: Infinity },
+        a: { mean: Infinity, max: Infinity },
+      },
+    };
 
     it('does not match when both dimensions differ', async () => {
       const result = await compareScreenshots(
@@ -194,7 +312,12 @@ describe('Image Comparison Helpers', () => {
     it('still matches the smallest possible image against itself', async () => {
       const single = await solidPng(SINGLE_PIXEL, OPAQUE_RED);
 
-      expect(await compareScreenshots(single, single)).toEqual({ matches: true, diffPixels: 0, diffRatio: 0 });
+      expect(await compareScreenshots(single, single)).toEqual({
+        matches: true,
+        diffPixels: 0,
+        diffRatio: 0,
+        channelDelta: NO_MOVEMENT,
+      });
     });
 
     it('counts a single changed pixel in a 1x1 image', async () => {
@@ -210,8 +333,8 @@ describe('Image Comparison Helpers', () => {
   });
 
   describe('compareScreenshots - threshold sensitivity', () => {
-    it('counts near-identical pixels as different at a zero threshold', async () => {
-      const result = await compareScreenshots(await solidPng(SQUARE_100, NEAR_RED), await redPng100(), {
+    it('counts a 10-step green shift as different at a zero threshold', async () => {
+      const result = await compareScreenshots(await solidPng(SQUARE_100, RED_WITH_TEN_GREEN), await redPng100(), {
         threshold: 0,
       });
 
@@ -220,12 +343,30 @@ describe('Image Comparison Helpers', () => {
       expect(result.matches).toBe(false);
     });
 
-    it('ignores near-identical pixels at the default threshold', async () => {
-      const result = await compareScreenshots(await solidPng(SQUARE_100, NEAR_RED), await redPng100());
+    it('forgives that same 10-step green shift at the default threshold', async () => {
+      // "Near-identical" was the word here, and it was the finding: 10 of 255 is 4%, and the
+      // default threshold forgives up to 93 red / 157 blue steps, so the honest name for this
+      // case is the magnitude. The forgiveness itself is pinned, so the name can change.
+      const result = await compareScreenshots(await solidPng(SQUARE_100, RED_WITH_TEN_GREEN), await redPng100());
 
       expect(result.diffPixels).toBe(0);
       expect(result.diffRatio).toBe(0);
       expect(result.matches).toBe(true);
+    });
+
+    it('still reports the 10 green steps in channelDelta while forgiving them in diffPixels', async () => {
+      // The two answers disagree on purpose, and that disagreement is the reason
+      // `channelDelta` exists: `diffPixels` is a thresholded luma distance, so it rounds this
+      // shift away to nothing, while the arithmetic below counts it exactly.
+      const result = await compareScreenshots(await solidPng(SQUARE_100, RED_WITH_TEN_GREEN), await redPng100());
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.channelDelta).toEqual({
+        r: { mean: 0, max: 0 },
+        g: { mean: TEN_GREEN_STEPS, max: TEN_GREEN_STEPS },
+        b: { mean: 0, max: 0 },
+        a: { mean: 0, max: 0 },
+      });
     });
   });
 
@@ -420,10 +561,10 @@ describe('Image Comparison Helpers', () => {
   describe('compareScreenshots - option normalization', () => {
     it('treats an explicitly undefined threshold as an omitted threshold', async () => {
       const base = await redPng100();
-      const nearIdentical = await solidPng(SQUARE_100, NEAR_RED);
+      const shifted = await solidPng(SQUARE_100, RED_WITH_TEN_GREEN);
 
-      expect(await compareScreenshots(nearIdentical, base, { threshold: undefined })).toEqual(
-        await compareScreenshots(nearIdentical, base)
+      expect(await compareScreenshots(shifted, base, { threshold: undefined })).toEqual(
+        await compareScreenshots(shifted, base)
       );
     });
 
@@ -435,11 +576,116 @@ describe('Image Comparison Helpers', () => {
     });
   });
 
+  /**
+   * WHY `channelDelta` EXISTS, stated as the disagreement it resolves.
+   *
+   * `diffPixels` is a luma-weighted YIQ distance compared against one number, so it is not
+   * a colour oracle at all: at the live call site's `threshold: 0.01` a uniform shift of up
+   * to 4 red, 3 green, 7 blue or 2 alpha steps across EVERY pixel of an 800x600 export is
+   * not a difference to it. No test in the suite asserted an exported colour before this,
+   * and `assertExportGeometry` cannot close the gap either — it measures luma-weighted ink,
+   * so a shift that trades red for blue at equal luma is invisible to both.
+   *
+   * These tests pin the ARITHMETIC, not a budget. What a caller then asserts on the numbers
+   * is a separate, deliberate decision, and the recommendation for the export call site is
+   * in the change report rather than in this file — a threshold added here would be a gate
+   * change wearing a test's clothes.
+   */
+  describe('compareScreenshots - channelDelta', () => {
+    it('reports no movement on any channel for two identical images', async () => {
+      const result = await compareScreenshots(await red10x10(), await red10x10());
+
+      expect(result.channelDelta).toEqual(NO_MOVEMENT);
+    });
+
+    it('reports the exact mean and max for a uniform shift over every pixel', async () => {
+      // Mean equals max because every pixel moved by the same amount, which is the case that
+      // makes the two numbers distinguishable from each other at all.
+      const result = await compareScreenshots(await shiftedBlack(4, ['r']), await shiftedBlack(0));
+
+      expect(result.channelDelta).toEqual({
+        ...NO_MOVEMENT,
+        r: { mean: FOUR_RED_STEPS, max: FOUR_RED_STEPS },
+      });
+    });
+
+    it('separates mean from max when only half the image moved', async () => {
+      // Half of a 10x10 is 50 pixels; green-over-red is a 255-step move on red and on green,
+      // so the mean is exactly half the max. Blue is 0 in both colours and is the control:
+      // it must read zero, which is what a per-channel mean or a max that leaked across
+      // channels would not do. A half-integer mean means a mean rounded to an integer fails.
+      const result = await compareScreenshots(await halfGreen10x10(), await red10x10());
+
+      expect(result.channelDelta).toEqual({
+        r: { mean: HALF_GREEN_PATCH_MEAN, max: OPAQUE_CHANNEL_MAX },
+        g: { mean: HALF_GREEN_PATCH_MEAN, max: OPAQUE_CHANNEL_MAX },
+        b: { mean: 0, max: 0 },
+        a: { mean: 0, max: 0 },
+      });
+    });
+
+    it('reports a whole-image channel move that diffPixels forgave entirely', async () => {
+      // The case the whole field exists for. At the export call site's `threshold: 0.01`,
+      // 4 red steps over 480,000 pixels is `diffPixels: 0` and `matches: true`; the channel
+      // arithmetic below says the colour moved by 4 and the caller is the only one who can
+      // decide whether that is a failure. Both halves are asserted together precisely so
+      // that neither can be changed without the other being re-decided.
+      const result = await compareScreenshots(await shiftedBlack(4, ['r']), await shiftedBlack(0), {
+        threshold: EXPORT_CALL_SITE_THRESHOLD,
+        maxDiffPixels: 0,
+      });
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+      expect(result.channelDelta.r).toEqual({ mean: FOUR_RED_STEPS, max: FOUR_RED_STEPS });
+    });
+
+    it('reports the same move that diffPixels DID count, so the two agree when they should', async () => {
+      // 94 red steps is past the boundary at the default threshold and past it at 0.01 too, so
+      // the pixel count and the channel arithmetic have to move together. Without this, a
+      // `channelDelta` that reported a plausible number for an image pixelmatch never read
+      // would still pass every case above.
+      const result = await compareScreenshots(await shiftedBlack(94, ['r']), await shiftedBlack(0), {
+        threshold: EXPORT_CALL_SITE_THRESHOLD,
+      });
+
+      expect(result.diffPixels).toBe(SQUARE_10_PIXELS);
+      expect(result.channelDelta.r).toEqual({ mean: 94, max: 94 });
+    });
+
+    it('reports Infinity on every channel for a size mismatch, rather than zero', async () => {
+      // Zero would be the dangerous lie here: it is what "the colour did not move" looks
+      // like, and a caller gating on `channelDelta.r.max` would read a size mismatch as a
+      // perfect colour match. `Infinity` fails that gate, which is the right outcome.
+      const result = await compareScreenshots(await red10x10(), await greenPng100());
+
+      expect(result.matches).toBe(false);
+      for (const channel of CHANNEL_NAMES) {
+        expect(result.channelDelta[channel]).toEqual({ mean: Infinity, max: Infinity });
+      }
+    });
+
+    it('hands out a fresh channelDelta that a caller may mutate without affecting later calls', async () => {
+      // Red against green at the same size, so every channel is measured rather than reported
+      // as the size-mismatch `Infinity`: the mutation below would be invisible if a later
+      // comparison returned the shared unmeasured object.
+      const first = await compareScreenshots(await red10x10(), await green10x10());
+      first.channelDelta.r.max = 0;
+      first.channelDelta.g = { mean: 0, max: 0 };
+
+      const second = await compareScreenshots(await red10x10(), await green10x10());
+
+      expect(second.channelDelta.r.max).toBe(OPAQUE_CHANNEL_MAX);
+      expect(second.channelDelta.g.max).toBe(OPAQUE_CHANNEL_MAX);
+    });
+  });
+
   describe('compareScreenshots - result contract', () => {
     it('returns exactly the documented result keys', async () => {
       const result = await compareScreenshots(await redPng100(), await redPng100());
 
-      expect(Object.keys(result).sort()).toEqual(['diffPixels', 'diffRatio', 'matches']);
+      expect(Object.keys(result).sort()).toEqual(['channelDelta', 'diffPixels', 'diffRatio', 'matches']);
     });
 
     it('returns values of the documented runtime types', async () => {
@@ -448,6 +694,7 @@ describe('Image Comparison Helpers', () => {
       expect(typeof result.matches).toBe('boolean');
       expect(typeof result.diffPixels).toBe('number');
       expect(Number.isFinite(result.diffRatio)).toBe(true);
+      expect(Object.keys(result.channelDelta).sort()).toEqual(['a', 'b', 'g', 'r']);
     });
 
     it('returns a fresh result object that callers may mutate without affecting later calls', async () => {
@@ -469,12 +716,17 @@ describe('Image Comparison Helpers', () => {
       }>();
     });
 
-    it('CompareResult has matches, diffPixels, diffRatio', () => {
+    it('CompareResult has matches, diffPixels, diffRatio and channelDelta', () => {
       expectTypeOf<CompareResult>().toEqualTypeOf<{
         matches: boolean;
         diffPixels: number;
         diffRatio: number;
+        channelDelta: Record<ChannelName, ChannelDelta>;
       }>();
+    });
+
+    it('ChannelDelta carries a mean and a max, both plain numbers', () => {
+      expectTypeOf<ChannelDelta>().toEqualTypeOf<{ mean: number; max: number }>();
     });
   });
 });

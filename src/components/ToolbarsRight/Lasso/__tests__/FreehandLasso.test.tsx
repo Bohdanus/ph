@@ -14,17 +14,12 @@ const mockDispatch = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   selections: [] as Selection[],
-  // An empty timeline at cursor -1 is what a store with nothing appended yet
-  // actually looks like, and it is what puts the Clear writer on the append
-  // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
-  // planner's `timeline`, `validateTimeline` reports the out-of-range cursor as a
-  // diagnostic instead of throwing on `undefined`, and the writer dispatches the
-  // plan it made. Without them the writer's `catch` produces a byte-identical
-  // dispatch with no `durableEntry`, and every pin below would pass on that
-  // fallback instead. `branchRevision` is the hook's own default, included for
-  // shape parity.
-  history: [] as unknown[],
-  historyIndex: -1,
+  // One committed edit with the cursor at its tip keeps the mocked timeline valid.
+  // An empty timeline at cursor -1 is intentionally not used: the append boundary
+  // withholds a durable plan when the cursor has no append point, which would make
+  // the writer pin the fallback instead of the planned dispatch.
+  history: [{ id: 'prior-edit', layerId: 'layer-1', actionName: 'new layer', args: {} }] as unknown[],
+  historyIndex: 0,
   branchRevision: 0,
 }));
 
@@ -84,10 +79,10 @@ const LASSO_SELECTION: Selection = {
 };
 
 /**
- * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
  * edit that appends to history, so a deselect can be undone. The store mock has
  * to carry a live selection for the writer to read — an already-empty document
- * makes Clear a deliberate no-op, which is a different test.
+ * makes Deselect a deliberate no-op, which is a different test.
  *
  * The component's contract is to PLAN the append and DISPATCH the plan. Whether
  * the planned `durableEntry` is published is the STORE's decision, made in
@@ -95,13 +90,10 @@ const LASSO_SELECTION: Selection = {
  * it is not asserted here. `id` is a fresh uuid per call, hence
  * `expect.any(String)`.
  *
- * The store mock carries `history`/`historyIndex` so the writer reaches the
- * SUCCESS branch of the append boundary: without them `planHistoryAppend`'s
- * `validateTimeline` evaluates `timeline.entries.some(...)` on `undefined` and
- * THROWS, the writer's `catch` converts that into a fallback dispatch that omits
- * `durableEntry` entirely, and the two dispatches are byte-identical apart from
- * that field — so this pin would keep passing on the failure path and a
- * regression that made the planner throw would leave the file green.
+ * The store mock carries a valid `history`/`historyIndex` pair so the writer's
+ * durable plan is present. The test is not about publication, which belongs to
+ * the StoreContext boundary; it is about the component handing the planner's
+ * result to the dispatcher rather than silently falling back.
  */
 const CLEAR_SELECTION_EDIT = expect.objectContaining({
   type: 'COMMIT_DOCUMENT_EDIT',
@@ -129,7 +121,7 @@ const setStoreSelections = (selections: Selection[], activeSelectionId: string |
 const getModeButton = () => screen.getByRole('button', { name: /^(Fill|Outline)$/ });
 const getCopyButton = () => screen.getByRole('button', { name: 'Copy' });
 const getPasteButton = () => screen.getByRole('button', { name: 'Paste' });
-const getClearButton = () => screen.getByRole('button', { name: 'Clear' });
+const getClearButton = () => screen.getByRole('button', { name: 'Deselect' });
 
 describe('FreehandLasso toolbar', () => {
   beforeEach(() => {
@@ -324,7 +316,7 @@ describe('FreehandLasso toolbar', () => {
     // plan being DISPATCHED is the writer's, and only the success branch carries
     // one. The two dispatches are byte-identical apart from this field, so
     // without this assertion a regression that made `planHistoryAppend` throw
-    // would leave every Clear pin in this file green while the durable shadow
+    // would leave every Deselect pin in this file green while the durable shadow
     // silently stopped being patched.
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
     setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);

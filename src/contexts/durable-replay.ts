@@ -122,6 +122,27 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
       case 'set-document-frame':
         frame = Object.freeze({ ...operation.next });
         break;
+      case 'replace-layer-source': {
+        const layer = layers.get(operation.layerId);
+        // Absent layer is a no-op, the same answer `remove-layer`,
+        // `set-layer-properties` and `reposition-layer` give for an id the
+        // document does not hold.
+        if (!layer) break;
+        // The retained operations SURVIVE a source rewrite. A source edit is an
+        // edit of the layer's arguments, not of the edits already applied to it:
+        // Photoshop keeps a live filter or transform on a type layer whose text is
+        // retyped, and `materializeLayer` renders the new source and then applies
+        // `layer.operations`, which is what makes the two agree. Clearing them
+        // would drop a user's blur on the next edit to their type.
+        layers.set(
+          operation.layerId,
+          layerWithSnapshot(
+            layer,
+            cloneLayerSnapshot({ ...layer.snapshot, pos: { ...operation.pos }, source: operation.source })
+          )
+        );
+        break;
+      }
       case 'merge-document':
         for (const id of operation.removedLayerIds) layers.delete(id);
         layers.set(
@@ -133,6 +154,16 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
       case 'set-selection':
         selections = cloneSelectionSnapshot(operation.after);
         break;
+      default:
+        // This switch is the durable replay authority's whole reading of an
+        // operation, so a kind it does not name is an operation the replay
+        // SILENTLY SKIPS — the layer never receives it and the document renders
+        // as though it were never committed. That is a wrong answer with no
+        // diagnostic, which is the worst shape a gap can take here, so adding a
+        // kind to `DurableOperation` without giving it a replay arm is a
+        // typecheck error rather than a silent divergence.
+        const _exhaustive: never = operation;
+        void _exhaustive;
     }
   }
 

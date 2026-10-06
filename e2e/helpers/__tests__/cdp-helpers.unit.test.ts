@@ -99,6 +99,25 @@ function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpH
   };
 }
 
+/**
+ * The reason a promise rejected, as an `Error`.
+ *
+ * `expect(p).rejects.toThrow(...)` matches a message and cannot reach an identity, and
+ * two of the cases below are about WHICH error the caller is handed and what is attached
+ * underneath it. A resolution is a failure of the case, not a `undefined` reason to assert
+ * on: the old `toolbar-helpers.unit.test.ts` idiom rejects with a message naming both.
+ */
+async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
+  const reason: unknown = await promise.then(
+    () => {
+      throw new Error('expected the promise to reject, but it resolved');
+    },
+    (caught: unknown) => caught
+  );
+  expect(reason).toBeInstanceOf(Error);
+  return reason as Error;
+}
+
 describe('CDP Helpers', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -167,6 +186,53 @@ describe('CDP Helpers', () => {
 
   describe('captureCanvasScreenshot', () => {
     afterEach(cleanupTempDirs);
+
+    it('names the helper and the missing field when testInfo has no output directory', async () => {
+      // The guard is the second statement of the function, and nothing failed when it was
+      // deleted, while the sibling guard in `takeLineScreenshot()` IS pinned by the test of
+      // this name in `canvas-interaction.unit.test.ts`. Without it the failure came from
+      // `path.join` as `The "path" argument must be of type string. Received undefined`,
+      // naming neither this helper nor the field to fix. `createTestInfoMock()` with no
+      // argument is the double that has no `outputDir`; every other pre-existing case in this
+      // file passes a real directory, which is why no earlier test could reach this branch.
+      const outputDir = await makeOutputDir('absent-output-dir');
+      const { page, newCDPSession, send } = createCdpHarness(outputDir);
+      const { testInfo, attach } = createTestInfoMock();
+
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'absent'));
+
+      expect(error.message).toContain('captureCanvasScreenshot');
+      expect(error.message).toContain('outputDir');
+      expect(error.message).toContain('required');
+      // Asserted rather than assumed: the guard is the FIRST thing the helper reads, so a
+      // TestInfo it cannot use costs no CDP session and no directory. A guard placed after
+      // the session was opened would leak the session on this path.
+      expect(newCDPSession).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
+      expect(existsSync(outputDir)).toBe(false);
+    });
+
+    it('rejects an empty output directory as the unusable field it is', async () => {
+      // The second clause of the same guard. An empty string is not a usable directory, and
+      // the two ways it is unusable are both silent: `path.join('', 'empty.png')` is the
+      // RELATIVE path `empty.png`, so the artifact path would name the process working
+      // directory rather than any output directory, and `fs.mkdir('')` — which runs first —
+      // fails as `ENOENT: no such file or directory, mkdir ''`, naming neither this helper
+      // nor the field to fix. The reader is left deciding whether the directory or the field
+      // is wrong. The sibling case above is the same fault with `undefined` in place of `''`.
+      const { page, newCDPSession, send } = createCdpHarness('');
+      const { testInfo, attach } = createTestInfoMock('');
+
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'empty-dir'));
+
+      expect(error.message).toContain('captureCanvasScreenshot');
+      expect(error.message).toContain('outputDir');
+      expect(error.message).toContain('required');
+      expect(newCDPSession).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
+    });
 
     it('sends Page.captureScreenshot with the box as the clip, at scale 1 and png format', async () => {
       const outputDir = await makeOutputDir('exact-params');
@@ -417,39 +483,55 @@ describe('CDP Helpers', () => {
       expect(detach).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects with a raw TypeError when the CDP response omits data, and detaches', async () => {
-      // FINDING, pinned: `Buffer.from(undefined, 'base64')` throws a bare Node
-      // TypeError naming neither CDP nor the test, so a truncated response is reported
-      // as "The first argument must be of type string...". Pinning the message means a
-      // fix that validates `data` up front breaks this test instead of passing quietly.
+    it('names the helper and the CDP request when the response carries no data, and detaches', async () => {
+      // The fix this replaced: `Buffer.from(undefined, 'base64')` answered with Node's
+      // `The first argument must be of type string or an instance of Buffer, ...`, which
+      // names neither CDP nor this helper nor the test. So the MESSAGE is the fix, not
+      // the error class: naming the helper and the request that produced the response is
+      // what lets a reader act on the failure without first finding the call site, and an
+      // assertion of the form `rejects.toThrow(Error)` would pass a fix that replaced the
+      // TypeError with an equally opaque message.
       const outputDir = await makeOutputDir('missing-data');
-      const { page, detach } = createCdpHarness(outputDir, { response: {} });
+      const { page, send, detach } = createCdpHarness(outputDir, { response: {} });
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'missing')).rejects.toThrow(
-        /first argument must be of type string/
-      );
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'missing'));
 
+      expect(error.message).toContain('captureCanvasScreenshot');
+      expect(error.message).toContain('Page.captureScreenshot');
+      // Absent and empty are different faults with the same call site, so the message has
+      // to tell them apart — and neither may be the raw Node text any more.
+      expect(error.message).toMatch(/no base64 `data` to decode \(received undefined\)/);
+      expect(error.message).not.toMatch(/first argument must be of type string/);
+      // A malformed response costs the capture, never the cleanup: the write and the
+      // attach are both still ahead of the failure, and the session is still detached.
+      expect(send).toHaveBeenCalledTimes(1);
       expect(attach).not.toHaveBeenCalled();
       expect(existsSync(path.join(outputDir, 'missing.png'))).toBe(false);
       expect(detach).toHaveBeenCalledTimes(1);
     });
 
-    it('reports success for an empty capture, writing and attaching a zero-byte file', async () => {
-      // FINDING, pinned: nothing checks that the decoded capture is non-empty, so a
-      // failed or empty CDP capture is reported as a success with a 0-byte PNG
-      // attached. Downstream, `loadImageData` then fails on a file this helper
-      // claimed to have written. Callers that check `length > 0` catch it; the helper
-      // itself does not.
+    it('rejects a capture that decodes to no bytes, instead of reporting success, and detaches', async () => {
+      // `{ data: '' }` is a PRESENT, correctly-typed response, which is exactly why a
+      // `typeof data === 'string'` guard alone is not the fix: it lets this through, and
+      // the helper then wrote, attached and RETURNED a 0-byte PNG as a successful capture.
+      // The subject asserted here is therefore the DECODED LENGTH, so this case fails
+      // against a type-only guard and against one that checks the string's length rather
+      // than the payload's. The fault it used to produce surfaced far from its cause, in
+      // `loadImageData` (canvas-helpers.ts:541), naming the consumer instead.
       const outputDir = await makeOutputDir('empty-data');
       const { page, detach } = createCdpHarness(outputDir, { response: { data: '' } });
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      const result = await captureCanvasScreenshot(page, BOX, testInfo, 'empty');
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'empty'));
 
-      expect(result).toHaveLength(0);
-      expect((await fs.stat(path.join(outputDir, 'empty.png'))).size).toBe(0);
-      expect(attach).toHaveBeenCalledTimes(1);
+      expect(error.message).toContain('captureCanvasScreenshot');
+      expect(error.message).toContain('Page.captureScreenshot');
+      expect(error.message).toMatch(/decoded to 0 bytes/);
+      // Before the write and before the attach, which were the two observable halves of
+      // the old success: a 0-byte file in outputDir, and a non-image attached to the report.
+      expect(existsSync(path.join(outputDir, 'empty.png'))).toBe(false);
+      expect(attach).not.toHaveBeenCalled();
       expect(detach).toHaveBeenCalledTimes(1);
     });
 
@@ -466,20 +548,54 @@ describe('CDP Helpers', () => {
       expect(detach).toHaveBeenCalledTimes(1);
     });
 
-    it('reports a detach failure in place of the capture failure when both fail', async () => {
-      // PIN: `finally { await cdp.detach() }` means a rejecting detach *replaces* the
-      // in-flight error, so the caller is told the session could not be closed and
-      // never learns the capture failed. Asserting on the detach message pins the
-      // masking; swallowing the detach error instead would break this test.
-      const outputDir = await makeOutputDir('detach-failure');
-      const { page, detach } = createCdpHarness(outputDir, {
-        sendError: new Error('capture exploded'),
-        detachError: new Error('detach exploded'),
-      });
-      const { testInfo } = createTestInfoMock(outputDir);
+    it('reports the capture failure when the detach also fails, hanging the detach off it as cause', async () => {
+      // The fix this replaced: `finally { await cdp.detach() }` means a rejecting detach
+      // REPLACES the in-flight error, so the caller was handed the detach's message and
+      // never learned the capture had failed at all. This is the likely pairing rather
+      // than a corner — a capture fails most often when the page or the target is already
+      // gone, which is precisely when the detach fails too. So the capture's error is the
+      // rejection, by identity and by message, and the detach's is REACHABLE underneath
+      // it rather than discarded: replacing the one with the other loses the cause, and
+      // swallowing the detach loses the session.
+      const outputDir = await makeOutputDir('both-fail');
+      const captureError = new Error('capture exploded');
+      const detachError = new Error('detach exploded');
+      const { page, detach } = createCdpHarness(outputDir, { sendError: captureError, detachError });
+      const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'both')).rejects.toThrow('detach exploded');
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'both'));
 
+      expect(error).toBe(captureError);
+      expect(error.message).toBe('capture exploded');
+      expect(error.cause).toBe(detachError);
+      // The detach is still ATTEMPTED on this path: once, not twice, and not zero.
+      expect(detach).toHaveBeenCalledTimes(1);
+      expect(attach).not.toHaveBeenCalled();
+      expect(existsSync(path.join(outputDir, 'both.png'))).toBe(false);
+    });
+
+    it('reports a detach failure on its own when the capture succeeded, rather than swallowing it', async () => {
+      // The other half of the fix, and the half a "just log the detach error" patch drops:
+      // with nothing already failing there is no cause to preserve, and a session that
+      // cannot be closed is the leak this helper exists to prevent — see 'waits for the
+      // session to detach before it resolves'. So the detach's error is the rejection here,
+      // unchanged, and a fix that made the detach quiet unconditionally fails this case.
+      const outputDir = await makeOutputDir('detach-only-failure');
+      const detachError = new Error('detach exploded');
+      const { page, detach } = createCdpHarness(outputDir, { detachError });
+      const { testInfo, attach } = createTestInfoMock(outputDir);
+
+      const error = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'detach-only'));
+
+      expect(error).toBe(detachError);
+      expect(error.message).toBe('detach exploded');
+      // No capture failure to point at, so nothing is attached to the detach's error —
+      // the success path does not invent a cause.
+      expect(error.cause).toBeUndefined();
+      // The capture itself succeeded, and it ran before the detach, so its artifact is on
+      // disk and attached: the detach failure does not retroactively unwrite it.
+      expect(existsSync(path.join(outputDir, 'detach-only.png'))).toBe(true);
+      expect(attach).toHaveBeenCalledTimes(1);
       expect(detach).toHaveBeenCalledTimes(1);
     });
 
@@ -549,35 +665,67 @@ describe('CDP Helpers', () => {
       expect(attach.mock.calls[0][0]).toBe('');
     });
 
-    it('treats a name containing a path separator as a path, not a filename', async () => {
-      // Only `outputDir` is created, so a name with a separator names a parent
-      // directory that does not exist. Documented constraint: `name` has to be a bare
-      // filename. A fix that sanitised the name breaks this test.
+    it('rejects a name containing a path separator instead of writing it as a path', async () => {
+      // The pin this replaces ASSERTED THE DEFECT: `path.join(outputDir, 'nested/thing.png')`
+      // names a parent directory that nothing creates, so the capture died with `ENOENT` on a
+      // file the caller never named, and the pin's own comment made sanitisation a fix it
+      // forbade. `name` is caller data interpolated into a path, so a separator in it became a
+      // path whether or not the caller meant one — the artifact path and the name the caller
+      // passed stopped being the same string. Rejected now, for the reason the `outputDir`
+      // guard throws: silently rewriting it would attach the report under a name the test
+      // never asked for, and two rewritten names would collide into one artifact.
       const outputDir = await makeOutputDir('name-with-separator');
-      const { page, detach } = createCdpHarness(outputDir);
+      // Pre-created so the assertion below is about what the helper WROTE. Whether it creates
+      // the directory is 'creates the whole output directory path before the CDP session is
+      // opened', and a rejected name must not need it to have been created at all.
+      await fs.mkdir(outputDir, { recursive: true });
+      const { page, newCDPSession, send, detach } = createCdpHarness(outputDir);
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      await expect(captureCanvasScreenshot(page, BOX, testInfo, 'nested/thing')).rejects.toThrow(/ENOENT/);
+      const separator = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'nested/thing'));
 
+      expect(separator.message).toContain('captureCanvasScreenshot');
+      expect(separator.message).toContain('nested/thing');
+      // The other separator, which is an ordinary character in a POSIX filename and a path
+      // separator on Windows: the artifact path has to mean one thing on every host.
+      const windows = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, 'nested\\thing'));
+      expect(windows.message).toContain(JSON.stringify('nested\\thing'));
+      // Rejected before anything was opened or created, so there is no session left to
+      // detach and no `ENOENT` standing in for the message that says what is wrong.
+      expect(newCDPSession).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+      expect(detach).not.toHaveBeenCalled();
       expect(attach).not.toHaveBeenCalled();
-      expect(detach).toHaveBeenCalledTimes(1);
+      expect(await fs.readdir(outputDir)).toEqual([]);
     });
 
-    it('writes outside the output directory when the name traverses out of it', async () => {
-      // The name is interpolated into a path with no sanitisation, so `..` segments
-      // resolve. Low severity in a throwaway test directory, but it means the written
-      // path and the attached path are not confined to `testInfo.outputDir` — a caller
-      // that assumes they are, or that later cleans up by output dir, is wrong.
+    it('never writes outside the output directory when the name traverses out of it', async () => {
+      // The pin this replaces ASSERTED THE DEFECT AS FACT: the name was interpolated into a
+      // path with no sanitisation, so `..` resolved, `escaped.png` was written one level ABOVE
+      // `outputDir`, and that outside path was the one handed to `attach` — so the report
+      // carried an artifact that no cleanup of the output directory would ever reach, and a
+      // caller assuming the written path is confined to `outputDir` was wrong.
       const outputDir = await makeOutputDir('name-traversal');
-      const { page } = createCdpHarness(outputDir);
+      await fs.mkdir(outputDir, { recursive: true });
+      const { page, newCDPSession } = createCdpHarness(outputDir);
       const { testInfo, attach } = createTestInfoMock(outputDir);
 
-      await captureCanvasScreenshot(page, BOX, testInfo, '../escaped');
+      const traversal = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, '../escaped'));
 
-      const escapedPath = path.join(path.dirname(outputDir), 'escaped.png');
-      expect(existsSync(escapedPath)).toBe(true);
-      expect(existsSync(path.join(outputDir, 'escaped.png'))).toBe(false);
-      expect(attach.mock.calls[0][1].path).toBe(escapedPath);
+      expect(traversal.message).toContain('captureCanvasScreenshot');
+      expect(traversal.message).toContain('../escaped');
+      // `..` alone is a directory reference rather than a filename, and the appended `.png`
+      // turns it into `...png`, which looks enough like an ordinary name to pass unnoticed.
+      const dotDot = await rejectionOf(captureCanvasScreenshot(page, BOX, testInfo, '..'));
+      expect(dotDot.message).toContain('captureCanvasScreenshot');
+      expect(dotDot.message).toContain(JSON.stringify('..'));
+      // The file the old pin watched for is never written...
+      expect(existsSync(path.join(path.dirname(outputDir), 'escaped.png'))).toBe(false);
+      // ...nothing takes its place inside the directory either, and nothing is attached, so
+      // the rejection cannot be mistaken for a capture that produced a report entry.
+      expect(await fs.readdir(outputDir)).toEqual([]);
+      expect(newCDPSession).not.toHaveBeenCalled();
+      expect(attach).not.toHaveBeenCalled();
     });
   });
 });

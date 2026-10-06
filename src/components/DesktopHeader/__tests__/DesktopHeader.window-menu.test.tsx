@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import DesktopHeader from '../DesktopHeader.tsx';
 import { PanelLayoutProvider } from '../../../contexts/PanelLayout.tsx';
+import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
 
 /**
  * The `Window` menu, which exists for one command.
@@ -59,7 +60,13 @@ vi.mock('../../../contexts/RightPanelVisibility.tsx', () => ({
   useRightPanelVisibility: () => ({ isCollapsible: false, isOpen: true, toggle: vi.fn() }),
 }));
 
-const wrapper = ({ children }: { children: ReactNode }) => <PanelLayoutProvider>{children}</PanelLayoutProvider>;
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <PanelLayoutProvider>
+    {/* The real provider, not a mock: `useUnsavedChanges` throws outside it. `Window` has
+        no discard guard, so nothing it can render appears here. */}
+    <UnsavedChangesProvider>{children}</UnsavedChangesProvider>
+  </PanelLayoutProvider>
+);
 
 describe('DesktopHeader Window menu', () => {
   beforeEach(() => {
@@ -68,6 +75,10 @@ describe('DesktopHeader Window menu', () => {
       {
         canvasRef: { current: null },
         currentArgs: { current: { toolName: 'draw' } },
+        // A REF, like `currentArgs`, because `UnsavedChangesProvider` reads
+        // `previewLayers.current` for an in-flight tool transaction. Without it the
+        // provider throws `Cannot convert undefined or null to object` on `Object.keys`.
+        previewLayers: { current: {} },
         fileName: 'x',
         hasUnsavedChanges: false,
         totalSize: { width: 1, height: 1 },

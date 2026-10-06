@@ -286,7 +286,7 @@ const shiftPaintedChannels = (
  * to share one.
  *
  * `points` are in the same space as `size` and the buffer: the registry hands a raster
- * tool the layer's own bitmap and extent (`src/contexts/useLayer.ts:544`), so a point is
+ * tool the layer's own bitmap and extent (`src/contexts/useLayer.ts:730-734`), so a point is
  * addressed against this buffer and not against the document.
  *
  * There is no build-up. Photoshop's dodge and burn accumulate for as long as the button

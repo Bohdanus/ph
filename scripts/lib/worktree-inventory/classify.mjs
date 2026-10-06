@@ -64,6 +64,11 @@ export const RECOMMENDATION = {
   KEEP: 'keep',
   /** Cannot be classified from what is known. Do not remove. */
   UNKNOWN: 'unknown',
+  /**
+   * Stale on purpose: nobody will work on this again, but the branch ref is
+   * worth the one ref it costs. See {@link ACTION.LEGACY}.
+   */
+  LEGACY: 'legacy',
 };
 
 /**
@@ -89,6 +94,31 @@ export const ACTION = {
   KEEP: 'keep',
   /** Cannot be decided from what is known. */
   UNDECIDED: 'undecided',
+  /**
+   * Keep the BRANCH, drop the WORKTREE. A curated `legacy: true`.
+   *
+   * WHY THIS IS NOT `at-risk`. `at-risk` means a human must act before anything
+   * can be lost, and it reads that way in every list an operator opens. A legacy
+   * branch is the opposite of a pending problem: nobody is going to act on it,
+   * the merge may never be wanted, and the only thing at stake is a ref that
+   * costs one entry in `.git/refs`. Filing it as `at-risk` put a permanent entry
+   * on the at-risk list, which is the list a sweep reads first, so a branch that
+   * was never going to be worked on kept being re-investigated every pass.
+   *
+   * WHAT IT BUYS. The worktree directory is the expensive thing — a checkout, a
+   * `node_modules`, a `dist/` — and git holds a branch without any worktree at
+   * all. So `legacy` separates the two: `npm run dispose` removes the directory
+   * and skips `git branch -d`, and the branch stays recoverable for the small
+   * chance it is ever needed. Keeping the whole worktree instead would cost a
+   * filesystem entry per legacy branch forever and buy nothing git does not
+   * already do with the ref.
+   *
+   * IT IS A CURATED CLAIM, LIKE `mustNotPrune`, AND IT IS NOT FREE OF GIT. It
+   * says "do not merge this and do not forget it", never "this is safe to
+   * delete" — the worktree half is disposable precisely because `legacy` is the
+   * reason the directory is safe to remove.
+   */
+  LEGACY: 'legacy',
 };
 
 /**
@@ -100,6 +130,53 @@ export const ACTION = {
  * in-use that the audit calls abandoned, which is worse than either answer.
  */
 export const LIVE_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * How recently a tool call must have touched a worktree's own directory for that
+ * to count as someone being in there.
+ *
+ * Deliberately WIDER than {@link LIVE_WINDOW_MS}, and it is a separate signal
+ * rather than a wider version of the same one. `LIVE_WINDOW_MS` answers "is a
+ * chat active", which is a question about `session.time_updated`; it cannot see
+ * a main-checkout agent at all, because that agent's `directory` is the main
+ * checkout no matter how many commands it runs inside a task worktree. Direct
+ * I/O inside the directory is the one piece of evidence that survives that, and
+ * it answers a different question: not "is a chat typing" but "did anything
+ * demonstrably happen here".
+ *
+ * The width is the operator's own staleness threshold, and it is a parameter
+ * rather than a constant of consequence: a worktree whose last recorded command
+ * ran inside this window is not a deletion candidate at any window, because the
+ * cost of being wrong is a live agent's work and the cost of being right is one
+ * worktree kept a few hours longer.
+ */
+export const RECENT_IO_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Did anything demonstrably happen inside this worktree recently?
+ *
+ * `shellHistory.lastAtMs` is a command whose recorded workdir, or whose target
+ * path, is inside this worktree. That is weaker evidence than a file write and
+ * stronger than a message: a `read` proves a reader, and a `write` here is
+ * already covered by `writeHistory`. All three are folded in because a reader
+ * inside a live window is still a live occupant — the skill is explicit that a
+ * read is grounds for LIVE unless the hit can be shown to be an inventory row —
+ * and because each history is a separate pass over the transcript, so any one
+ * of them can be the pass that caught the activity and the other two can be
+ * silent about the same session.
+ *
+ * A read is admitted on the same window as a write rather than a wider one,
+ * because readers accumulate: `readHistory` is why `--release-reads` exists.
+ * The release writes through to the same `lastAtMs`, so a released reader
+ * reads as no signal here rather than as a permanent claim.
+ *
+ * `derivedChatIds` and not `activeNow` for the same reason `writeLive` reads the
+ * former: `activeNow` is the value AFTER the suppression flag has been applied,
+ * so consulting it would let an override erase its own evidence.
+ */
+export function hasRecentIo(histories, nowMs, ioWindowMs = RECENT_IO_WINDOW_MS) {
+  return histories.some((h) => typeof h?.lastAtMs === 'number' && nowMs - h.lastAtMs < ioWindowMs);
+}
 
 function isWorkingTreeHeld(wt) {
   return wt.workingTree.modified + wt.workingTree.untracked > 0;
@@ -153,7 +230,17 @@ function mergeVerdict(wt) {
  */
 export function classify(
   wt,
-  { chatSummary, chatSessions, curated, nowMs, boardAgents = [], writeHistory = null, liveWritersSuppressed = null }
+  {
+    chatSummary,
+    chatSessions,
+    curated,
+    nowMs,
+    boardAgents = [],
+    writeHistory = null,
+    shellHistory = null,
+    readHistory = null,
+    liveWritersSuppressed = null,
+  }
 ) {
   const reasons = [];
   const uncommitted = isWorkingTreeHeld(wt);
@@ -175,7 +262,15 @@ export function classify(
   // override erase its own evidence and `derivedLive` would quietly agree with
   // `live` about a signal nobody ever checked.
   const writeLive = Boolean(writeHistory?.derivedChatIds?.length);
-  const derivedLive = chatLive || writeLive || Boolean(liveAgent);
+  // Direct I/O inside this directory, on the wider window. Without it the three
+  // signals above are all keyed on a chat's own liveness or on the board, and a
+  // main-checkout agent that ran `git -C … worktrees/<name> …` minutes ago is in
+  // neither: its `directory` is the main checkout, and the board is keyed on the
+  // branch. That gap is not theoretical — it is why a worktree with agents
+  // editing it an hour ago could carry `action: "dispose"` with `prunable: true`
+  // and every one of its git facts correct.
+  const ioLive = hasRecentIo([shellHistory, writeHistory, readHistory], nowMs);
+  const derivedLive = chatLive || writeLive || ioLive || Boolean(liveAgent);
 
   // A declared hard state outranks every heuristic above. Both of them are
   // RECENCY inferences over rows that outlive the process that wrote them, so
@@ -190,9 +285,23 @@ export function classify(
     reasons.push(
       `liveness overridden: ${liveWritersSuppressed}` +
         (derivedLive
-          ? ` (${chatLive ? 'a session' : 'a board agent'} looked live at ${new Date(nowMs).toISOString()})`
+          ? ` (${chatLive ? 'a session' : writeLive ? 'a write' : ioLive ? 'recent command I/O' : 'a board agent'} looked live at ${new Date(nowMs).toISOString()})`
           : '')
     );
+  }
+
+  // `read !== true`, NOT `read === false`. A missing `read` field is the ABSENCE of
+  // evidence that the tree was read, and this rule is affirmative evidence, not the
+  // absence of a complaint. The looser polarity looked equivalent while every
+  // production path set the field, and it is not: `read === false` treats "nothing
+  // said the tree was unreadable" as "the tree was read", which is the exact
+  // inversion of the rule stated above and in docs/ORCHESTRATION.md. Any caller that
+  // builds a `workingTree` without the field gets a legacy verdict it never earned.
+  let legacyUnknown = null;
+  if (curated?.legacy) {
+    if (wt.workingTree?.read !== true) legacyUnknown = 'the working tree could not be read';
+    else if (typeof wt.ahead !== 'number') legacyUnknown = 'the base branch could not be resolved';
+    else if (wt.branch === '(unknown)') legacyUnknown = 'the worktree has no branch to keep';
   }
 
   let status;
@@ -209,6 +318,15 @@ export function classify(
   } else if (wt.isPrimary) {
     status = STATUS.LANDED;
     reasons.push('this is the main worktree');
+  } else if (legacyUnknown !== null) {
+    // BEFORE THE CLEANLINESS ARMS, BECAUSE THEY STATE FACTS THEY DO NOT HAVE.
+    // An unreadable tree and an unresolvable base both arrive as zeros and nulls,
+    // which is what "clean" and "0 ahead" look like, so the arms below would
+    // publish "the branch is an ancestor of main and the working tree is clean"
+    // for a tree and a base git refused to read. The claim is about the branch
+    // being worth keeping, and it cannot be applied on evidence that is missing.
+    status = STATUS.UNREADABLE;
+    reasons.push(`a curated finding marks this branch legacy, but ${legacyUnknown}`);
   } else if (uncommitted && wt.ahead === 0) {
     status = STATUS.UNCOMMITTED_ONLY;
     reasons.push('the branch reports 0 commits ahead of main and is an ancestor of it');
@@ -231,7 +349,19 @@ export function classify(
   // branch is landed, because a curated finding is a human claim about work
   // that may only exist in this directory.
   const curatedBlocksPrune = Boolean(curated?.mustNotPrune);
+  const curatedLegacy = Boolean(curated?.legacy);
   const mergeState = mergeVerdict(wt);
+  // AFFIRMATIVE EVIDENCE, NOT THE ABSENCE OF A COMPLAINT, IS THE RULE ENCODED
+  // IN `legacyUnknown` ABOVE: a `legacy` verdict is built on a tree that was
+  // actually read as clean and a base comparison that actually produced a count.
+  // Both facts arrive as innocuous zeros and nulls when the command behind them
+  // failed, and zeros and nulls are exactly what "clean" and "no commits ahead"
+  // look like. `git.mjs` reports `read: false` rather than returning an empty
+  // tree for the same reason. Both guards were survivable while the only
+  // consequence was a wrong `prunable`; `legacy` makes them a licence to delete
+  // a directory, and it widens the reach — an unreadable worktree with a
+  // conflicting merge used to be `at-risk`, and with this flag it became
+  // `legacy`.
   let recommendation;
   if (wt.isPrimary) {
     // The main checkout is never a prune candidate, whatever git says about
@@ -249,8 +379,76 @@ export function classify(
         ? 'a chat wrote a file in this worktree inside the last 30 minutes'
         : chatLive
           ? 'a session messaged inside the last 30 minutes'
-          : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
+          : ioLive
+            ? `a command ran inside this worktree at ${new Date(
+                Math.max(shellHistory?.lastAtMs ?? 0, writeHistory?.lastAtMs ?? 0, readHistory?.lastAtMs ?? 0)
+              ).toISOString()}`
+            : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
+  } else if (
+    curatedLegacy &&
+    legacyUnknown === null &&
+    !curatedBlocksPrune &&
+    !uncommitted &&
+    !wt.detached &&
+    wt.tip !== null
+  ) {
+    // CHECKED HERE, NOT AT THE BOTTOM, AND ONLY FOR A CLEAN TREE.
+    //
+    // `uncommitted` is the load-bearing condition. `legacy` authorises removing
+    // the WORKTREE, so it is a licence to delete a directory — and a directory
+    // holding uncommitted changes is the only copy of them. A claim that the
+    // branch is worth keeping says nothing about files the branch has never
+    // seen, so allowing it here would let a prose field authorise the loss the
+    // whole program exists to prevent. A dirty legacy worktree therefore stays
+    // `at-risk`, which is where a human has to look.
+    //
+    // `!curatedBlocksPrune` IS THE OTHER GUARD THAT MATTERS, AND IT WAS THE ONE
+    // MISSING. An entry can carry both flags, and they are opposite claims about
+    // one tree: `mustNotPrune` says the work is in no commit and no ref, so the
+    // directory is the only copy; `legacy` says the directory may go. Without
+    // this condition the ladder below never reached either `curatedBlocksPrune`
+    // arm, so the pair filed the worktree as `legacy` — printed as "worktree
+    // disposable, BRANCH KEPT" and listed under NO protection, which is the
+    // opposite of what the flag pair says.
+    //
+    // `preflight` refuses `action: "legacy"` when the record also carries
+    // `mustNotPrune`, so nothing was lost through `npm run dispose` — but that
+    // made a second line of defence the only one, and the inventory is what a
+    // human reads. The precedence belongs HERE, where the verdict is formed.
+    // With it, the flag pair is self-contradictory in the safe direction: the
+    // entry reports `at-risk`, the claim about losing content wins, and the
+    // `legacy` flag is visibly inert rather than silently overriding.
+    //
+    // `detached` and an unreadable tip are excluded for the same reason
+    // `mustNotPrune` cannot rescue them: there is no branch to keep, so
+    // "keep the branch" has nothing to act on and would read as a clearance.
+    //
+    // It sits ABOVE the merge verdicts deliberately. A stale branch that no
+    // longer merges is the common case, not an exception — that is what "legacy"
+    // means — and leaving it `at-risk` is what put these on the list a sweep
+    // reads first, forever, for a branch nobody intends to reconcile.
+    recommendation = RECOMMENDATION.LEGACY;
+    reasons.push('a curated finding marks this branch legacy: keep the ref, drop the worktree');
+    if (wt.ahead > 0)
+      reasons.push(`${wt.ahead} commit(s) ahead of main are kept on the branch and not proposed for merge`);
+    // A legacy branch that no longer merges is the common case, not an exception,
+    // so the conflict is expected rather than news. It is still named, because a
+    // reader who sees "not proposed for merge" on a branch with three conflicting
+    // files would otherwise have to guess whether the conflict was considered.
+    if (mergeState === 'conflict') {
+      reasons.push(
+        `the merge conflicts on ${wt.merge?.files?.length ?? 'some'} path(s), and keeping the ref is why that is not being reconciled`
+      );
+    }
+  } else if (legacyUnknown !== null) {
+    // SAYS WHAT GIT COULD NOT ANSWER, INSTEAD OF THE ANSWER IT DID NOT GET.
+    // Reaching the ordinary arms here would publish a fabricated cleanliness fact
+    // — "the branch is an ancestor of main and the working tree is clean" — for a
+    // tree or a base that was never read. `undecided` is the honest verdict, and
+    // it is the one that keeps the directory.
+    recommendation = RECOMMENDATION.UNKNOWN;
+    reasons.push('the legacy claim cannot be applied on evidence git did not give, so the worktree is left alone');
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
     reasons.push('work here is not reachable from any commit on this branch');
@@ -334,6 +532,14 @@ export function classify(
     case RECOMMENDATION.KEEP:
       action = ACTION.KEEP;
       break;
+    case RECOMMENDATION.LEGACY:
+      // NOT read from `prunable`, unlike `dispose`. The worktree IS a disposal
+      // candidate — the tree is clean by the branch that got here — but the
+      // branch is not, and `prunable` means both at once. `npm run dispose` reads
+      // `action` and the skip is in the disposal program, so this is the one
+      // place the two halves can disagree.
+      action = ACTION.LEGACY;
+      break;
     default:
       action = ACTION.UNDECIDED;
   }
@@ -354,6 +560,17 @@ export function classify(
     // so an override is auditable: `live: false` beside `derivedLive: true` is
     // a record that something was suppressed and what it suppressed.
     derivedLive,
+    // Which signal fired, so a reader can tell "a chat is typing here" from
+    // "a command ran here 40 minutes ago". Collapsed into `derivedLive` these
+    // are indistinguishable, and they are not the same claim: the first is
+    // current occupancy, the second is evidence of it that survives the
+    // main-checkout-agent blind spot in `chatSummary`.
+    liveSignals: {
+      chat: chatLive,
+      write: writeLive,
+      io: ioLive,
+      board: Boolean(liveAgent),
+    },
     liveSuppressed: Boolean(liveWritersSuppressed),
     uncommitted,
     unmerged,
@@ -383,6 +600,14 @@ export function riskScore(verdict) {
       return 30;
     case RECOMMENDATION.KEEP:
       return 40;
+    case RECOMMENDATION.LEGACY:
+      // Below `PRUNE`, which is the surprising half and deliberate: a legacy
+      // branch is the LEAST work in the repository. Nothing is at risk, nobody is
+      // waiting on it, and the only remaining task is a ref somebody may never
+      // touch. It sorts under everything so it is the last thing a reader
+      // reaches, and last is where a thing with a 1% chance of mattering belongs
+      // — `PRUNE`'s 10 leaves room beneath it.
+      return 5;
     case RECOMMENDATION.PRUNE:
       return 10;
     default:

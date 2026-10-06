@@ -49,9 +49,14 @@ export const toolbarMap = [
       { label: 'Single Column Marquee Tool', name: 'single-column-marquee' },
     ],
     [
+      // All three lasso tools share `L` in Photoshop, and `Shift+L` is the cycling key rather
+      // than a second binding on one member. So the letter belongs to the tile and only the
+      // tile declares it, exactly as the marquee group above does. The cycling key itself is
+      // recorded as the Photoshop shortcut in `src/tools/descriptions/selection.ts`, which is
+      // where a key that belongs to the group rather than to a tool belongs.
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
       { label: 'Polygonal Lasso Tool', name: 'polygonal-lasso' },
-      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
+      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso' },
     ],
     // The Quick Selection shares the Magic Wand's tile because Photoshop puts the two
     // adjacent, and the Wand is the tile's identity as the first entry.
@@ -59,18 +64,25 @@ export const toolbarMap = [
       { label: 'Magic Wand Tool', name: 'magic-wand', shortcut: 'W' },
       { label: 'Quick Selection Tool', name: 'quick-selection' },
     ],
-    // Its own single-tool tile, so it gets no flyout of its own and stays directly after the
-    // Magic Wand it reads its Sample Size from in Photoshop.
-    [{ label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' }],
-  ],
-  [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
-  [
+    // The `I` family, which Photoshop cycles with `Shift+I`: "Eyedropper, Color Sampler, Ruler, Note,
+    // and Count Tool I". Only the tile's FIRST entry declares `shortcut`, exactly as the tonal and
+    // marquee groups above do, so the letter belongs to the tile and the Ruler is reached by the
+    // cycle rather than by a second binding on the same key.
+    //
+    // The three members Photoshop cycles to that this app does not have are absent rather than
+    // represented by placeholder values, per the rule the doc comment above states. Adobe prints no
+    // order for the cycle, and the three that exist keep the Eyedropper first because it is the
+    // tile's identity: a tile's name is its first entry, so leading with anything else would rename
+    // the tile and move every `tool-button-eyedropper` selector with it. The Color Sampler sits
+    // between the two because it is the one that reads a PIXEL, which is what makes it read as
+    // belonging beside the Eyedropper rather than beside the Ruler.
     [
-      { label: 'Colors', name: 'color' },
-      { label: 'Levels', name: 'levels' },
-      { label: 'Transform', name: 'transform' },
+      { label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' },
+      { label: 'Color Sampler Tool', name: 'color-sampler' },
+      { label: 'Ruler Tool', name: 'ruler' },
     ],
   ],
+  [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
     // The Brush stays the tile's default tool, so the eraser-family tools are appended
     // rather than inserted: `renderToolGroup` derives the tile's default identity from the
@@ -106,7 +118,22 @@ export const toolbarMap = [
       // `burn` — only the tile's first entry carries the letter.
       { label: 'Sponge Tool', name: 'sponge' },
     ],
-    [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
+    // NO SHORTCUT, and the omission is the fix rather than an oversight. This entry
+    // previously declared `shortcut: 'B'`, which is the Brush's own shortcut and which
+    // `AppKeyboardShortcuts.tsx` binds to `selectBrushTool` on both `b` and `shift+b`. The
+    // Draw tool is bound to no key at all, so the rail rendered a `B` badge on the Draw flyout
+    // item (`SidebarLeft.tsx` draws `tool.shortcut` as a `<kbd>`, and passes it to
+    // `ToolTooltip`) and pressing `B` selected the Brush. `SidebarLeft` is the only place a
+    // declared shortcut reaches the user, so a declared shortcut the app does not implement is
+    // a falsehood, exactly like a tooltip that promises an Esc key the tool has no handler for.
+    //
+    // There is no key to bind, because Adobe publishes none: Photoshop has no Draw tool, so the
+    // previous version of this comment — which claimed Adobe binds it to `Shift+W` — was quoting
+    // a binding that does not exist. `w` and `shift+w` both go to the Object Selection tool.
+    // `toolbar-mapping.test.ts` pins that no two entries may claim the same shortcut, so the
+    // fix cannot regress into a second collision, and `docs/OVERRIDES.md` OVR-2 is what keeps the
+    // tile.
+    [{ label: 'Draw Tool', name: 'draw' }],
   ],
   [
     [
@@ -164,6 +191,8 @@ export const availableTools: readonly ToolName[] = [
   'magic-wand',
   'quick-selection',
   'eyedropper',
+  'color-sampler',
+  'ruler',
   'eraser',
   'magic-eraser',
   'clone-stamp',
@@ -176,4 +205,23 @@ export const availableTools: readonly ToolName[] = [
   'sponge',
 ];
 
+/**
+ * Tool ids with no Tools-rail entry, because Photoshop's Tools panel has none.
+ *
+ * `color`, `levels` and `transform` are `Image ▸ Adjustments` and `Edit ▸ Free Transform`
+ * COMMANDS, and a command is not a tool. They were the sole members of a three-wide flyout
+ * here until they were extracted; what hosts them now is
+ * `src/components/DesktopHeader/DesktopHeader.tsx` — `Image ▸ Adjustments` carries the
+ * first two and `Edit ▸ Free Transform` the third.
+ *
+ * Before that extraction this export was a declaration with no consumer at all, and it still
+ * has none: `toolbar-mapping.test.ts` is its only importer. What that test pins is the
+ * two-way relation with `toolbarMap` — nothing in `extraTools` may be a tile, and a rail
+ * entry dropped without being recorded here fails it the other way.
+ *
+ * It is NOT the answer to "which registered tool is not a tile", because five more ids are
+ * not tiles: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`, reachable only as
+ * values of the `shape` tile's `figure`. The test carves those five out by name, so adding
+ * a sixth alias means adding it to that exemption too.
+ */
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

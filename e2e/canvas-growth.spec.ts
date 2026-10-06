@@ -17,6 +17,7 @@ import { test } from './fixtures/extended-test';
 
 import { type BoundingBox, documentToCanvasOffset, drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Size = { width: number; height: number };
@@ -125,6 +126,41 @@ test.describe('document size across many tool commits', () => {
     console.log(`[PW-PROBE-SUMMARY] ${JSON.stringify({ baseline, rows: rows.length })}`);
   });
 
+  test('12 Draw commits never expand the workspace row', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await clickToolButton(page, 'draw');
+
+    const baseline = await backingStore(page);
+    const baselineBox = await canvasBox(page);
+    const baselinePageHeight = await page.evaluate(() => ({
+      clientHeight: document.documentElement.clientHeight,
+      scrollHeight: document.documentElement.scrollHeight,
+    }));
+    const baselineRows = await page.getByTestId('layer-row').count();
+
+    for (let i = 0; i < 12; i += 1) {
+      const from = { x: 80 + (i % 4) * 180, y: 80 + Math.floor(i / 4) * 120 };
+      const to = { x: from.x + 80, y: from.y + 12 };
+      await dragInDocument(page, from, to);
+      await expect(page.getByTestId('layer-row'), `Draw commit ${i + 1}`).toHaveCount(baselineRows + 1 + i);
+      await expect.poll(() => backingStore(page), `backing store after Draw commit ${i + 1}`).toEqual(baseline);
+      await expect.poll(() => canvasBox(page), `canvas box after Draw commit ${i + 1}`).toEqual(baselineBox);
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => ({
+              clientHeight: document.documentElement.clientHeight,
+              scrollHeight: document.documentElement.scrollHeight,
+            })),
+          `page geometry after Draw commit ${i + 1}`
+        )
+        .toEqual(baselinePageHeight);
+    }
+  });
+
   test('a crop, then more shape commits, then undo/redo', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
@@ -197,11 +233,14 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
     await expect(getWorkspaceCanvas(page)).toBeVisible();
 
     const chooser = page.waitForEvent('filechooser');
-    page.once('dialog', (dialog) => {
-      void dialog.accept();
-    });
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-open-button').click();
+    // The app seeds a document on boot, so File > Open is gated behind the app's own
+    // discard prompt, and the answer has to land before the picker opens: the menu item
+    // reaches `openLoadImageDialog` only once the guard resolves. This test's baseline is
+    // the OPENED 64x64 document, so a declined guard would leave the poll below measuring
+    // the seeded 800x600 — which is why the prompt is waited for rather than tolerated.
+    await acceptDiscardPrompt(page);
     const fileChooser = await chooser;
     await fileChooser.setFiles(path.join(testInfo.config.rootDir, 'fixtures/split-half-red-blue.png'));
 

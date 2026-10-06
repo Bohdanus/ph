@@ -38,9 +38,15 @@ const STATE_PAIRS: ReadonlyArray<readonly [active: StyleName, inactive: StyleNam
 const DISABLED_CAPABLE: ReadonlyArray<readonly [name: StyleName, base: StyleName]> = [
   ['PRIMARY_BUTTON', 'PRIMARY_BUTTON'],
   ['TRANSPARENT_DARK_ICON_BUTTON', 'TRANSPARENT_DARK_ICON_BUTTON'],
+  // A disabled secondary button used to render pixel-for-pixel as an enabled one, because no style
+  // in this file that could be disabled carried a `disabled:` variant except the two above — and a
+  // `disabled` attribute is invisible to a sighted user and to a screenshot. The Type tool's Clear
+  // is secondary, and it is disabled for the whole of a session in which no box has been dragged.
+  ['SECONDARY_BUTTON', 'SECONDARY_BUTTON'],
 ];
 
 const classesOf = (name: StyleName) => (buttonStyles[name] as string).trim().split(/\s+/);
+const FOCUS_VISIBLE_BUTTONS = STYLE_NAMES.filter((name) => classesOf(name).includes('focus:outline-none'));
 
 describe('buttonStyles public surface', () => {
   it('exports exactly the documented style constants and nothing else', () => {
@@ -152,5 +158,16 @@ describe('buttonStyles disabled affordance', () => {
         name
       ).toEqual([]);
     }
+  });
+});
+
+describe('buttonStyles keyboard focus affordance', () => {
+  it.each(FOCUS_VISIBLE_BUTTONS)('%s provides a focus-visible ring', (name) => {
+    const tokens = classesOf(name);
+
+    expect(tokens).toContain('focus-visible:ring-2');
+    expect(tokens).toContain('focus-visible:ring-blue-500');
+    expect(tokens).toContain('focus-visible:ring-offset-2');
+    expect(tokens).not.toContain('focus:ring-2');
   });
 });

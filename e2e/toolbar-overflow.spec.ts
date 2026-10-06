@@ -35,10 +35,10 @@ import { slugifyToolLabel, toolbarMap, type ToolbarTool } from '../toolbar-mappi
  * A window tall enough that the whole rail fits, and a short one.
  *
  * TALL is much taller than a desktop window on purpose, and the number is derived rather than
- * picked. One column is sixteen rows of a 44px tile with a 6px gap and four section separators
- * of 7px each — 16x44 + 15x6 + 4x7 = 822px of tiles — and the budget is the whole slot, so a
- * window has to be 1094px tall before nothing collapses at all. A 900px window is a perfectly
- * ordinary laptop and it DOES collapse: it shows eleven of the sixteen, with the rest in the
+ * picked. One column is fifteen rows of a 44px tile with a 6px gap and three section separators
+ * of 7px each — 15x44 + 14x6 + 3x7 = 765px of tiles — and the budget is the whole slot, so a
+ * window has to be 1037px tall before nothing collapses at all. A 900px window is a perfectly
+ * ordinary laptop and it DOES collapse: it shows eleven of the fifteen, with the rest in the
  * three-dots tile. Which is the useful thing to know — the fit's reach is a HEIGHT, not a
  * layout, and no amount of desktop width buys a taller rail.
  */
@@ -131,7 +131,7 @@ test.describe('Left tool rail overflow', () => {
       if (hasOverflowTile) await openOverflowFlyout(page);
 
       // Counted in TOOLS, not in tiles, and the difference is the whole trap: a tile is a
-      // group, so sixteen tiles are forty tools, and adding sixteen to the menu's entries and
+      // group, so fifteen tiles are forty tools, and adding fifteen to the menu's entries and
       // calling the result a reachability count is a comparison between two different units.
       let toolsOnTiles = 0;
       for (const group of ALL_GROUPS) {

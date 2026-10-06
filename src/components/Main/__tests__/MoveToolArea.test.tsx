@@ -81,7 +81,16 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     tempUpdateLayer: h.tempUpdateLayer,
     updateLayerByTool: h.updateLayerByTool,
     setActiveLayer: h.setActiveLayer,
+    beginTextLayerEdit: vi.fn(),
   }),
+}));
+
+vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => ({ setToolArgs: vi.fn() }),
+}));
+
+vi.mock('../../../hooks/useApp.ts', () => ({
+  useApp: () => ({ goToTool: vi.fn() }),
 }));
 
 vi.mock('../../../hooks/useAnts.ts', () => ({

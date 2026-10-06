@@ -20,6 +20,7 @@ import {
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import {
   fillSaveDialog,
   INTEGRATION_TEST_TIMEOUT_MS,
@@ -70,7 +71,7 @@ const FIXTURE_SPLIT_BAND = { min: 0.48, max: 0.52 } as const;
 /** `exportAndVerify`'s budget, reused because this spec is bound by the same encoders plus a reload. */
 const ROUNDTRIP_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
 
-const PNG_FORMAT: ExportFormat = { label: 'PNG', extension: '.png', comparePixels: true };
+const PNG_FORMAT: ExportFormat = { label: 'PNG', extension: '.png', verification: 'browser-pixels' };
 
 /** The stroke colour the round trip puts on the canvas and reads back. */
 const STROKE_HEX = '#ff0000';
@@ -205,19 +206,31 @@ async function requireDominantRed(capture: Buffer, label: string) {
  * optional:
  *
  * - `openLoadImageDialog` stores a resolver and THEN clicks the hidden input
- *   (src/contexts/useFile.tsx:102-108). The input's `change` handler resolves that
+ *   (src/contexts/useFile.tsx:101-107). The input's `change` handler resolves that
  *   promise (src/contexts/useFile.tsx:78-81), and it is the promise's consumer that
- *   calls `setImageFromUpload` (src/components/DesktopHeader/DesktopHeader.tsx:182-183).
+ *   calls `setImageFromUpload` (src/components/DesktopHeader/DesktopHeader.tsx:250-251).
  *   Setting the input's files with nobody waiting therefore loads the file and throws
  *   the result away, so the button click is part of the mechanism, not a convenience.
- * - The button asks `confirm()` before discarding a document, and `src/App.tsx:32`
+ * - The menu item asks before discarding the current document, and `src/App.tsx:38`
  *   seeds a blank document on boot, so the prompt is shown on the very first click of
- *   a fresh page. Playwright auto-dismisses an unhandled dialog, which reads as
- *   "declined" and returns before the picker is ever opened. `once` scopes the
- *   handler to that one prompt: a global accept in a fixture would keep answering every
- *   dialog raised after it, so an unexpected `confirm()` or `prompt()` from some other
- *   path would be accepted instead of surfacing, and the run would continue past a guard
- *   it never reached.
+ *   a fresh page — and on the click after the `page.reload()` below, for the same
+ *   reason. It is answered with `acceptDiscardPrompt`, which WAITS for the prompt
+ *   before answering it. The `page.once('dialog')` this used to install was not
+ *   equivalent: Playwright auto-dismisses a dialog nobody is listening for, so a
+ *   handler that never fired and a guard that declined looked identical to the line
+ *   after it, and this file's claims all sit downstream of that.
+ *
+ * The answer lands BEFORE the file chooser is awaited, and that ordering is the
+ * mechanism: `openLoadImageDialog` is only reached once the guard resolves
+ * (`confirmDiscard` at src/components/DesktopHeader/DesktopHeader.tsx:249), so the
+ * `filechooser` event registered first is the one the discard releases. Nothing opens a
+ * native dialog on this path any more, which is why the `page.reload()` below needs no
+ * handler for the app's `beforeunload` guard: with no `dialog` listener registered,
+ * Playwright ACCEPTS a `beforeunload` dialog and dismisses every other type
+ * (`playwright-core/lib/coreBundle.js`, `DialogManager`'s no-listener branch), so the
+ * navigation proceeds. Installing a handler inverts that — `dismiss()` on a `beforeunload`
+ * is what refuses the navigation, which is the mechanism `document-dialogs.spec.ts` uses
+ * to prove the unload prompt fires at all.
  *
  * The file then arrives through Playwright's `filechooser` event, which is what the
  * programmatic `.click()` on a `display:none` input raises. Verified on this host: the
@@ -225,11 +238,9 @@ async function requireDominantRed(capture: Buffer, label: string) {
  */
 async function openDocumentViaFileMenu(page: Page, filePath: string): Promise<void> {
   const chooser = page.waitForEvent('filechooser');
-  page.once('dialog', (dialog) => {
-    void dialog.accept();
-  });
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-open-button').click();
+  await acceptDiscardPrompt(page);
   const fileChooser = await chooser;
   await fileChooser.setFiles(filePath);
 }
@@ -308,15 +319,46 @@ test.describe('File round trip', () => {
 
     await openSaveDialog(page);
     await fillSaveDialog(page, 'roundtrip', PNG_FORMAT.label);
+
+    /**
+     * The locator the absence below is stated with, resolved POSITIVELY first, while the dialog
+     * is still on screen.
+     *
+     * `SaveDialog` renders its title as an `<h2 id="save-dialog-title">`, and that `<h2>` is the
+     * dialog's `aria-labelledby` target, so while the dialog is open this locator names exactly
+     * one visible element. That is the whole reason the absence below is worth reading: it is
+     * the SAME locator in the SAME test, one step earlier, in the state where the element
+     * exists. A bare `toHaveCount(0)` on an unproven locator cannot tell "the dialog closed"
+     * from "this app never mints that name" — reword the title, demote the `<h2>` to a `<div>`,
+     * or drop the heading, and the absence keeps passing forever while the dialog stays on
+     * screen. These two lines go red instead.
+     *
+     * Count before visibility, the way `e2e/accessibility.spec.ts` resolves every scan scope:
+     * one element, and that element visible.
+     */
+    const saveDialogTitle = page.getByRole('heading', { name: 'Save File As...' });
+    await expect(
+      saveDialogTitle,
+      'the open Save dialog is titled by a heading carrying this accessible name'
+    ).toHaveCount(1);
+    await expect(saveDialogTitle, 'and that heading is on screen, not merely in the DOM').toBeVisible();
+
     const download = await submitSaveDialogForDownload(page, PNG_FORMAT);
     const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
     await download.saveAs(savedPath);
-    await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+    await expect(saveDialogTitle, 'the Save dialog unmounted once the download completed').toHaveCount(0);
     const savedBytes = await readFile(savedPath);
     expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
     // The control: reloading really does discard the document, so the pixels that
     // appear below came from the file and not from a canvas that was never cleared.
+    // Nothing has to answer an unload prompt here, because this document is CLEAN: the
+    // save above dispatched `hasUnsavedChanges: false` (`src/hooks/useApp.ts:70`), which is
+    // the one path that makes the `beforeunload` guard silent, and the same reason `File >
+    // New` would not prompt here. Were it dirty, this reload would still need no handler —
+    // an unregistered `beforeunload` is accepted, so the navigation proceeds. The in-app
+    // prompt is a different event and does need an answer, which is what
+    // `openDocumentViaFileMenu` gives it below.
     await page.reload();
     await expect(getWorkspaceCanvas(page)).toBeVisible();
     const reloadedCapture = await captureCanvasScreenshot(page, box, testInfo, 'file-roundtrip-after-reload');

@@ -1,232 +1,43 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
-import { legacyHistoryToDurable } from '../history-adapter.ts';
+import { durableSourceKindForTool, legacyHistoryToDurable } from '../history-adapter.ts';
+import { createLayerSource } from '../layer-utils.ts';
 import type { DurableOperation } from '../history-model.ts';
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayerOperation, LayerSource, LayersRecord } from '../layer-types.ts';
+import type { LayerOperation, LayerSource } from '../layer-types.ts';
 import type { DurableReplayResult } from '../durable-replay.ts';
-import type { Selection, Size } from '../general-types.ts';
-import type { DocumentFrame } from '../document-frame.ts';
-import type { TextToolArgs } from '../../tools/text.ts';
-import type { TransformToolArgs } from '../../tools/transform.ts';
-import {
-  HIDE_LAYER_ACTION,
-  MERGE_ACTION,
-  NEW_LAYER_ACTION,
-  OPEN_DOCUMENT_ACTION,
-  REMOVE_ACTION,
-  RENAME_LAYER_ACTION,
-  REORDER_ACTION,
-  SELECTION_ACTION,
-  SET_DOCUMENT_FRAME_ACTION,
-  SHOW_LAYER_ACTION,
-  TOOL_ACTION,
-} from '../../util/constants.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 
-const size: Size = { width: 400, height: 300 };
-const frame: DocumentFrame = { x: 0, y: 0, width: 400, height: 300 };
-const layerA = 'layer-a';
-const layerB = 'layer-b';
+// The twelve scenarios live in `history-replay.scenarios.ts` because the pixel differential
+// reads the SAME twelve: two suites describing two corpora would make "the two models agree" a
+// statement about neither.
+import {
+  parityFrame as frame,
+  paritySize as size,
+  replayParityScenarios as cases,
+} from './history-replay.scenarios.ts';
 
-type BlankSource = Extract<LayerSource, { kind: 'blank' }>;
-
-function blankSource(pos: Layer['pos']): BlankSource {
-  return { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos };
-}
-
-function runtimeLayer(id: string, order: number, pos = { x: 20, y: 30, width: 120, height: 80 }): Layer {
-  const source = blankSource(pos);
-  return {
-    id,
-    name: id,
-    isBedrock: false,
-    tmpCanvas: null,
-    bitmap: null,
-    visible: true,
-    opacity: 1,
-    locked: false,
-    blendMode: 'source-over',
-    order,
-    pos,
-    source,
-    operations: [],
-  };
-}
-
-function baseline(layers: LayersRecord = { [layerA]: runtimeLayer(layerA, 0) }): HistoryItem {
-  return {
-    id: 'baseline',
-    actionName: OPEN_DOCUMENT_ACTION,
-    layerId: Object.keys(layers)[0] ?? layerA,
-    documentSource: { layers, size, frame },
-  };
-}
-
-function item(id: string, actionName: HistoryItem['actionName'], layerId: string, args?: object): HistoryItem {
-  return { id, actionName, layerId, ...(args ? { args } : {}) };
-}
-
-function selection(id: string, x: number, y: number, active = true): Selection {
-  return {
-    id,
-    points: [
-      { x, y },
-      { x: x + 20, y },
-      { x: x + 20, y: y + 20 },
-    ],
-    isActive: active,
-    pos: { x, y, width: 20, height: 20 },
-    lifecycle: 'committed',
-    geometry: 'polygon',
-    sourceTool: 'polygonal-lasso',
-    metadata: { movedAtVersion: x + y },
-  };
-}
-
-const textArgs: TextToolArgs = {
-  toolName: 'text',
-  align: 'left',
-  bold: false,
-  color: '#111111',
-  fontFamily: 'Arial',
-  fontSize: 18,
-  italic: false,
-  lineHeight: 1.2,
-  text: 'Parity',
-  rect: { x1: 10, y1: 15, x2: 140, y2: 55 },
-};
-
-const transformArgs: TransformToolArgs = {
-  toolName: 'transform',
-  rotate: 17,
-  mirrorH: false,
-  mirrorV: false,
-  skewX: 0,
-  skewY: 0,
-  trapezoid: 0,
-  resizeX: 125,
-  resizeY: 85,
-};
-
-const cases: ReadonlyArray<{ name: string; history: readonly HistoryItem[] }> = [
-  {
-    name: 'layer properties',
-    history: [
-      baseline(),
-      item('hide', HIDE_LAYER_ACTION, layerA),
-      item('show', SHOW_LAYER_ACTION, layerA),
-      item('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
-    ],
-  },
-  {
-    name: 'create and remove',
-    history: [
-      baseline(),
-      {
-        id: 'create',
-        actionName: NEW_LAYER_ACTION,
-        layerId: 'created',
-        layerSource: blankSource({ x: 40, y: 50, width: 80, height: 60 }),
-      },
-      item('remove', REMOVE_ACTION, 'created'),
-    ],
-  },
-  {
-    name: 'reposition and affine transform',
-    history: [
-      baseline(),
-      item('move', TOOL_ACTION, layerA, { toolName: 'reposition', move: { x: 45, y: 55 } }),
-      item('transform', TOOL_ACTION, layerA, transformArgs),
-    ],
-  },
-  {
-    name: 'reorder',
-    history: [
-      baseline({ [layerA]: runtimeLayer(layerA, 0), [layerB]: runtimeLayer(layerB, 1) }),
-      item('reorder', REORDER_ACTION, layerB, { layerToMoveId: layerB, afterWhichLayerId: null }),
-    ],
-  },
-  {
-    name: 'filter chain',
-    history: [
-      baseline(),
-      item('blur', TOOL_ACTION, layerA, { toolName: 'blur', radius: 4 }),
-      item('color', TOOL_ACTION, layerA, { toolName: 'color', grayscale: 0.5 }),
-      item('levels', TOOL_ACTION, layerA, { toolName: 'levels', inputBlack: 0, inputWhite: 255 }),
-    ],
-  },
-  {
-    name: 'document frame crop',
-    history: [
-      baseline(),
-      item('crop', SET_DOCUMENT_FRAME_ACTION, 'document', {
-        previousFrame: frame,
-        nextFrame: { x: 10, y: 20, width: 200, height: 150 },
-      }),
-    ],
-  },
-  {
-    name: 'merge',
-    history: [
-      baseline({ [layerA]: runtimeLayer(layerA, 0), [layerB]: runtimeLayer(layerB, 1) }),
-      {
-        id: 'merge',
-        actionName: MERGE_ACTION,
-        layerId: 'merged',
-        layerSource: blankSource({ x: 0, y: 0, width: 400, height: 300 }),
-      },
-    ],
-  },
-  {
-    name: 'text source',
-    history: [
-      baseline(),
-      {
-        id: 'text',
-        actionName: NEW_LAYER_ACTION,
-        layerId: 'text-layer',
-        layerSource: {
-          kind: 'tool',
-          args: textArgs,
-          isBedrock: false,
-          pos: { x: 10, y: 15, width: 130, height: 40 },
-        },
-      },
-    ],
-  },
-  {
-    name: 'selection',
-    history: [
-      baseline(),
-      item('selection-create', SELECTION_ACTION, 'selection', {
-        previousSelectionState: { selections: [], activeSelectionId: null },
-        nextSelectionState: { selections: [selection('selection-a', 15, 25)], activeSelectionId: 'selection-a' },
-      }),
-    ],
-  },
-];
-
+/**
+ * The legacy side of the parity oracle, wired to the production rule rather than
+ * to a copy of it.
+ *
+ * `replayHistory` builds a created layer through its `createLayer` dependency, and
+ * `useHistory.ts` wires that to `createLayerSource`. This stub used to re-derive the
+ * layer instead — the bare kind as `name`, `Object.values(layers).length` as `order`
+ * — which is the same second rule the durable converter used to carry, so the oracle
+ * agreed with a divergence instead of catching it: three cases here read a name no
+ * production path produces. Delegating is what makes the comparison a parity test.
+ *
+ * `createLayerSource` does rasterise the layer, which is why this was ever stubbed;
+ * `beforeAll` enables canvas filter support and the jsdom setup provides
+ * `OffscreenCanvas`, so the real factory runs here. `createLayer` is synchronous and
+ * `createLayerSource` is too, so the dependency contract is unchanged.
+ */
 function replayDependencies(): HistoryReplayDependencies {
   return {
-    createLayer: ({ layerId, layers, source }) => ({
-      id: layerId,
-      name:
-        source.kind === 'tool' ? source.args.toolName : source.kind === 'image' ? (source.name ?? layerId) : 'Blank',
-      isBedrock: Boolean(source.isBedrock),
-      tmpCanvas: null,
-      bitmap: source.kind === 'image' ? source.bitmap : null,
-      visible: true,
-      opacity: 1,
-      locked: false,
-      blendMode: 'source-over',
-      order: Object.values(layers).length,
-      pos: 'pos' in source ? { ...source.pos } : { x: 0, y: 0, width: source.size.width, height: source.size.height },
-      source,
-      operations: [],
-    }),
+    createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
     applyRasterTool: (layer) => layer,
   };
 }
@@ -234,7 +45,7 @@ function replayDependencies(): HistoryReplayDependencies {
 function sourceKind(source: LayerSource | undefined): string {
   if (!source) return 'materialized';
   if (source.kind === 'image') return 'raster';
-  if (source.kind === 'tool') return source.args.toolName === 'text' ? 'text' : 'legacy-tool';
+  if (source.kind === 'tool') return durableSourceKindForTool(source.args.toolName) ?? 'legacy-tool';
   return source.kind;
 }
 
@@ -307,7 +118,7 @@ describe('legacy/durable logical replay parity', () => {
   beforeAll(() => overrideCanvasFilterSupport(true));
   afterAll(() => overrideCanvasFilterSupport(null));
 
-  it.each(cases)('matches at every reachable cursor: $name', ({ name, history }) => {
+  it.each(cases)('matches at every reachable cursor: $name', ({ name, history, expectedTipFrame }) => {
     const converted = convert(history, name);
     expect(converted.diagnostics).toEqual([]);
 
@@ -317,6 +128,19 @@ describe('legacy/durable logical replay parity', () => {
       expect(durableCursor, `${name} legacy cursor ${cursor} must map`).toEqual(expect.any(Number));
       const durable = replayDurableDocument(converted.document, durableCursor);
       expect(normalizeDurable(durable), `${name} at cursor ${cursor}`).toEqual(normalizeLegacy(legacy));
+
+      // Parity alone cannot see an origin clamp: a model that floored the frame at 0 would
+      // still agree with the other one, and the extent of these cases would not show it
+      // either. So a case that declares a tip frame is held to that frame on BOTH sides,
+      // sign included, at the only cursor that applied it.
+      if (expectedTipFrame && cursor === history.length - 1) {
+        expect(legacy.documentFrame, `${name} legacy frame at the tip`).toEqual(expectedTipFrame);
+        expect(durable.frame, `${name} durable frame at the tip`).toEqual(expectedTipFrame);
+        expect(Math.sign(legacy.documentFrame.x), `${name} legacy origin x sign`).toBe(Math.sign(expectedTipFrame.x));
+        expect(Math.sign(durable.frame.x), `${name} durable origin x sign`).toBe(Math.sign(expectedTipFrame.x));
+        expect(Math.sign(legacy.documentFrame.y), `${name} legacy origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+        expect(Math.sign(durable.frame.y), `${name} durable origin y sign`).toBe(Math.sign(expectedTipFrame.y));
+      }
     }
   });
 

@@ -18,12 +18,18 @@ interface ContainerSignature {
 /**
  * First bytes that prove the file is the container the save dialog claimed.
  *
- * `exportAndVerify` stops at "a download landed, the extension matches, the file is not
- * tiny" - which a flat, layerless or truncated PSD satisfies, since a blank 300x100 TIFF is
- * kilobytes. For a format with no pixel comparison the container signature is the only
- * content assertion available, so it is checked against the bytes on disk rather than
- * assumed. Keyed by extension: a `comparePixels: false` format with no entry below is a gap
- * in the suite, and the test says so rather than passing quietly.
+ * `exportAndVerify` proves the container is not blank and is this document — it decodes the
+ * export, rejects one carrying no ink, and for a `container` format applies the drawing oracle
+ * against the source canvas. What it does not do is say WHERE that ink is, and this file adds no
+ * second oracle that does: the signature is the only content assertion here, so it is checked
+ * against the bytes on disk rather than assumed. Keyed by extension: a `verification: 'container'`
+ * format with no entry below is a gap in the suite, and the test says so rather than passing
+ * quietly.
+ *
+ * The structure neither entry claims — a TIFF's IFD, a PSD's layer table and its flat composite
+ * — is `structured-formats.spec.ts`'s subject, which drives the same two formats through
+ * `exportAndVerify` and runs the byte verifiers. Between the two files every raster claim is made
+ * somewhere; neither title may imply the other one is not running.
  */
 const CONTAINER_SIGNATURES: Record<string, ContainerSignature> = {
   '.tiff': {
@@ -32,18 +38,22 @@ const CONTAINER_SIGNATURES: Record<string, ContainerSignature> = {
       [0x49, 0x49, 0x2a, 0x00],
       [0x4d, 0x4d, 0x00, 0x2a],
     ],
-    notVerified: 'pixel content',
+    notVerified: 'where the ink is',
   },
   '.psd': {
     name: 'the 8BPS PSD signature',
     allowed: [[0x38, 0x42, 0x50, 0x53]],
-    notVerified: 'pixel content or PSD layer structure (layer count, composite)',
+    notVerified: 'where the ink is',
   },
 };
 
 const toHex = (bytes: readonly number[]): string => bytes.map((byte) => byte.toString(16).padStart(2, '0')).join(' ');
 
-const nonComparisonFormats = exportFormats.filter((f) => !f.comparePixels);
+// The signature oracle's own set, re-keyed onto the `verification` field that replaced
+// `comparePixels`. `comparePixels: false` used to be the value the schema deleted, so the
+// filter is now stated as the mechanism it actually named: a format the browser cannot
+// decode, whose bytes are checked in Node.
+const nonComparisonFormats = exportFormats.filter((f) => f.verification === 'container');
 
 for (const format of nonComparisonFormats) {
   const container = CONTAINER_SIGNATURES[format.extension];

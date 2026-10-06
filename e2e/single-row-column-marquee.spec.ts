@@ -1,59 +1,77 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import { type BoundingBox, getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { type AntRun, readAntRuns, waitForCommittedAnts } from './helpers/selection-ants';
 import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
  * End-to-end coverage for the Single Row Marquee and the Single Column Marquee.
  *
  * WHAT IS ASSERTED, AND AGAINST WHAT
- *   The committed band is read from `tool-overlay-canvas` with `getImageData`, not from a
- *   screenshot, for the reason `e2e/selection-gestures.spec.ts:199` gives and
- *   `e2e/selection-marching-ants.spec.ts:55`: `Main.tsx:150` sizes that canvas to the DOCUMENT
- *   (`resizeCanvas(toolOverlayRef.current, width, height)`), so one backing-store pixel IS one
- *   document pixel and every number below is already in the space `singleRowMarqueeRect` and
- *   `singleColumnMarqueeRect` work in. A screenshot would have to be re-scaled back through the
- *   contain fit to say the same thing, and would composite whatever the document painted under.
+ *   A committed band is drawn ONCE, on `selection-ants-canvas`, by `useSelectionMarchingAnts`
+ *   (`src/hooks/useSelectionAnts.ts`). `Main.tsx:214` sizes that canvas to the DOCUMENT
+ *   (`resizeCanvas(selectionAntsOverlayRef.current, width, height)`), so one backing-store pixel
+ *   IS one document pixel and every number below is already in the space
+ *   `singleRowMarqueeRect` / `singleColumnMarqueeRect` work in. The reads come from
+ *   `e2e/helpers/selection-ants.ts`, which takes them out of `getImageData` rather than a
+ *   screenshot for exactly that reason, and that file's header is the reference for what
+ *   `readAntRuns` returns.
  *
- *   The band is painted by `drawSelectionOutline` onto that canvas, which strokes the closed
- *   path with `OUTLINE_LINE_WIDTH` (2, `src/util/selection.ts:23`) DIVIDED by the contain scale
- *   (`selection.ts:181`) so the chrome keeps a constant thickness on screen at any zoom. The
- *   stroke is CENTRED on the path, so it overhangs the band by half a stroke on each side, and
- *   the band's two edges are 1 document pixel apart — close enough that their two strokes
- *   OVERLAP rather than stacking. The painted extent is therefore
+ *   `tool-overlay-canvas` is no longer where a band can be found, and this spec does not look
+ *   there for one. `drawSelectionOutline` is gone, and `SingleRowColumnMarqueeToolArea.tsx:70`
+ *   paints `drawMarqueePreview` — the same blue, on the tool overlay — only while a NEW band is
+ *   being aimed: `redrawOverlay` (`:191`) full-clears that canvas and repaints only the
+ *   preview points it is handed, and `handlePointerUp` (`:400`) hands it none. So "blue on the
+ *   tool overlay" now means "a marquee is in flight" and never "a band is committed".
  *
- *     band thickness  +  ONE stroke width,   not  +  two
+ * HOW A BAND'S EXTENT IS DERIVED FROM THE ANT STROKE
+ *   The ants are ONE stroke, centred on the rect's edges, at `LINE_WIDTH`/scale document px
+ *   (`useSelectionAnts.ts:149`-`:158`: `const lineWidth = LINE_WIDTH / scale`, then
+ *   `setLineDash`), and it is stroked twice, black then white half a dash apart (`:172`-`:179`).
+ *   `LINE_WIDTH` is 1 (`useAnts.ts:13`). So a rect whose edges are at `a` and `b` paints, on the
+ *   scan-line axis, every line from
  *
- *   which is what `thicknessOf` divides back out. That stroke is a known constant, not a fudge
- *   factor, and dividing it out is what makes a 40x40 box fail rather than pass: it would
- *   measure about 40, while the band measures about 1.
+ *     floor(a - lineWidth/2)   to   floor(b + lineWidth/2)
  *
- *   The stroke is also DASHED — `OUTLINE_DASH_LENGTH` 6 on, `OUTLINE_DASH_GAP` 4 off
- *   (`selection.ts:24-25`), divided by the same scale — so the band is not painted in every
- *   pixel of its span. `SPAN_COVERAGE_FLOOR` is derived from that duty cycle rather than
- *   asserted at a round number, and the span is primarily read from the band's two extreme
- *   cross-axis positions, which the dashes cannot move.
+ *   which is what `firstPaintedLine` / `lastPaintedLine` below compute and what every geometry
+ *   assertion compares against. For a 1-document-pixel band at row 252 at this suite's fit
+ *   (`data-fit-scale` 0.97167, so lineWidth/2 = 0.51459) that is scan lines 251..253: two
+ *   antialiased fringes and the band's own row. A 40x40 rectangular marquee dragged on the same
+ *   document at the same fit measures 42 painted scan lines and 42 painted columns, which is the
+ *   comparison number the failure messages carry.
  *
- * WHY THE SCAN IS A WINDOW AND NOT THE WHOLE CANVAS
- *   `drawSelectionOutline` also paints a white anchor disc at every vertex
- *   (`selection.ts:198-209`), radius `SELECTION_ANCHOR_RADIUS` = 5. On a 1-pixel band the four
- *   vertices are 1 document pixel apart, so the anchors swallow the band: measured across the
- *   whole canvas they report a thickness of about 13, not 3.
+ * WHY THE TWO EXTREMES AND NOT A COUNT
+ *   The band's own row is painted by BOTH of the rect's horizontal edges, and the dash pattern
+ *   runs along the whole closed path, so the two edges meet it at phases one edge-length apart.
+ *   Where the two passes composite disagreeing colours the result is a mid grey, which is
+ *   neither of the two the colour test accepts, and that row's coverage collapses. MEASURED, at
+ *   this fit: the two fringe rows held 0.915-0.934 coverage throughout, while the band's own row
+ *   ranged over 0.033-0.952 — and a column band released at column 600 painted scan lines
+ *   {599, 601} on some frames and {599, 600, 601} on others. So the thin axis is asserted as the
+ *   FIRST and LAST painted scan line, which are the ant stroke's own extremes and were stable in
+ *   every one of those samples, never as how many lines carry paint.
  *
- *   The anchors are at the two vertical edges and the two horizontal ones, so excluding a
- *   10-pixel frame from the canvas removes all four and leaves only the band's own stroke. Ten
- *   pixels is derived, not chosen: the anchor reaches `SELECTION_ANCHOR_RADIUS + lineWidth/2`
- *   = 5 + 1/scale ≈ 6.2 document px in, so 10 clears it at any scale this suite measures, and
- *   a 40-pixel band in the middle of an 800-pixel document could not reach either inner edge of
- *   the frame. What remains is measured twice, for both claims at once: the extent ALONG the
- *   window's short axis is the band's thickness, and the extent ACROSS its long axis is its
- *   span — and the span check runs at columns 10..12 and 787..789, which a band of any
- *   plausible box width fails.
+ * WHY THE CROSS AXIS IS READ ACROSS A WHOLE DASH CYCLE
+ *   The closed path's two end caps paint the document's first and last column only where a dash
+ *   lands on them, and a dash is `DASH_LENGTH`/scale = 6.18 document px long, so on any ONE
+ *   frame the outermost column is a property of the dash phase rather than of the band. One ant
+ *   cycle is `(DASH_LENGTH + GAP_LENGTH) / SPEED` = 30 frames whatever the scale, which is 500ms
+ *   at 60fps and 1000ms at 30fps, so `committedAntsBand` unions the reads over `SPAN_SAMPLES` of
+ *   `SPAN_SAMPLE_INTERVAL_MS` — 1.2s, at least one full cycle at either frame rate. The extremes
+ *   are then the ones the ants sweep rather than the ones one frame happened to catch. MEASURED
+ *   over roughly 280 single-frame reads of both orientations, the extremes were the document's
+ *   own 0 and 799 (row band) and 0 and 599 (column band) in every one of them — except one read
+ *   in one full run of this spec, which saw 1 where 0 was derived, and that is the whole reason
+ *   this read is phase-complete: a single frame is not an instrument for a dashed line's ends.
  *
- * WHY THE COLOUR FILTER EXCLUDES THE FIRST ANCHOR'S BLUE
- *   One anchor is stroked `rgba(0,0,255,1)` (`selection.ts:202`) — blue with a ZERO green
- *   channel — while the outline is `rgba(0,123,255,0.95)`. The filter requires a green channel
- *   of 40..200, so the outline is measured and that anchor is not, without either depending on
- *   the other's radius.
+ * WHY THE FLOOR IS 0.5
+ *   `SPAN_COVERAGE_FLOOR` is what says the span has no hole in the middle of it, and it is
+ *   derived from the 6/6 duty cycle rather than the old 6/4 one: two 50% passes offset by half a
+ *   cycle leave a line fully covered apart from the antialiased seam at each cycle boundary,
+ *   where a black tapers off as a white tapers on and the composite is grey. It is measured
+ *   against a SINGLE frame, which is where the phase matters: 0.648 at its worst over 70 frames
+ *   of a full-span band and 0.933 at its best, against 0.0525 for a 40-pixel band in the middle
+ *   of an 800-pixel document. Unioning a whole cycle's frames instead measures the band and the
+ *   dashes, not the band.
  *
  * WHY NO DOCUMENT COORDINATE IS WRITTEN DOWN IN THIS FILE
  *   `usePointerPosition` publishes the scale and offsets it used as `data-fit-*`
@@ -61,7 +79,7 @@ import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/
  *   (`usePointerPosition.ts:229`). The press points here are built from that published fit, so
  *   they are page pixels computed the way the app computes them, and each one targets the
  *   CENTRE of a chosen document row or column — which is what makes the tool's `Math.floor`
- *   (`clampPixelIndex`, `src/tools/singleRowColumnMarquee.ts:66`) unambiguous. This is the
+ *   (`clampPixelIndex`, `src/tools/singleRowColumnMarquee.ts:85`) unambiguous. This is the
  *   warning at `e2e/selection-tools.spec.ts:33` resolved the only way it can be: the fit is
  *   read from the app rather than re-derived from a second copy of the contain arithmetic.
  */
@@ -69,52 +87,52 @@ import { expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/
 const ROW = 'single-row-marquee';
 const COLUMN = 'single-column-marquee';
 
-/** `src/util/canvas.ts:3` sizes the overlay to the document, so its backing store is document px. */
-const overlayCanvas = (page: Page) => page.getByTestId('tool-overlay-canvas');
-
 /** `MARQUEE_THICKNESS_PX`, `src/tools/singleRowColumnMarquee.ts:14`. Document pixels. */
 const BAND_THICKNESS_PX = 1;
 
-/** `OUTLINE_LINE_WIDTH`, `src/util/selection.ts:23`. Divided by the contain scale when stroked. */
-const OUTLINE_LINE_WIDTH = 2;
+/** `LINE_WIDTH`, `src/hooks/useAnts.ts:13`. CSS px, divided by the contain scale when stroked. */
+const ANT_LINE_WIDTH = 1;
+
+/** The centred ant stroke's own width, in document pixels. `useSelectionAnts.ts:150`. */
+const antStrokeWidth = (scale: number) => ANT_LINE_WIDTH / scale;
 
 /**
- * Document pixels of anchor-free frame around the scan window.
+ * The first scan line a centred ant stroke of `edge` reaches, clamped to the canvas.
  *
- * `SELECTION_ANCHOR_RADIUS` (5, `selection.ts:17`) plus half the stroke is ≈ 6.2 at the scale
- * this suite measures, so 10 clears all four vertex discs. See the header.
+ * `Math.floor`, not a round: the stroke's outer boundary is `edge - lineWidth/2` and a pixel
+ * belongs to it when the stroke covers any of it, so the first such pixel is the floor.
  */
-const ANCHOR_CLEARANCE_PX = 10;
+const firstPaintedLine = (edge: number, scale: number, extent: number) =>
+  Math.min(Math.max(Math.floor(edge - antStrokeWidth(scale) / 2), 0), Math.max(0, extent - 1));
+
+/** The last scan line the same stroke reaches. See `firstPaintedLine`. */
+const lastPaintedLine = (edge: number, scale: number, extent: number) =>
+  Math.min(Math.max(Math.floor(edge + antStrokeWidth(scale) / 2), 0), Math.max(0, extent - 1));
 
 /**
- * One stroke width in document pixels, as `drawSelectionOutline` draws it.
+ * How many scan lines a band of `thickness` document pixels paints at `start`.
  *
- * `selection.ts:181` computes `lineWidth = OUTLINE_LINE_WIDTH / scale`, so this is the stroke's
- * own extent in the same space as the pixels being measured. See the header for why the band
- * carries ONE of these rather than two.
+ * Computed rather than quoted, so the "a 40-pixel band would paint this many" half of every
+ * thickness failure message is arithmetic on the same two helpers the assertion itself uses.
  */
-const strokeWidth = (scale: number) => OUTLINE_LINE_WIDTH / scale;
+const paintedLineCount = (start: number, thickness: number, scale: number, extent: number) =>
+  lastPaintedLine(start + thickness, scale, extent) - firstPaintedLine(start, scale, extent) + 1;
 
 /**
- * How much of the band's span the dashes leave painted, as a fraction, with slack.
+ * How much of the cross axis ONE frame's painted ants cover, as a fraction, over every scan
+ * line that frame painted.
  *
- * `OUTLINE_DASH_LENGTH` 6 on to `OUTLINE_DASH_GAP` 4 off is a 0.6 duty cycle, so a fully
- * spanning band paints about 60% of its cross-axis positions and a band that stops short of an
- * edge cannot paint the rest. 0.5 is derived from that ratio rather than picked: it is below the
- * duty cycle, so it cannot fail on dash phase, and it is far above the fraction a band of any
- * plausible box width would cover — a 40-pixel band in the middle of an 800-pixel document
- * covers 5%, which is 25 times under this floor.
+ * MEASURED, at this suite's fit: 0.648 at its worst over 70 frames of a full-span band and
+ * 0.933 at its best, against 0.0525 for a 40-pixel band in the middle of an 800-pixel document.
+ * 0.5 is under the worst measured phase, so it cannot fail on where in the dash cycle a sample
+ * lands, and it is nowhere near what a band stopping short of an edge would cover. See the
+ * header for why it is read from one frame and the extremes are not.
  */
 const SPAN_COVERAGE_FLOOR = 0.5;
 
-/**
- * Slack, in document pixels, between a stroke's measured extent and its nominal one.
- *
- * A canvas stroke is antialiased, so which pixels it owns is decided by a coverage fraction
- * rather than by an edge test, and `data-fit-scale` is itself a float. 1.5 absorbs both while
- * staying far below the thickness of any band this spec compares against.
- */
-const STROKE_TOLERANCE_PX = 1.5;
+/** Frames sampled per cross-axis read, and the pause between them. See the header. */
+const SPAN_SAMPLES = 20;
+const SPAN_SAMPLE_INTERVAL_MS = 60;
 
 /**
  * The hint sentence the shared bar spells with `row` or with `column`
@@ -163,145 +181,187 @@ async function readFit(page: Page): Promise<Fit> {
   };
 }
 
-/** What one scan of the overlay found, in DOCUMENT pixels. */
-interface BandRead {
-  /** The band's own edges along its short axis: `top`/`bottom` for a row, `left`/`right` for a column. */
-  start: number;
-  end: number;
-  /** The farthest the band's outline reaches along the cross axis, and how many columns carry it. */
-  spanStart: number;
-  spanEnd: number;
-  spanPixels: number;
-  /** The scan window, so a failure can name the region it was looking at. */
-  window: { x: number; y: number; width: number; height: number };
-}
-
-function scanWindow(fit: Fit, axis: 'row' | 'column') {
-  return axis === 'row'
-    ? {
-        axis,
-        x: ANCHOR_CLEARANCE_PX,
-        y: 0,
-        width: Math.max(1, fit.documentWidth - ANCHOR_CLEARANCE_PX * 2),
-        height: fit.documentHeight,
-      }
-    : {
-        axis,
-        x: 0,
-        y: ANCHOR_CLEARANCE_PX,
-        width: fit.documentWidth,
-        height: Math.max(1, fit.documentHeight - ANCHOR_CLEARANCE_PX * 2),
-      };
+/** The rect one of the two tools builds from a press on document `index`. */
+interface BandRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 }
 
 /**
- * One scan of the overlay, restricted to the anchor-free window.
+ * The rect `singleRowMarqueeRect` / `singleColumnMarqueeRect` build for `index`, mirrored.
  *
- * The cross axis is measured as a COUNT as well as a pair of extremes, so "the band reaches
- * this far" is corroborated by "the band is painted across this many columns", which a single
- * stray pixel pair could not fake.
+ * `src/tools/singleRowColumnMarquee.ts:101` and `:114`, which is where the thin edge is `index`
+ * and the other two span the document. Mirrored rather than imported because the press point
+ * below is already built from the app's own published fit, and a test that asserts against the
+ * tool's own output cannot fail when the tool is wrong.
  */
-async function readBand(page: Page, fit: Fit, axis: 'row' | 'column'): Promise<BandRead | null> {
-  const area = scanWindow(fit, axis);
-  return overlayCanvas(page).evaluate((element, view) => {
-    if (!(element instanceof window.HTMLCanvasElement)) {
-      throw new Error('readBand: no [data-testid="tool-overlay-canvas"] on the page');
-    }
-    const ctx = element.getContext('2d');
-    if (!ctx) throw new Error('the tool overlay canvas has no 2d context');
-    const w = view.width;
-    const h = view.height;
-    if (view.x < 0 || view.y < 0 || view.x + w > element.width || view.y + h > element.height) {
-      throw new Error(
-        `readBand: the window ${JSON.stringify(view)} is outside the ${element.width}x${element.height} backing store`
-      );
-    }
-    const { data } = ctx.getImageData(view.x, view.y, w, h);
-
-    // `axis` says which way the band's THICKNESS runs: a row band is 1 pixel tall and spans
-    // horizontally, a column band is 1 pixel wide and spans vertically.
-    const acrossIsX = view.axis === 'row';
-    const acrossCount = acrossIsX ? w : h;
-    const thicknessCount = acrossIsX ? h : w;
-    const alongExtent = new Int32Array(thicknessCount).fill(-1);
-    const acrossSeen = new Uint8Array(acrossCount);
-    let acrossPixels = 0;
-
-    for (let a = 0; a < thicknessCount; a += 1) {
-      for (let c = 0; c < acrossCount; c += 1) {
-        const x = acrossIsX ? c : a;
-        const y = acrossIsX ? a : c;
-        const index = (y * w + x) * 4;
-        // The overlay alone holds this backing store, so the outline's own
-        // `rgba(0,123,255,0.95)` is what lands in the pixels; a white anchor disc is rejected by
-        // both the green floor and the blue ceiling, and the blue-stroked anchor by the floor.
-        if (
-          data[index + 3] < 8 ||
-          data[index] > 128 ||
-          data[index + 1] < 40 ||
-          data[index + 1] > 200 ||
-          data[index + 2] < 150
-        ) {
-          continue;
-        }
-        alongExtent[a] += 1;
-        if (!acrossSeen[c]) {
-          acrossSeen[c] = 1;
-          acrossPixels += 1;
-        }
-      }
-    }
-
-    let first = -1;
-    let last = -1;
-    for (let a = 0; a < thicknessCount; a += 1) {
-      if (alongExtent[a] < 0) continue;
-      if (first < 0) first = a;
-      last = a;
-    }
-    if (first < 0) return null;
-
-    let spanFirst = -1;
-    let spanLast = -1;
-    for (let c = 0; c < acrossCount; c += 1) {
-      if (!acrossSeen[c]) continue;
-      if (spanFirst < 0) spanFirst = c;
-      spanLast = c;
-    }
-
-    const spanOrigin = acrossIsX ? view.x : view.y;
-    const thicknessOrigin = acrossIsX ? view.y : view.x;
-
-    return {
-      start: thicknessOrigin + first,
-      end: thicknessOrigin + last,
-      spanStart: spanOrigin + spanFirst,
-      spanEnd: spanOrigin + spanLast,
-      spanPixels: acrossPixels,
-      window: { x: view.x, y: view.y, width: w, height: h },
-    };
-  }, area);
+function bandRect(fit: Fit, axis: 'row' | 'column', index: number): BandRect {
+  return axis === 'row'
+    ? { x1: 0, y1: index, x2: fit.documentWidth, y2: index + BAND_THICKNESS_PX }
+    : { x1: index, y1: 0, x2: index + BAND_THICKNESS_PX, y2: fit.documentHeight };
 }
 
-/** Waits for the band's stroke to reach the overlay, then reads it once. */
-async function committedBand(page: Page, fit: Fit, axis: 'row' | 'column'): Promise<BandRead> {
-  await expect
-    .poll(async () => (await readBand(page, fit, axis)) !== null, { message: 'the committed band outline' })
-    .toBe(true);
-  const read = await readBand(page, fit, axis);
-  if (!read) throw new Error('committedBand: the band vanished between the poll and the read');
+/** The four scan-line extremes a rect's ant stroke is expected to paint. */
+function expectedAntsExtent(fit: Fit, axis: 'row' | 'column', index: number) {
+  const rect = bandRect(fit, axis, index);
+  const thinExtent = axis === 'row' ? fit.documentHeight : fit.documentWidth;
+  const crossExtent = axis === 'row' ? fit.documentWidth : fit.documentHeight;
+  const thinStart = axis === 'row' ? rect.y1 : rect.x1;
+  const thinEnd = axis === 'row' ? rect.y2 : rect.x2;
+  const crossStart = axis === 'row' ? rect.x1 : rect.y1;
+  const crossEnd = axis === 'row' ? rect.x2 : rect.y2;
 
-  return read;
+  return {
+    first: firstPaintedLine(thinStart, fit.scale, thinExtent),
+    last: lastPaintedLine(thinEnd, fit.scale, thinExtent),
+    crossFirst: firstPaintedLine(crossStart, fit.scale, crossExtent),
+    crossLast: lastPaintedLine(crossEnd, fit.scale, crossExtent),
+    crossExtent,
+    thinExtent,
+    thinStart,
+  };
 }
 
-/** Paints anywhere on the overlay at all, anchors included — the undo assertion needs all of it. */
-async function anyOverlayPaint(page: Page): Promise<number> {
-  return overlayCanvas(page).evaluate((element) => {
-    if (!(element instanceof window.HTMLCanvasElement)) {
-      throw new Error('anyOverlayPaint: no [data-testid="tool-overlay-canvas"] on the page');
+/** What one whole-canvas scan of the ants found, in DOCUMENT pixels. */
+interface AntsScan {
+  /** First and last scan line on the band's thin axis that carried any ant. */
+  first: number;
+  last: number;
+  /** How many scan lines carried anything at all. See the header for why it is not asserted. */
+  lines: number;
+  /** The painted extremes on the cross axis. */
+  crossFirst: number;
+  crossLast: number;
+  /** Painted cross positions over every painted scan line, as a fraction of the document. */
+  coverage: number;
+}
+
+/** Folds one scan into a union of scans, which is how the cross-axis extremes are read. */
+function unionScan(into: AntsScan, add: AntsScan): AntsScan {
+  return {
+    first: Math.min(into.first, add.first),
+    last: Math.max(into.last, add.last),
+    lines: into.lines + add.lines,
+    crossFirst: Math.min(into.crossFirst, add.crossFirst),
+    crossLast: Math.max(into.crossLast, add.crossLast),
+    coverage: Math.max(into.coverage, add.coverage),
+  };
+}
+
+/** One scan of the whole ants canvas, on the band's thin axis. `null` when it holds no ants. */
+async function scanAntsOnce(page: Page, fit: Fit, axis: 'row' | 'column'): Promise<AntsScan | null> {
+  const runs: AntRun[][] = await readAntRuns(
+    page,
+    { x: 0, y: 0, width: fit.documentWidth, height: fit.documentHeight },
+    axis
+  );
+  const crossCount = axis === 'row' ? fit.documentWidth : fit.documentHeight;
+  const paintedCross = new Uint8Array(crossCount);
+  let lines = 0;
+  let first = -1;
+  let last = -1;
+  let crossFirst = -1;
+  let crossLast = -1;
+
+  runs.forEach((lineRuns, line) => {
+    if (lineRuns.length === 0) return;
+    lines += 1;
+    if (first < 0) first = line;
+    last = line;
+    for (const [from, to] of lineRuns) {
+      if (crossFirst < 0) crossFirst = from;
+      if (to > crossLast) crossLast = to;
+      for (let at = from; at <= to; at += 1) paintedCross[at] = 1;
     }
+  });
+
+  if (lines === 0) return null;
+  let covered = 0;
+  for (const painted of paintedCross) covered += painted;
+
+  return { first, last, lines, crossFirst, crossLast, coverage: covered / crossCount };
+}
+
+/**
+ * Waits for a band, then reads the ants canvas: the thin axis and the coverage from the first
+ * frame that holds one, the cross extremes from every frame over a whole dash cycle.
+ *
+ * One function so no test can read the two halves at different instants, and so the reason the
+ * two halves are read differently is stated once. See the header.
+ */
+async function committedAntsBand(page: Page, fit: Fit, axis: 'row' | 'column'): Promise<AntsScan> {
+  await waitForCommittedAnts(page, 'the committed band on the ants canvas');
+  const first = await scanAntsOnce(page, fit, axis);
+  if (!first) throw new Error('committedAntsBand: the ants canvas held no band between the wait and the read');
+
+  let swept = first;
+  for (let sample = 1; sample < SPAN_SAMPLES; sample += 1) {
+    await page.waitForTimeout(SPAN_SAMPLE_INTERVAL_MS);
+    const next = await scanAntsOnce(page, fit, axis);
+    if (next) swept = unionScan(swept, next);
+  }
+
+  return {
+    first: first.first,
+    last: first.last,
+    lines: first.lines,
+    crossFirst: swept.crossFirst,
+    crossLast: swept.crossLast,
+    coverage: first.coverage,
+  };
+}
+
+/**
+ * The four extremes, asserted against the rect the press should have committed.
+ *
+ * One place, so every test in this file asks the geometry the same way and a failure names both
+ * what was measured and what the ant stroke says it should be. The thickness is stated as the two
+ * extremes rather than as a count because of the doubled thin row the header describes, and the
+ * cross axis is stated as the document's own edges because the path's end caps paint them at any
+ * dash phase.
+ */
+function expectAntsBand(band: AntsScan, fit: Fit, axis: 'row' | 'column', index: number) {
+  const expected = expectedAntsExtent(fit, axis, index);
+  const where = axis === 'row' ? `row ${index}` : `column ${index}`;
+  const forty = paintedLineCount(expected.thinStart, 40, fit.scale, expected.thinExtent);
+
+  expect
+    .soft(
+      { first: band.first, last: band.last },
+      `the band's thin axis is ${band.first}..${band.last} and a ${BAND_THICKNESS_PX}-pixel band at ${where} ` +
+        `stroked by a ${antStrokeWidth(fit.scale).toFixed(4)} document px ant reaches ` +
+        `${expected.first}..${expected.last} (a 40-pixel band there would paint ${forty} scan lines)`
+    )
+    .toEqual({ first: expected.first, last: expected.last });
+
+  expect
+    .soft(
+      { crossFirst: band.crossFirst, crossLast: band.crossLast },
+      `the band spans ${band.crossFirst}..${band.crossLast} of ${expected.crossExtent} across, and the ` +
+        `ants around ${where} reach ${expected.crossFirst}..${expected.crossLast}`
+    )
+    .toEqual({ crossFirst: expected.crossFirst, crossLast: expected.crossLast });
+
+  expect
+    .soft(
+      band.coverage,
+      `the ants should paint most of the span, and a band stopping short of an edge cannot (measured ` +
+        `worst case 0.648, best 0.933)`
+    )
+    .toBeGreaterThan(SPAN_COVERAGE_FLOOR);
+
+  return expected;
+}
+
+/** Every pixel painted anywhere on the ants canvas — the undo assertion needs all of it. */
+async function anyAntsPaint(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const element = document.querySelector<HTMLCanvasElement>('[data-testid="selection-ants-canvas"]');
+    if (!element) throw new Error('anyAntsPaint: no [data-testid="selection-ants-canvas"] on the page');
     const ctx = element.getContext('2d');
-    if (!ctx) throw new Error('the tool overlay canvas has no 2d context');
+    if (!ctx) throw new Error('the selection ants canvas has no 2d context');
     const { data } = ctx.getImageData(0, 0, element.width, element.height);
     let painted = 0;
     for (let index = 3; index < data.length; index += 4) if (data[index] !== 0) painted += 1;
@@ -319,11 +379,11 @@ async function selectMarquee(page: Page, toolName: string, label: string): Promi
 /**
  * The canvas box, checked against the element the fit was computed on.
  *
- * `usePointerPosition` measures `workspace-container` (`Main.tsx:369`) and the gesture is
- * dispatched on the tool area filling that same container. `visual-regression.spec.ts` proves
- * the canvas element and the container coincide; this asserts it for this spec's own
- * measurements, because a silent divergence would place every press on a different pixel while
- * each individual assertion still passed.
+ * `usePointerPosition` measures `workspace-container` and the gesture is dispatched on the tool
+ * area filling that same container. `visual-regression.spec.ts` proves the canvas element and the
+ * container coincide; this asserts it for this spec's own measurements, because a silent
+ * divergence would place every press on a different pixel while each individual assertion still
+ * passed.
  */
 async function measure(page: Page): Promise<{ box: BoundingBox; fit: Fit }> {
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -371,19 +431,6 @@ function documentAxisOf(fit: Fit, coordinate: number, axis: 'row' | 'column'): n
   return index;
 }
 
-/**
- * The band's own thickness, with `drawSelectionOutline`'s stroke divided back out.
- *
- * Stated as one function so every test in this file asks the geometry the same way, and so the
- * "what a 40x40 box would measure" number in the failure message is computed rather than
- * asserted about.
- */
-function thicknessOf(read: BandRead, scale: number) {
-  return read.end - read.start + 1 - strokeWidth(scale);
-}
-
-const asFortyByForty = (scale: number) => 40 - strokeWidth(scale);
-
 async function openWorkspace(page: Page): Promise<void> {
   await page.goto('/');
   await expect(getWorkspaceCanvas(page)).toBeVisible();
@@ -399,7 +446,7 @@ test.describe('Single row and single column marquee', () => {
   //    NOT `clickToolButton`, and the reason is a layout fact rather than a preference. That
   //    helper resolves a tool through a tile of its OWN name and, failing that, through the
   //    three-dots overflow (`toolbar-helpers.ts:189-217`). Neither route reaches a member of a
-  //    group that still has a tile: the marquee group is the second of sixteen
+  //    group that still has a tile: the marquee group is the second of fifteen
   //    (`toolbar-mapping.ts:41`), the collapse is a SUFFIX, and at the suite's 1280x720 window
   //    the rail keeps the marquee tile as `tool-button-rectangular-selection` — so the two
   //    1-pixel tools have no tile of their own AND are not among the collapsed tools. The
@@ -420,45 +467,22 @@ test.describe('Single row and single column marquee', () => {
     expect.soft(documentAxisOf(fit, press.y, 'row'), 'the press is built to land on its row').toBe(252);
     await page.mouse.click(press.x, press.y);
 
-    const band = await committedBand(page, fit, 'row');
+    const band = await committedAntsBand(page, fit, 'row');
     const readBack = await readFit(page);
     expect.soft(readBack.scale, 'the fit must not have changed between the press and the read').toBe(fit.scale);
 
-    // 2. Exactly 1 document pixel tall, with the outline's own stroke divided back out.
-    const thickness = thicknessOf(band, fit.scale);
-    expect
-      .soft(
-        Math.abs(thickness - BAND_THICKNESS_PX),
-        `the band's own thickness is ${thickness.toFixed(2)} document px, against a required ${BAND_THICKNESS_PX} ` +
-          `(a 40x40 box would measure ${asFortyByForty(fit.scale).toFixed(2)})`
-      )
-      .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
+    // 2. One document pixel on the thin axis and the whole document on the other, read off the
+    //    ants. `expectAntsBand` states all four extremes against the rect the press should have
+    //    committed, so "on row 252" and "spans 0..799" are one assertion rather than a special
+    //    case per property.
+    expectAntsBand(band, fit, 'row', 252);
 
-    // 3. Spans the full document width. The scan's cross axis is the window's 780 columns, and
-    //    the band's stroke is measured across all of them; a box of any plausible width stops
-    //    hundreds of columns short of both inner edges.
-    expect
-      .soft(band.spanStart, 'a row band reaches the left of the document')
-      .toBeLessThanOrEqual(scanWindow(fit, 'row').x + 3);
-    expect
-      .soft(band.spanEnd, 'a row band reaches the right of the document')
-      .toBeGreaterThanOrEqual(scanWindow(fit, 'row').x + scanWindow(fit, 'row').width - 4);
-    expect
-      .soft(
-        band.spanPixels / scanWindow(fit, 'row').width,
-        'the dashes should paint most of the window, which a band stopping short of an edge cannot'
-      )
-      .toBeGreaterThan(SPAN_COVERAGE_FLOOR);
-
-    // 4. On the row under the press. The stroke is centred on the band's top edge, so the
-    //    painted top sits half a stroke above the row it belongs to.
-    const halfStroke = OUTLINE_LINE_WIDTH / 2 / fit.scale;
-    expect
-      .soft(
-        Math.abs(band.start - (252 - halfStroke)),
-        `the band should be on row 252, and its painted top edge is ${band.start}`
-      )
-      .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
+    // 3. Nothing but that band is on the ants canvas: a second selection's ants, or a leftover
+    //    preview, would show up as scan lines outside the three the stroke reaches. This is the
+    //    claim a window used to make and the whole canvas now makes instead — with no anchor
+    //    discs to exclude, there is nothing left that a frame would have hidden.
+    const stray = band.lines - (band.last - band.first + 1);
+    expect.soft(stray, `painted scan lines outside the band's own, which spans ${band.first}..${band.last}`).toBe(0);
   });
 
   test('the single column marquee is selectable from the marquee flyout and commits a 1-pixel band', async ({
@@ -474,32 +498,8 @@ test.describe('Single row and single column marquee', () => {
     expect.soft(documentAxisOf(fit, press.x, 'column'), 'the press is built to land on its column').toBe(530);
     await page.mouse.click(press.x, press.y);
 
-    const band = await committedBand(page, fit, 'column');
-    const thickness = thicknessOf(band, fit.scale);
-    expect
-      .soft(
-        Math.abs(thickness - BAND_THICKNESS_PX),
-        `the band's own thickness is ${thickness.toFixed(2)} document px, against a required ${BAND_THICKNESS_PX} ` +
-          `(a 40x40 box would measure ${asFortyByForty(fit.scale).toFixed(2)})`
-      )
-      .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
-
-    const window = scanWindow(fit, 'column');
-    expect.soft(band.spanStart, 'a column band reaches the top of the document').toBeLessThanOrEqual(window.y + 3);
-    expect
-      .soft(band.spanEnd, 'a column band reaches the bottom of the document')
-      .toBeGreaterThanOrEqual(window.y + window.height - 4);
-    expect
-      .soft(band.spanPixels / window.height, 'the dashes should paint most of the window')
-      .toBeGreaterThan(SPAN_COVERAGE_FLOOR);
-
-    const halfStroke = OUTLINE_LINE_WIDTH / 2 / fit.scale;
-    expect
-      .soft(
-        Math.abs(band.start - (530 - halfStroke)),
-        `the band should be on column 530, and its painted left edge is ${band.start}`
-      )
-      .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
+    const band = await committedAntsBand(page, fit, 'column');
+    expectAntsBand(band, fit, 'column', 530);
   });
 
   // Shift+M walks the marquee group in its declared order (`AppKeyboardShortcuts.tsx:40`), and
@@ -548,8 +548,8 @@ test.describe('Single row and single column marquee', () => {
 
   // Two presses at clearly different rows must land on two different rows, by the delta the fit
   // predicts. Stated as a DELTA as well as an absolute, so it cannot be satisfied by a band
-  // that is wrong in the same way twice, and each band is re-measured for thickness, so the
-  // pair cannot pass as two 40-pixel boxes the right distance apart.
+  // that is wrong in the same way twice, and each band is re-measured against its own rect, so
+  // the pair cannot pass as two 40-pixel boxes the right distance apart.
   test('two presses at different heights commit bands the expected document rows apart', async ({ page }) => {
     await selectMarquee(page, ROW, 'Single Row Marquee Tool');
     await expect(rowBar(page)).toBeVisible();
@@ -560,39 +560,28 @@ test.describe('Single row and single column marquee', () => {
     expect.soft(expectedDelta, 'the two presses are 300 document rows apart by construction').toBe(300);
 
     await page.mouse.click(upper.x, upper.y);
-    const first = await committedBand(page, fit, 'row');
+    const first = await committedAntsBand(page, fit, 'row');
     await page.mouse.click(lower.x, lower.y);
-    const second = await committedBand(page, fit, 'row');
+    const second = await committedAntsBand(page, fit, 'row');
     const readBack = await readFit(page);
     expect.soft(readBack.scale, 'the fit must not have changed between the two presses').toBe(fit.scale);
 
     // The SECOND band is the one on screen, so the read of `first` is the reading that proves
     // the first press was not a no-op and the delta is between two real bands.
-    const delta = second.start - first.start;
+    const delta = second.first - first.first;
     expect
       .soft(
         Math.abs(delta - expectedDelta),
-        `the two bands are ${delta} document px apart, and ${expectedDelta} is expected`
+        `the two bands' first painted scan lines are ${first.first} and ${second.first}, and ` +
+          `${expectedDelta} apart is expected`
       )
       .toBeLessThanOrEqual(1);
 
-    for (const [name, read, row] of [
-      ['first', first, 120],
-      ['second', second, 420],
+    for (const [read, row] of [
+      [first, 120],
+      [second, 420],
     ] as const) {
-      expect
-        .soft(
-          Math.abs(thicknessOf(read, fit.scale) - BAND_THICKNESS_PX),
-          `the ${name} band is ${thicknessOf(read, fit.scale).toFixed(2)} document px thick`
-        )
-        .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
-      const halfStroke = OUTLINE_LINE_WIDTH / 2 / fit.scale;
-      expect
-        .soft(
-          Math.abs(read.start - (row - halfStroke)),
-          `the ${name} band should be on row ${row}, its top edge is ${read.start}`
-        )
-        .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
+      expectAntsBand(read, fit, 'row', row);
     }
   });
 
@@ -614,51 +603,194 @@ test.describe('Single row and single column marquee', () => {
     await page.mouse.move(release.x, release.y, { steps: 12 });
     await page.mouse.up();
 
-    const band = await committedBand(page, fit, 'column');
-    const halfStroke = OUTLINE_LINE_WIDTH / 2 / fit.scale;
-    const releaseError = Math.abs(band.start - (600 - halfStroke));
-    const pressError = Math.abs(band.start - (200 - halfStroke));
-    expect
-      .soft(
-        thicknessOf(band, fit.scale),
-        `a dragged band is ${thicknessOf(band, fit.scale).toFixed(2)} document px wide`
-      )
-      .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
-    expect
-      .soft(releaseError, `the band sits at painted left edge ${band.start}, and the release column is 600`)
-      .toBeLessThanOrEqual(STROKE_TOLERANCE_PX);
+    const band = await committedAntsBand(page, fit, 'column');
+    const released = expectedAntsExtent(fit, 'column', 600);
+    const pressed = expectedAntsExtent(fit, 'column', 200);
+    expectAntsBand(band, fit, 'column', 600);
     // Its own assertion rather than a fold-in: this is what says the drag was AIMED at all, and
     // a band committed from the press would satisfy the line above only if the two columns were
     // close, which the 400-column separation above rules out.
+    const releaseError = Math.abs(band.first - released.first);
+    const pressError = Math.abs(band.first - pressed.first);
+    expect
+      .soft(releaseError, `the band's first painted column is ${band.first}, and 600's ants start at ${released.first}`)
+      .toBe(0);
     expect
       .soft(pressError, `the band must not be at the press column 200, which is ${pressError} px away`)
       .toBeGreaterThan(releaseError + 20);
   });
 
+  // The same drag under the ROW tool, where it changes only X. The band is the pointer's
+  // ABSOLUTE document row rather than a function of the gesture:
+  // `SingleRowColumnMarqueeToolArea.tsx:305` re-derives `drag.axis` from `documentPoint.y` on
+  // every move frame, so a gesture that never crosses a row boundary leaves it where it was
+  // pressed. The column tool's identical gesture is the test above, and between the two the
+  // pair pins the axis to the TOOL rather than to the direction the pointer travelled.
+  //
+  // Broken by: the create arm accumulating a delta instead of reading the pointer's axis, which
+  // would carry the band down with the drag; or the row tool reading X, which would commit a
+  // COLUMN band at the release column — read through this window that is a band about 600
+  // document px thick, so the thickness assertion below is what catches the transposition.
+  test('a row drag that changes only X leaves the band on its press row', async ({ page }) => {
+    await selectMarquee(page, ROW, 'Single Row Marquee Tool');
+    await expect(rowBar(page)).toBeVisible();
+    const { fit } = await measure(page);
+    // Both points are built on row 200, so the release cannot be on another row by accident of
+    // the arithmetic; only X differs, and by 640 document pixels.
+    const press = pointOn(fit, 'row', 200, 0.1);
+    const release = pointOn(fit, 'row', 200, 0.9);
+    expect.soft(documentAxisOf(fit, press.y, 'row'), 'the press is built to land on its row').toBe(200);
+    expect.soft(documentAxisOf(fit, release.y, 'row'), 'the release is on the SAME row, by construction').toBe(200);
+    expect
+      .soft(Math.abs(release.x - press.x) / fit.scale, 'the gesture must be a real drag, not a click')
+      .toBeGreaterThan(100);
+
+    await page.mouse.move(press.x, press.y);
+    await page.mouse.down();
+    await page.mouse.move(release.x, release.y, { steps: 12 });
+    await page.mouse.up();
+
+    // PORTED FROM MAIN. This test arrived written against the `tool-overlay-canvas` reader, and
+    // this branch deleted that reader: the band is stroked on `selection-ants-canvas` now, so the
+    // old `readBand`/`committedBand`/`anyOverlayPaint` and the `OUTLINE_LINE_WIDTH` half-stroke
+    // arithmetic behind them have no definition here. It is not weakened in the port. Main
+    // asserted `thicknessOf(band) <= STROKE_TOLERANCE_PX` and `|band.start - (200 - halfStroke)|
+    // <= STROKE_TOLERANCE_PX`; `expectAntsBand` asserts the band's thin axis EQUALS the extremes a
+    // centred ant stroke at row 200 reaches, which is a tighter claim than a 1.5px tolerance
+    // around a rounded half-stroke. Main's `spanStart <= window.x + 3` / `spanEnd >=
+    // window.x + window.width - 4` become exact `crossFirst === 0` / `crossLast === 799`, again
+    // tighter, plus the span-coverage floor the old reader never had.
+    const band = await committedAntsBand(page, fit, 'row');
+    expectAntsBand(band, fit, 'row', 200);
+  });
+
+  // A press INSIDE a committed 1-pixel band is a MOVE (`isPressOnActiveBand`,
+  // `SingleRowColumnMarqueeToolArea.tsx:279`-`:287`), and it writes exactly ONE history state.
+  // `SingleRowColumnMarqueeToolArea.test.tsx:527` covers this against a MOCKED store and counts
+  // dispatches, which is a different question: a double commit — the move arm appending on
+  // pointerup while the create arm appended on pointerdown — dispatches once per arm but
+  // replays into two states, and only the real undo cursor can see that.
+  test('a press inside a committed band moves it and appends one history state', async ({ page }) => {
+    await selectMarquee(page, ROW, 'Single Row Marquee Tool');
+    await expect(rowBar(page)).toBeVisible();
+    const undo = page.getByTestId('undo-button');
+    const { fit } = await measure(page);
+
+    const press = pointOn(fit, 'row', 200, 0.5);
+    await page.mouse.click(press.x, press.y);
+    const first = await committedAntsBand(page, fit, 'row');
+    // PORTED FROM MAIN — see the note on the row-drag test above. `committedBand` ->
+    // `committedAntsBand`, and the exact-extent assertion replaces main's
+    // `|start - (200 - halfStroke)| <= STROKE_TOLERANCE_PX`.
+    expectAntsBand(first, fit, 'row', 200);
+    await expect(undo, 'the first band is one history state').toBeEnabled();
+
+    // The same press point, so it lands inside the band just committed — the CENTRE of row 200 is
+    // the only row of hits unambiguously inside a band one document pixel tall. The drag ends 100
+    // rows lower, which is where the move must put it.
+    const release = pointOn(fit, 'row', 300, 0.5);
+    expect.soft(documentAxisOf(fit, release.y, 'row'), 'the release is built to land on its row').toBe(300);
+    await page.mouse.move(press.x, press.y);
+    await page.mouse.down();
+    await page.mouse.move(release.x, release.y, { steps: 12 });
+    await page.mouse.up();
+
+    const moved = await committedAntsBand(page, fit, 'row');
+    // PORTED FROM MAIN. `expectAntsBand(..., 300)` is exact where main asserted
+    // `|moved.start - (300 - halfStroke)| <= STROKE_TOLERANCE_PX`.
+    expectAntsBand(moved, fit, 'row', 300);
+
+    // The count is the point, and it is read off the cursor rather than off a dispatch list: one
+    // undo must return the band to row 200 — a create-on-press would have appended a second band
+    // there instead — and the second must clear the canvas entirely, which a second state from
+    // the move gesture would survive.
+    await undo.click();
+    await expect
+      .poll(
+        async () => {
+          const band = await scanAntsOnce(page, fit, 'row');
+
+          return band ? band.first : Number.NaN;
+        },
+        { message: 'one undo to bring the band back to the row it was committed on' }
+      )
+      .toBe(first.first);
+    await undo.click();
+    await expect.poll(async () => anyAntsPaint(page), { message: 'the second undo to clear the ants canvas' }).toBe(0);
+    await expect(
+      undo,
+      'the create and the move wrote two history states between them, so the move wrote one'
+    ).toBeDisabled();
+  });
+
   // A history state, unlike the eyedropper — `e2e/erase-fill-eyedropper.spec.ts:674` pins the
   // inverse. The seeded document has exactly one entry at cursor 0, so undo is disabled until
   // something commits, and the baseline is asserted BEFORE the gesture so a failure after it
-  // names the gesture rather than a precondition nobody checked.
+  // names the gesture rather than a precondition nobody checked. The canvas the assertion clears
+  // is the ants canvas now, which is where the band's whole visible form lives.
   test('a band records one history state and one undo removes it', async ({ page }) => {
     await selectMarquee(page, ROW, 'Single Row Marquee Tool');
     await expect(rowBar(page)).toBeVisible();
     const undo = page.getByTestId('undo-button');
     await expect(undo, 'a seeded document has nothing to undo').toBeDisabled();
+    expect.soft(await anyAntsPaint(page), 'nothing is selected before the press').toBe(0);
 
     const { fit } = await measure(page);
     const press = pointOn(fit, 'row', 300, 0.5);
     await page.mouse.click(press.x, press.y);
-    expect((await committedBand(page, fit, 'row')).start, 'the press should have committed a band').toBeGreaterThan(0);
+    const band = await committedAntsBand(page, fit, 'row');
+    expect.soft(band.first, 'the press should have committed a band on row 300').toBe(299);
+    expect.soft(await anyAntsPaint(page), 'the band is painted on the ants canvas').toBeGreaterThan(0);
     await expect(undo, 'the band is a history state, unlike the eyedropper').toBeEnabled();
 
     await undo.click();
     await expect
-      .poll(async () => anyOverlayPaint(page), { message: 'every painted pixel of the band to be undone' })
+      .poll(async () => anyAntsPaint(page), { message: 'every painted pixel of the band to be undone' })
       .toBe(0);
     // One click reverted the whole gesture and nothing is left: a second entry would still be on
     // the cursor, and a commit per pointer move would have left several. This is what makes
     // "one history state" mean one rather than at least one.
     await expect(undo, 'the band wrote exactly one history state').toBeDisabled();
+  });
+
+  // REDO, which the one-state test above stops short of. Undo proves the band was REACHED from a
+  // known geometry; it says nothing about the geometry coming BACK, and a replay that restored a
+  // band somewhere else — off by the frame origin, or on the wrong row — would pass every undo
+  // assertion in this file.
+  test('redo brings back the band undo took away, on the row it was committed', async ({ page }) => {
+    await selectMarquee(page, ROW, 'Single Row Marquee Tool');
+    await expect(rowBar(page)).toBeVisible();
+    const { fit } = await measure(page);
+    const press = pointOn(fit, 'row', 300, 0.5);
+    await page.mouse.click(press.x, press.y);
+    // PORTED FROM MAIN — see the row-drag test's note. `BandRead{start,end,spanStart,spanEnd}` maps
+    // onto `AntsScan{first,last,crossFirst,crossLast}`, and `anyOverlayPaint` onto `anyAntsPaint`.
+    // The poll is two-step on purpose: `scanAntsOnce` is a SINGLE-frame read while
+    // `committedAntsBand` is phase-complete (it unions a whole dash cycle, which is the only way to
+    // read a dashed line's ENDS), so gating on a single frame and then comparing a single frame
+    // against the phase-complete `committed` would be comparing two different instruments. Gate on
+    // "ants are painted again", then read with the same instrument the commit was read with.
+    const committed = await committedAntsBand(page, fit, 'row');
+    const geometry = (band: AntsScan) => ({
+      first: band.first,
+      last: band.last,
+      crossFirst: band.crossFirst,
+      crossLast: band.crossLast,
+    });
+
+    await page.getByTestId('undo-button').click();
+    await expect.poll(async () => anyAntsPaint(page), { message: 'undo to take the band off the ants canvas' }).toBe(0);
+
+    await page.getByTestId('redo-button').click();
+    await expect
+      .poll(async () => (await scanAntsOnce(page, fit, 'row')) !== null, {
+        message: 'redo to repaint the band',
+      })
+      .toBe(true);
+    expect(
+      geometry(await committedAntsBand(page, fit, 'row')),
+      'redo must repaint the band exactly where it was committed'
+    ).toEqual(geometry(committed));
   });
 });
 
@@ -669,17 +801,34 @@ test.describe('The seeded document the geometry is read from', () => {
 
   // The 800x600 default is the one number every geometry assertion above is scaled against, so it
   // is read from the app rather than trusted: a change to the seeded size would otherwise move
-  // the target of "the full document span" without any test failing on it directly.
+  // the target of "the full document span" without any test failing on it directly. The second
+  // half pins the derived stroke arithmetic itself, because every extent in this file is
+  // `floor(edge +/- antStrokeWidth(scale)/2)` and that expression is where a wrong scale would
+  // show up first.
   test('the fit reports the seeded document size the geometry assertions assume', async ({ page }) => {
     const fit = await readFit(page);
     expect(fit.documentWidth).toBe(800);
     expect(fit.documentHeight).toBe(600);
     expect(fit.scale, 'a contain fit is never zero').toBeGreaterThan(0);
     expect
+      .soft(bandRect(fit, 'row', 252), 'a row band is the whole document width by one document pixel')
+      .toEqual({ x1: 0, y1: 252, x2: 800, y2: 253 });
+    expect
+      .soft(expectedAntsExtent(fit, 'row', 252), 'the ants around row 252 reach these scan lines and columns')
+      .toEqual({
+        first: 251,
+        last: 253,
+        crossFirst: 0,
+        crossLast: 799,
+        crossExtent: 800,
+        thinExtent: 600,
+        thinStart: 252,
+      });
+    expect
       .soft(
-        { ...scanWindow(fit, 'row'), axis: undefined },
-        'the row window must leave room for the anchors to be excluded'
+        paintedLineCount(252, 1, fit.scale, 600),
+        'and a 1-pixel band paints three scan lines where a 40-pixel one paints far more'
       )
-      .toEqual({ axis: undefined, x: 10, y: 0, width: 780, height: 600 });
+      .toBe(3);
   });
 });

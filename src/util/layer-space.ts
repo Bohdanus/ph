@@ -11,14 +11,22 @@ import type { Point, Pos } from '../contexts/general-types.ts';
  * (`src/hooks/usePaintStroke.ts:166-167`) because a pointer is over the DOCUMENT, and it is
  * the space a `Layer['pos']` is expressed in.
  *
- * LAYER-LOCAL space is the processor's own raster, and it is what the processor is handed at
- * `src/contexts/useLayer.ts:544`: `processor.imageProcessor({ bitmap, size: layer.pos })`.
- * Every raster tool allocates `new OffscreenCanvas(size.width, size.height)` from that, so
- * pixel (0, 0) is the LAYER's top-left and carries no document origin at all. A processor
- * cannot know where its layer sits — it receives one buffer and its extents, and a stroke
- * running off the layer's edge simply clamps, exactly as it would at the document's edge.
+ * LAYER-LOCAL space is the processor's own raster. A layer carrying a retained affine or filter
+ * is handed a buffer staged at its EVALUATED extent, not its raw one: the live path stages it
+ * through `stageProcessorInput()` and replay stages the same way, both of which report where that
+ * buffer sits as `bounds`. A layer with no retained operation is handed the raw raster, and its
+ * bounds are `layer.pos`. Every raster tool allocates `new OffscreenCanvas(size.width, size.height)`
+ * from that, so pixel (0, 0) is the staged raster's top-left and carries no document origin at all.
+ * A processor cannot know where its layer sits — it receives one buffer and its extents, and a
+ * stroke running off the layer's edge simply clamps, exactly as it would at the document's edge.
  *
- * The two spaces agree at exactly one place: a layer whose `pos` origin is (0, 0). That is
+ * So the origin this module subtracts is whatever buffer the processor was handed, and the caller
+ * is the only one who knows: `processorPresentationBounds(layer)` answers it, and is `layer.pos`
+ * for every layer that presents nothing. That is why the parameter is named `layerPos` rather than
+ * `layerBounds` only in the identity sense — passing `layer.pos` to a transformed layer is the
+ * defect, not a simplification.
+ *
+ * The two spaces agree at exactly one place: a presented layer whose origin is (0, 0). That is
  * every layer on a freshly opened document, which is why this is invisible until something
  * moves one — a moved layer, a duplicated layer, a pasted one — and why the whole family of
  * tools breaks together rather than one at a time.
@@ -48,9 +56,9 @@ import type { Point, Pos } from '../contexts/general-types.ts';
  *   buffer.
  *
  * History then keeps the rebased numbers, which is correct rather than lossy: replay feeds a
- * stored `TOOL_ACTION`'s args back to the same processor with the same layer raster
- * (`src/contexts/useHistory.ts:98-108` supplies `size: layer.pos` too), so a stroke replays
- * against the frame it was recorded in.
+ * stored `TOOL_ACTION`'s args back to the same processor over the same staged buffer
+ * (`src/contexts/useHistory.ts` — `applyRasterTool`), so a stroke replays against the geometry
+ * the screen showed when it was recorded.
  */
 
 /**

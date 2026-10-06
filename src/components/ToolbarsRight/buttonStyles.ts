@@ -8,28 +8,36 @@
  * Used for main actions (Apply, Save, Open File, etc.)
  */
 export const PRIMARY_BUTTON =
-  'rounded bg-blue-600 px-3 h-9 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none disabled:opacity-50';
+  'rounded bg-blue-600 px-3 h-9 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50';
 
 /**
  * Primary button style - for larger buttons
  */
 export const PRIMARY_BUTTON_LARGE =
-  'rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2';
+  'rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 /**
  * Secondary button style - Light gray background, dark text
  * Used for Cancel, Clear, secondary actions
  * Light theme: white bg with gray text, hover to light gray
  * Dark theme: gray-700 bg with gray text, hover to darker gray
+ *
+ * **`disabled:opacity-50` and `disabled:cursor-not-allowed` are load-bearing, not decoration.**
+ * Every other style in this file that can be disabled carries a `disabled:` variant, and this one
+ * did not — so a disabled secondary button rendered pixel-for-pixel as an enabled one. On the Text
+ * tool's bar that meant Apply and Clear looked live for the whole of a session in which no box had
+ * been dragged yet, and there is no other signal on the control: a `disabled` attribute is invisible
+ * to a sighted user and to a screenshot. The opacity matches `PRIMARY_BUTTON`'s, so the two styles
+ * read as one system.
  */
 export const SECONDARY_BUTTON =
-  'rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Secondary button style - for larger buttons
  */
 export const SECONDARY_BUTTON_LARGE =
-  'rounded border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Toggle button style - shows active/inactive states
@@ -49,7 +57,7 @@ export const TOGGLE_BUTTON_INACTIVE =
  * Dark theme: gray-700 bg with gray text, hover to darker gray
  */
 export const ICON_BUTTON =
-  'rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-200 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Small toggle button style (like mirror buttons)
@@ -95,9 +103,16 @@ export const TOOLBAR_MENU_BUTTON_INACTIVE = 'text-blue-600 hover:bg-blue-100 dar
  * Menu item button style (used in dropdown menus)
  * Light theme: dark text, white/transparent background, hover to light gray
  * Dark theme: light text, transparent background, hover to darker gray
+ *
+ * The `disabled:` variants are load-bearing, not decoration. `Image ▸ Adjustments` ships
+ * Adobe's item list with the unbuilt commands as real `<button disabled>` elements, and a
+ * disabled button still matches `:hover` in every engine while Tailwind's preflight adds no
+ * `button:disabled` rule — so without these the twenty-one unbuilt commands are pixel-identical
+ * to the two that work and paint the hover affordance of a live item. The disabled rules come
+ * last so they win over the `hover:` ones in the generated CSS.
  */
 export const MENU_ITEM_BUTTON =
-  'w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700';
+  'w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700 disabled:cursor-default disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600 dark:disabled:hover:bg-transparent';
 
 /**
  * Dialog button style for secondary actions (Cancel, Close)
@@ -105,7 +120,7 @@ export const MENU_ITEM_BUTTON =
  * Dark theme: gray text, gray background, hover to darker gray
  */
 export const DIALOG_SECONDARY_BUTTON =
-  'mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-200 focus:outline-none dark:text-gray-400 dark:hover:bg-gray-600';
+  'mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:text-gray-400 dark:hover:bg-gray-600';
 
 /**
  * Transparent icon button on dark background (like history controls)

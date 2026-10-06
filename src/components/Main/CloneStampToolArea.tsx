@@ -4,6 +4,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { documentPointToLayerLocal, documentPointsToLayerLocal } from '../../util/layer-space.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } from '../../contexts/document-frame.ts';
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
@@ -57,7 +58,7 @@ type SourceMarker = {
  * a crosshair under the cursor and a ring at the source.
  *
  * Module-level rather than inline in the component for the same reason
- * `src/util/selection.ts`'s `drawSelectionOutline` is: it is pure overlay painting, it needs
+ * `src/util/selection.ts`'s `drawSelectionAnchors` is: it is pure overlay painting, it needs
  * no state, and the react-compiler lint rule reads a property assignment on a prop-supplied
  * context as a mutation of the component's inputs. `MagicWandToolArea.tsx:35` and
  * `ShapeToolArea.tsx:62` sidestep it the same way — by calling a drawer.
@@ -151,8 +152,8 @@ const drawCloneSourceMarker = (
  * `points` field then mean the same space, which is the only reason the offset arithmetic is
  * readable at all.
  *
- * `tempUpdateLayer` then calls the processor with `size: layer.pos` and the LAYER's own
- * bitmap (`src/contexts/useLayer.ts:544`), so the frame the processor addresses is
+ * The processor is then called with the LAYER's own bitmap in that layer's space
+ * (`src/contexts/useLayer.ts:730-734`), so the frame the processor addresses is
  * layer-local [0, pos.width) x [0, pos.height) and carries no document origin. Every point
  * is therefore translated by `-activeLayer.pos` on the way into the processor — the same
  * rebase `buildArgs` in `GradientToolArea.tsx` does and for the same reason, and both now
@@ -302,7 +303,10 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
     const source = args.source;
     if (!source || !activeLayer) return null;
 
-    const origin = activeLayer.pos;
+    // The presented raster's origin, not `pos`: a layer carrying a transform is handed a
+    // buffer staged at its evaluated extent, and a rebase against `pos` would address a
+    // point in that buffer the layer is not drawn at.
+    const origin = processorPresentationBounds(activeLayer);
 
     return {
       ...args,

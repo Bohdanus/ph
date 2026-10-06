@@ -59,6 +59,12 @@ export type ToolCommitKind =
 export type ToolProcessorDefinition = {
   creator?: boolean;
   /**
+   * Whether the processor reads the existing layer bitmap before producing its
+   * raster result. Omitted means true; draw-backed paint processors are the
+   * explicit exceptions because they create a fresh canvas from their stroke.
+   */
+  compositesOntoInput?: boolean;
+  /**
    * The tool's pixels or its retained presentation depend on `CanvasRenderingContext2D.filter`,
    * which is not Baseline: caniuse records Safari 3.1 - 17.6 as unsupported (WebKit bug 198416,
    * since resolved) and MDN states the feature is not Baseline. Set this on every such tool so the
@@ -85,8 +91,23 @@ export type ToolProcessorDefinition = {
  * tool does not work yet", and it is read as exactly that by `src/components/Main/Main.tsx`'s tool
  * dispatch. Naming the set is also what lets a consumer of `toolProcessors` distinguish "this tool
  * has no processor" from "this tool name does not exist".
+ *
+ * The Ruler is the second member, and it earns the set by the same rule rather than by affinity
+ * with the Eyedropper. Adobe describes the measuring line as a **nonprinting** line and gives its
+ * removal as dragging it out of the image or clicking Clear — not as undoing an edit — so a
+ * measurement changes no pixel and there is nothing for a history state to restore. `HANDOFF.md`
+ * §74 groups it as the measurement band "because these are `PIXEL_FREE_TOOLS` like the Eyedropper,
+ * committing no pixels and needing no durable operation", and that decision is the app-side answer
+ * to a question Adobe never states outright.
+ *
+ * The Color Sampler is the third, on Adobe's own one-line description: "Color Sampler tool |
+ * Displays color values for up to four areas." It displays rather than edits, so the pixels under a
+ * sampler are unchanged by its existence and a sample is not a document fact. It reads a pixel the
+ * way the Eyedropper does and writes it to a module store rather than to the foreground swatch, and
+ * neither difference gives it a `commit` kind.
+ * <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler', 'color-sampler'] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;
@@ -177,15 +198,13 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   'polygonal-lasso': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: selection,
   },
   'freehand-lasso': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: selection,
   },
@@ -203,8 +222,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   'rectangular-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
@@ -216,8 +234,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   // registered here.
   'elliptical-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: ellipticalSelection,
   },
@@ -228,22 +245,19 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
   'single-row-marquee': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   'single-column-marquee': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   'quick-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: quickSelection,
   },
@@ -298,14 +312,16 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   brush: {
     commit: 'raster',
+    creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen'));
+      const [canvas] = draw(params)(buildDrawArgs(args, 'pen'));
       return [canvas];
     },
   },
   pencil: {
     commit: 'raster',
+    creator: true,
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
       // `??` guards only `undefined` and `null`, so a non-numeric string reaches
@@ -313,7 +329,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
       // in favour of a width it picks itself. Only a finite width may reach the clamp.
       const width = Number((args as Partial<DrawToolArgs>).lineWidth ?? DEFAULT_PENCIL_LINE_WIDTH);
       const lineWidth = Number.isFinite(width) ? Math.max(1, width) : DEFAULT_PENCIL_LINE_WIDTH;
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen', lineWidth));
+      const [canvas] = draw(params)(buildDrawArgs(args, 'pen', lineWidth));
       return [canvas];
     },
   },

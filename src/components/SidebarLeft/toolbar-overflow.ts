@@ -25,8 +25,8 @@
  * section costs 50px — a 44px tile and the grid's 6px gap — so with a budget of `0.8 × A` the
  * count moved every `50 / 0.8 = 62.5`px of window and with a budget of `A` it moves every 50px: a
  * quarter more tolerance for a drag. A row that OPENS A SECTION costs 57px, because the boundary
- * adds its own 7px, and those steps went from `57 / 0.8 = 71.25` to 57. So of the fifteen gaps in
- * this rail's map, eleven were 12.5px stickier and four were 14.25px stickier.
+ * adds its own 7px, and those steps went from `57 / 0.8 = 71.25` to 57. So of the fourteen gaps in
+ * this rail's map, eleven were 12.5px stickier and three were 14.25px stickier.
  *
  * That is not what the trade was worth. 12.5px of tolerance is felt only as an absence of flicker,
  * while the price is visible and permanent, and it is the wrong trade for the SEQUENCE of a drag:
@@ -36,8 +36,10 @@
  * What the old budget actually cost, measured: on a 448px slot — an ordinary 1280x720 window — it
  * admitted six tool tiles where seven fit and left 97px of the slot empty. The rail now leaves 40,
  * which is the fraction of a row no whole row can use. The three-dots tile still appears at 720, and
- * it now lists the Brush group down instead of the Colors/Levels group down — one row further
- * down the map, and the group that was first to fold is no longer reachable by accident of depth.
+ * it now lists the Clone Stamp group down instead of the Brush group down — one row further down the
+ * map, and the Brush, the group that was first to fold here, is back on the rail. A shorter window
+ * still takes it: at 600 the rail is five tiles and the fold begins at the Crop, the same suffix rule
+ * reached two groups further down.
  *
  * **THE HEADROOM THAT IS REAL IS THE FLOOR, not the fraction.** {@link planToolbarOverflow} floors
  * the budget, so a slot is never shorter than the pixels it was measured at, and a fractional

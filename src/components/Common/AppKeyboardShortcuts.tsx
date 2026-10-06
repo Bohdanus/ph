@@ -1,11 +1,15 @@
+import { flushSync } from 'react-dom';
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
+import { useFile } from '../../contexts/useFile.tsx';
+import { useLayers } from '../../contexts/useLayer.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
 import type { SpongeMode } from '../../tools/sponge.ts';
+import type { FigureType } from '../../tools/shape.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
 
 /**
@@ -51,6 +55,21 @@ const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolN
 /** `O`: the whole toning flyout — the Dodge, the Burn and the Sponge, in Adobe's order. */
 const tonalGroup = ['dodge', 'burn', 'sponge'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
+/**
+ * `I`: the measurement-and-sampling tile.
+ *
+ * Adobe cycles the family with `Shift+I` and names five members — "Eyedropper, Color Sampler,
+ * Ruler, Note, and Count Tool I" (`src/tools/descriptions/eyedropper-draw.notes.md`) — of which this
+ * app has three. The two it does not have are absent from the group rather than listed as members it
+ * cannot select, because `cycleToolGroup` advances through whatever the array holds: a name that is
+ * not a working tool would make `Shift+I` land on `DummyToolArea`.
+ *
+ * The cycle ORDER is not Adobe's, because Adobe publishes no order for it: the Eyedropper leads
+ * because it is the tile's first entry, and a tile's name is its first entry, so leading with
+ * anything else would rename the tile and move every `tool-button-eyedropper` selector with it. The
+ * Color Sampler sits second because it is the other member that reads a pixel.
+ */
+const measurementGroup = ['eyedropper', 'color-sampler', 'ruler'] as const satisfies readonly ToolName[];
 
 /**
  * The tools whose options bar carries a tip, and the field each one spells it with.
@@ -99,11 +118,13 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ hasImage, toolName }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
-  const { goToTool } = useApp();
+  const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { openSaveImageDialog } = useFile();
+  const { commitDirtyTool } = useLayers();
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -114,6 +135,20 @@ export const AppKeyboardShortcuts = () => {
     }
 
     goToTool(brushGroup.includes(toolName as (typeof brushGroup)[number]) ? toolName : 'brush');
+  };
+
+  const selectMeasurementTool = (shiftKey = false) => {
+    const inGroup = measurementGroup.includes(toolName as (typeof measurementGroup)[number]);
+
+    if (shiftKey) {
+      const current = inGroup ? toolName : 'eyedropper';
+      goToTool(cycleToolGroup(current as ToolName, measurementGroup as readonly ToolName[]));
+      return;
+    }
+
+    // The unshifted key keeps a tool that is already in the group, which is what every other group
+    // selector in this file does: pressing `I` while the Ruler is selected stays on the Ruler.
+    goToTool(inGroup ? toolName : 'eyedropper');
   };
 
   const selectLassoTool = (shiftKey = false) => {
@@ -129,21 +164,45 @@ export const AppKeyboardShortcuts = () => {
 
   const selectShapeTool = (shiftKey = false) => {
     if (shiftKey) {
-      // The cycle must be expressed in real FigureType values. Matching the
-      // display name 'ellipse' against the stored figure 'oval' made
-      // indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle
-      // instead of advancing to Line.
+      // The cycle IS the flyout, in the rail's own order: `toolbar-mapping.ts` —
+      // `toolbarMap`'s five `shape`-named entries. The Custom Shape tool is the sixth entry of
+      // that same group rather than a figure, because it carries its own `toolName`, so it gets
+      // the one index past the last figure and the modulus spans all six entries.
+      //
+      // The group CLOSES, which is what Adobe's "cycle through tools with the same shortcut
+      // key" does: the press after the last entry advances to the first, so the press after
+      // Custom Shape selects the Rectangle. That is why the active tool's position is derived
+      // explicitly rather than left to `indexOf`. Letting the Custom Shape tool fall into the
+      // `-1` branch gave it the Rectangle's index, and the cycle then closed over five entries
+      // with the Rectangle permanently unreachable by Shift+U alone.
+      //
+      // The fallback is still `-1 + 1 === 0`, so a genuinely unlisted figure and a non-shape
+      // tool both start the group at the Rectangle. The list holds real `FigureType` values for
+      // the same reason: matching the display name 'ellipse' against the stored figure 'oval'
+      // made indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle instead of
+      // advancing to Line.
+      const orderedFigures = [
+        'rectangle',
+        'oval',
+        'line',
+        'triangle',
+        'polygon',
+      ] as const satisfies readonly FigureType[];
+      const customShapeIndex = orderedFigures.length;
       const currentFigure = toolArgs.toolName === 'shape' ? toolArgs.figure : 'rectangle';
-      const orderedFigures = ['rectangle', 'oval', 'line', 'custom-shape'] as const;
-      const currentIndex = orderedFigures.indexOf(currentFigure as (typeof orderedFigures)[number]);
-      const nextFigure = orderedFigures[(currentIndex + 1) % orderedFigures.length];
+      const figureIndex = orderedFigures.indexOf(currentFigure);
+      // The Custom Shape tool is the group's LAST entry, not a figure, so its index comes from
+      // what it is rather than from the -1 the figure lookup gives it.
+      const currentIndex = toolArgs.toolName === 'custom-shape' ? customShapeIndex : figureIndex;
+      const nextIndex = (currentIndex + 1) % (orderedFigures.length + 1);
 
-      if (nextFigure === 'custom-shape') {
+      if (nextIndex === customShapeIndex) {
         goToTool('custom-shape');
-      } else {
-        patchToolArgs('shape', { figure: nextFigure });
-        goToTool('shape');
+        return;
       }
+
+      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
+      goToTool('shape');
       return;
     }
 
@@ -255,6 +314,49 @@ export const AppKeyboardShortcuts = () => {
     patchToolArgs(tool, { alpha: value } as ToolPatch<typeof tool>);
   };
 
+  /**
+   * The save the `mod+S` chord runs. It is the header's save, restated rather than shared: the same
+   * four steps `DesktopHeader`, `MobileHeader` and `MobileMenuDrawer` each write out, with the same
+   * `flushSync`, the same staged `ImageSaveInput` and the same `if (data)` guard. **No shared hook
+   * was extracted and none is implied.** Four call sites now spell the sequence rather than three,
+   * and that duplication is the deliberate price of a change that adds a keyboard binding without
+   * re-architecting the save path — extracting a `useSaveDocument` is a separate decision with its
+   * own blast radius (it would have to carry `useStore`, `useLayers`, `useApp` and `useFile` into
+   * one hook and rewrite three components that are each independently tested). Recorded here so the
+   * next reader counts copies deliberately instead of assuming one is hiding.
+   *
+   * Restating rather than forking is what keeps a keyboard save and a `File > Save` click identical:
+   * the steps are the same three calls in the same order, and the `flushSync` around
+   * `commitDirtyTool` is load-bearing rather than decorative. `commitDirtyTool` bakes a live preview
+   * into a real layer and dispatches, and `exportLayers` has to hold THAT result before
+   * `openSaveImageDialog` is called; without the wrapper the batch runs after the call and the
+   * dialog is handed the un-committed record.
+   *
+   * `if (data) handleImageSave(data)` is the in-band refusal every other caller of this flow
+   * already guards: a cancelled dialog resolves `null` and is not a save, so there is nothing to
+   * record and nothing to report. The `try` matches them too — a throwing `commitDirtyTool` is
+   * reported rather than escaping a document-level `keydown` listener as an uncaught exception.
+   */
+  const saveDocument = async () => {
+    try {
+      if (!hasImage) return;
+
+      let exportLayers!: ReturnType<typeof commitDirtyTool>;
+      flushSync(() => {
+        exportLayers = commitDirtyTool();
+      });
+      const data = await openSaveImageDialog({
+        fileName,
+        layers: exportLayers,
+        size: totalSize,
+        documentFrame,
+      });
+      if (data) handleImageSave(data);
+    } catch (error) {
+      console.error('Unable to prepare document export', error);
+    }
+  };
+
   useKeyDownShortcut({
     key: 'z',
     mod: true,
@@ -327,11 +429,23 @@ export const AppKeyboardShortcuts = () => {
     onKeyDown: () => goToTool('reposition'),
   });
 
+  // `shift: true` is required rather than optional: `matchesShortcut` compares `event.shiftKey`
+  // against the field whenever it is declared, so a shifted `I` would fall through to the plain
+  // registration without it — the omission the Eyedropper's own `appNotes` used to record as a
+  // divergence and no longer does.
   useKeyDownShortcut({
     key: 'i',
     mod: false,
     enabled: hasImage,
-    onKeyDown: () => goToTool('eyedropper'),
+    onKeyDown: (event) => selectMeasurementTool(event.shiftKey),
+  });
+
+  useKeyDownShortcut({
+    key: 'i',
+    mod: false,
+    shift: true,
+    enabled: hasImage,
+    onKeyDown: (event) => selectMeasurementTool(event.shiftKey),
   });
 
   useKeyDownShortcut({
@@ -363,6 +477,48 @@ export const AppKeyboardShortcuts = () => {
         console.error('Failed to create a layer from the active selection');
       }
     },
+  });
+
+  /**
+   * `mod+S`: Adobe's Save on both platforms at once. `mod: true` is what covers the pair —
+   * `matchesShortcut` compares `(event.metaKey || event.ctrlKey)` against the declared `mod`, so
+   * this one registration IS `Cmd+S` on macOS and `Ctrl+S` on Windows and Linux, which is exactly
+   * the split Adobe documents. Declaring `meta` or `ctrl` instead would bind one platform and
+   * silently unbind the other.
+   *
+   * **Position is NOT load-bearing here, unlike the Sponge's two mode keys.** Every other `s`
+   * registration in this file declares `mod: false`, so a press carrying either modifier fails
+   * their `mod` test before their undeclared `shift`/`alt` are ever compared, and last-registered-
+   * wins never gets to arbitrate. It sits here with the other document chords rather than beside
+   * the Clone Stamp because that is where it belongs by kind; a future bare-`s` registration that
+   * DID declare `mod: true` would need this moved last.
+   *
+   * `preventDefault` is the whole reason the key is registered at all: `Ctrl+S`/`Cmd+S` is the
+   * browser's own Save Page in every engine, and an in-app Save that also saved the HTML would be
+   * worse than the missing shortcut this replaces.
+   *
+   * `enabled: hasImage` is the file's uniform gate and nothing more is claimed for it. Unlike the
+   * Meta+J chord above, `saveDocument` has no narrower precondition to lose — there is no selection
+   * to check — so the tempting "claim the key even when there is nothing to save" argument does not
+   * apply. What DOES apply is the ordering: `useKeyboardEvents.tsx` resolves `enabled` with a
+   * `continue` that runs BEFORE `preventDefault`, so with no document loaded this registration is
+   * skipped and the browser's own Save Page is left alone. That consequence is deliberate here, it
+   * matches every other registration in this file, and the save tests pin it as the behaviour rather
+   * than papering over it. Widening the claim to the no-document case would mean answering a
+   * document-less keypress outside the handler, which is a different design than this one.
+   *
+   * `mutatesDocument` is left at its `true` default and that is deliberate: the handler commits a
+   * live tool preview, and `useKeyboardEvents.tsx` refuses a document-committing registration at
+   * `keydown` — before dispatch, therefore before `commitDirtyTool` — while a gesture holds the
+   * document. A mid-gesture save would consume the preview the gesture's own commit is about to
+   * write. The refusal costs the press, which is the correct trade.
+   */
+  useKeyDownShortcut({
+    key: 's',
+    mod: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: saveDocument,
   });
 
   useKeyDownShortcut({
@@ -469,17 +625,15 @@ export const AppKeyboardShortcuts = () => {
     onKeyDown: (event) => selectTonalTool(event.shiftKey),
   });
 
-  // The three tiles that hold a single tool get one plain registration each, exactly as
+  // The two tiles that hold a single tool get one plain registration each, exactly as
   // `t` and the old `w` did: there is nothing to cycle, so a `shift: true` twin would
   // select the same tool twice. Each key matches the `shortcut` on its `toolbar-mapping.ts`
-  // line — I for the eyedropper (:56), E for the eraser (:70), S for the clone stamp (:74).
-  useKeyDownShortcut({
-    key: 'i',
-    mod: false,
-    enabled: hasImage,
-    onKeyDown: () => goToTool('eyedropper'),
-  });
-
+  // line — E for the eraser (:70), S for the clone stamp (:74).
+  //
+  // `i` is NOT one of them and used to be: it was registered twice here and above with identical
+  // bodies, and the later registration won on `useKeyboardEvents`' last-registered-wins, so the
+  // earlier one was dead code. The pair that replaced the dead arm is the `I`-family cycle, and a
+  // tile's key belongs to the tile rather than to one member of it.
   useKeyDownShortcut({
     key: 'e',
     mod: false,

@@ -2,11 +2,13 @@ import { cloneDeep } from 'lodash-es';
 
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
+import { AUTO_LEADING } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
+import { DEFAULT_POLYGON_SIDES } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
@@ -23,6 +25,8 @@ import {
   type ColorReplacementToolArgs,
 } from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
+import type { ColorSamplerToolArgs } from './colorSampler.ts';
+import type { RulerToolArgs } from './ruler.ts';
 import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from './quickSelection.ts';
 import type { GradientToolArgs } from './gradient.ts';
@@ -47,7 +51,16 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   rectangle: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   oval: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   triangle: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
-  polygon: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
+  polygon: {
+    alpha: 1,
+    lineWidth: 5,
+    // Adobe's Polygon tool seeds Sides at 5. Seeding it here rather than defaulting at the
+    // call site means the options bar has something to show on first open, for the same reason
+    // the eraser seeds `mode` and its tip width a few hundred lines down: a settings object
+    // that arrives without the key is an object the bar has nothing to show.
+    sides: DEFAULT_POLYGON_SIDES,
+    toolMode: 'shape',
+  },
 };
 
 export const defaultSettings = {
@@ -84,13 +97,19 @@ export const defaultSettings = {
   text: {
     text: '',
     fontSize: 64,
-    lineHeight: 1.1,
+    lineHeight: AUTO_LEADING,
     fontFamily: 'Arial',
     color: '#000000',
     rect: null,
     align: 'left',
     bold: false,
     italic: false,
+    allCaps: false,
+    smallCaps: false,
+    strikethrough: false,
+    tracking: 0,
+    underline: false,
+    kind: 'point',
 
     toolName: 'text',
   } satisfies TextToolArgs,
@@ -209,7 +228,6 @@ export const defaultSettings = {
     alpha: 1,
     color: '#000000',
     pos: { x: 0, y: 0 },
-    size: { width: 1, height: 1 },
     toolName: 'magic-eraser',
   } satisfies FillToolArgs,
   'paint-bucket': {
@@ -218,7 +236,6 @@ export const defaultSettings = {
     alpha: 1,
     color: '#000000',
     pos: { x: 0, y: 0 },
-    size: { width: 1, height: 1 },
     toolName: 'paint-bucket',
   } satisfies FillToolArgs,
   eyedropper: {
@@ -226,6 +243,20 @@ export const defaultSettings = {
     sampleAllLayers: false,
     toolName: 'eyedropper',
   } satisfies EyedropperToolArgs,
+  // The Color Sampler's only setting is the Sample Size it shares with the Eyedropper, seeded to
+  // Point Sample because that is the footprint Adobe's own worked examples use and the one that
+  // reports a pixel rather than a neighbourhood. The samplers are NOT seeded here: they are placed by
+  // gesture and dropped when the document frame size changes, which is view state rather than
+  // document state (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
+  'color-sampler': {
+    sampleSize: 1,
+    toolName: 'color-sampler',
+  } satisfies ColorSamplerToolArgs,
+  // The Ruler has no settings to seed: every number it reports belongs to the gesture that produced
+  // it rather than to a choice the user made, so the args object is the tool's name and nothing
+  // else. The measuring line itself is deliberately not here — it is view state, not document state
+  // (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
+  ruler: { toolName: 'ruler' } satisfies RulerToolArgs,
   'elliptical-selection': {
     style: 'normal',
     fixedRatio: 1,

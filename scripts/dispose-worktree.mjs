@@ -83,12 +83,20 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { ACTION, LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
+import {
+  abortCommand,
+  readOperations,
+  resolveAdminDirFor,
+  resolveCommonDir,
+  resolveGitDir,
+  unmergedPaths,
+} from './lib/git-operation-state.mjs';
 import { listWorktrees } from './lib/worktree-inventory/git.mjs';
 
 /**
@@ -115,7 +123,14 @@ export const KEEP_REF_PREFIX = 'refs/keep/disposed/';
  * board holds two locks" and "the board was unavailable" is the difference
  * between waiting and proceeding.
  */
-const REFUSALS = {
+/**
+ * The refusal messages, as data. Exported so a test can assert on the WORDS of a
+ * refusal it cannot otherwise reach — `prunable` needs a registration shape no
+ * `preflight` case builds, and a message that recommends an irreversible command is
+ * exactly the kind of thing a reader should be able to check without constructing the
+ * whole state around it.
+ */
+export const REFUSALS = {
   'unknown-worktree': (t) =>
     `No worktree named "${t}" in \`git worktree list\`. Name it exactly as \`git worktree list\` does.`,
   'main-worktree': () =>
@@ -125,7 +140,7 @@ const REFUSALS = {
   locked: (reason) =>
     `This worktree is \`git worktree lock\`ed${reason ? ` (${reason})` : ''}, so somebody marked it as not-to-be-touched by hand. Unlock it yourself if that is stale; do not force past it.`,
   prunable: (reason) =>
-    `\`git worktree list\` still reports this worktree but ${reason}. Its directory is gone or its administrative entry is stale, so there is nothing to salvage and no state to verify. Run \`git worktree prune\`, then re-generate the inventory.`,
+    `\`git worktree list\` still reports this worktree but ${reason}. Its directory is gone or its administrative entry is stale. \`npm run repo:state\` first: if it reports an operation in progress for it, the administrative directory still holds resolution state and \`git worktree prune\` DELETES it with no reflog entry and nothing for \`git fsck\` to recover — carry that state out by hand before pruning. If it reports nothing, run \`git worktree prune\`, then re-generate the inventory.`,
   'no-tip': () =>
     'Git cannot read a tip commit for this worktree, so there is nothing to anchor and no proof of what would be removed.',
   'board-unavailable': (detail) =>
@@ -141,7 +156,7 @@ const REFUSALS = {
   'not-in-inventory': () =>
     'The inventory has no entry for this worktree, so its action is unknown. Regenerate, or add a curated entry if it is a real finding.',
   'action-not-dispose': (action) =>
-    `The inventory says \`action: "${action}"\`, not \`"${ACTION.DISPOSE}"\`. Per docs/ORCHESTRATION.md that is not a deletion candidate — \`in-use\` means leave it alone, \`land\` means merge it, \`at-risk\` means save it, \`undecided\` means do not remove it.`,
+    `The inventory says \`action: "${action}"\`, not \`"${ACTION.DISPOSE}"\` and not \`"${ACTION.LEGACY}"\`. Per docs/ORCHESTRATION.md that is not a deletion candidate — \`in-use\` means leave it alone, \`land\` means merge it, \`at-risk\` means save it, \`undecided\` means do not remove it. A \`legacy\` action would have said the worktree is removable with the branch kept.`,
   'must-not-prune': () =>
     'A curated finding sets `mustNotPrune`, which vetoes `dispose` as well as `land`. It records work git cannot see in a clean tree.',
   'board-claim': (rows) =>
@@ -158,6 +173,18 @@ const REFUSALS = {
     `\`${command ?? 'git status'}\` failed on this worktree (${detail}), so what it would have reported is UNKNOWN rather than clean. This program will not read an unreadable tree as an empty one; restore the worktree's git state, or ask the operator.`,
   'ignored-content': (count, paths) =>
     `The working tree holds ${count} gitignored path(s) that no command rebuilds, so they exist in no commit, no ref and no reflog: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? `, +${paths.length - 8} more` : ''}. \`git status\` does not list these, which is why a tree holding only them reads as clean. Commit them with \`git add -f\`, or move them out, before removing the directory.`,
+  'operation-in-progress': (detail, remedy, ownership, remedyless) =>
+    `A git operation is in progress in this worktree, and removing the directory deletes the state files that are its only record: ${detail}. Nothing about it is in a commit, a ref or the reflog, so this is unrecoverable rather than merely inconvenient. ` +
+    (remedy
+      ? `Finish or abandon it deliberately — ${remedy} — and re-run this. If every conflict is already resolved, COMMIT it instead: the abort throws the resolution away, which is the one outcome this refusal exists to prevent. `
+      : remedyless
+        ? `Git has no command that abandons ${remedyless}, so there is nothing to run: finish or commit the resolution there, or reset the worktree by hand. `
+        : `No operation marker is set, so no abort will clean this up — inspect \`git diff --name-only --diff-filter=U\` there and resolve or stage it by hand. `) +
+    (ownership ?? ''),
+  'operation-state-unreadable': (detail, command) =>
+    `\`${command}\` failed while reading this worktree's git state (${detail}), so whether an operation is in progress is UNKNOWN rather than no. This program will not read an unreadable state as a clear one; restore the worktree's git state, or ask the operator.`,
+  'operation-state-absent': () =>
+    'No git operation state was supplied for this worktree, so the check that protects unrecoverable merge and rebase state never ran. An absent check is not a clear worktree. This is a bug in the caller, not a verdict about the tree.',
 };
 
 /**
@@ -184,11 +211,19 @@ const REFUSALS = {
  * entry carries the command that rebuilds it, because an entry nobody can
  * regenerate is an entry that should not be here.
  *
- * Deliberately NOT on this list: \`.serena/\`, \`.vscode/*\`, \`*.local\`,
+ * \`.serena/\` IS on this list, and it was the seventh dead worktree before it was:
+ * the index flagged \`.serena/\` alone as a reason it could never be free. It is
+ * almost entirely machine-written — \`project.yml\` and \`project.local.yml\`
+ * are regenerated by the MCP server on its next activation in that directory,
+ * and \`cache/\` is a symbol index it rebuilds from source — so treating it as
+ * content protected nothing and blocked a real cleanup. \`.serena/memories/\` is
+ * the exception and is NOT rebuildable, so it carries an \`except\` list; see
+ * PROTECTED_BENEATH.
+ *
+ * Deliberately NOT on this list: \`.vscode/*\`, \`*.local\`,
  * \`playwright/.auth\`, \`.DS_Store\`, and \`*.log\`. They are ignored, which is a
  * statement about version control and not about whether they are worth
- * anything — an auth state and a session index are both real work, and the
- * inventory flagged \`.serena/\` alone as a reason a worktree was never free.
+ * anything — an auth state and a session index are both real work.
  *
  * An entry here that git does not actually ignore is dead weight: \`ls-files
  * --ignored\` can never report it, so it relaxes nothing. \`.husky/_\` was one,
@@ -212,7 +247,46 @@ const REGENERABLE_IGNORED = [
   { prefix: '.eslintcache', rebuild: 'npm run lint:check' },
   { prefix: 'tsconfig.tsbuildinfo', rebuild: 'npm run tsc' },
   { prefix: 'WORKTREES.json', rebuild: 'node scripts/worktree-inventory.mjs' },
+  {
+    prefix: '.serena',
+    rebuild:
+      'the serena MCP server rewrites project.yml and reindexes the language server on its next activation in this directory',
+    // `.serena/memories/` is where an agent writes notes to itself. They are on no
+    // ref and no command rebuilds them, so a blanket `.serena` entry would make
+    // the only surviving record of a dead session's thinking disposable.
+    except: ['memories'],
+  },
 ];
+
+/**
+ * Ignored paths that hold real work DESPITE sitting inside an allowlisted
+ * directory, and must therefore be looked for on disk.
+ *
+ * WHY A DISK WALK AND NOT A PATH PREFIX. `ls-files --others --ignored
+ * --exclude-standard --directory` — the exact invocation `readGitState` and
+ * `salvage` both use, `--directory` being there so `node_modules` reports as one
+ * entry rather than 18,901 files — COLLAPSES a fully ignored directory to its
+ * own name. On a worktree holding only the three files serena writes, it
+ * reports `.serena/` and not one of them. So a prefix check on the reported path
+ * cannot see `.serena/memories/` even in principle: the entry that reached it
+ * never named a memory. Verified on a real worktree — with and without a file
+ * under `memories/`, the reported path is `.serena/` both times.
+ *
+ * WHICH MEANS THE NARROW ALLOWLIST IS NOT AVAILABLE. Allowlisting
+ * `.serena/cache` and `.serena/project.yml` instead of `.serena` would relax
+ * nothing at all, because neither can ever be the string git hands this program;
+ * they would be dead weight in the sense the comment above already records for
+ * `.husky/_`. The parent has to be the entry, and the exception has to be
+ * resolved against the filesystem.
+ *
+ * SO AN EXCEPTION IS CHECKED BY WALKING IT, AND A FAILURE TO READ IS CONTENT.
+ * An unreadable `memories/` counts as present, which is the fail-closed
+ * direction and matches every other detection-fails-open-explicitly decision
+ * here: this is policy, not detection.
+ */
+const PROTECTED_BENEATH = REGENERABLE_IGNORED.filter((entry) => entry.except).flatMap((entry) =>
+  entry.except.map((sub) => `${entry.prefix}/${sub}`)
+);
 
 /**
  * True when no command rebuilds this ignored path.
@@ -221,9 +295,50 @@ const REGENERABLE_IGNORED = [
  * as content, and that is the intended reading — a log is the record of what a
  * dead session was doing when it died, and it is the one ignored file class a
  * cleanup sweep most often throws away by accident.
+ *
+ * A path inside a `PROTECTED_BENEATH` exception is content even though its
+ * parent directory is allowlisted, so this answers false for it. That is belt to
+ * `protectedContentOnDisk`'s braces: it holds when git happens to report a
+ * protected path by name, which it does not do when it collapses the directory.
  */
 export function isRegenerableIgnored(path) {
+  if (PROTECTED_BENEATH.some((prefix) => coversPath(prefix, path))) return false;
   return REGENERABLE_IGNORED.some((entry) => coversPath(entry.prefix, path));
+}
+
+/**
+ * The protected paths that exist on disk inside an allowlisted directory.
+ *
+ * Returns repository-relative paths, so a caller can tar them, and returns them
+ * ALL rather than stopping at the first: the refusal message is more useful with
+ * the whole set, and one walk either way.
+ *
+ * Only paths that git reported as an ignored DIRECTORY are worth walking, which
+ * is what keeps this off the hot path — `node_modules` is not a candidate, and
+ * `ls-files` already enumerated it as one entry.
+ */
+export function protectedContentOnDisk(root, ignoredPaths) {
+  const found = [];
+  for (const path of ignoredPaths) {
+    // git's `--directory` mode marks a collapsed directory with a trailing slash.
+    // A file path has none, and cannot contain a nested subtree.
+    if (!path.endsWith('/')) continue;
+    // The match runs the OTHER way round from `coversPath`, and has to: git
+    // reports the ANCESTOR `.serena/` and the prefix is `.serena/memories`, so
+    // `coversPath(prefix, path)` is false for every collapsed directory and this
+    // function would return nothing for the exact case it exists to handle.
+    const collapsed = path.replace(/\/$/, '');
+    for (const prefix of PROTECTED_BENEATH) {
+      if (!coversPath(collapsed, prefix)) continue;
+      const absolute = join(root, prefix);
+      try {
+        if (existsSync(absolute) && readdirSync(absolute).length > 0) found.push(`${prefix}/`);
+      } catch {
+        found.push(`${prefix}/`);
+      }
+    }
+  }
+  return found;
 }
 
 /**
@@ -257,6 +372,7 @@ export function nonRegenerableIgnored(paths) {
 
 /** The rebuild command for an ignored path, or null when nothing rebuilds it. */
 export function rebuildCommand(path) {
+  if (PROTECTED_BENEATH.some((prefix) => coversPath(prefix, path))) return null;
   const entry = REGENERABLE_IGNORED.find((e) => coversPath(e.prefix, path));
   return entry ? entry.rebuild : null;
 }
@@ -299,6 +415,7 @@ export function preflight({
   target,
   nowMs = Date.now(),
   gitState,
+  operationState,
   inventory,
   board,
   sessions,
@@ -306,10 +423,30 @@ export function preflight({
 } = {}) {
   const failures = [];
   const refuse = (code, ...args) => failures.push({ code, message: REFUSALS[code] ? REFUSALS[code](...args) : code });
+  // DERIVED ONCE AND PASSED TO `dispose()`. It is the difference between removing
+  // a directory and removing a branch, and `dispose()` must not re-derive it: it
+  // has no inventory and would have to re-read `WORKTREES.json`, which is a
+  // regenerable file, so a regeneration between the decision and the action would
+  // make the two halves answer differently. The `action` field below is re-read
+  // from the SAME in-memory `record`, which is safe for the reason this comment
+  // states — one object, one read of the file — so the invariant is "one object",
+  // not "one read of one field".
+  //
+  // IT IS A CLAIM, NOT AN OUTCOME, UNTIL `ok`. It is computed before the
+  // freshness, action, `mustNotPrune`, derived-live, dirtiness, operation-state
+  // and ownership checks, so `keepBranch === true` co-occurs with `ok === false`
+  // for any record that is refused. `main()` gates on `ok` before it can reach
+  // `dispose()`, so nothing destructive follows from that today; the name is
+  // what would mislead a future caller reading the field without it.
+  const keepBranch = inventory?.record?.action === ACTION.LEGACY;
 
   if (!gitState?.found) {
     refuse('unknown-worktree', target);
-    return { ok: false, failures, record: null };
+    // `keepBranch` IS HERE TOO. This return has a different key set from the
+    // one at the end of the function, so a caller that destructures the result
+    // gets `undefined` here and a boolean there — and this is the return a new
+    // caller hits first.
+    return { ok: false, failures, record: null, keepBranch };
   }
   if (gitState.isPrimary) refuse('main-worktree');
   if (gitState.detached) refuse('detached');
@@ -337,7 +474,15 @@ export function preflight({
     if (!Number.isFinite(age) || age > maxAgeMs) refuse('inventory-stale', age, inventory.generatedAt);
     if (!inventory.record) refuse('not-in-inventory');
     else {
-      if (inventory.record.action !== ACTION.DISPOSE) refuse('action-not-dispose', inventory.record.action);
+      // `legacy` IS a disposal candidate, and the check that separates it from
+      // `dispose` is the one below rather than this one. A legacy worktree is
+      // clean by the branch that classified it, so everything here that protects
+      // a live, dirty or in-flight worktree applies to it unchanged; the only
+      // thing that differs is whether the BRANCH goes with the directory, and
+      // `dispose()` answers that.
+      if (inventory.record.action !== ACTION.DISPOSE && inventory.record.action !== ACTION.LEGACY) {
+        refuse('action-not-dispose', inventory.record.action);
+      }
       if (inventory.record.mustNotPrune) refuse('must-not-prune');
       // The liveness arm this guard used to re-derive from two channels that
       // structurally cannot see the chat in question, while the signal was
@@ -377,6 +522,59 @@ export function preflight({
     refuse('ignored-content', gitState.ignoredWork.length, gitState.ignoredWork);
   }
 
+  // An operation in progress is the content NO probe in this file can see, and
+  // `readGitState` cannot see it either: it reads porcelain status, which
+  // reports a `UU` path as an ordinary modification and reports a bisect as
+  // nothing at all. So this state reaches the dirty-tree check above as either a
+  // count that happens to be zero or a count that means something else.
+  //
+  // It is checked HERE, after the tree has been found and its branch and tip
+  // confirmed, because it is the only check that can be the last one before
+  // `git worktree remove` deletes `.git/worktrees/<name>/` — and that directory
+  // is the ONLY place a merge's conflict list and `MERGE_HEAD` exist. Removing a
+  // worktree mid-merge destroys resolution work with no reflog entry and nothing
+  // for `git fsck` to recover, which makes this a precondition and not a warning.
+  //
+  // The unreadable case refuses for the same reason `dirty-tree-unreadable` does,
+  // and it is checked in the same order: a state this program could not read is
+  // not a state it may report as clear.
+  const state = operationState;
+  if (state === undefined || state === null) {
+    // FAIL CLOSED on an absent SIGNAL, which is the rule the board and session
+    // checks above already follow for the same reason: a missing input is not an
+    // empty answer. Skipping this check when the caller forgot it would leave the
+    // one piece of state that is unrecoverable if destroyed as the one piece of
+    // state that can be missed by omission.
+    refuse('operation-state-absent');
+  } else if (state.readError) {
+    refuse('operation-state-unreadable', state.readError, 'git diff --name-only --diff-filter=U');
+  } else if (state.operations.length > 0 || state.unmerged.length > 0) {
+    const named = state.operations.map((o) => `${o.operation} (${o.marker}${o.value ? ` -> ${o.value}` : ''})`);
+    const unmerged = state.unmerged.length > 0 ? [`${state.unmerged.length} unmerged path(s) in the index`] : [];
+    // No remedy name when there is no command to name. `git merge --abort` does nothing
+    // for an unresolvable index with no operation behind it, and a squash has no abandon
+    // command at all; a refusal that names a command which cannot work is the same defect
+    // as a report that calls such a state clean. Those two are different sentences, so
+    // they are told apart here: `remedyless` names the operation git cannot abandon, and
+    // is null when there is no marker at all. `repo-state-gate.mjs` must advise the same
+    // way about the same state.
+    const remedy = state.operations.map(abortCommand).filter(Boolean).join(' / ');
+    const remedyless =
+      remedy === '' && state.operations.length > 0
+        ? state.operations
+            .filter((o) => abortCommand(o) === null)
+            .map((o) => `a ${o.operation}`)
+            .join(' or ')
+        : null;
+    refuse(
+      'operation-in-progress',
+      [...named, ...unmerged].join(', '),
+      remedy,
+      liveSignal(board, sessions),
+      remedyless
+    );
+  }
+
   // Ownership, from three independent sources. ANY of them means somebody is
   // there. This is the check the sweep's `git status --porcelain` probe could
   // not make, and it is the one that would have saved the worktree.
@@ -396,7 +594,7 @@ export function preflight({
   if ((board?.liveAgents?.length ?? 0) > 0) refuse('board-agent-live', board.liveAgents.length);
   if ((sessions?.live?.length ?? 0) > 0) refuse('live-session', sessions.live.length);
 
-  return { ok: failures.length === 0, failures, record: inventory?.record ?? null };
+  return { ok: failures.length === 0, failures, record: inventory?.record ?? null, keepBranch };
 }
 
 /**
@@ -522,7 +720,10 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
     failedCommand = String(err?.message ?? err).split('\n')[0];
   }
 
-  const ignoredWork = nonRegenerableIgnored(ignoredPaths);
+  // `ignoredPaths` is what git reported; `protectedContentOnDisk` is what a
+  // collapsed `.serena/` actually holds. Both halves are content, because git's
+  // collapse is a display convenience and not a statement about the contents.
+  const ignoredWork = [...nonRegenerableIgnored(ignoredPaths), ...protectedContentOnDisk(absolutePath, ignoredPaths)];
 
   return {
     found: true,
@@ -582,6 +783,105 @@ export function locateInventory(cwd, { run = defaultRun, exists = existsSync } =
     /* not a repository, or git could not answer; `cwd` below is the fallback */
   }
   return join(cwd, 'WORKTREES.json');
+}
+
+/**
+ * The operations in progress in one worktree, and whether that could be read.
+ *
+ * A separate reader from `readGitState` because it answers a different question
+ * about a different directory. `readGitState` reads the worktree's porcelain
+ * status, which answers "what is in the files". This reads the worktree's GIT
+ * DIRECTORY, which answers "what is git doing" — and the two disagree in the
+ * direction that matters: a merge whose conflicts are all resolved has a clean
+ * index and an empty porcelain, and a bisect has both, while its `BISECT_LOG`
+ * and its detached `HEAD` are the only evidence it is running.
+ *
+ * `readError` is kept as a FIELD rather than thrown, because the caller's
+ * decision differs from a thrown error's: an unreadable state is a refusal with
+ * its own message naming the command, exactly as `dirty-tree-unreadable` is. A
+ * reader that cannot answer must not be indistinguishable from one that answered
+ * "nothing in progress".
+ *
+ * BOTH injected readers are guarded, not one. `preflight` is a pure decision
+ * function with no try/catch of its own, so an unguarded throw here escapes it as
+ * a stack trace — which is the outcome this refusal exists to replace. An earlier
+ * version guarded `unmergedPaths` and left `readOperations` bare, which is
+ * untestable as well as unreachable: `readOperations` cannot throw, so nothing
+ * could have shown the asymmetry to be a hole.
+ */
+export function readOperationState(
+  absolutePath,
+  { gitDirOf = resolveGitDir, readOps = readOperations, unmergedOf = unmergedPaths, fallbackGitDir = null } = {}
+) {
+  // `fallbackGitDir` exists for the shape that matters most. A worktree whose DIRECTORY
+  // is gone cannot be asked anything, so `gitDirOf` — which runs git inside it — answers
+  // null, and an earlier version returned `operations: []` with a `readError` while the
+  // administrative directory beside it still held the merge. That is the exact state
+  // `git worktree prune` destroys, and the `prunable` refusal was meanwhile telling the
+  // operator there was "nothing to salvage and no state to verify". So the git directory
+  // is matched by content when the directory is unavailable; see `resolveAdminDirFor`.
+  const gitDir = gitDirOf(absolutePath) ?? fallbackGitDir;
+  if (gitDir === null) {
+    return {
+      gitDir: null,
+      operations: [],
+      unmerged: [],
+      readError: 'git rev-parse --absolute-git-dir failed and no administrative directory claims this worktree',
+    };
+  }
+  let operations;
+  try {
+    operations = readOps(gitDir);
+  } catch (error) {
+    return { gitDir, operations: [], unmerged: [], readError: error?.message ?? String(error) };
+  }
+  let unmerged = [];
+  let unmergedError = null;
+  try {
+    unmerged = unmergedOf(absolutePath);
+  } catch (error) {
+    // Not a `readError` when the OPERATIONS were read: a merge whose index cannot be
+    // diffed because its directory is gone is still a merge in progress, and reporting
+    // only the read failure would hide the finding this whole check exists to produce.
+    unmergedError = error?.message ?? String(error);
+    if (operations.length === 0) return { gitDir, operations, unmerged: [], readError: unmergedError };
+  }
+  return { gitDir, operations, unmerged, readError: null, unmergedError };
+}
+
+/**
+ * Who else is in this worktree, in one sentence, from the sources already in hand.
+ *
+ * The `operation-in-progress` refusal names a command that DISCARDS work, and the
+ * operator's first question about that command is whether anybody is standing there.
+ * `board` and `sessions` are already arguments to `preflight`, so the facts are already
+ * computed — an earlier version of this refusal ran ahead of every ownership check and
+ * dropped them, so the advice to consider `git merge --abort` arrived with no hint that
+ * a live session was mid-merge in it. On the repository this was written for, that gap
+ * is the difference between a safe abort and destroying a session's in-flight work.
+ *
+ * STATES THE WINDOW, because "recorded in this worktree RIGHT NOW" was a review finding
+ * against this sentence: every one of these sources is a recency window —
+ * `LIVE_WINDOW_MS` for agents, the same window for sessions — so "right now" asserted a
+ * strength the data does not have, and the refusal printed beside it states the same
+ * fact correctly. The refusal now carries the number instead.
+ *
+ * Returns null when nothing is live, so the refusal does not gain a sentence claiming
+ * nobody is there: that is an ABSENCE of evidence, and stating it as evidence is how a
+ * reader concludes a worktree is safe when it is only unobserved.
+ */
+function liveSignal(board, sessions) {
+  const parts = [];
+  const claims = board?.claims?.length ?? 0;
+  const locks = board?.fileLocks?.length ?? 0;
+  const agents = board?.liveAgents?.length ?? 0;
+  const live = sessions?.live?.length ?? 0;
+  if (claims > 0) parts.push(`${claims} board claim(s)`);
+  if (locks > 0) parts.push(`${locks} board file lock(s)`);
+  if (agents > 0) parts.push(`${agents} live board agent(s)`);
+  if (live > 0) parts.push(`${live} live session(s)`);
+  if (parts.length === 0) return null;
+  return `Others are recorded in this worktree inside the last ${LIVE_WINDOW_MS / 60000} min: ${parts.join(', ')}. Establish who they are before you abort anything.`;
 }
 
 /**
@@ -870,10 +1170,17 @@ function salvage(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaul
       // filter all of them out one entry later.
       '--directory',
     ]).stdout;
-    const worth = ignored
-      .split('\0')
-      .filter(Boolean)
-      .filter((path) => !isRegenerableIgnored(path));
+    const reported = ignored.split('\0').filter(Boolean);
+    // The same two halves `readGitState` counts: what git named, plus what a
+    // collapsed allowlisted directory holds. Archiving the reported paths alone
+    // would tar `run.log` and skip `.serena/memories/` for the reason that
+    // reaches this function at all.
+    const worth = [
+      ...new Set([
+        ...reported.filter((path) => !isRegenerableIgnored(path)),
+        ...protectedContentOnDisk(gitState.absolutePath, reported),
+      ]),
+    ];
     if (worth.length) {
       tar(gitState.absolutePath, join(dir, 'ignored.tar'), worth.map((p) => `${p}\0`).join(''));
       written.push('ignored.tar');
@@ -918,15 +1225,43 @@ function firstLine(err) {
  * The removal itself. No `--force` parameter exists on this function, so no
  * caller can pass one.
  *
+ * TWO MODES, AND THIS FUNCTION VALIDATES NEITHER. `keepBranch: false` is the
+ * disposal described below: anchor, salvage, remove the worktree, then
+ * `git branch -d`. `keepBranch: true` is a LEGACY disposal, and it is the first
+ * mode this function has that writes no anchor and deletes no branch, because
+ * `ACTION.LEGACY` means the directory is disposable and the ref is the thing
+ * being preserved.
+ *
+ * `keepBranch` IS NOT DERIVED HERE AND IS NOT CHECKED HERE. It is a human claim
+ * carried in from `preflight()`, which is the only thing that establishes the
+ * inventory says `action: "legacy"` — and that inventory check is the whole
+ * authorisation. So this signature and its doc are the pairing a reader needs:
+ * a caller that reaches `dispose()` directly, as the tests do, can pass
+ * `keepBranch: true` for a worktree no inventory ever called legacy. Nothing
+ * destructive follows, because the flag only ever omits writes, but the authority
+ * for the mode lives in `preflight()` and nowhere else.
+ *
  * `git branch -d` rather than `-D`: it refuses an unmerged branch, and that
  * refusal is the guard. The anchor above means a branch kept by that refusal is
  * still recoverable either way, so there is nothing to gain by forcing it and a
- * work to lose.
+ * work to lose. A legacy disposal does not consult that guard at all, because
+ * the command is never run.
  */
-export function dispose(cwd, gitState, { run = defaultRun, fs = defaultFs, tar = defaultTar } = {}) {
+export function dispose(
+  cwd,
+  gitState,
+  { run = defaultRun, fs = defaultFs, tar = defaultTar, keepBranch = false } = {}
+) {
   const steps = [];
-  const ref = anchor(cwd, gitState, { run });
+  // NO ANCHOR WHEN THE BRANCH SURVIVES. The anchor exists so a deleted branch is
+  // still reachable; a branch that is deliberately kept is already reachable,
+  // and writing `refs/keep/disposed/<slug>` for it would put a ref that reads as
+  // evidence of a disposal next to a branch that was never disposed. The
+  // asymmetry is the point: `disposed/` means "this was removed and this is the
+  // only copy", and it must keep meaning that.
+  const ref = keepBranch ? null : anchor(cwd, gitState, { run });
   if (ref) steps.push(`anchored ${gitState.tip} at ${ref}`);
+  else if (keepBranch) steps.push(`no anchor ref: the branch ${gitState.branch} is being kept`);
 
   const saved = salvage(cwd, gitState, { run, fs, tar });
   // NAMES WHAT, or says there was nothing. `salvaged  to /path` — an empty join
@@ -947,21 +1282,52 @@ export function dispose(cwd, gitState, { run = defaultRun, fs = defaultFs, tar =
     steps.push(`removed worktree ${gitState.absolutePath}`);
   } catch (err) {
     steps.push(`KEPT worktree ${gitState.absolutePath}: ${firstLine(err)}`);
-    steps.push(`nothing was deleted; its branch is still anchored at ${ref ?? 'no anchor'}`);
-    return { steps, branchDeleted: false, worktreeRemoved: false, anchorRef: ref, salvage: saved };
+    // BRANCHED, NOT `ref ?? 'no anchor'`. `keepBranch` makes a null ref the
+    // NORMAL state, so the old fallback turned a routine legacy failure into the
+    // line "its branch is still anchored at no anchor" — self-contradicting, and
+    // pointing an operator at a ref this module's header documents as the only
+    // recovery point for a DISPOSED branch. This is the last line printed before
+    // `main()` exits 2, so it is the one read after a failed disposal.
+    steps.push(
+      keepBranch
+        ? `nothing was deleted; its branch ${gitState.branch} is untouched, as a legacy disposal keeps it`
+        : `nothing was deleted; its branch is still anchored at ${ref ?? 'no anchor'}`
+    );
+    // `branchKept` IS HERE TOO, not only on the paths that reach the branch step.
+    // Nothing was deleted, so a kept branch was trivially kept — and a caller
+    // reading `branchKept` found `undefined` on this path and `true` on the
+    // other, so the shape depended on which failure happened.
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: ref,
+      salvage: saved,
+      branchKept: keepBranch,
+    };
   }
 
   let branchDeleted = false;
-  try {
-    run(cwd, ['branch', '-d', gitState.branch]);
-    branchDeleted = true;
-    steps.push(`deleted branch ${gitState.branch}`);
-  } catch (err) {
+  if (keepBranch) {
+    // THE WHOLE POINT OF THE STATUS, IN ONE BRANCH OF ONE FUNCTION. A legacy
+    // worktree's directory goes and its branch stays: git holds a branch with no
+    // worktree, so this costs a ref and saves the checkout, its `node_modules`
+    // and its `dist/`.
     steps.push(
-      `KEPT branch ${gitState.branch}: git refused \`-d\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+      `KEPT branch ${gitState.branch}: the inventory calls this action "legacy", so the ref is the thing being preserved`
     );
+  } else {
+    try {
+      run(cwd, ['branch', '-d', gitState.branch]);
+      branchDeleted = true;
+      steps.push(`deleted branch ${gitState.branch}`);
+    } catch (err) {
+      steps.push(
+        `KEPT branch ${gitState.branch}: git refused \`-d\`, so it is unmerged (${firstLine(err)}). Its commits remain at ${ref ?? 'no anchor'}.`
+      );
+    }
   }
-  return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved };
+  return { steps, branchDeleted, worktreeRemoved: true, anchorRef: ref, salvage: saved, branchKept: keepBranch };
 }
 
 function realpathIfExists(p) {
@@ -992,12 +1358,18 @@ const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [
 
   <worktree>   a path or a name as \`git worktree list\` prints it.
 
-Refuses unless the generated inventory calls this worktree \`action: "dispose"\`,
-no board claim, lock or live agent names it, no session has it as its directory
-inside the live window, and its working tree is clean. Anchors the branch at
+Refuses unless the generated inventory calls this worktree \`action: "dispose"\`
+or \`action: "legacy"\`, no board claim, lock or live agent names it, no session
+has it as its directory inside the live window, and its working tree is clean.
+Anchors the branch at
 ${KEEP_REF_PREFIX}<name> and salvages uncommitted work before removing anything.
 
 There is no --force. A dirty tree is a finding to report, not an obstacle.
+
+\`action: "legacy"\` removes the WORKTREE and keeps the BRANCH: git holds a branch
+with no worktree, so the directory, its node_modules and its dist/ go while the
+ref survives. No anchor ref is written, because the branch is the copy being
+kept. See docs/ORCHESTRATION.md.
 `;
 
 function main(argv) {
@@ -1067,6 +1439,12 @@ function main(argv) {
     target,
     nowMs,
     gitState,
+    // The fallback is what lets this read the state of a worktree whose own
+    // directory is gone: matched against the administrative directories by content,
+    // because there is no directory left to run git in. See `readOperationState`.
+    operationState: readOperationState(gitState.absolutePath, {
+      fallbackGitDir: resolveAdminDirFor(resolveCommonDir(cwd), gitState.absolutePath),
+    }),
     inventory,
     board: ownership.board,
     sessions: ownership.sessions,
@@ -1086,21 +1464,28 @@ function main(argv) {
   if (dryRun) {
     const ref = anchorRefFor(gitState);
     process.stdout.write(
-      `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch -d ${gitState.branch}\n`
+      verdict.keepBranch
+        ? `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose, and the branch will be KEPT because the inventory calls it legacy.\n  would write no anchor ref — the branch itself is the copy being kept\n  would remove ${gitState.absolutePath}\n  would NOT run git branch -d ${gitState.branch}\n`
+        : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch -d ${gitState.branch}\n`
     );
     return 0;
   }
 
-  const result = dispose(cwd, gitState);
+  const result = dispose(cwd, gitState, { keepBranch: verdict.keepBranch });
   for (const step of result.steps) process.stdout.write(`  ${step}\n`);
   if (!result.worktreeRemoved) {
     process.stderr.write('dispose: nothing was deleted.\n');
     return 2;
   }
   process.stdout.write(
-    `dispose: ${gitState.name} disposed. The inventory is now stale; re-run \`node scripts/worktree-inventory.mjs\`.\n`
+    result.branchKept
+      ? `dispose: ${gitState.name} worktree removed, branch ${gitState.branch} kept. The inventory is now stale; re-run \`node scripts/worktree-inventory.mjs\`.\n`
+      : `dispose: ${gitState.name} disposed. The inventory is now stale; re-run \`node scripts/worktree-inventory.mjs\`.\n`
   );
-  return result.branchDeleted ? 0 : 2;
+  // A kept branch is not a failed deletion, so it must not report exit 2 — that
+  // code means "git refused" and is what a caller reads as "nothing was done".
+  // The worktree is gone and the branch survived, which is the whole request.
+  return result.branchDeleted || result.branchKept ? 0 : 2;
 }
 
 /**

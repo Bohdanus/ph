@@ -90,6 +90,27 @@ function baselineHistory(): HistoryItem[] {
   ];
 }
 
+/**
+ * A History row carrying the document's opening state — the entry
+ * `legacyHistoryToDurable` adopts as the durable baseline. `disabled` picks the
+ * shape a History-panel toggle produces. The id is a token none of the
+ * diagnostic message bodies contain otherwise, so `toContain` on it pins the
+ * `${item.id}` interpolation rather than a coincidental word.
+ */
+function openingEntry(id: string, disabled: boolean): HistoryItem {
+  return {
+    id,
+    actionName: OPEN_DOCUMENT_ACTION,
+    layerId: 'layer-1',
+    ...(disabled ? { disabled: true } : {}),
+    documentSource: {
+      layers: { 'layer-1': blankLayer('layer-1') },
+      size: initialSize,
+      frame: baselineFrame,
+    },
+  };
+}
+
 function convert(items: HistoryItem[], registry: AssetRegistry, options: Record<string, unknown> = {}) {
   return legacyHistoryToDurable([...baselineHistory(), ...items], {
     documentId: 'test-doc',
@@ -712,17 +733,7 @@ describe('durable shadow divergences from legacy replay', () => {
 
   it('a disabled first entry replays as the empty state legacy replays', () => {
     const registry = new AssetRegistry();
-    const disabledOpen: HistoryItem = {
-      id: 'baseline',
-      actionName: OPEN_DOCUMENT_ACTION,
-      layerId: 'layer-1',
-      disabled: true,
-      documentSource: {
-        layers: { 'layer-1': blankLayer('layer-1') },
-        size: initialSize,
-        frame: baselineFrame,
-      },
-    };
+    const disabledOpen = openingEntry('baseline', true);
 
     const converted = legacyHistoryToDurable([disabledOpen], { documentId: 'test-doc', registry });
     const replayed = replayDurableDocument(converted.document, -1);
@@ -816,6 +827,171 @@ describe('bedrock frame authority between durable shadow and legacy replay', () 
     expect(Object.keys(replayDurableDocument(converted.document, 0).layers)).toEqual(['layer-1', 'layer-bedrock']);
     expect(Object.keys(legacy.layers)).toEqual(['layer-1', 'layer-bedrock']);
     expect(converted.diagnostics).toEqual([]);
+    registry.shutdown();
+  });
+});
+
+/**
+ * The diagnostic that makes the disabled-baseline divergence in the describe
+ * above OBSERVABLE. The behaviour it reports is unchanged and still wrong; these
+ * tests pin that the divergence is now NAMED, that the warning is scoped to the
+ * case where it holds, and that reporting it does not cost the user the document.
+ */
+describe('disabled durable baseline reporting', () => {
+  /**
+   * No dependency is reachable for any fixture below: an item carrying a
+   * `documentSource` returns at `history-replay.ts:78-84` before either call, and
+   * a disabled item is skipped at `history-replay.ts:74` before the loop body.
+   * They are tripwires against a future replay that routes either shape through a
+   * layer factory, not a protection for the assertions below.
+   */
+  const unreachableToolDependencies: HistoryReplayDependencies = {
+    createLayer: () => {
+      throw new Error('a baseline-carrying history entry must not create a layer');
+    },
+    applyRasterTool: () => {
+      throw new Error('a baseline-carrying history entry must not rasterize');
+    },
+  };
+
+  it('reports nothing for an enabled opening entry, which legacy replay does apply', () => {
+    const registry = new AssetRegistry();
+    const opened = openingEntry('opening-row', false);
+
+    const converted = legacyHistoryToDurable([opened], { documentId: 'test-doc', registry });
+    const legacy = replayHistory([opened], 0, initialSize, unreachableToolDependencies);
+
+    // The guard is the ENABLED state, not "an entry was adopted as the baseline":
+    // this row is the baseline and the conversion reports nothing at all, and it
+    // converts exactly as it did before the warning existed.
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
+    expect(converted.document.baseline.frame).toEqual(baselineFrame);
+    // And the two models AGREE here, so there would be nothing to report even if
+    // a diagnostic could be raised: `replayHistory` skips only a disabled item, so
+    // it applies the same opening state the durable baseline holds.
+    expect(Object.keys(legacy.layers)).toEqual(['layer-1']);
+    expect(Object.keys(replayDurableDocument(converted.document).layers)).toEqual(['layer-1']);
+    registry.shutdown();
+  });
+
+  it('keeps the shadow available for a disabled opening entry, where an error diagnostic would void it', () => {
+    const registry = new AssetRegistry();
+
+    const attempt = convertLegacyHistorySafely([openingEntry('opening-row', true)], {
+      documentId: 'test-doc',
+      registry,
+    });
+
+    // The SEVERITY is what this pins. `convertLegacyHistorySafely` rolls the asset
+    // transaction back and returns `status: 'unavailable'` with a NULL document on
+    // the first error diagnostic, so an error-severity naming of this divergence
+    // would discard every later entry over a defect the legacy timeline already
+    // tolerates — a strictly worse outcome than the divergence it reports.
+    expect(attempt.diagnostics).toHaveLength(1);
+    expect(attempt.diagnostics[0]?.severity).toBe('warning');
+    expect(attempt.status).toBe('current');
+    expect(attempt.document).not.toBeNull();
+    registry.shutdown();
+  });
+
+  it('surfaces the disabled opening entry through the safe entry point on a document that still replays', () => {
+    const registry = new AssetRegistry();
+    const disabledOpen = openingEntry('opening-row', true);
+
+    const attempt = convertLegacyHistorySafely([disabledOpen], { documentId: 'test-doc', registry });
+
+    // The warning is in the SAME result any consumer reads `status` from, so
+    // `status: 'current'` is not by itself a claim of faithfulness.
+    expect(attempt.diagnostics).toHaveLength(1);
+    expect(attempt.diagnostics[0]).toMatchObject({
+      historyId: 'opening-row',
+      actionName: OPEN_DOCUMENT_ACTION,
+      severity: 'warning',
+      code: 'invalid-history-entry',
+    });
+    expect(attempt.diagnostics[0]?.message).toContain('opening-row');
+    // The document handed back is still consumable, and it AGREES with what the
+    // user sees: `replayHistory` skips a disabled entry, so the baseline is
+    // empty rather than the opening state, and the two models say the same thing
+    // at this cursor. That is the fix, not the divergence this test used to pin.
+    const document = attempt.document as DurableDocument;
+    expect(Object.keys(replayDurableDocument(document).layers)).toEqual([]);
+    expect(document.baseline.layers).toEqual([]);
+    expect(attempt.legacyCursorToDurableCursor).toEqual([-1]);
+    registry.shutdown();
+  });
+
+  it('counts a nested args.enabled false as a disabled opening entry, which legacy replay still applies', () => {
+    const registry = new AssetRegistry();
+    const nested: HistoryItem = {
+      id: 'nested-row',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      args: { enabled: false },
+      documentSource: {
+        layers: { 'layer-1': blankLayer('layer-1') },
+        size: initialSize,
+        frame: baselineFrame,
+      },
+    };
+
+    const converted = legacyHistoryToDurable([nested], { documentId: 'test-doc', registry });
+    const legacy = replayHistory([nested], 0, initialSize, unreachableToolDependencies);
+
+    // The second half of `isEntryEnabled` (`history-adapter.ts:433-436`): a
+    // disabled entry is `item.disabled` OR a nested `args.enabled === false`.
+    expect(converted.diagnostics).toHaveLength(1);
+    expect(converted.diagnostics[0]).toMatchObject({
+      historyId: 'nested-row',
+      severity: 'warning',
+      code: 'invalid-history-entry',
+    });
+    expect(converted.diagnostics[0]?.message).toContain('nested-row');
+    // `isEntryEnabled` treats a nested `args.enabled === false` as disabled, and
+    // the baseline is gated on exactly that predicate — so the durable baseline is
+    // empty here.
+    //
+    // KNOWN OVER-BREADTH, pinned as-is rather than endorsed: `replayHistory` gates
+    // on `item.disabled` ALONE (`history-replay.ts:74`), so it APPLIES this
+    // document source and the legacy timeline describes a full document. The two
+    // models therefore DISAGREE on this row, and the warning is what names it.
+    // Whether the guard should be scoped to `item.disabled` is left open; what the
+    // code does today is pinned.
+    expect(Object.keys(legacy.layers)).toEqual(['layer-1']);
+    expect(Object.keys(replayDurableDocument(converted.document).layers)).toEqual([]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
+    registry.shutdown();
+  });
+
+  it('reports no opening-state divergence for a timeline whose first entry is not an open document', () => {
+    const registry = new AssetRegistry();
+    const disabledCreate: HistoryItem = {
+      id: 'create-row',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'layer-2',
+      layerSource: blankSource,
+      disabled: true,
+    };
+
+    const converted = legacyHistoryToDurable([disabledCreate], { documentId: 'test-doc', registry });
+    const legacy = replayHistory([disabledCreate], 0, initialSize, unreachableToolDependencies);
+
+    // No entry carries a document source, so `snapshotFromDocumentSource` finds
+    // nothing, the baseline-adoption branch is never entered and the warning is
+    // UNREACHABLE. A disabled row that does not carry the opening state reports
+    // nothing at all, whatever its disabled shape.
+    expect(converted.diagnostics).toEqual([]);
+    // The baseline is the derived fallback rather than a document's opening state:
+    // with no document source and no options the frame is 1x1 and there are no
+    // layers, so nothing claims a document the legacy timeline never described.
+    expect(converted.document.baseline.frame).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    expect(converted.document.baseline.layers).toEqual([]);
+    // The entry is still PUBLISHED and still disabled, and both models skip it —
+    // which is why there is nothing here to report.
+    expect(converted.document.history.map((entry) => entry.enabled)).toEqual([false]);
+    expect(Object.keys(legacy.layers)).toEqual([]);
+    expect(Object.keys(replayDurableDocument(converted.document).layers)).toEqual([]);
     registry.shutdown();
   });
 });

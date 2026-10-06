@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createImageHistoryItem } from '../../__tests__/fixtures/history.ts';
@@ -50,6 +50,19 @@ function collectLive(next: LayersRecord, history: readonly HistoryItem[]): Set<B
   }
   return live;
 }
+
+/**
+ * Global and mock teardown belongs HERE, not at the end of a test body: a
+ * failing assertion in a body never reaches the copies it would have run, and
+ * the stubbed `createImageBitmap` then survives into every later test in the
+ * file. `vi.restoreAllMocks()` is safe in an `afterEach` precisely because
+ * `src/test/setup.ts` re-installs the `getContext` spy from its own `beforeEach`
+ * before the next test body runs.
+ */
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('isSamePresentationCanvas', () => {
   it('matches only the exact canvas the layer still holds', () => {
@@ -173,9 +186,6 @@ describe('materializePresentationBitmap', () => {
     // a raster of the wrong content under the layer's id.
     expect(createImageBitmapStub).toHaveBeenCalledWith(canvas);
     expect(bitmap.close).not.toHaveBeenCalled();
-
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
   it('contains a materialization failure and resolves undefined', async () => {
@@ -190,9 +200,6 @@ describe('materializePresentationBitmap', () => {
 
     await expect(materializePresentationBitmap(staged())).resolves.toBeUndefined();
     expect(consoleError).toHaveBeenCalledWith('Unable to materialize layer presentation cache', failure);
-
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
   it('rejects when the platform has no createImageBitmap', async () => {
@@ -271,6 +278,20 @@ describe('DocumentPresentationScope ownership', () => {
     expect(owned.close).toHaveBeenCalledTimes(1);
 
     scope.dispose();
+  });
+
+  it('releases a transferred materialization lease when its presentation leaves the store', () => {
+    const scope = new DocumentPresentationScope();
+    const bitmap = createMockImageBitmap();
+    const release = vi.fn();
+    scope.trackPublishedLease('doc-1', bitmap, release);
+
+    scope.retireUnreferenced('doc-1', () => new Set());
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(bitmap.close).not.toHaveBeenCalled();
+
+    scope.dispose();
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it('keeps an adopted raster alive while a history entry still names it, then closes it once', () => {

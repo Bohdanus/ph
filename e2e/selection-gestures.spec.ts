@@ -1,7 +1,5 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 import {
-  CANVAS_REDRAW_POLL_INTERVAL_MS,
-  CANVAS_REDRAW_TIMEOUT_MS,
   getDarkPixelBounds,
   getSelectionBounds,
   getWorkspaceCanvas,
@@ -12,6 +10,7 @@ import {
   type SelectionBounds,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
+import { committedAntsOutline, waitForCommittedAnts } from './helpers/selection-ants';
 import {
   clickToolButton,
   openToolFlyoutViaRightClick,
@@ -63,27 +62,37 @@ import { setForegroundColor } from './helpers/color-helpers';
  * they are not properties the guard establishes:
  *
  * - The Move tool's transform box is on a DIFFERENT canvas (`rectOverlayRef`,
- *   `MoveToolArea.tsx:87`) and is genuinely excluded, so blue that survives on
+ *   `MoveToolArea.tsx:126`) and is genuinely excluded, so blue that survives on
  *   `tool-overlay-canvas` while a selection tool is active cannot be a transform box.
- * - `useMarchingAnts` is NOT excluded. `MoveToolArea.tsx:30` runs it on `toolOverlayRef` — the
+ * - `useMarchingAnts` is NOT excluded. `MoveToolArea.tsx:32` runs it on `toolOverlayRef` — the
  *   SAME canvas the rectangular selection's `useRect` paints. The guard is safe there today
- *   only because `useAnts.ts:62,66` strokes the ants black and then white, and neither black
+ *   only because `useAnts.ts:92,96` strokes the ants black and then white, and neither black
  *   nor white satisfies the blue thresholds below. That is a fact about that file's two
  *   colours, not something this file proves; recolouring the ants blue would let these tests
  *   pass on a transform box. The independent discriminator, used by the marquee tests, is the
- *   mask: a `useRect` selection darkens everything outside its rectangle (`useRect.ts:158-159`)
+ *   mask: a `useRect` selection darkens everything outside its rectangle (`useRect.ts:302-306`)
  *   and a Move transform box does not, because `MoveToolArea` passes `hideBlend: true`
- *   (`MoveToolArea.tsx:83`).
- * - For the two lasso tests the discriminator is GEOMETRY, not canvas and not colour: the
- *   draft and the committed outline are the same canvas in the same blue, and only the closing
- *   edge appearing after Enter tells them apart.
+ *   (`MoveToolArea.tsx:122`).
+ * - A marquee's own `#007bff` dashed border no longer contributes to that question at all:
+ *   `borderMode` gates it to `'while-dragging'` (`useRect.ts:319`), so at rest the only blue a
+ *   rectangular marquee leaves on the tool overlay is its four corner handles
+ *   (`useRect.ts:331-337`).
+ * - For the two lasso tests the discriminator is CANVAS, which it used not to be: the draft is
+ *   the blue open path on the tool overlay, and a committed selection's border is the ants on
+ *   `selection-ants-canvas` (`src/hooks/useSelectionAnts.ts`), in black and white. Geometry is
+ *   the second discriminator, inside the draft itself — `p2 -> p0` reaches the tool overlay only
+ *   once `closePath` is set (`PolygonClickToolArea.tsx:100-102`), which the Enter test proves
+ *   absent before it presses the key.
  */
 
 /**
- * The app's selection colour, `rgba(0, 123, 255, ...)` in both
- * `drawSelectionOutline` (`src/util/selection.ts:150`) and `useRect.drawMask`
- * (`src/hooks/useRect.ts:165`). Read explicitly rather than relying on the
- * helper's defaults, so a change to those defaults cannot silently move the
+ * The app's selection colour, `rgb(0, 123, 255)` — written `#007bff` by `useRect.drawMask`, for
+ * the corner handles (`src/hooks/useRect.ts:333`) and for the marquee's own dashed border while a
+ * drag is in flight (`src/hooks/useRect.ts:320`), and written `rgba(0,123,255,...)` by the tool
+ * areas' transient drag previews (`EllipticalSelectionToolArea.tsx:70`,
+ * `QuickSelectionToolArea.tsx:72`, `SingleRowColumnMarqueeToolArea.tsx:80`). It is no longer the
+ * colour of any COMMITTED border: those are the ants' black and white. Read explicitly rather
+ * than relying on the helper's defaults, so a change to those defaults cannot silently move the
  * threshold this file asserts against.
  */
 const SELECTION_COLOR_THRESHOLDS = { redMax: 80, greenMin: 80, blueMin: 180 };
@@ -91,24 +100,39 @@ const SELECTION_COLOR_THRESHOLDS = { redMax: 80, greenMin: 80, blueMin: 180 };
 /**
  * How far outside the intended shape a selection-blue pixel may land.
  *
- * Every selection renderer paints outside its own geometry by a known amount:
+ * Each reading in this file paints outside its own geometry by a known amount, and each amount is
+ * attributed here rather than lumped together — the sources changed under this file, and an
+ * unattributed overshoot cannot be re-derived when they change again.
  *
- * - the marquee fills corner handles of `HANDLE_SIZE / 2` (6) beyond each corner
- *   (`src/hooks/useRect.ts:172-178`) and strokes a 2px line, so its blue reaches ~7px past the
- *   rect;
- * - `drawSelectionOutline` paints a 5px-radius anchor circle with a 2px stroke at each vertex
- *   (`src/util/selection.ts:176-184`), so its blue reaches ~6px past the geometry;
- * - the magic wand's `simplifyClosedPath` can move a vertex by the smoothing tolerance
- *   (1.5 by default) either way, and its flood fill drops the outermost anti-aliased ring.
+ * - A RECTANGULAR marquee at rest paints its four corner handles and NOTHING else: its own dashed
+ *   border is gated behind `borderMode: 'while-dragging'` (`src/hooks/useRect.ts:319`) and
+ *   `RectangularSelectionToolArea` calls no anchor painter, so `useRect`'s handle fills
+ *   (`src/hooks/useRect.ts:331-337`) are the whole of the blue. `HANDLE_SIZE` is 12
+ *   (`src/util/constants.ts:1`) and is divided by the contain fit before it reaches the context, so
+ *   a handle reaches `HANDLE_SIZE / scale / 2` beyond its corner — 4.93 document px at this file's
+ *   fit, which pixel quantisation turns into 5 document px on the leading edges and 4 on the
+ *   trailing ones.
+ * - The ANTS reads carry no handles and no anchors, so their only overshoot is the stroke's own
+ *   half-width, `LINE_WIDTH / scale` (`src/hooks/useAnts.ts:13,88`) — under 1 CSS px either side.
+ *   The anchor dots are painted on the tool overlay (`drawSelectionAnchors`,
+ *   `src/util/selection.ts:146`), never on the ants canvas, so they cannot reach a
+ *   `committedAntsOutline` reading.
+ * - The magic wand's `simplifyClosedPath` (`src/util/magicWand.ts:178`) can move a vertex by the
+ *   smoothing tolerance (1.5 by default) either way, and its flood fill drops the outermost
+ *   anti-aliased ring.
  *
- * MEASURED rather than argued: dragging a marquee to a known box-relative rectangle and
- * reading the blue back with the clip origin added, the overshoot is 6px on the left and top
- * and 5px on the right and bottom — and it is the SAME at both this file's 1.2175 fit and the
- * 0.9717 fit an inherited 1280x720 gives. The offset is therefore not being scaled by the
- * document-to-CSS fit at all, which is worth stating because an earlier version of this comment
- * argued it from the drag and the outline travelling through the same scale in opposite
- * directions; that argument gives a document-pixel offset as a document-pixel offset only at
- * scale 1, and neither viewport is at scale 1. The measurement is what the number rests on.
+ * MEASURED and then DERIVED, because the two agree only when both are right: dragging a marquee
+ * to a known box-relative rectangle and reading the blue back with the clip origin added gives an
+ * overshoot of 6px on the left and top and 5px on the right and bottom. Multiplying the handle
+ * arithmetic above by this file's 1.2175 fit gives 5 x 1.2175 = 6.09 and 4 x 1.2175 = 4.87 — the
+ * measured pair — and the derivation also accounts for the ASYMMETRY, which leading/trailing pixel
+ * rounding does and a symmetric 2px stroke did not. The same arithmetic at the 0.9717 fit an
+ * inherited 1280x720 gives yields 6 and 5 document px, i.e. 5.83 and 4.86 CSS px, which is why the
+ * pair came out the same at both sizes. An earlier version of this comment rested the number on
+ * the measurement alone and concluded the offset was not scaled by the document-to-CSS fit at all;
+ * the offset IS scaled, in document px, and only the CSS-px pair it happens to produce is
+ * fit-independent. The measurement is what the number rests on; the arithmetic is what says which
+ * pixel it is.
  *
  * 10 is above the measured 6 and far below the shortest distance any test here asserts on (a
  * ~290px drag), so it cannot absorb a wrong answer, and the pin is what keeps the 6
@@ -135,11 +159,13 @@ const VIEWPORT = { width: 1280, height: 1000 };
  * 0 would be arithmetically right: the region is a static part of a blank document, so a second
  * capture of it is the same capture. 2 covers nothing measurable, and it sits two orders of
  * magnitude below the defect this bounds. `useRect.drawMask` fills `rgba(0, 0, 0, 0.7)`
- * (`useRect.ts:158`) over everything outside the rectangle, which moves a 255-level document
+ * (`useRect.ts:302`) over everything outside the rectangle, which moves a 255-level document
  * pixel to about 76. Measured in this file's own geometry: that region darkens by exactly 179
- * levels while the selection exists, and by exactly 179 levels after the tool switch that
- * deselects it — the second number is the P1. A tolerance of 2 cannot absorb any fraction of
- * either, and neither can a tolerance of 100.
+ * levels while the selection exists, and by at most 2 after the tool switch that deselects it.
+ * That second number used to be another 179 — the P1 this constant was written against — and what
+ * closed it is the unmount cleanup in `useRect` (`useRect.ts:152-174`), because the overlay
+ * canvas outlives the tool area that painted it. A tolerance of 2 cannot absorb any fraction of
+ * the 179, and neither can a tolerance of 100.
  */
 const MAX_DARKENING_LEVELS = 2;
 
@@ -186,111 +212,6 @@ const waitForNoSelectionBlue = (page: Page, clip: Required<ClipOptions>, descrip
   waitForCanvasPixels(page, clip, async (png) => (await getSelectionBounds(png, SELECTION_COLOR_THRESHOLDS)) === null, {
     description,
   });
-
-/**
- * Where a committed selection's border is on the page, read off the marching-ants canvas.
- *
- * A committed polygon's border no longer lives on the tool overlay: it is the animated
- * black/white ants on their own canvas, which the polygon selection tools never clear. So the
- * blue detection above cannot see it — it still sees the DRAFT, which `drawPolygonOverlay`
- * strokes in the same blue, and asserting on it after a commit would prove the draft rather than
- * the selection.
- *
- * The read is `getImageData` on the canvas's own context rather than a screenshot, for the same
- * reason `e2e/selection-marching-ants.spec.ts` does it that way: this canvas's backing store is
- * already in document pixels, so a screenshot would need a page-coordinate clip and a
- * device-pixel-ratio correction to describe the same pixels, and it would composite whatever the
- * document painted underneath.
- *
- * The element's own bounding rect is what maps the two spaces, and it is read here rather than
- * derived from `workspaceBox()`: the element is the thing being measured, so the mapping cannot
- * drift from it. The canvas is `object-contain`, so that mapping is a scale plus a centring
- * offset in both axes, not a scale alone.
- */
-const committedAntsOutline = async (
-  page: Page
-): Promise<{ left: number; top: number; right: number; bottom: number } | null> =>
-  page.getByTestId('selection-ants-canvas').evaluate((element) => {
-    if (!(element instanceof window.HTMLCanvasElement)) {
-      throw new Error('committedAntsOutline: no [data-testid="selection-ants-canvas"] on the page');
-    }
-    const ctx = element.getContext('2d');
-    if (!ctx) throw new Error('the selection ants canvas has no 2d context');
-
-    const { data } = ctx.getImageData(0, 0, element.width, element.height);
-    let left = Number.POSITIVE_INFINITY;
-    let top = Number.POSITIVE_INFINITY;
-    let right = Number.NEGATIVE_INFINITY;
-    let bottom = Number.NEGATIVE_INFINITY;
-    let antPixels = 0;
-
-    for (let y = 0; y < element.height; y += 1) {
-      for (let x = 0; x < element.width; x += 1) {
-        const index = (y * element.width + x) * 4;
-        if (data[index + 3] === 0) continue;
-        // Both ant colours are opaque, so alpha alone would accept any future overlay. Requiring
-        // one of the two the loop actually paints keeps this a test of the ants.
-        const isAnt =
-          (data[index] < 64 && data[index + 1] < 64 && data[index + 2] < 64) ||
-          (data[index] > 192 && data[index + 1] > 192 && data[index + 2] > 192);
-        if (!isAnt) continue;
-        antPixels += 1;
-        if (x < left) left = x;
-        if (x > right) right = x;
-        if (y < top) top = y;
-        if (y > bottom) bottom = y;
-      }
-    }
-
-    if (antPixels === 0) return null;
-
-    const rect = element.getBoundingClientRect();
-    // The canvas is `object-contain` inside a box that is not its aspect ratio, so the backing
-    // store is letterboxed in both axes and document pixels map to page pixels through a scale AND
-    // a centring offset. The scale-plus-offset arithmetic is `containFit`'s rule
-    // (`e2e/helpers/canvas-helpers.ts:91`), written out here so the whole read stays one round trip.
-    // It is applied to this element's own rect rather than to `workspaceBox()` because the element
-    // being measured is the one being mapped, so the two cannot drift apart.
-    const scale = Math.min(rect.width / element.width, rect.height / element.height);
-    const offsetX = (rect.width - element.width * scale) / 2;
-    const offsetY = (rect.height - element.height * scale) / 2;
-
-    return {
-      left: rect.left + offsetX + left * scale,
-      top: rect.top + offsetY + top * scale,
-      right: rect.left + offsetX + right * scale,
-      bottom: rect.top + offsetY + bottom * scale,
-    };
-  });
-
-/**
- * Resolves once the ants canvas holds a border.
- *
- * This polls `committedAntsOutline` directly rather than going through `waitForCanvasPixels`,
- * because that loop takes its reading from a screenshot and the point of this read is that a
- * screenshot is the wrong instrument here.
- */
-const waitForCommittedAnts = async (page: Page, description: string): Promise<void> => {
-  const deadline = Date.now() + CANVAS_REDRAW_TIMEOUT_MS;
-  let last: unknown = null;
-  let lastError: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      last = await committedAntsOutline(page);
-      lastError = null;
-      if (last !== null) return;
-    } catch (error) {
-      // Kept, and reported at the end, because a read that throws every tick and a read that
-      // returns null forever are different failures and the timeout message must say which.
-      lastError = error;
-    }
-    await page.waitForTimeout(CANVAS_REDRAW_POLL_INTERVAL_MS);
-  }
-  throw new Error(
-    `Timed out waiting for ${description} (last read: ${JSON.stringify(last)}, ` +
-      `last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
-  );
-};
 
 /**
  * The tool overlay, intersected with the viewport.
@@ -369,6 +290,42 @@ const toPage = (box: BoundingBox, rect: Rect): Required<ClipOptions> => ({
 });
 
 /**
+ * `HANDLE_SIZE` (`src/util/constants.ts`), copied rather than imported because nothing under
+ * `e2e/` may import from `src/` — `paint-options.spec.ts` states the rule and `text-edit.spec.ts`
+ * follows it for `PLACEHOLDER_TEXT`. There is no runtime channel to equality-check a constant
+ * against, so a change to the source has to change this copy with it.
+ */
+const HANDLE_SIZE = 12;
+
+/**
+ * The tool overlay's selection chrome at REST, as a rect to compare a `selectionBlue` read against.
+ *
+ * `selectionBlue` screenshots the tool overlay for `#007bff`, and what is on that overlay once a
+ * marquee has been committed is `useRect`'s four corner HANDLES, not a border:
+ * `borderMode: 'while-dragging'` keeps the dashed stroke for the drag the ants stood down for and
+ * drops it when the gesture closes, because the committed border is the marching ants on
+ * `selection-ants-canvas` and two outlines of one selection is worse than either.
+ *
+ * `useRect` draws each handle as `fillRect(x - h1, y - h1, h1, h1)` and so on (`useRect.ts` —
+ * `drawMask()`), with `h1` being `HANDLE_SIZE / scale`. The handles therefore sit OUTSIDE every
+ * corner rather than inside it, and the box they bound is the committed rect grown by
+ * `HANDLE_SIZE` on all four sides — not the rect itself. Asserting the handle box against the bare
+ * rect fails on the two containment edges by exactly that margin, which is why this grows the
+ * expectation instead of leaving `OUTLINE_SLACK_PX` to absorb it: the allowance is a measured
+ * geometry, not a tolerance, and folding it into the slack would hide the same 2px on any future
+ * regression.
+ */
+const overlayChromeAtRest = (box: BoundingBox, rect: Rect): Required<ClipOptions> => {
+  const page = toPage(box, rect);
+  return {
+    x: page.x - HANDLE_SIZE,
+    y: page.y - HANDLE_SIZE,
+    width: page.width + HANDLE_SIZE * 2,
+    height: page.height + HANDLE_SIZE * 2,
+  };
+};
+
+/**
  * `expectOutlineAround` adds a clip origin to the bounds it is given. A screenshot read is
  * clip-relative, so it passes the clip it captured; the ants read is already in page coordinates,
  * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
@@ -379,9 +336,10 @@ const ORIGIN_CLIP: Required<ClipOptions> = { x: 0, y: 0, width: 0, height: 0 };
 /**
  * Asserts that the selection border found in `clip` outlines `expected`, both in page coordinates.
  *
- * "Selection border" rather than "selection blue": a committed polygon's border is the ants on
- * their own canvas, and those two readings arrive by different routes, so the name says what is
- * being compared rather than which colour happened to be on the surface that carried it.
+ * "Selection border" rather than "selection blue": every committed selection's border is the ants
+ * on their own canvas, and those readings arrive by a different route than a screenshot of the
+ * tool overlay, so the name says what is being compared rather than which colour happened to be
+ * on the surface that carried it.
  */
 const expectOutlineAround = (
   // Only the four edges are read here, so this asks for only the four edges: the ants read has no
@@ -426,9 +384,9 @@ const expectOutlineAround = (
  * The Move tool's transform box is drawn in the same `#007bff` as a selection, by the same
  * `useRect.drawMask`, so the two are indistinguishable by colour alone. They are, however, drawn
  * on DIFFERENT canvases: `useRect`'s `overlayRef` is `rectOverlayRef` for `MoveToolArea`
- * (`src/components/Main/MoveToolArea.tsx:87`) and `toolOverlayRef` for
- * `RectangularSelectionToolArea` (`src/components/Main/RectangularSelectionToolArea.tsx:45`), and
- * `Main.tsx:199-205` displays `rectOverlayRef` only while `interactionMode === 'reposition'`.
+ * (`src/components/Main/MoveToolArea.tsx:126`) and `toolOverlayRef` for
+ * `RectangularSelectionToolArea` (`src/components/Main/RectangularSelectionToolArea.tsx:70`), and
+ * `Main.tsx:369` displays `rectOverlayRef` only while `interactionMode === 'reposition'`.
  *
  * So this assertion is what makes "these pixels are a selection, not a Move transform box" a
  * checked fact instead of an assumption about which tool the test happened to leave selected.
@@ -475,10 +433,19 @@ test.describe('Selection tools', () => {
     );
 
     await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    // What this reads at rest is narrower than the test's name sounds, and that is a property of
+    // the app rather than a choice made here. `borderMode: 'while-dragging'` (`useRect.ts:319`)
+    // keeps the dashed border for the drag the ants stood down for and drops it once the gesture
+    // closes, so the committed BORDER is the ants on `selection-ants-canvas`
+    // (`src/hooks/useSelectionAnts.ts`) and the blue left on the tool overlay is `useRect`'s four
+    // corner handles (`useRect.ts:331-337`). The assertion is therefore "a marquee drag left a
+    // selection where the drag was", which is this test's intent and which the handles prove — and
+    // it would still pass if the ants were switched off entirely. Asserting the border itself needs
+    // `committedAntsOutline`, which the wand and the polygon below already use.
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
   });
 
-  test('Clear removes the selection outline', async ({ page }) => {
+  test('Deselect removes the selection outline', async ({ page }) => {
     const box = await workspaceBox(page);
     const clip = await overlayClip(page, box);
 
@@ -492,10 +459,10 @@ test.describe('Selection tools', () => {
       { x: dragged.x, y: dragged.y },
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
-    await waitForSelectionBlue(page, clip, 'a selection outline before Clear');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    await waitForSelectionBlue(page, clip, 'a selection outline before Deselect');
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
 
-    const clearButton = page.getByRole('button', { name: 'Clear', exact: true });
+    const clearButton = page.getByRole('button', { name: 'Deselect', exact: true });
     await expect(clearButton).toBeEnabled();
     await clearButton.click();
     // The button going disabled is the store-level effect. Waiting for it means the first
@@ -503,13 +470,17 @@ test.describe('Selection tools', () => {
     // "the outline is gone" cannot pass by being sampled before the click landed.
     await expect(clearButton).toBeDisabled();
 
-    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Clear');
+    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Deselect');
   });
 
-  // RED on purpose. Documents the P1 in e2e/OPEN_PROBLEMS.md: the tool switch deselects, and
-  // the marquee's outline AND its 70% darkening mask both survive it. Two separate assertions
-  // because they are two separate halves of the defect, and a fix that only cleared the outline
-  // would leave the whole document dimmed outside the rectangle with nothing here noticing.
+  // Two separate assertions because they were two separate halves of one defect: the tool switch
+  // deselects, and the marquee's outline AND its 70% darkening mask both survived it, so a fix
+  // that cleared only the outline would have left the whole document dimmed outside the rectangle
+  // with nothing here noticing. This was RED on purpose then, pinned to a P1 in
+  // e2e/OPEN_PROBLEMS.md; that entry is gone and the test is GREEN, because `useRect`'s unmount
+  // cleanup (`useRect.ts:152-174`) clears the overlay canvas that outlives the tool area. The
+  // split is kept because the fix could still have been half a fix, and in the defective state the
+  // mask poll is the leg that fails — which is why it runs first.
   test('switching to another tool removes the selection outline and its darkening mask', async ({ page }) => {
     const box = await workspaceBox(page);
     const clip = await overlayClip(page, box);
@@ -532,7 +503,7 @@ test.describe('Selection tools', () => {
       { x: dragged.x + dragged.width, y: dragged.y + dragged.height }
     );
     await waitForSelectionBlue(page, clip, 'a selection outline before the tool switch');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
 
     // This is what makes the "and its darkening mask" half of the test non-vacuous: it proves
     // the region WAS inside the mask, so a later "the mask is gone" cannot pass because the
@@ -563,7 +534,7 @@ test.describe('Selection tools', () => {
     await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after the tool switch');
   });
 
-  test('Copy and Clear are enabled only while a selection exists', async ({ page }) => {
+  test('Copy and Deselect are enabled only while a selection exists', async ({ page }) => {
     const box = await workspaceBox(page);
     const clip = await overlayClip(page, box);
 
@@ -571,9 +542,9 @@ test.describe('Selection tools', () => {
     await expectMoveTransformBoxHidden(page);
 
     const copyButton = page.getByRole('button', { name: 'Copy', exact: true });
-    const clearButton = page.getByRole('button', { name: 'Clear', exact: true });
+    const clearButton = page.getByRole('button', { name: 'Deselect', exact: true });
     await expect(copyButton, 'Copy with no selection').toBeDisabled();
-    await expect(clearButton, 'Clear with no selection').toBeDisabled();
+    await expect(clearButton, 'Deselect with no selection').toBeDisabled();
     await waitForNoSelectionBlue(page, clip, 'no selection outline before any drag');
 
     const dragged = boxRect(box, 0.3, 0.32, 0.58, 0.6);
@@ -585,14 +556,14 @@ test.describe('Selection tools', () => {
     );
 
     await waitForSelectionBlue(page, clip, 'a selection outline after the marquee drag');
-    expectOutlineAround(await selectionBlue(page, clip), clip, toPage(box, dragged));
+    expectOutlineAround(await selectionBlue(page, clip), clip, overlayChromeAtRest(box, dragged));
     await expect(copyButton, 'Copy with a committed selection').toBeEnabled();
-    await expect(clearButton, 'Clear with a committed selection').toBeEnabled();
+    await expect(clearButton, 'Deselect with a committed selection').toBeEnabled();
 
     await clearButton.click();
     await expect(clearButton).toBeDisabled();
     await expect(copyButton).toBeDisabled();
-    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Clear');
+    await waitForNoSelectionBlue(page, clip, 'the selection outline to be gone after Deselect');
   });
 
   test('magic wand click outlines the region under the cursor', async ({ page }) => {
@@ -647,10 +618,14 @@ test.describe('Selection tools', () => {
 
     await page.mouse.click(box.x + barMidpoint.x, box.y + barMidpoint.y);
 
-    // The committed border is the ants, not the blue: `drawSelectionOutline` keeps the dashed
-    // blue stroke for the selection tools that stay on the tool overlay (the elliptical and quick
-    // selections), while the polygon's border moved to the marching-ants canvas. So the geometry
-    // below is read off that canvas in DOCUMENT pixels and mapped back through the contain fit,
+    // The committed border is the ants, in black and white, on
+    // `selection-ants-canvas` (`src/hooks/useSelectionAnts.ts`) — for the wand exactly as for
+    // every other selection tool, because it is in `Main.tsx`'s `SELECTION_INTERACTION_MODES`.
+    // Nothing paints a committed selection's border on the tool overlay any more: the static
+    // `rgba(0,123,255,0.95)` 2px 6/4 dashed outline is gone from the tool areas, and the marquee's
+    // own `useRect` stroke is gated to `'while-dragging'` (`useRect.ts:319`), so the blue those
+    // areas write is a transient drag preview that survives release not at all. So the geometry
+    // below is read off the ants canvas in DOCUMENT pixels and mapped back through the contain fit,
     // which is the same mapping the click itself went through — predicting it from the CSS box
     // instead would bake this file's viewport into the assertion.
     await waitForCommittedAnts(page, 'a committed selection border after the wand click');
@@ -694,9 +669,12 @@ test.describe('Selection tools', () => {
     await page.keyboard.press('Enter');
 
     // The closing edge appears as the COMMITTED border, which is the ants on their own canvas and
-    // not the tool overlay's blue — so this is the only reading that can tell a committed
-    // polygon from the draft the wait above was watching. The draft itself is gone by now, so a
-    // blue reading here would fail rather than pass for the wrong reason.
+    // not the tool overlay's blue — so this is the only reading that can tell a committed polygon
+    // from the draft the wait above was watching. A blue reading here would fail rather than pass
+    // for the wrong reason, and it is worth saying what blue is left: the draft is gone, but the
+    // committed selection's anchors are not, and `drawSelectionAnchors` strokes the first one
+    // `rgba(0,123,255,1)` while every other anchor is stroked black (`src/util/selection.ts:174-182`)
+    // — so a blue reading would see one disc, and a 10px disc is not the polygon's bounds.
     await waitForCommittedAnts(page, 'the committed border closing the polygon');
     expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, {
       x: box.x + Math.min(p0.x, p1.x, p2.x),

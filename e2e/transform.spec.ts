@@ -83,16 +83,20 @@ function bands(box: BoundingBox): Bands {
   return { top: band(TOP_BAR_Y_RATIO), bottom: band(BOTTOM_BAR_Y_RATIO) };
 }
 
+/**
+ * Selects the transform tool through `Edit ▸ Free Transform`.
+ *
+ * Two clicks, and both are necessary: the `Edit` host is a button that opens a menu, and
+ * `Free Transform` is the only item inside it. `transform` has no rail tile and no
+ * `tools-menu-transform-button` — Photoshop has no such tool, and this app's Tools rail and
+ * Tools menu now agree with it — so the header menu is the only surface that selects it.
+ */
 async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
   await page.getByTestId('header-edit-menu-button').click();
-  await page.getByTestId('edit-menu-transform-button').click();
+  await page.getByTestId('edit-menu-free-transform-button').click();
   // The toolbox swaps in with the tool; its sliders are what the specs drive next.
   await expect(page.locator('#trapezoid-slider')).toBeVisible();
   await expect(page.locator('#rotate-slider')).toBeVisible();
-}
-
-async function applyTransform(page: Parameters<typeof clickToolButton>[0]): Promise<void> {
-  await page.getByRole('button', { name: 'Apply', exact: true }).click();
 }
 
 test.describe('Transform tool', () => {
@@ -104,7 +108,7 @@ test.describe('Transform tool', () => {
   // ambiguity instead of leaving it to be rediscovered as a flaky failure.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
-  test('rotates a drawn layer 90 degrees and keeps the rotation after Apply', async ({ page }, testInfo) => {
+  test('rotates a drawn layer 90 degrees and keeps the rotation after the commit', async ({ page }, testInfo) => {
     await page.goto('/');
     const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
     expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
@@ -163,13 +167,12 @@ test.describe('Transform tool', () => {
       'a rotation must not move the layer vertically'
     ).toBeLessThan(0.03);
 
-    await applyTransform(page);
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
     const committed = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'rotate-applied', testInfo, wholeCanvas)
+      await takeLineScreenshot(page, box, 'rotate-committed', testInfo, wholeCanvas)
     );
     expect(committed, 'the committed layer should still be dark').not.toBeNull();
-    expect(committed!.height / committed!.width, 'Apply must not drop the rotation').toBeGreaterThan(3);
+    expect(committed!.height / committed!.width, 'the commit must not drop the rotation').toBeGreaterThan(3);
   });
 
   /**
@@ -217,7 +220,6 @@ test.describe('Transform tool', () => {
     await openTransformTool(page);
     await page.getByTitle('Rotate 90° Right').click();
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
-    await applyTransform(page);
     await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
 
     const committed = await getDarkPixelBounds(
@@ -228,7 +230,10 @@ test.describe('Transform tool', () => {
       committed!.height / committed!.width,
       'the committed layer is the rotated bar, so the rotation is on the timeline'
     ).toBeGreaterThan(3);
-    await expect(page.getByTestId('undo-button'), 'Apply committed a history entry').toBeEnabled();
+    await expect(
+      page.getByTestId('undo-button'),
+      'committing the transform left a history entry to undo'
+    ).toBeEnabled();
 
     // ONE UNDO, and the bar is the horizontal one again — the original pixels, not merely
     // something dark.
@@ -256,7 +261,7 @@ test.describe('Transform tool', () => {
     ).toBeLessThan(0.15);
   });
 
-  test('tapers a layer so the bottom narrows and the top does not, and keeps it after Apply', async ({
+  test('tapers a layer so the bottom narrows and the top does not, and keeps it after the commit', async ({
     page,
   }, testInfo) => {
     await page.goto('/');
@@ -328,12 +333,80 @@ test.describe('Transform tool', () => {
     const imageWidth = bottomAfter!.imageWidth;
     expect(Math.abs(bottomCentre - imageWidth / 2) / imageWidth, 'the narrowed bar stays centred').toBeLessThan(0.1);
 
-    await applyTransform(page);
     await waitForCanvasRedraw(page, box, { clip: clip.bottom });
     const committedBottom = await getDarkPixelBounds(
-      await takeLineScreenshot(page, box, 'taper-bottom-applied', testInfo, clip.bottom)
+      await takeLineScreenshot(page, box, 'taper-bottom-committed', testInfo, clip.bottom)
     );
     expect(committedBottom, 'the committed layer should still be dark').not.toBeNull();
-    expect(committedBottom!.width / bottomBefore!.width, 'Apply must not drop the taper').toBeLessThan(0.5);
+    expect(committedBottom!.width / bottomBefore!.width, 'the commit must not drop the taper').toBeLessThan(0.5);
+  });
+
+  test('a slider drag lands as one history entry when the pointer is released', async ({ page }, testInfo) => {
+    // The behaviour the whole commit model rests on, and the one this spec file could not
+    // express before: a drag PREVIEWS while it is in motion and COMMITS on release, with
+    // no button press and no tool switch. Until this test existed, the only way to land a
+    // transform was to leave the tool.
+    await page.goto('/');
+    const canvasBox = (await page.getByTestId('workspace-canvas').boundingBox()) ?? null;
+    expect(canvasBox, 'workspace canvas should have visible coordinates').not.toBeNull();
+    const box = canvasBox!;
+    const wholeCanvas: Required<ClipOptions> = {
+      x: box.x,
+      y: box.y,
+      width: Math.floor(box.width),
+      height: Math.floor(box.height),
+    };
+
+    await clickToolButton(page, 'draw');
+    await page.locator('#size-slider').fill(String(BRUSH_SIZE));
+    await drawLine(page, box, BAR_START_X, Math.round(box.height * 0.5), BAR_END_X, Math.round(box.height * 0.5));
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+
+    const before = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-before', testInfo, wholeCanvas));
+    expect(before, 'the bar was drawn and visible').not.toBeNull();
+    const originalRatio = before!.width / before!.height;
+    expect(originalRatio, 'the bar starts out wider than it is tall').toBeGreaterThan(3);
+
+    await openTransformTool(page);
+
+    // Nothing is committed while the pointer is still down, so the undo stack must still
+    // hold exactly the one entry the draw created.
+    const slider = page.locator('#rotate-slider');
+    const sliderBox = await slider.boundingBox();
+    expect(sliderBox, 'the rotate slider has a box').not.toBeNull();
+    const y = sliderBox!.y + sliderBox!.height / 2;
+    await page.mouse.move(sliderBox!.x + sliderBox!.width * 0.5, y);
+    await page.mouse.down();
+    await page.mouse.move(sliderBox!.x + sliderBox!.width * 0.7, y);
+
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    const midDrag = await getDarkPixelBounds(
+      await takeLineScreenshot(page, box, 'drag-in-motion', testInfo, wholeCanvas)
+    );
+    expect(midDrag, 'the drag is previewed while the pointer is down').not.toBeNull();
+
+    // And now the release. This is the step that must write history.
+    await page.mouse.move(sliderBox!.x + sliderBox!.width * 0.98, y);
+    await page.mouse.up();
+
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    const after = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-released', testInfo, wholeCanvas));
+    expect(after, 'the released drag changed the layer').not.toBeNull();
+    expect(
+      after!.width / after!.height,
+      'a near-90 degree rotation of a wide bar leaves it taller than it is wide, so the ' +
+        'committed geometry really is on the layer and not only in the panel'
+    ).toBeLessThan(1);
+
+    // One undo returns the original bar, which is what "one history entry" means here: the
+    // drag is a single entry, not one per frame the pointer crossed.
+    await page.getByTestId('undo-button').click();
+    await waitForCanvasRedraw(page, box, { clip: wholeCanvas });
+    const undone = await getDarkPixelBounds(await takeLineScreenshot(page, box, 'drag-undone', testInfo, wholeCanvas));
+    expect(undone, 'one undo restored something').not.toBeNull();
+    expect(
+      Math.abs(undone!.width / undone!.height - originalRatio) / originalRatio,
+      'one undo returns the original horizontal bar, so the whole drag was one entry'
+    ).toBeLessThan(0.15);
   });
 });

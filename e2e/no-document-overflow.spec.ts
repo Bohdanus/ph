@@ -40,23 +40,23 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * ## The one place the numbers live
  *
  * The left tool rail's tool grid, measured in this browser at `deviceScaleFactor: 1` with a
- * 16px default font in en-US: **16** tool groups in **5** sections, **40** tool entries.
- * The rendered grid is **822px** tall in one column — 16 rows of a 44px tile at a 6px row gap
- * with 4 section rules, which is what `e2e/toolbar-fit.spec.ts` prints at its tallest height
+ * 16px default font in en-US: **15** tool groups in **4** sections, **40** tool entries.
+ * The rendered grid is **765px** tall in one column — 15 rows of a 44px tile at a 6px row gap
+ * with 3 section rules, which is what `e2e/toolbar-fit.spec.ts` prints at its tallest height
  * and what its `tile`/`gap`/`sep` non-vacuity assertions pin between them. Two columns is
  * 8 rows with no section rules, so **394px** by that same arithmetic; nothing prints or
  * asserts that one, because `toolbar-fit.spec.ts` only measures the one-column layout.
  *
- * 822px IS THE WHOLE-SLOT FIT'S FIRST FULL RAIL, and saying so is the point. The budget is
+ * 765px IS THE WHOLE-SLOT FIT'S FIRST FULL RAIL, and saying so is the point. The budget is
  * the entire tools slot, floored to a whole pixel (`TOOLBAR_HEIGHT_BUDGET` in
  * `src/components/SidebarLeft/toolbar-overflow.ts`, which is where that constant lives and
- * why it is not restated here), so a slot of 822 is exactly what all sixteen rows need: at
+ * why it is not restated here), so a slot of 765 is exactly what all fifteen rows need: at
  * 1280 wide the slot is the window height less 272px of fixed chrome — the offset is the shell's
  * other rows, and it is 26px shorter at 810 wide, which is why the iPad 10.2" portrait slot
- * below is 834px rather than 808px — so **1094px is the tallest window that shows sixteen tiles
- * and no three-dots tile**, and at 1093 the rail is already down to fourteen tiles plus the
- * tile. Fifteen tiles is unreachable and always was — fifteen rows plus the three-dots row IS
- * the 822px grid, so the tile and the fifteenth tile are the same 50px either way.
+ * below is 834px rather than 808px — so **1037px is the shortest window that shows fifteen tiles
+ * and no three-dots tile**, and at 1036 the rail is already down to thirteen tiles plus the
+ * tile. Fourteen tiles is unreachable and always was — fourteen rows plus the three-dots row IS
+ * the 765px grid, so the tile and the fourteenth tile are the same 50px either way.
  *
  * THIS USED TO PUBLISH THE WINDOW HEIGHTS AT WHICH THE RAIL OVERFLOWED, derived from a
  * `viewportHeight - 137` figure and a pair of content heights that were both wrong (1014px
@@ -179,7 +179,7 @@ function readOuterShell(selectors: readonly string[]) {
  * The tool grid as the user sees it: from the top of the first visible tile to the bottom of
  * the last section, so it includes every separator between them. The same measurement
  * `e2e/toolbar-fit.spec.ts` prints, read here so the control in the last test is a
- * measurement rather than this file's own 822px constant — a control that reads a constant
+ * measurement rather than this file's own 765px constant — a control that reads a constant
  * cannot notice the constant going stale.
  *
  * `collapsed` says whether anything went into the three-dots entry, which is what decides
@@ -386,12 +386,12 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     // AND THE FIT MUST BE LOAD-BEARING AT THIS HEIGHT FOR ANY OF THAT TO MEAN ANYTHING. It is
     // load-bearing only where the whole one-column grid cannot fit the slot unshrunk, and at
     // iPad 10.2" portrait — where this test used to run, and where the earlier version of it
-    // measured — the slot is 834px against a grid of 822px. The whole grid FITS: the rail does
+    // measured — the slot is 834px against a grid of 765px. The whole grid FITS: the rail does
     // not overflow, and the assertion below passes with the collapse fit deleted from the app
     // entirely. That is a test that cannot fail, and no amount of wording makes it otherwise.
     //
     // So the viewport is 1280×800, one of this file's own matrix viewports and the width the
-    // band search below runs at, where the same 822px grid is 294px TALLER than the 528px slot
+    // band search below runs at, where the same 765px grid is 237px TALLER than the 528px slot
     // and the fit keeps nine tool rows plus the tile. The budget it honours is the WHOLE slot,
     // floored — `e2e/toolbar-fit.spec.ts` is that rule's contract and sweeps it across its own
     // height list, and the constant itself lives in
@@ -600,7 +600,7 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
       gaveUp.toolTiles,
       `at ${fitBand.boundary}px the fit must have given up on every tool row, or the search found the wrong state`
     ).toBe(0);
-    expect(gaveUp.threeDots, 'and the three-dots tile must still be there to hold the sixteen groups').toBe(true);
+    expect(gaveUp.threeDots, 'and the three-dots tile must still be there to hold the fifteen groups').toBe(true);
     expect(
       gaveUp.railOver,
       `the rail must still fit its row at ${fitBand.boundary}px with no tool tile at all, or "the fit gave up" is the document growing a scrollbar`
@@ -615,7 +615,7 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
       oneTaller.toolTiles,
       `at ${fitBand.boundary + 1}px at least one tool row must fit again — that is what makes ${fitBand.boundary}px the top of the band and not an arbitrary probe`
     ).toBeGreaterThan(0);
-    expect(oneTaller.threeDots, 'and the tile must still be there, because fifteen of sixteen is still a fold').toBe(
+    expect(oneTaller.threeDots, 'and the tile must still be there, because fourteen of fifteen is still a fold').toBe(
       true
     );
 

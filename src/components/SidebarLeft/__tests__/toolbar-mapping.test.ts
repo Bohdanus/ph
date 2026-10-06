@@ -9,6 +9,28 @@ const allGroups: readonly (readonly ToolbarTool[])[] = toolbarMap.flat() as read
 const shapeFlyout = allGroups.find((group) => group.some((tool) => tool.name === 'shape'))!;
 const allTools: readonly ToolbarTool[] = allGroups.flat();
 
+/** Every `name` on the rail, from the `name:` fields and never from a label. */
+const railNames: readonly string[] = [...new Set(allTools.map((tool) => tool.name))];
+
+/** Every `figure` on the rail, widened to `string` so a `ToolName` can be tested against it. */
+const railFigures: readonly string[] = [
+  ...new Set(allTools.map((tool) => tool.figure).filter((figure): figure is FigureType => Boolean(figure))),
+];
+
+/**
+ * The five shape figure aliases, and the only ids in `availableTools` that carry no rail
+ * `name`. They are not `extraTools`: the Rectangle, Ellipse, Triangle, Polygon and Line
+ * TILES are all in `toolbarMap`, as `figure` values on entries whose `name` is `shape`.
+ *
+ * Spelled out rather than derived, because it cannot be derived. `toolbarMap` writes the
+ * figure as `oval` while the registry calls that tool `ellipse`, so "is this id on the rail,
+ * as a name or as a figure" has no rule to apply to it — the mapping between the two
+ * vocabularies is data, and data has to be written down. The set is pinned as exactly these
+ * five by the assertions below, so a sixth alias cannot join the exception silently.
+ */
+const figureAliases = ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+const figureAliasSet: ReadonlySet<string> = new Set(figureAliases);
+
 /**
  * Hard-coded copy of the narrowed `FigureType` union plus the expected shape flyout.
  * The imported type cannot be enumerated at runtime, so the contract is spelled out.
@@ -94,8 +116,39 @@ describe('toolbar mapping shape contract', () => {
     expect(availableTools).not.toContain('circle');
   });
 
-  it('keeps extraTools disjoint from the shape tool', () => {
-    expect(extraTools).not.toContain('shape');
+  it('lists exactly the registered tools that have no Tools-rail entry', () => {
+    // Forward direction: nothing in `extraTools` is a tile. Checked against BOTH `name` and
+    // `figure`, because "no entry anywhere in `toolbarMap`" is the promise the export's own
+    // comment makes and a `figure` is an entry.
+    expect([...extraTools].filter((id) => railNames.includes(id) || railFigures.includes(id))).toEqual([]);
+
+    // Converse direction: an id dropped from the rail without being recorded here is a
+    // failure too, and this is the direction that makes the export a pin rather than a
+    // description of itself.
+    const absentFromRail = [...new Set(availableTools)].filter((name) => !railNames.includes(name));
+    expect(
+      absentFromRail.filter((name) => !figureAliasSet.has(name)),
+      `registered tools with no rail entry that ${extraTools.join(', ')} does not list, ignoring the five shape figure aliases`
+    ).toEqual([...extraTools]);
+  });
+
+  it('keeps the figure-alias exception to that list at exactly the five shape figures', () => {
+    const absentFromRail = [...new Set(availableTools)].filter((name) => !railNames.includes(name));
+    const exempt = absentFromRail.filter((name) => figureAliasSet.has(name));
+
+    expect(exempt).toEqual([...figureAliases]);
+    // Each exempt id really is a figure of the `shape` flyout, so the exemption is justified
+    // by the map rather than by the size of the list. `ellipse` is the one that cannot be
+    // matched directly, which is why `figureAliases` is a written list at all.
+    const shapeFigures = shapeFlyout
+      .map((tool) => tool.figure)
+      .filter((figure): figure is FigureType => Boolean(figure));
+    for (const alias of figureAliases) {
+      expect(shapeFigures, `${alias}: not a figure of the shape flyout, so the exemption is unjustified`).toContain(
+        alias === 'ellipse' ? 'oval' : alias
+      );
+    }
+    expect(railNames).toContain('custom-shape');
   });
 });
 
@@ -160,6 +213,75 @@ describe('toolbar mapping shape group contract', () => {
     expect([...figures].sort()).toEqual([...figureTypes].sort());
   });
 });
+
+describe('toolbar mapping shortcut contract', () => {
+  /**
+   * No two entries may claim the same key.
+   *
+   * WHY THIS IS NOT REDUNDANT WITH THE KEYMAP. `SidebarLeft` renders a declared `shortcut` as
+   * a `<kbd>` badge on the flyout item and passes the same string to `ToolTooltip`, so a
+   * declared shortcut is a promise the user reads. The runtime keymap lives in
+   * `AppKeyboardShortcuts.tsx` as inline `useKeyDownShortcut` handlers and cannot be
+   * enumerated as data, so nothing in the suite could previously ask "does every badge the
+   * rail renders correspond to a key that selects this tool?".
+   *
+   * This pins the half of that which is a pure function of the mapping: two entries cannot
+   * both claim one key. That was violated exactly once — `Draw Tool` declared `B`, the Brush's
+   * key, and `b`/`shift+b` both resolve to `selectBrushTool`, so the badge was a falsehood
+   * rather than a duplicate. The invariant is deliberately about the CLAIM, not about
+   * reachability, so it stays checkable without mounting the app.
+   *
+   * Not vacuous: the offenders are collected by name and label, so a failure says which two
+   * entries collided, and the pre-fix state reports `B` on both Brush and Draw.
+   */
+  it('never declares the same shortcut on two entries', () => {
+    const claimed = new Map<string, string[]>();
+
+    for (const tool of allTools) {
+      if (tool.shortcut === undefined) continue;
+      const labels = claimed.get(tool.shortcut) ?? [];
+      labels.push(tool.label);
+      claimed.set(tool.shortcut, labels);
+    }
+
+    const collisions = [...claimed.entries()]
+      .filter(([, labels]) => labels.length > 1)
+      .map(([shortcut, labels]) => `${shortcut}: ${labels.join(' and ')}`);
+
+    expect(collisions).toEqual([]);
+  });
+
+  /**
+   * The same invariant, stated from the other side: a key is claimed at most once, counted
+   * rather than grouped. This is the assertion that would survive a future edit that made
+   * `allTools` contain a tool twice, where the grouped form above would report one pair and
+   * this one reports the count.
+   */
+  it('claims each shortcut key at most once across the whole mapping', () => {
+    const keys = allTools.map((tool) => tool.shortcut).filter((key): key is string => key !== undefined);
+
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  /**
+   * The Draw tool is the entry the collision was found on, and it is the one tool in the
+   * mapping that is registered with `ToolArgsByName` and reachable from the rail while having
+   * no keyboard binding at all. Pinning that it declares no shortcut keeps the badge off it:
+   * a shortcut added here without a matching `useKeyDownShortcut` is the exact defect this
+   * describe block exists to prevent, and it is a one-line regression.
+   */
+  it('gives the Draw tool no shortcut, because no key selects it', () => {
+    const draw = allTools.filter((tool) => tool.name === 'draw');
+
+    expect(draw).toHaveLength(1);
+    expect(draw[0].label).toBe('Draw Tool');
+    expect(draw[0].shortcut).toBeUndefined();
+  });
+});
+
+describe('toolbar mapping icon contract', () => {
+  /**
+    * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
 
 describe('toolbar mapping icon contract', () => {
   /**

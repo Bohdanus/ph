@@ -6,6 +6,9 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { createFloodFillMask } from '../../util/floodFill.ts';
 import type { FillToolArgs, FillToolName } from '../../tools/fill.ts';
 import type { BitmapSource, Point, Size } from '../../contexts/general-types.ts';
+import type { Layer } from '../../contexts/layer-types.ts';
+import { stageProcessorInput, type ProcessorStaging } from '../../contexts/presentation-evaluator.ts';
+import { documentPointToLayerLocal } from '../../util/layer-space.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type FillToolAreaProps = {
@@ -30,6 +33,29 @@ const isFillToolName = (toolName: string): toolName is FillToolName =>
  */
 export const FILL_TOOL_READBACK_UNAVAILABLE = 'fill-tool-readback-unavailable';
 export const FILL_TOOL_NO_LAYER_PIXELS = 'fill-tool-no-layer-pixels';
+export const FILL_TOOL_PRESENTATION_UNAVAILABLE = 'fill-tool-presentation-unavailable';
+
+/**
+ * Stages the PRESENTED raster the fill processor will be handed, or `null` when it cannot be
+ * staged at all — a degenerate or over-cap presentation, or no 2D context.
+ *
+ * `null` is a refusal rather than a throw because this runs inside a pointer handler, and it is
+ * loud for the same reason the two names above are: the decision this gate protects is "does this
+ * click replace anything", and a tool that cannot ask must not write a history row that changed
+ * nothing.
+ */
+const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap']>): ProcessorStaging | null => {
+  try {
+    return stageProcessorInput(layer, bitmap);
+  } catch (error) {
+    console.error(
+      FILL_TOOL_PRESENTATION_UNAVAILABLE,
+      `the active layer ${layer.id} cannot be staged for a fill`,
+      error
+    );
+    return null;
+  }
+};
 
 /**
  * Reads the active layer back at its own size, the same read `src/tools/fill.ts:59-66` performs
@@ -112,19 +138,26 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
       return;
     }
 
-    const size = { width: layer.pos.width, height: layer.pos.height };
-    const imageData = readLayerPixels(bitmap, size);
+    // The PRESENTED raster, because that is what the processor is handed: a layer carrying a
+    // transform or a filter is staged at its evaluated extent first, so a mask computed from the
+    // raw pixels would be both the wrong pixels and the wrong size, and it would disagree with the
+    // commit that follows it about whether the gesture replaced anything.
+    const staged = stageLayerPresentation(layer, bitmap);
+    if (!staged) return;
+
+    const size = { width: staged.bounds.width, height: staged.bounds.height };
+    const imageData = readLayerPixels(staged.bitmap, size);
     if (!imageData) {
       console.error(FILL_TOOL_READBACK_UNAVAILABLE, `${args.toolName} cannot read the active layer's pixels`);
       return;
     }
 
     // The processor receives the layer's own local coordinates, so the click is converted out of
-    // canvas space and into the active layer's frame. `commit: 'raster'` replaces the layer's
-    // pixels with a `layer.pos`-sized canvas drawn back at the origin, which is what makes this the
-    // right space and not the document's.
+    // canvas space and into the raster it will write. `commit: 'raster'` replaces the layer's
+    // pixels with a canvas of the size it was handed, drawn back at the origin, which is what makes
+    // this the right space and not the document's.
     const documentSeed = canvasToDocumentPoint(seed, documentFrame);
-    const layerSeed = { x: documentSeed.x - layer.pos.x, y: documentSeed.y - layer.pos.y };
+    const layerSeed = documentPointToLayerLocal(documentSeed, staged.bounds);
 
     const region = createFloodFillMask(imageData, layerSeed, {
       tolerance: args.tolerance,
@@ -146,10 +179,12 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     // fill colour into a history entry describing an erase — a value the pixels could never honour.
     // `FillToolArgs.color` is carried for both names only so the pair shares one type, and it
     // travels unchanged for the eraser.
+    //
+    // No `size` beside `pos`: both processors learn the geometry from the curried
+    // `ProcessorToolParams`, so an args-level `size` was a second, unread source of it that the
+    // durable replay path could not honour. `FillToolArgs` no longer declares the field.
     const commitArgs =
-      args.toolName === 'paint-bucket'
-        ? { ...args, color: store.color, pos: layerSeed, size }
-        : { ...args, pos: layerSeed, size };
+      args.toolName === 'paint-bucket' ? { ...args, color: store.color, pos: layerSeed } : { ...args, pos: layerSeed };
 
     updateLayerByTool({ toolArgs: commitArgs });
   };

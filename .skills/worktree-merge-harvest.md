@@ -27,7 +27,7 @@ that other sessions are writing to.
 
 The corollary that decides the whole sweep: **an `action: land` you did not
 generate yourself is a claim about a moment.** `WORKTREES.json` is a snapshot
-(`scripts/lib/worktree-inventory/assemble.mjs:319` stamps `generatedAt`), `main`
+(`scripts/lib/worktree-inventory/assemble.mjs` — `buildInventory()` — stamps `generatedAt`), `main`
 moves underneath it, and the `mergeConflict` answer in particular is the fastest
 field in the file to go stale. Regenerate before you trust it, and re-read `dirty`
 and `mergeConflict` before you act.
@@ -46,11 +46,14 @@ the time it is acted on.
 a commit made from the main worktree. It does not stop the write — it runs after
 the edit — so it converts "rogue commits nobody can attribute" into "a dirty
 tree the next `git status` names". A landing never reaches it, because a
-fast-forward runs no hook and a merge runs `pre-merge-commit`; the one override
-is `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Everything else that
-changes a tracked file belongs in the branch's own worktree, including a comment
-— and before you edit, `git rev-parse --show-toplevel` is the only thing that
-distinguishes the worktree you are in from the one you believe you are in.
+fast-forward fires no **blocking** hook and a merge fires `pre-merge-commit`
+before it commits; the one override is `ALLOW_MAIN_COMMIT=1`, and only the exact
+value `1`. A fast-forward does fire `post-merge`, which releases the board claims
+this merge carried — that is the one hook a landing reaches, and it cannot block.
+Everything else that changes a tracked file belongs in the branch's own worktree,
+including a comment — and before you edit, `git rev-parse --show-toplevel` is the
+only thing that distinguishes the worktree you are in from the one you believe you
+are in.
 
 ---
 
@@ -82,12 +85,12 @@ Read the top-level answers before the table:
 Per worktree, the fields that decide:
 
 - **`action`** — `land` is the target. The values are `land`, `at-risk`,
-  `dispose`, `in-use`, `keep`, `undecided`
-  (`scripts/lib/worktree-inventory/classify.mjs:79-92`).
+  `dispose`, `legacy`, `in-use`, `keep`, `undecided`
+  (`ACTION` in `scripts/lib/worktree-inventory/classify.mjs`).
 - **`writeHistory.chatCount`** — who wrote a file here, **ever**. This is the
   freedom check that `chats` cannot do. `chats` is keyed on
   `session.directory`, which is where a chat OPENED
-  (`scripts/lib/worktree-inventory/chats.mjs:365-367`): a main-checkout chat that
+  (`auditChats()` in `scripts/lib/worktree-inventory/chats.mjs`): a main-checkout chat that
   drove into a worktree is booked against main for its whole life, and the
   worktree reads as untouched. `writeHistory` is derived from the write calls
   themselves, so it catches that case. **`writeHistory.chatCount === 0` on a
@@ -97,9 +100,9 @@ Per worktree, the fields that decide:
   in there right now. Not a harvest target.
 - **`mustNotPrune`** — a human claim that something unaccounted-for is in that
   directory. It is a **veto on merging**, not only on pruning
-  (`scripts/lib/worktree-inventory/classify.mjs:277-283`): a clean
+  (`classify()` in `scripts/lib/worktree-inventory/classify.mjs`): a clean
   `mergeConflict: false` does not outrank it. Read the `note` before merging, not
-  after. `curatedFor` is at `scripts/lib/worktree-inventory/curated.mjs:1064`.
+  after. `curatedFor()` is in `scripts/lib/worktree-inventory/curated.mjs`.
 - **`dirty` / `untracked`** — uncommitted work is on NO ref. It is the first
   thing to be lost and the last thing git can find. A worktree with
   `dirty > 0` needs its contents committed or saved **before** the merge, not
@@ -110,7 +113,7 @@ Per worktree, the fields that decide:
   `dirty`, `untracked`, `ahead`, `behind` and `commitsAheadTruncated` are already
   on every record, and prose arithmetic goes stale the moment `main` moves.
 - **`mergeConflict` / `mergeConflictFiles`** — and remember `mergeChecked: false`
-  means _no answer_, never "clean" (`classify.mjs:266-272`).
+  means _no answer_, never "clean" (`classify()` in `classify.mjs`).
 - **`summary` / `note` / `issues`** — the curator's claim about the branch. The
   `claimedLanded` / `mergedIntoMain` pair is asserted to agree by a test, so a
   stale `landed: true` fails the suite rather than quietly contradicting git.
@@ -343,8 +346,9 @@ npm run test:e2e          # headless; starts its own dev server on its own port
 
 - **`npm run tsc` is not `npx tsc --noEmit`.** `tsc -b` covers
   `tsconfig.app/node/e2e.json` and therefore the specs and test files. The
-  `--noEmit` form resolves the app config alone, excludes tests, and exits 0
-  while the tests do not compile.
+  `--noEmit` form resolves the root solution stub and type-checks ZERO files; it does
+  not fall back to the app config, and `tsconfig.app.json` has no `exclude`, so it
+  pulls `src/**/__tests__` in anyway.
 - **`npm run test:e2e` only where the change is observable in a browser.** A
   change to a script or a stylesheet does not need a seven-minute suite; a change
   to a tool, a panel, or anything with pixels does. Say which you ran and why.
@@ -402,12 +406,10 @@ git commit -m "wip(salvage): <what the uncommitted work is>"
 git fetch origin main 2>/dev/null || true
 git merge main        # resolve HERE, in this worktree, reviewed
 
-# 3. Did the merge silently revert anything? Compute it, do not read for it.
-comm -13 \
-  <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
-  <(git diff --name-only main..HEAD | sort)
-#    Anything in that set is main content the merge had no business touching.
-#    Restore it: git checkout main -- <path>
+# 3. Did the merge silently revert anything? It is checked for you, not by you reading.
+#    scripts/merge-takeover-guard.mjs runs from pre-commit and pre-merge-commit and refuses
+#    the merge. The one home for the mechanism and its limits is docs/ORCHESTRATION.md;
+#    the `comm -13` recipe that used to be here is retired because it missed this shape.
 
 # 4. Re-verify after the merge. Composition is where silent reverts live.
 npm run tsc && npm run build && npm run test
@@ -477,6 +479,19 @@ move on. A dirty tree means commit it or carry it as a patch. `git branch -d`
 refusing is likewise a finding, not an obstacle — and `dispose` already uses `-d`,
 so a branch it kept is anchored and recoverable.
 
+**Expect `derived-live-writer`, and do not expect it to name you.** Step 5 ran the gates in that
+worktree, so the refusal is about you or about nobody in particular — only the write arm names a
+chat, and only for thirty minutes. `--no-live-writers` does not clear it.
+`docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is the
+one home for the mechanism, and `HANDOFF.md` §224 is the one home for the flag that _would_ clear it,
+which a sweep must not reach for.
+
+This is the gate working: the same signal caught a worktree with agents editing it an hour earlier
+reading `action: "dispose"` with every git fact correct. Do not reach for the removal command by
+hand. **Land the work, leave the directory, and say in the report that the removal is pending** — a
+harvest that reports its landing and silently leaves the worktree behind is indistinguishable from
+one that forgot.
+
 **Record the outcome.** `.skills/stale-worktree-reclaim.md` and this file both
 exist because a harvest that lands silently teaches the next agent nothing. Put
 it in the place that ships:
@@ -518,8 +533,9 @@ skipped its own safety steps.
   on the next run, and a hand-edited `prunable: true` is a licence to delete.
 - **`git add -A` in a worktree whose root checkout is dirty.** This is the more
   expensive of the two `-A` traps and the one that ships reverts: 17 of them, none
-  a conflict. Stage the paths `git status` named, and run the `comm -13`
-  computation before the review.
+  a conflict. Stage the paths `git status` named. `scripts/merge-takeover-guard.mjs` checks this for
+  you and refuses the merge; the recipe that used to sit here is retired, see
+  `docs/ORCHESTRATION.md`.
 - **`git add -A` in the main checkout.** Stage only your own paths, after
   re-reading `git status`.
 - **Land a branch without bringing `main` into it first.** A merge that skips this
@@ -534,8 +550,8 @@ skipped its own safety steps.
 - **Weaken a gate.** See step 5.
 - **Open a browser window.** See step 5.
 - **Fan out from the main checkout.** A `task` subagent inherits the working
-  directory; 1,398 of them wrote into `main` in seven days. Create the worktree
-  first and put its absolute path in the brief.
+  directory; 1,398 of them ran with `main` as their working directory in seven days.
+  Create the worktree first and put its absolute path in the brief.
 - **Let a review finding be fixed after the merge.** Then it is a change on `main`
   that no worktree owns.
 
@@ -546,7 +562,7 @@ skipped its own safety steps.
   `land` has to be caught by regenerating. A `landedAt` stamp on the decision
   would close it.
 - `mergeConflict` is computed by `git merge-tree`
-  (`scripts/lib/worktree-inventory/git.mjs:198`) and reported raw, but there is no
+  (`mergeConflict()` in `scripts/lib/worktree-inventory/git.mjs`) and reported raw, but there is no
   check anywhere that the checked merge equals the merge that will actually
   happen after step 6's `git merge main`. Two different merges, two different
   answers, and the second one is the one that ships.

@@ -58,9 +58,10 @@ const SECTION_SEPARATOR_COST = 13;
 /**
  * Window heights spanning "everything fits" to "almost nothing fits".
  *
- * The ends matter as much as the middle. 1400 is the only sampled height where nothing collapses
- * in one column, and 420/400 are past the point where the budget cannot hold a tool row and the
- * three-dots tile's row — see `the degenerate band` below.
+ * The ends matter as much as the middle. 1400 is the tall end of the sweep, where nothing
+ * collapses in one column — as it also does at every other height from 1037 up — and 420/400 are
+ * past the point where the budget cannot hold a tool row and the three-dots tile's row — see
+ * `the degenerate band` below.
  *
  * `705` and `709` are here because they are the band where the old fit accepted a row it had
  * charged no separator for — the defect `HANDOFF.md` recorded as §97 and deleted once fixed — and
@@ -73,14 +74,13 @@ const SECTION_SEPARATOR_COST = 13;
  * the three-dots tile is the whole rail. A height list that cannot reach the state the file has a
  * branch for is a list with an unreachable branch in it.
  *
- * `1093` and `1094` are the other such pair, on the other side: 822px of tiles in a slot that is
- * the window height minus 272px of chrome, so nothing collapses from 1094 and the fit is already
- * two tiles short at 1093. Bracketing it with 1100 and 1000 leaves the exact edge unpinned, and this
- * is the tightest point in the rail's whole range — at 1094 the six-item Shape flyout has 17px of
- * window left below it.
+ * `1037` and `1036` are the other such pair, on the other side: 765px of tiles — fifteen rows of
+ * 44, fourteen gaps of 6, three section rules of 7 — in a slot that is the window height minus
+ * 272px of chrome, so nothing collapses from 1037 and the fit is already two tiles short at 1036.
+ * Bracketing it with 1100 and 1000 leaves the exact edge unpinned.
  */
 const HEIGHTS = [
-  1400, 1370, 1350, 1280, 1150, 1100, 1094, 1093, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400, 360, 340,
+  1400, 1370, 1350, 1280, 1150, 1100, 1037, 1036, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400, 360, 340,
 ] as const;
 
 type Measured = {
@@ -252,12 +252,12 @@ test.describe('Toolbar fit', () => {
     expect(any, 'and it shows every group').toContain(`tools=${ALL_GROUPS.length}/${ALL_GROUPS.length}`);
     // The edge itself, to the pixel, because everything above it depends on where it is.
     expect(
-      rows.find((line) => line.startsWith('H=1094')),
-      '1094 is where the rail stops folding'
+      rows.find((line) => line.startsWith('H=1037')),
+      '1037 is where the rail stops folding'
     ).toContain('overflow=n');
     expect(
-      rows.find((line) => line.startsWith('H=1093')),
-      'and 1093 is already two tiles short'
+      rows.find((line) => line.startsWith('H=1036')),
+      'and 1036 is already two tiles short'
     ).toContain(`tools=${ALL_GROUPS.length - 2}/${ALL_GROUPS.length}`);
 
     // Printed so the next agent can re-derive the figures in this file without re-measuring.
@@ -322,22 +322,22 @@ test.describe('Toolbar fit', () => {
     // about a drag rather than about one height: a rail that pinned its count would satisfy
     // both of them at every step.
     //
-    // Sixteen of the seventeen counts, and the one that never appears is fifteen — which is
-    // GEOMETRY rather than an accident of this sweep. Fifteen tiles plus the three-dots tile
-    // IS the full sixteen-row grid, 822px, which is the same height at which the fit shows all
-    // sixteen and no tile at all. There is no budget in between, so no window produces fifteen.
+    // Fifteen of the sixteen counts, and the one that never appears is fourteen — which is
+    // GEOMETRY rather than an accident of this sweep. Fourteen tiles plus the three-dots tile
+    // IS the full fifteen-row grid, 765px, which is the same height at which the fit shows all
+    // fifteen and no tile at all. There is no budget in between, so no window produces fourteen.
     expect(new Set(counts).size, `the count took ${new Set(counts).size} values: ${counts.join(',')}`).toBe(
       ALL_GROUPS.length
     );
-    expect(counts.includes(ALL_GROUPS.length - 1), 'and 15 is unreachable, not merely unsampled').toBe(false);
+    expect(counts.includes(ALL_GROUPS.length - 1), 'and 14 is unreachable, not merely unsampled').toBe(false);
     // And no 20px of window moves it by more than one tile. Row boundaries are 50px apart, so a
     // step that dropped two would mean the fit had decided something other than geometry — which
     // is what a separator that reads 0 on one layout and 7 on the next does, and that was exactly
     // the §97 defect, with a 7px band to hide in.
     //
     // There is exactly one legal exception, the one above: the step off "everything" goes to
-    // fourteen, because fifteen plus the three-dots tile is the full grid and so no budget
-    // produces fifteen at all. Every other step is one boundary or none.
+    // thirteen, because fourteen plus the three-dots tile is the full grid and so no budget
+    // produces fourteen at all. Every other step is one boundary or none.
     const skips = steps.flatMap((step, index) => {
       if (index === 0) return [];
       const drop = counts[index - 1] - counts[index];
@@ -349,26 +349,44 @@ test.describe('Toolbar fit', () => {
     expect(skips, `a 20px step dropped more than one tile — ${counts.join(',')}`).toEqual([]);
   });
 
-  test('both layouts collapse and stay reachable', async ({ page }) => {
-    // The two-column rail is the one the whole suite missed: `toolbarSlots` minted
-    // `two-column-N` keys there while the three-dots flyout asked about `section-group` keys,
-    // so a collapse matched nothing and the tile came out holding an empty group.
-    //
-    // The heights are the ones where each layout actually folds something, which changed when
-    // the budget stopped being 80%: a two-column grid is 394px of tiles and fits whole from a
-    // 700px window up, so 720 and 900 are a no-collapse control here and 600 and 500 are not.
-    for (const twoColumns of [false, true]) {
-      for (const height of [1400, 900, 720, 600, 500]) {
+  // ONE TEST PER (layout, height), where this was ONE test over all ten. The two-column rail is
+  // what this file is really a tripwire for: `toolbarSlots` minted `two-column-N` keys there while
+  // the three-dots flyout asked about `section-group` keys, so a collapse matched nothing and the
+  // tile came out holding an empty group.
+  //
+  // TEN combinations inside one test meant ten full app loads against ONE 30s budget, so the test
+  // could lose on Playwright's default while every assertion in it was far inside its own — which is
+  // what TEST-FLAKES.md §13 recorded, and only under CPU contention. Splitting is the structural
+  // answer and it is free: Playwright's budget is PER TEST, so ten tests give ten budgets, and the
+  // work is unchanged because each test still gets its own fresh page from `open()`. It is also the
+  // better report, because a red run now names the layout and the height instead of leaving the
+  // reader to infer both from one failure.
+  //
+  // WHAT WAS NOT DONE, and it is the obvious first idea: the ten loads are not shareable. The fit
+  // is re-planned asynchronously, and this test reads the rail ONCE — `hasOverflowTile` below is a
+  // single `count()` immediately after `open()` or after the layout toggle — so a measurement taken
+  // against the previous height's plan is a false reading rather than a slow one. `settled` above
+  // is the fix for that, and it is a poll on the property, not a delay; the resize sweep uses it
+  // because its subject IS the resize path. Navigating once and `setViewportSize`-ing through the
+  // other nine would replace ten trustworthy readings with one. So the multiplication can only be
+  // removed from the BUDGET, not from the work. No `test.setTimeout` was added anywhere.
+  //
+  // The heights are the ones where each layout actually folds something, which changed when
+  // the budget stopped being 80%: a two-column grid is 394px of tiles and fits whole from a
+  // 700px window up, so 720 and 900 are a no-collapse control here and 600 and 500 are not.
+  for (const twoColumns of [false, true]) {
+    for (const height of [1400, 900, 720, 600, 500]) {
+      const label = `${twoColumns ? 'two' : 'one'}-col H=${height}`;
+      test(`both layouts collapse and stay reachable — ${label}`, async ({ page }) => {
         await open(page, height);
         if (twoColumns) await prefersTwoColumns(page);
         else {
           const toggle = page.getByTestId('toolbar-layout-toggle');
           if ((await toggle.count()) && (await toggle.getAttribute('aria-pressed')) !== 'true') await toggle.click();
         }
-        const label = `${twoColumns ? 'two' : 'one'}-col H=${height}`;
 
         // A collapse has to have happened for the rest to mean anything, and one of the two
-        // layouts at one height is the only place all sixteen groups fit.
+        // layouts at one height is the only place all fifteen groups fit.
         const hasOverflowTile = (await page.getByTestId('tool-overflow-tile').count()) > 0;
 
         // REACHABILITY, per tool: a tile or the three-dots entry, never neither, never both.
@@ -431,9 +449,9 @@ test.describe('Toolbar fit', () => {
         page.on('pageerror', (error) => pageErrors.push(String(error)));
         if (hasOverflowTile) await page.getByTestId('tool-overflow-tile').click();
         expect(pageErrors, `${label}: clicking the three-dots tile must not throw`).toEqual([]);
-      }
+      });
     }
-  });
+  }
 });
 
 /** The app's slug rule, restated: a label becomes a run of non-alphanumerics as one dash. */

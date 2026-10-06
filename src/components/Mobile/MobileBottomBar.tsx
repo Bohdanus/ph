@@ -61,9 +61,12 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
       <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
 
       {/* The options sheet has its own control. A tool tile selecting its own tool
-          is a different concern: the old tile compared `matchingTools` against the
-          current tool and, on a match, opened the sheet instead of selecting, so
-          with `levels` active a tap on Adjust never reached `color`. */}
+          is a different concern: the tile that grouped the adjustments compared
+          `matchingTools` against the current tool and, on a match, opened the sheet
+          instead of selecting, so with `levels` active a tap on Adjust never reached
+          `color`. That tile left the rail with the other adjustment commands, so no
+          mobile group holds two ids that can collide here any more; the rule stays
+          because a group can hold two again. */}
       <button
         type="button"
         disabled={!hasImage}

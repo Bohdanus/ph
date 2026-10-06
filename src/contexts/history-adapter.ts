@@ -14,16 +14,18 @@ import {
   type DurableLayerSource,
   type DurableOperation,
   type PlainObject,
+  type ReplaceLayerSourceOperation,
   type SelectionSnapshot,
   type AssetId,
   cloneDurableDocument,
   cloneLayerSnapshot,
   collectDurableAssetIds,
   freezeDurableDocument,
+  refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
-import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
+import type { Layer, LayerId, LayerSource, LayersRecord, ToolLayerSource } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
@@ -42,7 +44,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
-import { toolLayerBlendMode } from './layer-utils.ts';
+import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -65,6 +67,7 @@ export type MigrationDiagnostic = Readonly<{
     | 'document-replacement'
     | 'invalid-history-entry'
     | 'conversion-failed'
+    | 'array-arg-hole-preserved'
     | 'durable-append-mismatch';
   message: string;
 }>;
@@ -99,16 +102,49 @@ export type LegacyConversionOptions = Readonly<{
   registry?: AssetRegistry;
 }>;
 
-function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject] {
+/**
+ * Where an array argument carried an absence that {@link plainValue} preserved
+ * as a hole rather than the legacy explicit `undefined`.
+ *
+ * The hole is value-preserving and observation-preserving in different ways, and
+ * this file does not trade either for silence — see the array arm. The caller
+ * turns each path into a `warning` so a shadow that reports `current` while
+ * holding something other than the authority's observation is never silent.
+ */
+type ArrayCompaction = { paths: string[] };
+
+function plainValue(value: unknown, path: string, compaction?: ArrayCompaction): PlainObject[keyof PlainObject] {
   if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`Non-finite value at ${path}`);
     return value;
   }
   if (Array.isArray(value)) {
+    // `undefined` is absence, not a value, and a history arg carrying one is a
+    // sparse array rather than a defect. Treating it as one WAS the bug: a throw
+    // here became an `error` diagnostic, and `convertLegacyHistorySafely`
+    // withholds the WHOLE shadow on the first one, so one holey tool-arg array
+    // was enough to lose the document.
+    //
+    // The absence is PRESERVED rather than compacted away, because legacy replay
+    // (`history-replay.ts`) hands the processor the original array and an index
+    // IS the meaning: `lineDash: [4, undefined, 2]` compacting to `[4, 2]` is a
+    // different dash pattern, and every positional consumer would read a
+    // different value. So the result keeps the legacy length and keeps the hole
+    // at the legacy index.
+    //
+    // It is still not the legacy observation, which is what `compaction` is for:
+    // `1 in durableStops` is `false` where legacy's explicit `undefined` makes
+    // it `true`, so the hole is recorded and reported by the caller rather than
+    // adopted quietly — the same trade this file already refuses further down,
+    // where a conversion that cannot fail still emits a diagnostic rather than
+    // losing a frame silently.
     const result = new Array<Exclude<PlainObject[keyof PlainObject], undefined>>(value.length);
     for (let index = 0; index < value.length; index += 1) {
-      if (!Object.hasOwn(value, index) || value[index] === undefined) continue;
-      result[index] = plainValue(value[index], `${path}[${index}]`) as Exclude<
+      if (!Object.hasOwn(value, index) || value[index] === undefined) {
+        compaction?.paths.push(`${path}[${index}]`);
+        continue;
+      }
+      result[index] = plainValue(value[index], `${path}[${index}]`, compaction) as Exclude<
         PlainObject[keyof PlainObject],
         undefined
       >;
@@ -120,13 +156,13 @@ function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject
     Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => Object.prototype.propertyIsEnumerable.call(value, key))
-        .map(([key, item]) => [key, item === undefined ? undefined : plainValue(item, `${path}.${key}`)])
+        .map(([key, item]) => [key, item === undefined ? undefined : plainValue(item, `${path}.${key}`, compaction)])
     )
   ) as PlainObject;
 }
 
-function plainObject(value: unknown, path: string): PlainObject {
-  const result = plainValue(value, path);
+function plainObject(value: unknown, path: string, compaction?: ArrayCompaction): PlainObject {
+  const result = plainValue(value, path, compaction);
   if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error(`Expected object at ${path}`);
   return result as PlainObject;
 }
@@ -145,6 +181,57 @@ function registerRaster(registry: AssetRegistry, documentId: string, bitmap: Bit
   // Legacy history/runtime layers retain ownership until the durable model is
   // authoritative. The diagnostic sidecar must never close their bitmaps.
   return registry.registerBaseline(documentId, bitmap, { ownership: 'borrow' });
+}
+
+/**
+ * The tool names whose layer source is an editable, typed source, and the kind
+ * each becomes.
+ *
+ * One rule, because two decisions depend on it and must not disagree: which
+ * sources {@link convertSource} may type rather than leaving as `legacy-tool`,
+ * and which legacy source a source edit is allowed to install. A tool added here
+ * becomes editable by the conversion and the source edit together.
+ */
+export function durableSourceKindForTool(toolName: string): 'text' | 'vector' | 'paint' | null {
+  if (toolName === 'text') return 'text';
+  if (['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(toolName)) return 'vector';
+  if (['draw', 'brush', 'pencil'].includes(toolName)) return 'paint';
+  return null;
+}
+
+export function editableDurableSourceKind(toolName: string): 'text' | 'vector' | null {
+  const kind = durableSourceKindForTool(toolName);
+  return kind === 'text' || kind === 'vector' ? kind : null;
+}
+
+/**
+ * The tool arm of {@link convertSource}, with no document id and no registry in
+ * reach — because it needs neither.
+ *
+ * An extraction, not a second copy of the rule: a `kind: 'tool'` source's durable
+ * form is derived entirely from the source itself and the layer box it was
+ * authored against, so the raster registration the other two arms perform has no
+ * call site here. Keeping that structural is what lets
+ * `deriveReplaceLayerSourceEntry` plan a source edit with no store in reach at
+ * all, and it is also what would stop a future `tool` arm from quietly acquiring
+ * a registry dependency — the extraction is where that would have to be undone.
+ */
+function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerSource {
+  const size = sourceSize(source);
+  const isBedrock = !!source.isBedrock;
+  const args = plainObject(source.args, `layer:${layer.id}.source.args`);
+  const kind = durableSourceKindForTool(source.args.toolName) ?? 'legacy-tool';
+  if (kind === 'legacy-tool') {
+    return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
+  }
+  return Object.freeze({
+    kind,
+    toolName: source.args.toolName,
+    args,
+    size,
+    sourcePos: Object.freeze({ ...layer.pos }),
+    isBedrock,
+  });
 }
 
 function convertSource(
@@ -167,26 +254,8 @@ function convertSource(
         ...(source.name ? { name: source.name } : {}),
         isBedrock,
       });
-    case 'tool': {
-      const args = plainObject(source.args, `layer:${layer.id}.source.args`);
-      const kind =
-        source.args.toolName === 'text'
-          ? 'text'
-          : ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(source.args.toolName)
-            ? 'vector'
-            : 'legacy-tool';
-      if (kind === 'legacy-tool') {
-        return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
-      }
-      return Object.freeze({
-        kind,
-        toolName: source.args.toolName,
-        args,
-        size,
-        sourcePos: Object.freeze({ ...layer.pos }),
-        isBedrock,
-      });
-    }
+    case 'tool':
+      return convertToolSource(source, layer);
   }
 }
 
@@ -457,6 +526,93 @@ export function deriveRemoveLayerEntry(item: HistoryItem): DurableHistoryEntry<R
   return entry(item.id, operation, isEntryEnabled(item));
 }
 
+/**
+ * The legacy carrier of a source edit: the REPLACEMENT source under
+ * `args.source`, which is where `updateLayer(id, patch, actionName)` already puts
+ * a layer patch.
+ *
+ * `null` for every shape that is not an installable editable source, and each
+ * refusal is a rule rather than a missing arm:
+ *
+ * - A `layerSource` on the item means the entry carries a source of its own, and
+ *   `NEW_LAYER` / `MERGE` / a `TOOL_ACTION` source own that. A source edit
+ *   describes the source of a layer that already exists, so an entry that also
+ *   carries a creation source is not one.
+ * - A `kind: 'tool'` source whose tool has no editable durable representation is
+ *   the `legacy-tool` case `convertSource` already refuses to type.
+ * - A bedrock source is refused because a bedrock source's SIZE IS THE DOCUMENT.
+ *   `replayHistory` honours it as the frame only for the entry that opened the
+ *   document and refuses it mid-history, and this operation cannot write the
+ *   frame at all — only `set-document-frame` does. So a bedrock replacement is
+ *   not expressible here, and the product path that does replace a background
+ *   layer's content is an explicit conversion, not a source edit.
+ *
+ * This is the single reader of the legacy shape. The derivation below and the
+ * append-boundary grading in `history-append.ts` both go through it, the way
+ * `legacyToolArgs` is shared there, so neither restates the carrier.
+ */
+export function editableSourceReplacementFromEntry(item: HistoryItem): ToolLayerSource | undefined {
+  if (item.layerSource) return undefined;
+  const candidate = (item.args as { source?: unknown } | undefined)?.source;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+  if ((candidate as { kind?: unknown }).kind !== 'tool') return undefined;
+  const source = candidate as ToolLayerSource;
+  const toolName = (source.args as { toolName?: unknown } | undefined)?.toolName;
+  if (typeof toolName !== 'string' || !editableDurableSourceKind(toolName)) return undefined;
+  if (source.isBedrock) return undefined;
+  return source;
+}
+
+/**
+ * The single derivation of the source-edit operation, shared by conversion AND
+ * the Phase 1 append boundary, for the reason every other derivation here is
+ * shared: a published entry and a converted entry for one legacy item must be the
+ * same entry, or the shadow and the authority stop describing the same edit.
+ *
+ * It takes NO store context — no document id, no registry — and that is the load-
+ * bearing property rather than an omission. The reader admits only a `kind:
+ * 'tool'` source, and `convertToolSource` is the one arm of layer-source
+ * conversion that registers nothing, so there is nothing here for a registry to
+ * resolve or a transaction to own. That is what makes the derivation callable
+ * from `translate()`, which sees no store, and therefore what makes a source edit
+ * APPENDABLE instead of conversion-only: `planHistoryAppend` can plan one from
+ * nothing but the entry and its live arguments, exactly as it plans a rename.
+ *
+ * The two consistency requirements of the payload therefore hold by construction
+ * rather than by review: a non-bedrock source's `size` is `sourceSize(source)` —
+ * the box's width and height — and its `sourcePos` is the box the replacement was
+ * authored against, which is the `pos` this operation carries.
+ *
+ * The layer map handed to `sourceToRuntimeLayer` is empty deliberately. That
+ * helper derives an `order` from the layers it is given; this operation replaces
+ * the source of a layer that already exists, so the layer's order is the existing
+ * layer's, the derived one is discarded, and requiring the caller to supply the
+ * layer set would buy a field nothing reads.
+ */
+export function deriveReplaceLayerSourceEntry(
+  item: HistoryItem
+): DurableHistoryEntry<ReplaceLayerSourceOperation> | null {
+  const replacement = editableSourceReplacementFromEntry(item);
+  if (!replacement) return null;
+  const runtime = sourceToRuntimeLayer(item.layerId, replacement, new Map());
+  // `convertToolSource` rather than `convertLayer`, and that is the whole reason
+  // the derivation needs no store: it is the one arm of source conversion that
+  // registers no asset, so there is no registry here to fake and no document id to
+  // invent. Reaching for `convertLayer` instead would require a throw-only
+  // registry stub, which would only make the same claim less checkably.
+  const source = convertToolSource(replacement, runtime);
+  // Unreachable while this function and `editableDurableSourceKind` agree, and
+  // stated so that loosening either one cannot silently widen the payload type.
+  if (source.kind !== 'text' && source.kind !== 'vector') return null;
+  const operation: ReplaceLayerSourceOperation = Object.freeze({
+    kind: 'replace-layer-source',
+    layerId: item.layerId,
+    source,
+    pos: Object.freeze({ ...runtime.pos }),
+  });
+  return entry(item.id, operation, isEntryEnabled(item));
+}
+
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
   return {
     ...(item ? { historyId: item.id, actionName: item.actionName } : {}),
@@ -476,7 +632,11 @@ export function isEntryEnabled(item: HistoryItem): boolean {
   return !item.disabled && nested?.enabled !== false;
 }
 
-export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): DurableOperation | null {
+export function operationForTool(
+  item: HistoryItem,
+  layer: DurableLayerSnapshot,
+  compaction?: ArrayCompaction
+): DurableOperation | null {
   const candidate = item.args as { args?: unknown } | undefined;
   const args = (candidate && candidate.args && typeof candidate.args === 'object' ? candidate.args : item.args) as
     ToolArgs | undefined;
@@ -498,7 +658,7 @@ export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot)
         layerId: item.layerId,
         processorId: 'transform',
         version: processor.replay.version,
-        args: plainObject(args, `history:${item.id}.args`),
+        args: plainObject(args, `history:${item.id}.args`, compaction),
       });
     }
     let transform;
@@ -519,7 +679,7 @@ export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot)
   }
 
   if (processor.commit === 'layer-operation') {
-    const filterArgs = plainObject(args, `history:${item.id}.args`);
+    const filterArgs = plainObject(args, `history:${item.id}.args`, compaction);
     if (!['blur', 'color', 'levels'].includes(args.toolName)) {
       throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);
     }
@@ -549,7 +709,7 @@ export function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot)
       layerId: item.layerId,
       processorId: args.toolName,
       version: processor.replay.version,
-      args: plainObject(args, `history:${item.id}.args`),
+      args: plainObject(args, `history:${item.id}.args`, compaction),
     });
   }
   if (processor.commit === 'document-operation' || processor.commit === 'selection') return null;
@@ -809,7 +969,31 @@ export function legacyHistoryToDurable(
       } else if (item.actionName === TOOL_ACTION) {
         const layer = currentLayers.get(item.layerId);
         if (!layer) throw new UnsupportedHistoryFeatureError(`Layer ${item.layerId} is unavailable`, item.id);
-        operation = operationForTool(item, layer);
+        const compaction: ArrayCompaction = { paths: [] };
+        operation = operationForTool(item, layer, compaction);
+        // An absent element in an array keeps its index and its length, so the
+        // sequence of values the processor reads is the legacy one — but the
+        // durable array is a real hole where legacy's is an explicit
+        // `undefined`, and `1 in array` is `false` where legacy makes it `true`.
+        // The shadow therefore publishes `status: 'current'` holding a value the
+        // authority does not hold, and the only thing that keeps that from being
+        // silent is this report.
+        //
+        // `warning`, not `error`: an error withholds the ENTIRE durable document
+        // through `convertLegacyHistorySafely`, so refusing to convert over a
+        // sparse array would cost the user every entry in the timeline to report
+        // a divergence the shadow already carries. The divergence is named
+        // instead, so `status: 'current'` is never a claim of faithfulness on its
+        // own.
+        for (const path of compaction.paths) {
+          diagnostics.push({
+            historyId: item.id,
+            actionName: item.actionName,
+            severity: 'warning',
+            code: 'array-arg-hole-preserved',
+            message: `History entry ${item.id} carries an absent element in the array argument at ${path}, which the durable conversion preserved as a hole at the same index. Legacy replay hands the processor an explicit value at that position, so the durable array is not the legacy observation even though its length and its values match.`,
+          });
+        }
         if (operation?.kind === 'reposition-layer') {
           const pos = {
             ...layer.pos,
@@ -819,7 +1003,33 @@ export function legacyHistoryToDurable(
           if (enabled) currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, pos }));
         }
       } else {
-        throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
+        // The tail is where a source edit is recognized, and its position is the
+        // guarantee that it claims nothing another arm owns: every action a
+        // creation, a merge, a layer property, a removal, a reorder, a frame, a
+        // selection or a tool argument already handles has returned above, so
+        // anything still here is an action this converter does not have a rule
+        // for. A new action carrying a replacement source lands here; an action
+        // carrying no replacement source still reports `Unsupported legacy
+        // action`, which is the pre-existing behaviour for every unknown action.
+        const replaceEntry = deriveReplaceLayerSourceEntry(item);
+        if (!replaceEntry) {
+          throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
+        }
+        operation = replaceEntry.operation;
+        if (replaceEntry.enabled) {
+          // The fold advances so the entries derived after this one see the source
+          // and box the legacy timeline would produce — the affine-geometry
+          // derivation reads `layer.pos`, and a reorder reads the layer set. The
+          // layer's absence is not a refusal, matching `replayHistory`, which
+          // skips a property change to an id it does not hold.
+          const layer = currentLayers.get(item.layerId);
+          if (layer) {
+            currentLayers.set(
+              item.layerId,
+              cloneLayerSnapshot({ ...layer, source: replaceEntry.operation.source, pos: replaceEntry.operation.pos })
+            );
+          }
+        }
       }
     } catch (error) {
       diagnostics.push(diagnosticFromError(error, item));
@@ -926,15 +1136,18 @@ export function sourceToRuntimeLayer(
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
+  const orderRecords: LayerOrderRecord = Object.create(null);
+  for (const [layerId, layer] of layers) orderRecords[layerId] = layer;
+  const { name, order } = deriveLayerNameAndOrder(orderRecords, source);
   return {
     id,
-    name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
+    name,
     isBedrock: !!source.isBedrock,
     visible: true,
     opacity: 1,
     locked: false,
     blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
-    order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
+    order,
     pos,
     source,
     operations: [],
@@ -951,8 +1164,12 @@ export function createDurableDocument(
 
 export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
   const history = [...document.history.slice(0, document.cursor + 1), next];
-  return freezeDurableDocument({
-    ...cloneDurableDocument(document),
+  // One freeze, not two. `cloneDurableDocument` used to run here and the freeze it
+  // fed deep-copied its result immediately, so the retained prefix was copied twice
+  // per append and the first copy was observable in neither. The retained entries are
+  // carried across by reference when `document` is one of `history-model.ts`'s own
+  // frozen copies, and deep-copied when it is not.
+  return refreezeDurableDocument(document, {
     history,
     cursor: history.length - 1,
     branchRevision: document.branchRevision + 1,
@@ -966,9 +1183,9 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   const history = document.history.map((historyEntry, historyIndex) =>
     historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
   );
-  return freezeDurableDocument({
-    ...document,
+  return refreezeDurableDocument(document, {
     history,
+    cursor: document.cursor,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
   });
@@ -978,5 +1195,5 @@ export function setDurableCursor(document: DurableDocument, cursor: number): Dur
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
   return cursor === document.cursor
     ? document
-    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
+    : refreezeDurableDocument(document, { cursor, durableRevision: document.durableRevision + 1 });
 }

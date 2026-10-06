@@ -7,6 +7,16 @@ import {
 } from '../EyedropperToolArea.tsx';
 import type { EyedropperToolArgs } from '../../../tools/eyedropper.ts';
 import { EYEDROPPER_SAMPLE_SIZE_OPTIONS } from '../../../tools/eyedropper.ts';
+import { resetColorSamplersForTest, useColorSamplers } from '../../../tools/color-sampler-store.ts';
+import type { ColorSampler } from '../../../tools/colorSampler.ts';
+
+/** The published sampler list, read over a real subscription rather than off the module. */
+let renders: (readonly ColorSampler[])[] = [];
+
+const SamplerProbe = () => {
+  renders.push(useColorSamplers());
+  return null;
+};
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const workspaceCanvas = vi.hoisted(() => document.createElement('canvas'));
@@ -441,5 +451,127 @@ describe('EyedropperToolArea', () => {
     const { container } = render(<EyedropperToolArea className="test-eyedropper-area" />);
 
     expect(container.firstElementChild).toHaveClass('test-eyedropper-area', 'cursor-crosshair');
+  });
+});
+
+/**
+ * Adobe's Shift-click, which belongs to the EYEDROPPER: "To add new color samplers, select the Color
+ * Sampler tool and click in the image, or select the Eyedropper tool and Shift-click in the image."
+ * <https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html>
+ *
+ * A separate `describe` because it is a different claim from everything above: those tests are about
+ * what this area writes to the foreground swatch, and these are about what it writes to the Color
+ * Sampler's store — including that it writes NOTHING to the swatch, which is the half a regression
+ * would most plausibly lose.
+ */
+describe('EyedropperToolArea Shift-click, which places a color sampler', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    dispatchMock.mockClear();
+    resetColorSamplersForTest();
+    storeState.documentFrame = null;
+    toolState.toolArgs = { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' };
+    composited = createCompositedImageData(4, 4);
+    workspaceCanvas.width = 4;
+    workspaceCanvas.height = 4;
+    getContextSpy = vi.spyOn(workspaceCanvas, 'getContext').mockReturnValue({
+      getImageData: vi.fn((x: number, y: number, width: number, height: number) => readWindow(x, y, width, height)),
+    } as unknown as CanvasRenderingContext2D);
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    getContextSpy?.mockRestore();
+    getContextSpy = null;
+    consoleErrorSpy.mockRestore();
+    resetColorSamplersForTest();
+  });
+
+  /** The samplers the store holds, read back over a real subscription. */
+  const storedSamplers = (): readonly { id: number; point: { x: number; y: number }; color: string }[] => {
+    renders = [];
+    const view = render(<SamplerProbe />);
+    view.unmount();
+    return renders[renders.length - 1];
+  };
+
+  it('places a sampler on Shift-click instead of setting the foreground', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, shiftKey: true });
+
+    expect(storedSamplers()).toEqual([{ id: 1, point: { x: 1, y: 0 }, color: '#00ff00' }]);
+    // The load-bearing half: Shift must REPLACE the swatch write, not add to it. A path that placed
+    // a sampler and then fell through would leave the foreground changed, which is not Adobe's
+    // behaviour — the two gestures are alternatives, not a sequence.
+    expect(colorActions()).toEqual([]);
+    expect(historyActions()).toEqual([]);
+  });
+
+  it('still sets the foreground on a click with no modifier, so Alt keeps meaning background', () => {
+    // Adobe's two gestures are on adjacent modifiers, and the check is on `shiftKey` alone. If this
+    // press were captured by the sampler branch, Alt-click-to-background would be dead.
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0 });
+
+    expect(colorActions()).toEqual([{ type: 'SET_COLOR', payload: '#00ff00' }]);
+    expect(storedSamplers()).toEqual([]);
+  });
+
+  it('honours the Sample Size the bar shares, so a wide footprint averages for the sampler too', () => {
+    toolState.toolArgs = { ...toolState.toolArgs, sampleSize: 3 };
+    const toolArea = renderArea();
+
+    // A 3x3 block centred on the green pixel at (1,0) clips to rows 0..1 and columns 0..2, so it
+    // averages six pixels: red, green, blue on the top row and cyan, magenta, [10,20,30] beneath.
+    // That is 520/530/795 over six, which rounds to 87, 88 and 133.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, shiftKey: true });
+
+    expect(storedSamplers()[0].color).toBe('#575885');
+  });
+
+  it("deletes a sampler on Shift-Alt-click, which is Adobe's third gesture", () => {
+    // "Option + Shift (Mac) | Alt + Shift (Win) -click on the Color Sampler to delete a Color Sampler
+    // (With the Eyedropper tool selected)." It has to be a DELETE and not a second placement on the
+    // same pixel, and the delete is checked before the placement for that reason.
+    const toolArea = renderArea();
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, shiftKey: true });
+    expect(storedSamplers()).toHaveLength(1);
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, shiftKey: true, altKey: true });
+
+    expect(storedSamplers()).toEqual([]);
+    expect(colorActions()).toEqual([]);
+  });
+
+  it('places a sampler rather than deleting one when Shift-Alt-click misses every marker', () => {
+    // A 16px field, because the whole point is to click FURTHER than the eight-pixel hit radius and
+    // a 4px fixture has a diameter of 4.24 — every point in it is inside the radius of every other,
+    // so the "misses every marker" premise could not be set up at that size.
+    composited = createSplitField(16);
+    workspaceCanvas.width = 16;
+    workspaceCanvas.height = 16;
+    const toolArea = renderArea();
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 1, shiftKey: true });
+
+    // Twelve pixels away, so well outside the radius: the modifier is about the marker, not about
+    // the click, so this is an ordinary placement.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 13, clientY: 1, shiftKey: true, altKey: true });
+
+    expect(storedSamplers().map(({ id }) => id)).toEqual([1, 2]);
+  });
+
+  it('places nothing and logs nothing on a transparent pixel, the quiet-nothing case', () => {
+    toolState.toolArgs = { ...toolState.toolArgs, sampleAllLayers: true };
+    const toolArea = renderArea();
+
+    // `sampleAllLayers` still refuses loudly FIRST, which is the Eyedropper's own rule and is checked
+    // before the Shift path: the refusal is about the tool's layer source, not about the gesture.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 1, clientY: 0, shiftKey: true });
+
+    expect(storedSamplers()).toEqual([]);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(EYEDROPPER_ALL_LAYERS_UNSUPPORTED, expect.any(String));
   });
 });

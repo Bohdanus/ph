@@ -6,6 +6,7 @@ import type { DurableReplayLayer, DurableReplayResult } from './durable-replay.t
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import type { ToolArgs } from './tool-types.ts';
+import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentation,
@@ -102,14 +103,21 @@ function presentationOperations(operations: readonly DurableOperation[]): Presen
   return normalized;
 }
 
+/**
+ * Resolves the raster a layer starts from, and says whether the caller may
+ * publish it as this layer's own result. `borrowed` is true only for the
+ * registry's asset, whose bitmap the registry — or the legacy runtime layer
+ * behind a borrowed baseline — owns and may close. Every other source is created
+ * here, so nothing outside this call can reach it.
+ */
 async function sourceBitmap(
   layer: DurableReplayLayer,
   request: MaterializationRequest
-): Promise<{ bitmap: BitmapSource; release: () => void; size: Size }> {
+): Promise<{ bitmap: BitmapSource; release: () => void; size: Size; borrowed: boolean }> {
   const { source } = layer.snapshot;
   if (source.kind === 'raster') {
     const lease = await request.assetRegistry.resolve(source.assetId, request.signal);
-    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer) };
+    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer), borrowed: true };
   }
   if (source.kind === 'legacy-tool') throw new Error(`Legacy source ${source.toolName} requires an explicit adapter`);
   const renderSize = layerSize(layer);
@@ -119,7 +127,7 @@ async function sourceBitmap(
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
     ctx.fillRect(0, 0, renderSize.width, renderSize.height);
-    return { bitmap: canvas, release: () => undefined, size: renderSize };
+    return { bitmap: canvas, release: () => undefined, size: renderSize, borrowed: false };
   } else {
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
@@ -135,13 +143,31 @@ async function sourceBitmap(
         : (source.args as ToolArgs);
     const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
     if (!created) throw new Error(`Source tool ${toolName} produced no raster`);
-    return { bitmap: created, release: () => undefined, size: { width: created.width, height: created.height } };
+    return {
+      bitmap: created,
+      release: () => undefined,
+      size: { width: created.width, height: created.height },
+      borrowed: false,
+    };
   }
 }
 
 async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
   if (globalThis.createImageBitmap) return globalThis.createImageBitmap(canvas);
   return canvas;
+}
+
+/**
+ * An unevaluated copy of `bitmap` at `size`, owned by the caller.
+ *
+ * Deliberately a plain blit rather than a retained-segment render: it must not
+ * evaluate the presentation, because the one caller that needs it is the
+ * presentation whose extent the affine raster caps refuse.
+ */
+async function copyOwnedBitmap(bitmap: BitmapSource, size: Size): Promise<BitmapSource> {
+  const copy = createCanvas(size.width, size.height);
+  context2d(copy).drawImage(bitmap as CanvasImageSource, 0, 0, size.width, size.height);
+  return toOwnedBitmap(copy);
 }
 
 function closeOwnedBitmap(bitmap: BitmapSource) {
@@ -257,11 +283,30 @@ export async function materializeLayer(
           };
           size = { width: processed.width, height: processed.height };
         }
-        await renderRetainedSegment(retainedOperations, true);
-        const presentation = bitmap;
-        const presentationIsOwned = ownsBitmap;
-        ownsBitmap = false;
+        const area = size.width * size.height;
+        const requiresSurface =
+          retainedOperations.length > 0 ||
+          request.frame !== undefined ||
+          !Number.isFinite(area) ||
+          size.width <= 0 ||
+          size.height <= 0 ||
+          area <= MAX_AFFINE_PIXELS;
+        await renderRetainedSegment(retainedOperations, requiresSurface);
         const bounds: Pos = { x: origin.x, y: origin.y, width: size.width, height: size.height };
+        // The materialization cache owns every bitmap it publishes, and it
+        // outlives this producer's lease on the source. Skipping the final
+        // surface — which a presentation too large for the affine budget MUST
+        // skip, because evaluating it would refuse the layer — otherwise leaves
+        // the registry's borrowed bitmap as the result, and either the registry
+        // or the legacy runtime layer behind a borrowed baseline may close that
+        // bitmap while this entry is still live. So an unrendered borrowed
+        // source is copied into one the cache owns; a bitmap created here (a
+        // blank or creator source) and anything an operation already replaced
+        // are published as they are.
+        const publishesBorrowedSource = !ownsBitmap && source.borrowed;
+        const presentation = publishesBorrowedSource ? await copyOwnedBitmap(bitmap, size) : bitmap;
+        const presentationIsOwned = ownsBitmap || publishesBorrowedSource;
+        ownsBitmap = false;
         if (!request.frame) {
           return { bitmap: presentation, metadata: bounds };
         }
@@ -311,6 +356,7 @@ export async function materializeDocument(
   try {
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+      if (!layer.snapshot.visible) continue;
       try {
         materialized[layer.snapshot.id] = await materializeLayer(layer, request);
       } catch (error) {

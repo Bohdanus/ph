@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,10 +9,10 @@ import {
   SwarmLock,
   E2E_SENTINEL,
   assertOwnServer,
-  findFreePort,
   isPortFree,
+  reservePort,
   resolvePort,
-  run,
+  run as runUnderTest,
   runOutputPaths,
 } from '../e2e-run.mjs';
 
@@ -129,6 +129,74 @@ function recorder() {
   return { log: (line) => lines.push(line), text: () => lines.join('\n') };
 }
 
+/* -------------------------------------------------------------------------- */
+/* THE RUN RECORD PATH, which this file owns                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where a run started by `npm run test:e2e` records the port that served it:
+ * `<repo>/.kilo/e2e-last-run.json`, a real file, written twice per run (once as the
+ * run starts and once as it closes, so "died at startup" is distinguishable from
+ * "served an hour").
+ *
+ * Every one of the ~40 `run()` calls below used to write it, which made this unit
+ * suite a second writer of a file owned by whatever e2e run happened to be on the
+ * machine — and the two tests that care about the record made it worse. One deleted it
+ * outright in a `finally`; the other read the live bytes, let `run()` overwrite them,
+ * read them back to assert on its OWN run, and wrote the captured bytes over whatever
+ * a concurrent run had put there. Both are the same defect wearing two shapes: a
+ * shared, untracked, unrecoverable file (`.gitignore:49`) that a test must not touch.
+ *
+ * The fix is not a narrower window on that restore. It is that this file never has a
+ * claim on that path at all: `run()` takes the destination as an option, the way it
+ * already takes `runPlaywright` so the suite never spawns a real Playwright, and
+ * EVERY call in this file goes through the wrapper below, which gives the run a
+ * record in a temp directory of its own.
+ *
+ * A LOCK was the wrong instrument for this, and not only because it would be
+ * contended. Its effect would be to make `npm run test` block until a real e2e run
+ * finished — so the unit suite would depend on the very thing it is supposed to be
+ * independent of, and a run that hangs would hang the whole app suite behind it. A
+ * compare-and-swap on the restore narrows the interleave without closing it, because
+ * the file can be created and deleted between the read and the write and nothing
+ * detects either.
+ *
+ * So the suite and an e2e run now touch disjoint files, and `npm run test` is
+ * runnable at the same time as `npm run test:e2e` without either one knowing.
+ */
+
+/** The worktree's live record. READ by the tripwire below; never written, never deleted. */
+const LIVE_RUN_RECORD = join(REPO_ROOT, '.kilo', 'e2e-last-run.json');
+
+let recordDir = null;
+
+/** A temp directory for this test's run records, created on first use. */
+function tempRecordDir() {
+  if (recordDir === null) recordDir = mkdtempSync(join(tmpdir(), 'e2e-run-record-'));
+  return recordDir;
+}
+
+/** The file this test's runs record into, which exists only for the length of the test. */
+function runRecordPath() {
+  return join(tempRecordDir(), 'e2e-last-run.json');
+}
+
+afterEach(() => {
+  if (recordDir === null) return;
+  rmSync(recordDir, { recursive: true, force: true });
+  recordDir = null;
+});
+
+/**
+ * `run()` with a run record of its own. EVERY test in this file calls this rather
+ * than the import, and that is the point: the shared path is unreachable from here by
+ * construction rather than by remembering, because a test that forgot to pass the
+ * option would be the exact regression this exists to prevent.
+ */
+function run(argv, options = {}) {
+  return runUnderTest(argv, { runRecordPath: runRecordPath(), ...options });
+}
+
 /**
  * A stand-in for the suite, so a test can read the board from outside while a run is
  * "in flight" and return an exit code without starting a browser.
@@ -142,6 +210,69 @@ function fakeSuite(onRun) {
   };
   fn.calls = calls;
   return fn;
+}
+
+/**
+ * Take a port the PRODUCTION path picked, and keep it.
+ *
+ * Three things are deliberate here.
+ *
+ * **It asks `reservePort`, not `findFreePort`.** `findFreePort` asks the OS for a port
+ * and lets it go; `reservePort` is the path a run actually uses, and it re-picks a port
+ * it lost between the ask and the check. A test of the guarantee belongs on the code
+ * that makes the guarantee, and an earlier version of the "free" test asserted on the
+ * primitive, so the retry that exists precisely for this race was never under test.
+ *
+ * **It binds and HOLDS.** A bound socket is the only evidence that "free" meant
+ * bindable, and holding it is what lets the assertion that follows be independent of
+ * the machine: the OS does not hand out a port that is in use.
+ *
+ * **It retries five times.** `reservePort` re-checks its own candidate, but a test that
+ * binds the answer is a THIRD bind and therefore its own gap, and on this repository's
+ * shared machine that gap is not a promise. Five is the number `reservePort` itself
+ * gives up on, so this loop tolerates exactly as much loss as the production path
+ * considers acceptable and no more — and it is a THROW, not a skip: no port taken in
+ * five attempts fails the test, with every port and every `attempt` in the message.
+ */
+async function claimAPort(heldPort = null) {
+  const trail = [];
+  const asked = heldPort === null ? '' : ` It was asked while this process was listening on ${heldPort}.`;
+  for (let cycle = 1; cycle <= 5; cycle += 1) {
+    let reserved;
+    try {
+      reserved = await reservePort();
+    } catch (error) {
+      // `reservePort`'s own message blames the machine, which is the right guess for a
+      // run and the WRONG one for a picker answering from a constant — so the trail is
+      // appended rather than replaced, because the two are told apart by the numbers in
+      // it and nothing else says which happened.
+      throw new Error(
+        `${error.message}${asked} The ports it had already handed out were: ${trail.join(', ') || 'none of them'}. ` +
+          'Five consecutive losses on the SAME number is a picker answering from a constant, which is a defect; ' +
+          'five losses on five DIFFERENT numbers is this machine claiming ports faster than they are released.'
+      );
+    }
+    const { port, attempt } = reserved;
+    trail.push(`${port} (reservePort attempt ${attempt})`);
+    const server = createServer();
+    const claimed = await new Promise((resolve) => {
+      server.once('error', () => resolve(false));
+      server.listen(port, '127.0.0.1', () => resolve(true));
+    });
+    if (claimed) {
+      return {
+        port,
+        attempt,
+        cycles: cycle,
+        close: () => new Promise((resolve) => server.close(resolve)),
+      };
+    }
+  }
+  throw new Error(
+    `the production path handed out five ports and this process could not bind any of them: ${trail.join(', ')}. ` +
+      'Either something on this machine is claiming ports as fast as they are released, or the picker is ' +
+      'answering from a constant — reservePort re-checks the same number every time and gives up on the fifth.'
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -300,29 +431,23 @@ describe('e2e-run: the own-server guarantee', () => {
   });
 
   it('records the port it used, so a run that fails later is diagnosable', async () => {
-    const recordPath = join(REPO_ROOT, '.kilo', 'e2e-last-run.json');
-    // Real shared state in a real repository, so the previous contents are restored
-    // rather than deleted: an earlier version of this test removed the file in both
-    // branches of its `finally` under a comment saying "put it back", which destroyed
-    // whatever a real `npm run test:e2e` in this worktree had recorded.
-    const previous = existsSync(recordPath) ? readFileSync(recordPath, 'utf8') : null;
-    try {
-      const suite = fakeSuite();
-      await run([], { env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' }, log: recorder().log, runPlaywright: suite });
+    const suite = fakeSuite();
+    await run([], { env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' }, log: recorder().log, runPlaywright: suite });
 
-      const record = JSON.parse(readFileSync(recordPath, 'utf8'));
-      expect(record.port, 'the port that served this run').toBe(suite.calls[0].env.PLAYWRIGHT_PORT);
-      expect(record.baseUrl).toBe(`http://localhost:${suite.calls[0].env.PLAYWRIGHT_PORT}`);
-      expect(record.outputDir).toContain('test-results');
-      expect(record.queued, 'and whether it had the queue, which is diagnostic not load-bearing').toBe(true);
-      // The record is closed when the run finishes, so "died at startup" is
-      // distinguishable from "served an hour" by more than a timestamp.
-      expect(record.exitCode).toBe(0);
-      expect(record.finishedAt, 'the record says the run ended').toBeTruthy();
-    } finally {
-      if (previous === null) rmSync(recordPath, { force: true });
-      else writeFileSync(recordPath, previous);
-    }
+    // This run's OWN record, not the worktree's: see the block comment on `run`
+    // above. Nothing is saved and nothing is restored, because nothing outside this
+    // test owns this file — the read/restore dance an earlier version performed
+    // existed only to give back a file it should never have borrowed, and it raced
+    // a concurrent run into a false red as well as destroying its record.
+    const record = JSON.parse(readFileSync(runRecordPath(), 'utf8'));
+    expect(record.port, 'the port that served this run').toBe(suite.calls[0].env.PLAYWRIGHT_PORT);
+    expect(record.baseUrl).toBe(`http://localhost:${suite.calls[0].env.PLAYWRIGHT_PORT}`);
+    expect(record.outputDir).toContain('test-results');
+    expect(record.queued, 'and whether it had the queue, which is diagnostic not load-bearing').toBe(true);
+    // The record is closed when the run finishes, so "died at startup" is
+    // distinguishable from "served an hour" by more than a timestamp.
+    expect(record.exitCode).toBe(0);
+    expect(record.finishedAt, 'the record says the run ended').toBeTruthy();
   });
 
   it('records the REMOTE target as the base URL, not the localhost port it also started', async () => {
@@ -330,20 +455,60 @@ describe('e2e-run: the own-server guarantee', () => {
     // Deriving `baseUrl` from that port recorded a URL that served no test as the
     // thing under test, in the one file whose job is to stop a report implying a
     // local verification.
-    const boardDir = tempBoard();
-    try {
-      const suite = fakeSuite();
-      await run([], {
-        env: { ...boardDir.env, E2E_ALLOW_REMOTE: '1', PLAYWRIGHT_BASE_URL: 'https://staging.example.com' },
-        log: recorder().log,
-        runPlaywright: suite,
-      });
+    //
+    // This test used to end in an unconditional `rmSync` of the worktree's live
+    // record, eleven lines below a sibling that had been repaired for exactly that
+    // in the same commit. It reads its own record now and deletes nothing.
+    const suite = fakeSuite();
+    await run([], {
+      env: { ...boardDir.env, E2E_ALLOW_REMOTE: '1', PLAYWRIGHT_BASE_URL: 'https://staging.example.com' },
+      log: recorder().log,
+      runPlaywright: suite,
+    });
 
-      const record = JSON.parse(readFileSync(join(REPO_ROOT, '.kilo', 'e2e-last-run.json'), 'utf8'));
-      expect(record.baseUrl).toBe('https://staging.example.com');
-      expect(record.remote, 'and the record admits it was not a local verification').toBe(true);
-    } finally {
-      rmSync(join(REPO_ROOT, '.kilo', 'e2e-last-run.json'), { force: true });
+    const record = JSON.parse(readFileSync(runRecordPath(), 'utf8'));
+    expect(record.baseUrl).toBe('https://staging.example.com');
+    expect(record.remote, 'and the record admits it was not a local verification').toBe(true);
+  });
+
+  it("writes the record where it was told, and never names the worktree's own file", async () => {
+    // The tripwire for the whole arrangement above. It READS the worktree's record and
+    // writes nothing, deliberately: a test that planted a marker there and checked it
+    // survived would be doing the damage it claims to prevent, one bug away from doing
+    // it for real.
+    const suite = fakeSuite();
+    const log = recorder();
+    await run([], { env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' }, log: log.log, runPlaywright: suite });
+
+    // The record is in the file this test was given, so a `run()` that ignored
+    // `runRecordPath` fails here on the read rather than on a comparison.
+    const record = JSON.parse(readFileSync(runRecordPath(), 'utf8'));
+    expect(record.port, 'the record is in the file this test was given').toBe(suite.calls[0].env.PLAYWRIGHT_PORT);
+    expect(log.text(), 'and the log names that file rather than the default one').toContain(runRecordPath());
+
+    // `runId` is what makes the last check decide instead of compare. It carries a
+    // timestamp and the writing process's pid, so a file written by THIS run is
+    // distinguishable from one written by a real e2e run, in either direction.
+    //
+    // What is deliberately NOT here is a before/after comparison of the live bytes.
+    // An earlier draft of this test had one, and it was a false red waiting for the
+    // first time somebody ran `npm run test` and `npm run test:e2e` together — which
+    // is the situation this whole change exists to make legal. A real e2e run is
+    // entitled to rewrite that file at any moment, and this test is not entitled to
+    // call that a failure.
+    //
+    // For the same reason an unparseable read asserts nothing rather than throwing:
+    // `writeFileSync` is not atomic, so a read can land inside a concurrent run's
+    // write. That is a writer in flight, which is not evidence about this test.
+    const live = (() => {
+      try {
+        return JSON.parse(readFileSync(LIVE_RUN_RECORD, 'utf8'));
+      } catch {
+        return null;
+      }
+    })();
+    if (live !== null) {
+      expect(live.runId, "no run in this suite reached the worktree's own record").not.toBe(record.runId);
     }
   });
 
@@ -497,11 +662,13 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
   });
 
   it('renews the lease while the suite runs, and says so if a renewal fails', async () => {
-    // A file lock is never renewed by the board itself, so this wrapper owns the
-    // lease for as long as the suite lives. An earlier version defined the renewal
-    // and never started it: the timer existed, was documented, and no code path
-    // reached it. It survived a real full-suite run purely because the 30-minute
-    // lease outlasted it, which is exactly the kind of pass that is not evidence.
+    // The board renews this run's own lock too (`renewOwnLocks`, while the
+    // worktree is on disk), so this timer is belt and braces rather than the only
+    // thing standing between a live run and the sweep. An earlier version defined
+    // the renewal and never started it: the timer existed, was documented, and no
+    // code path reached it. It survived a real full-suite run purely because the
+    // 30-minute lease outlasted it, which is exactly the kind of pass that is not
+    // evidence — and the reason it still has to start is the same.
     //
     // A failed renewal is now a MESSAGE, not a kill. The old version stopped the
     // suite, which was correct when the lock was the guarantee and is wrong now that
@@ -755,16 +922,51 @@ describe('e2e-run: ports and arguments', () => {
   });
 
   it('finds a port it can then bind itself, which is what "free" has to mean', async () => {
-    // The earlier version asserted only that the number was in a plausible range,
-    // which `return 3000` satisfies verbatim. This one takes the port back and binds
-    // it: a port something else is listening on cannot be bound.
-    const port = await findFreePort();
-    expect(await isPortFree(port)).toBe(true);
-    await new Promise((resolve, reject) => {
-      const server = createServer();
-      server.on('error', reject);
-      server.listen(port, '127.0.0.1', () => server.close(resolve));
-    });
+    // The claim is unchanged and it is still the load-bearing one: the port a run is
+    // handed is a port this process can take, so `return 3000` cannot pass.
+    //
+    // What changed is how it is taken, because the earlier version took it in ONE shot:
+    // `findFreePort()`, then `isPortFree()` on the answer. Those are two binds with a
+    // gap between them, and the port is released inside the gap, so that assertion is
+    // also a claim about what every other process on the machine did during it — which
+    // is the one promise this repository's own header refuses to make.
+    // `scripts/e2e-run.mjs:191-199` says so in the code that matters: the check "cannot
+    // close the gap between this returning and Vite calling bind", and `reservePort`
+    // exists because one pick is not a guarantee. A test that asserted the one-shot
+    // shape was therefore asserting a property of the machine, and it went red against
+    // a correct implementation on a loaded host.
+    //
+    // Measured here rather than assumed: 0 losses in 10,250 find→check→bind cycles, with
+    // 16 sibling processes churning ephemeral ports and then under three concurrent
+    // full-suite runs. That is not evidence the assertion was sound. It is evidence the
+    // race is rare at this load, and rare is not the property a merge gate needs — the
+    // report that this test failed red in a full `npm run test` is the observation that
+    // matters, and the machine has 97 worktrees on it.
+    const first = await claimAPort();
+    try {
+      const second = await claimAPort(first.port);
+      try {
+        // Deterministic, and the half that no amount of retrying can paper over: `first` is
+        // LISTENING for the whole of this assertion, and the OS does not hand out a port
+        // that is in use (verified on this host: 200 picks with 40 LAN-bound ports held
+        // re-handed none of them, and a pick made while another was held never repeated it).
+        //
+        // So a picker answering from a constant cannot produce a second, different port
+        // while this process holds the first: `reservePort` re-checks the number it was
+        // given, finds it taken, and throws on its fifth consecutive loss — before this
+        // assertion can even be reached. The host can cost this test a cycle; it cannot
+        // cost it its verdict.
+        expect(
+          second.port,
+          `the production path answered ${first.port} twice — once with it bound and once after (reservePort ` +
+            `attempts ${first.attempt} and ${second.attempt})`
+        ).not.toBe(first.port);
+      } finally {
+        await second.close();
+      }
+    } finally {
+      await first.close();
+    }
   });
 
   it('reports a taken port as taken, which is what makes re-picking worth doing', async () => {

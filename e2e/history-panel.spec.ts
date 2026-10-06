@@ -11,6 +11,7 @@ import {
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
@@ -146,9 +147,16 @@ test.describe('History panel', () => {
     await expect(drawRows(page), 'the first document has an entry for the second to lose').toHaveCount(1);
     await expect(page.getByTestId('undo-button')).toBeEnabled();
 
-    page.on('dialog', (dialog) => void dialog.accept());
     await page.getByTestId('header-file-menu-button').click();
     await page.getByTestId('header-file-new-button').click();
+    // The stroke above is work, so File > New is gated behind the app's own discard
+    // prompt. It has to be ACCEPTED, not merely tolerated: the New Image dialog is only
+    // reached once the guard resolves, and the fresh timeline this test is about exists
+    // only if that dialog is submitted. The `page.on('dialog')` that used to stand here
+    // was a no-op for two reasons at once — it only ever matched the native `confirm()`
+    // this replaced, and Playwright auto-dismisses a dialog nobody is listening for, so a
+    // menu item that had stopped asking could not be told apart from a declined guard.
+    await acceptDiscardPrompt(page);
     await page.getByTestId('new-image-dialog-submit-button').click();
 
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);

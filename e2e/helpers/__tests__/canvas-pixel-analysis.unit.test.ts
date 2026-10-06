@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  CANVAS_REDRAW_CLIP,
+  INK_LUMA_FLOOR,
   STROKE_ANALYSIS,
   dominantRed,
   hasDarkPixels,
@@ -7,9 +9,14 @@ import {
   getDarkPixelBounds,
   getSelectionBounds,
   getColorAtPoint,
+  inkHeight,
+  inkWidth,
+  loadImageData,
+  measureInk,
   type ImageDataResult,
 } from '../canvas-helpers';
 import {
+  BLACK,
   CYAN,
   DARK_GRAY,
   GREEN,
@@ -18,6 +25,7 @@ import {
   TRANSPARENT,
   WHITE,
   createImageData,
+  createTestImage,
   createTestImageData,
   fillAll,
   fillRect,
@@ -47,6 +55,19 @@ describe('dominantRed', () => {
 
   it.each(NON_RED)('returns null for $name', async ({ color, alpha }) => {
     expect(await dominantRed(await createTestImageData(color, 50, 50, alpha))).toBeNull();
+  });
+
+  it('ranks two reds by population, because the sort is what picks the winner', async () => {
+    // Every other case here has ONE red in the map, so none of them reaches the comparator at
+    // all: `[...colors.values()][0]` on a one-entry array is the same answer as a sort of one
+    // entry. Two distinct reds are needed, and the one with FEWER pixels must lose — which is
+    // the property that makes the map a tally rather than a set. Insertion order is the wrong
+    // one deliberately: the more common red is written second.
+    const image = createImageData(10, 10);
+    fillRect(image, { left: 0, top: 0, right: 2, bottom: 9 }, RED);
+    fillRect(image, { left: 3, top: 0, right: 9, bottom: 9 }, { red: 200, green: 20, blue: 20 });
+
+    expect(await dominantRed(image)).toEqual({ red: 200, green: 20, blue: 20, count: 70 });
   });
 
   it('counts only the red pixels of a mixed image', async () => {
@@ -103,6 +124,56 @@ describe('hasDarkPixels', () => {
     setPixel(image, 7, 3, { red: 0, green: 0, blue: 0 });
 
     expect(await hasDarkPixels(image)).toBe(true);
+  });
+
+  // A TRIPWIRE, not a pin. Every case above says the predicate CAN answer true; this one
+  // says the thing it is pointed at cannot, and it is the only test in the suite that can.
+  it('reports the empty LIGHT workspace backdrop as empty — the premise the pinnedTheme fixture exists to hold', async () => {
+    // Under the light theme pin every pixel a capture can hold is one of two colours: the
+    // workspace checkerboard's own `#fff` and `#f3f3f3`, or the opaque white boot document.
+    // `hasDarkPixels` is a disjunction over opaque pixels, so an image carrying EVERY colour
+    // that backdrop can produce is the strongest form of the assertion — false here means no
+    // subset of it can be true. The document is the 255, which no threshold reaches, so the
+    // checkerboard alone already IS that worst case and the document is left out deliberately
+    // rather than filled in.
+    //
+    // The grid phase and the dimensions are incidental to the verdict (both colours appear
+    // under any phase, and the predicate is order-independent), but they are taken from
+    // `CANVAS_REDRAW_CLIP` so the fixture is the shape of the capture a redraw wait actually
+    // photographs — and so a later edit that quietly rebuilt this as a flat fill would be
+    // visible in the diff rather than only in the verdict.
+    const paper: Color = { red: 255, green: 255, blue: 255 };
+    const checker: Color = { red: 0xf3, green: 0xf3, blue: 0xf3 };
+    const { width, height } = CANVAS_REDRAW_CLIP;
+    const image = createImageData(width, height);
+    fillAll(image, paper);
+    for (let cellY = 0; cellY * 20 < height; cellY++) {
+      for (let cellX = 0; cellX * 20 < width; cellX++) {
+        if ((cellX + cellY) % 2 === 1) {
+          fillRect(
+            image,
+            {
+              left: cellX * 20,
+              top: cellY * 20,
+              right: cellX * 20 + 19,
+              bottom: cellY * 20 + 19,
+            },
+            checker
+          );
+        }
+      }
+    }
+
+    expect(
+      await hasDarkPixels(image),
+      `hasDarkPixels must answer false on the empty light workspace backdrop, and it answered true. The darkest ` +
+        `pixel of that backdrop is #f3f3f3 (243) against a DARK_PIXEL_THRESHOLD of ${DARK_PIXEL_THRESHOLD}. ` +
+        `Two things make it true, and only two: the app is painting its DARK checkerboard (#000 / #121212 in ` +
+        `the workspace rule in index.scss), which the pinnedTheme fixture in extended-test.ts is what stops, ` +
+        `or DARK_PIXEL_THRESHOLD has been tuned past 243. Under the first, every waitForCanvasRedraw in the ` +
+        `suite returns on its first poll and every hasDarkPixels-based assertion becomes an always-true no-op — ` +
+        `and a green run cannot tell.`
+    ).toBe(false);
   });
 });
 
@@ -492,5 +563,185 @@ describe('getColorAtPoint', () => {
     expect(result!.red).toBeLessThan(255);
     expect(result!.green).toBeGreaterThan(result!.red);
     expect(result!.green / result!.red).toBeCloseTo(greenColumns / redColumns, 1);
+  });
+});
+
+/**
+ * THE EXPORT ORACLE'S INSTRUMENT, and the reason it exists.
+ *
+ * `compareScreenshots` counts differing pixels against a budget, and for a long horizontal
+ * stroke that budget is wildly asymmetric: shifting a 174x11 band one pixel sideways relights
+ * only the two round caps, so on the committed baseline a 1.0-document-pixel horizontal shift
+ * produces 88 diff pixels and PASSES the 100-pixel budget while the same shift vertically
+ * produces 741 and fails. `measureInk` has no such blind spot — which is only true if it really
+ * tracks a sub-pixel shift, so the shift is asserted rather than asserted ABOUT in a docstring.
+ * `e2e/adjustments.spec.ts:91` and `e2e/export/helpers.ts:224-237` are the two callers, and
+ * `assertExportGeometry` is what stands or falls on the centroid case below.
+ */
+describe('measureInk', () => {
+  const PAPER = 255;
+  /** What `measureInk` treats as 255-paper, from `INK_LUMA_FLOOR`. Derived, not typed twice. */
+  const PAPER_LUMA = PAPER - INK_LUMA_FLOOR;
+
+  /** A horizontal band of black on white, `left`..`left + width - 1`, `rows` tall. */
+  const band = (left: number, top: number, width: number, rows: number): ImageDataResult => {
+    const image = createImageData(200, 20);
+    fillRect(image, { left, top, right: left + width - 1, bottom: top + rows - 1 }, BLACK);
+    return image;
+  };
+
+  it('weights a pixel by its alpha, so a translucent mark weighs half of an opaque one', async () => {
+    // The claim at the weight line: `((paper - luma) * alpha) / 255`. Pure black at alpha 255
+    // carries the full `paper - 0 = 247`; at alpha 128 it carries 247 * 128/255 of that. Asserted
+    // as the exact ratio rather than as "about half", because "about half" would also pass for
+    // a linear-ramp weighting that is not the one in the code.
+    const opaque = createImageData(1, 1);
+    setPixel(opaque, 0, 0, BLACK, OPAQUE);
+    const translucent = createImageData(1, 1);
+    setPixel(translucent, 0, 0, BLACK, 128);
+
+    const opaqueProfile = await measureInk(opaque);
+    const translucentProfile = await measureInk(translucent);
+
+    expect(opaqueProfile!.ink).toBeCloseTo(PAPER_LUMA, 6);
+    expect(translucentProfile!.ink).toBeCloseTo((PAPER_LUMA * 128) / PAPER, 6);
+    expect(translucentProfile!.ink / opaqueProfile!.ink).toBeCloseTo(128 / PAPER, 9);
+  });
+
+  it('drops a pixel whose weight is zero or less, which is the paper boundary', async () => {
+    // `paper` is `255 - INK_LUMA_FLOOR` (247), and the weight is `paper - luma`. So luma 247
+    // weighs EXACTLY zero and is dropped by the `<= 0` test; luma 246 weighs 1 and is kept. A
+    // `< 0` test instead of `<= 0` would admit the zero-weight pixel and count it in
+    // `pixelCount`, which is one of the numbers `assertExportGeometry` compares.
+    const atThePaper = createImageData(1, 1);
+    setPixel(atThePaper, 0, 0, gray(PAPER_LUMA));
+    const oneDarker = createImageData(1, 1);
+    setPixel(oneDarker, 0, 0, gray(PAPER_LUMA - 1));
+
+    expect(await measureInk(atThePaper)).toBeNull();
+    const profile = await measureInk(oneDarker);
+    expect(profile!.ink).toBeCloseTo(1, 9);
+    expect(profile!.pixelCount).toBe(1);
+  });
+
+  it('returns null for a blank page and for an empty image, which are different answers', async () => {
+    // The docstring's contract: null means "no ink at all", a legitimate blank export. The two
+    // fixtures reach it through different arms — every pixel transparent (`alpha === 0`) and
+    // every pixel at or above the paper (`weight <= 0`) — so both are pinned.
+    const paper = createImageData(8, 8);
+    fillAll(paper, WHITE);
+
+    expect(await measureInk(createImageData(8, 8))).toBeNull();
+    expect(await measureInk(paper)).toBeNull();
+    expect(await measureInk({ width: 0, height: 0, data: new Uint8ClampedArray(0) })).toBeNull();
+  });
+
+  it('tracks a horizontal shift of exactly one document pixel', async () => {
+    // THE LOAD-BEARING CASE. `assertExportGeometry` compares measured centroids against the
+    // committed baselines, and the whole reason `measureInk` was written is that the pixel-diff
+    // oracle it replaced was ~110x looser on this axis. One image pixel at one CSS pixel per
+    // image pixel is a one-document-pixel shift, because the capture is at CSS scale.
+    const base = band(20, 8, 160, 3);
+    const shifted = band(21, 8, 160, 3);
+
+    const before = await measureInk(base);
+    const after = await measureInk(shifted);
+
+    expect(before).not.toBeNull();
+    expect(after).not.toBeNull();
+    expect(after!.centroidX - before!.centroidX).toBeCloseTo(1, 9);
+    // And the axis the old oracle COULD see is equally blind here, which is the property that
+    // makes the centroid a replacement rather than an addition.
+    expect(after!.centroidY).toBe(before!.centroidY);
+    expect(after!.spreadX).toBeCloseTo(before!.spreadX, 9);
+    expect(after!.spreadY).toBe(before!.spreadY);
+  });
+
+  it('resolves the centroid on the pixel-centre convention, so a one-pixel mark is at 0.5', async () => {
+    // The `x + 0.5` at the accumulation line, which is what makes a sub-pixel centroid possible
+    // at all: without it every centroid would be a whole number and the measurement would
+    // quantise exactly where the diff oracle did not.
+    const image = createImageData(4, 4);
+    setPixel(image, 1, 2, BLACK);
+
+    const profile = await measureInk(image);
+
+    expect(profile!.centroidX).toBe(1.5);
+    expect(profile!.centroidY).toBe(2.5);
+  });
+
+  it('reports zero spread for a single pixel, and NaN is the failure this was checked against', async () => {
+    // `Math.max(0, E[x²] - E[x]²)` guards against catastrophic cancellation, and a single pixel
+    // is the minimum case: the quantity it guards is exactly zero. A NaN spread reaches
+    // `assertExportGeometry` as a comparison against a tolerance, which is always false, so the
+    // failure would be a hard red rather than a wrong pass — but a red that says nothing about
+    // the geometry.
+    //
+    // WHAT IS NOT CLAIMED HERE. The guard cannot be shown to be load-bearing by any fixture of
+    // a capturable size. The unguarded expression goes negative only when the ink-weighted mean
+    // is near-zero variance AT A LARGE COORDINATE, and measuring that needs roughly 1e5 ink
+    // pixels at column 8000 or beyond — an image over 8e8 pixels, which no `page.screenshot`
+    // produces and which would not fit the heap. Small images with mixed weights were searched
+    // to 2e6 pixels and across both axes without finding one. So the guard is defensive, this
+    // case pins the contract it protects (a zero-variance profile reports 0, never NaN), and
+    // the fact that the guard itself is unreachable at capture sizes is recorded here rather
+    // than left as an assumption.
+    const image = createImageData(4, 4);
+    setPixel(image, 2, 1, BLACK);
+
+    const profile = await measureInk(image);
+
+    expect(profile!.spreadX).toBe(0);
+    expect(profile!.spreadY).toBe(0);
+    expect(Number.isNaN(profile!.spreadX)).toBe(false);
+    expect(Number.isNaN(profile!.spreadY)).toBe(false);
+  });
+
+  it('carries the image size alongside the measurements, since a 2x capture is twice as wide', async () => {
+    const profile = await measureInk(band(20, 8, 160, 3));
+
+    expect(profile!.imageWidth).toBe(200);
+    expect(profile!.imageHeight).toBe(20);
+    expect(profile!.pixelCount).toBe(160 * 3);
+    expect(profile!.left).toBe(20);
+    expect(profile!.right).toBe(179);
+    expect(profile!.top).toBe(8);
+    expect(profile!.bottom).toBe(10);
+  });
+
+  it('measures a Buffer exactly like decoded image data', async () => {
+    const buffer = await createTestImage(BLACK, 12, 4);
+    const decoded = await loadImageData(buffer);
+
+    expect(await measureInk(buffer)).toEqual(await measureInk(decoded));
+  });
+
+  it('exposes the span accessors as right-minus-left, not as a CSS size', async () => {
+    // Both are `[IMAGE]` pixels, so a caller converting to CSS has to divide by the capture
+    // scale itself. `inkWidth`/`inkHeight` are what `e2e/export/helpers.ts:236-237` compares
+    // against the committed baseline, so the "+1" inclusive convention is pinned on a fixture
+    // whose inclusive edges are not symmetric: a mark on columns 20..24 is FIVE columns wide.
+    const image = createImageData(40, 40);
+    fillRect(image, { left: 20, top: 5, right: 24, bottom: 9 }, BLACK);
+
+    const profile = await measureInk(image);
+
+    expect(inkWidth(profile!)).toBe(5);
+    expect(inkHeight(profile!)).toBe(5);
+    expect(inkWidth(profile!)).toBe(profile!.right - profile!.left + 1);
+    expect(inkHeight(profile!)).toBe(profile!.bottom - profile!.top + 1);
+  });
+
+  it('has one floor, and it is the constant every export measurement was taken with', async () => {
+    // `options.floor` used to let a caller change this and is gone: no caller in `e2e/` ever
+    // passed it, so it was a second place for the same number to disagree with itself. The
+    // measurement it was supposed to justify — that a floor of 8 trims JPEG's ringing from
+    // `112..295` to the `118..292` every format agrees on — is about the EXPORT formats, which
+    // `e2e/export/helpers.ts` decodes and hands over unchanged. Pinning the constant is what
+    // stops a future edit from quietly moving every baseline at once.
+    expect(INK_LUMA_FLOOR).toBe(8);
+    // And the value is derived from it rather than from a second literal in the loop.
+    const profile = await measureInk(band(20, 8, 160, 3));
+    expect(profile!.ink).toBeCloseTo(160 * 3 * PAPER_LUMA, 6);
   });
 });

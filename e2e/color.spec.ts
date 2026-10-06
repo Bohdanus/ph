@@ -10,12 +10,31 @@ import {
   LINE_START_Y,
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
-import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
+import { waitForCanvasPixels } from './helpers/canvas-redraw';
+/*
+ * Every redraw wait in this file polls the DOCUMENT's own rect inside the canvas box, derived
+ * from the contain fit, rather than `CANVAS_REDRAW_CLIP`.
+ *
+ * `CANVAS_REDRAW_CLIP` is a fixed 300x100 box-relative rect, so whether it stays inside the
+ * document is a property of the current layout rather than of the helper: at the suite's
+ * 974x583 box it starts at box x 100 while the document's own left edge is at
+ * `offsetX = 98.33`, and `offsetX` reaches 100 at a box height of 580.5. A viewport three
+ * pixels shorter therefore puts the LETTERBOX inside it. In the light theme that is
+ * `#ffffff` and nothing false-passes; under DARK it is `#121212`, which is inside
+ * `hasDarkPixels` (all three channels under 60) with no stroke on the canvas at all — so a
+ * wait for the stroke would return on a frame containing nothing, and a wait for the stroke
+ * to LOSE its dark core could never settle and would time out instead.
+ *
+ * The fitted document rect is a subset of the box by construction, so a clip built from the
+ * fit cannot contain the letterbox. That is the spec-side statement; the containment itself
+ * is pinned in `__tests__/document-sampling.unit.test.ts`.
+ */
+import { documentClipInBox } from './helpers/document-sampling';
 import { setForegroundColor } from './helpers/color-helpers';
 import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
-  await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
+  await waitForCanvasPixels(page, documentClipInBox(box), hasRedPixels, { description: 'red pixels' });
 }
 
 // screenshot of canvas area contains line of selected red color
@@ -52,10 +71,14 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // `tool-button-draw` element.
   await expectToolSelected(page, 'draw');
 
-  // Measured AFTER the tool switches, not before: a tool change swaps the options
-  // bar, which can move the canvas, and `drawLine` takes box-relative offsets. A box
-  // measured before would stroke - and then sample - somewhere the geometry no longer
-  // describes. The two clicks above are what makes this ordering load-bearing.
+  // Measured AFTER the tool switches, not before, and `drawLine` takes box-relative
+  // offsets, so the box has to be the one the finished layout produced. It is NOT read
+  // after the switch because a tool change moves the canvas: it cannot. The options bar
+  // mounts in the toolbar row, which `TOOLBAR_BASE_CLASS` fixes at 50px, and the canvas is
+  // in the main area, a different row in `App.tsx`. Read after the switch, this box is
+  // right whether or not that holds, and a layout that made a tool resize the workspace
+  // would not silently aim the stroke somewhere else.
+  // The two clicks above are what makes this ordering load-bearing.
   const box = await canvas.boundingBox();
   expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 

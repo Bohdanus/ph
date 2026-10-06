@@ -27,6 +27,7 @@ export const LAYER_TRANSPARENCY_ACTION = 'layer transparency'; // todo this is n
 // export const UPDATE_LAYER_ACTION = 'some update'; // fallback, and maybe never used
 export const REORDER_ACTION = 'reorder layers';
 export const MERGE_ACTION = 'merge layers';
+export const REPLACE_LAYER_SOURCE_ACTION = 'edit layer source';
 export const REMOVE_ACTION = 'remove layer';
 export const SET_DOCUMENT_FRAME_ACTION = 'set document frame';
 
@@ -42,5 +43,6 @@ export type ActionType =
   // | typeof UPDATE_LAYER_ACTION
   | typeof REORDER_ACTION
   | typeof MERGE_ACTION
+  | typeof REPLACE_LAYER_SOURCE_ACTION
   | typeof REMOVE_ACTION
   | typeof SET_DOCUMENT_FRAME_ACTION;

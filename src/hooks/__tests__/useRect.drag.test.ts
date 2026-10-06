@@ -144,6 +144,23 @@ describe('useRect mask drawing', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
   });
 
+  /**
+   * `handlesOutside` is the Type tool's alone, and the default above is Adobe's: a grip straddling
+   * the corner is grabbable across its whole width, because `edgeAtPoint` takes
+   * `HANDLE_SIZE / scale / 2` either side of the corner either way. Painting the grip wholly outside
+   * left the outer half of every visible handle unclickable on the marquee, the crop and the Move
+   * tool, and `e2e/select-move.spec.ts` — `stretches selected line` — caught exactly that.
+   */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 250, handle, handle);
+  });
+
   it('reports the sorted rect to onRepaint but not to onChange while idle', () => {
     const onRepaint = vi.fn();
     const onChange = vi.fn();
@@ -437,6 +454,58 @@ describe('useRect handle detection', () => {
     expect(target.style.cursor).toBe('');
     // The guard rejects before the coordinates are even read.
     expect(pointer.data.getLocalCoords).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRect marquee border animation', () => {
+  beforeEach(resetPointerMock);
+
+  it('advances the in-flight border at screen speed and stops on release', () => {
+    pointer.data.dimensionsRef.current.scale = 2;
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging' });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets).toContain(-0.2);
+    const paintedFrames = dashOffsets.length;
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(paintedFrames);
+  });
+
+  it('keeps the always-mode border static while dragging', () => {
+    const { ctx, result, event } = setup({ borderMode: 'always', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(210, 185));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(1);
+    expect(dashOffsets).toEqual([0]);
   });
 });
 
@@ -748,6 +817,108 @@ describe('useRect drag geometry', () => {
   });
 });
 
+/**
+ * `allowOutsideCanvas` changes the PAINTED geometry, and only for the one consumer that asks.
+ *
+ * By default the rect is clamped to the canvas before it is painted, so a marquee, a Move box or a
+ * text box dragged past the image edge snaps back to it. That is what every consumer wants and
+ * what `useRect drag geometry` above pins. Crop's box is a window onto a canvas that extends past
+ * the image, and there the clamp was the wrong answer: the box shrank on screen while the rect
+ * `onChange`/`onChangeEnd` reported — and the crop committed — kept the overhang, so the two
+ * disagreed. With the prop the true rect is painted and the backing store clips it, which is why
+ * the overhang is still legible and why the DOM frame (a separate area's job) is needed at all.
+ */
+describe('useRect painting outside the canvas', () => {
+  beforeEach(resetPointerMock);
+
+  /** A drag from inside the document to up and to the left of its origin corner. */
+  function dragOutOfBounds(props: Partial<UseRectProps>) {
+    const { ctx, result, event, flushFrame } = setup(props);
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(-100, -50));
+    });
+    flushFrame();
+
+    return { ctx, result, event };
+  }
+
+  it('paints the true rect, its blend cut-out and its four handles where the pointer left it', () => {
+    const { ctx } = dragOutOfBounds({ allowOutsideCanvas: true });
+
+    // -100,-50 with a 150x110 extent: the overhang is painted, not pulled back to the origin.
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(-100, -50, 150, 110);
+    // The cut-out follows the true rect, and the backing store clips it to the document.
+    expect(ctx.clearRect).toHaveBeenLastCalledWith(-100, -50, 150, 110);
+    // The dim is the document, not the selection, so it is unchanged by the prop.
+    expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
+
+    const handle = HANDLE_SIZE;
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
+  });
+
+  it('leaves the clamped painting and handles in place for a consumer that does not opt in', () => {
+    const { ctx } = dragOutOfBounds({});
+
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(0, 0, 50, 60);
+    expect(ctx.clearRect).toHaveBeenLastCalledWith(0, 0, 50, 60);
+
+    // The handles are derived from the painted rect, so the clamp moves them too — which is the
+    // snap-back this prop exists to switch off, pinned for everyone who does not set it.
+    const handle = HANDLE_SIZE;
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
+  });
+
+  it('paints a rect that stays inside the document identically with and without the prop', () => {
+    const painted = (props: Partial<UseRectProps>) => {
+      const { ctx, result, event, flushFrame } = setup(props);
+
+      // Fractional pointer coords, so this also pins that the prop does not smuggle a second
+      // rounding rule in: both paths round each edge once and derive the extent from the rounds.
+      startDrag({ result, event }, { x: 100.4, y: 100.6 });
+      act(() => {
+        result.current.pointerHandlers.onPointerMove(event(300.4, 250.6));
+      });
+      flushFrame();
+
+      return vi.mocked(ctx.strokeRect).mock.calls.at(-1);
+    };
+
+    const clamped = painted({});
+    expect(clamped).toEqual([100, 101, 200, 150]);
+    expect(painted({ allowOutsideCanvas: true })).toEqual(clamped);
+  });
+
+  it('still reports the unclamped rect to onChange and onChangeEnd', () => {
+    const onChange = vi.fn();
+    const onChangeEnd = vi.fn();
+    const { result, event, flushFrame } = setup({ allowOutsideCanvas: true, onChange, onChangeEnd });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(-100, -50));
+    });
+    flushFrame();
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(-100, -50));
+    });
+
+    // The reports were never clamped — this prop must not have changed what crop commits either.
+    const expected = { x1: -100, y1: -50, x2: 50, y2: 60 };
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
 describe('useRect pointer up and move tool', () => {
   beforeEach(resetPointerMock);
 
@@ -890,9 +1061,12 @@ describe('useRect pointer up and move tool', () => {
  * rectangle out from the press point, and both at once is a square centred on it.
  *
  * They are per-consumer props rather than a behaviour of the hook, because `useRect` is shared
- * with crop and the Move tool and neither of them constrains a drag. The first case below is
- * the regression guard for that: the same gesture with neither prop set is the pre-existing
- * `adjustFreePoint` path, byte for byte.
+ * with the Move tool and the text tool and neither of them constrains a drag. The crop is the
+ * second consumer to opt in, beside the rectangular marquee, and it is the one that carries an
+ * aspect ratio of its own — so the cases below also pin that Shift is a square rather than
+ * "whatever ratio is in play", and that the ratio a marquee is NOT given is not read from the
+ * press either. The first case is the regression guard for the consumers that opt out: the same
+ * gesture with neither prop set is the pre-existing `adjustFreePoint` path, byte for byte.
  */
 describe('useRect fresh-drag modifiers', () => {
   beforeEach(resetPointerMock);
@@ -976,7 +1150,8 @@ describe('useRect fresh-drag modifiers', () => {
       move: { altKey: true, shiftKey: true },
     });
 
-    // Crop and the Move tool: the modifiers are pressed and nothing about the rect changes.
+    // The Move tool and the text tool: the modifiers are pressed and nothing about the rect
+    // changes.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 150 });
   });
 
@@ -1002,5 +1177,51 @@ describe('useRect fresh-drag modifiers', () => {
     // A 2:1 rect dragged by its top-left corner is still 2:1, measured from the shared
     // opposite corner the handle anchored it to: 250 wide, 125 tall.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 75, x2: 300, y2: 200 });
+  });
+
+  it.each([
+    ['Command', { metaKey: true }],
+    ['Control', { ctrlKey: true }],
+  ] as const)('%s is not the aspect-ratio modifier on a fresh drag', (_name, modifier) => {
+    // The crop's own modifier table gives Command to Straighten and to disabling edge snapping,
+    // and neither Command nor Control constrains proportions on a marquee anywhere in Adobe's
+    // geometry modifiers — Shift is that key. So a fresh drag out of the existing 2:1 selection
+    // must take no ratio from it: before the gate in `getEdgeAtPoint`, this press recorded the
+    // selection's ratio as well and the drag out of it came out 2:1.
+    const onChange = dragFrom(
+      { from: { x: 500, y: 500 }, to: { x: 700, y: 550 }, down: modifier, move: modifier },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 500, y1: 500, x2: 700, y2: 550 });
+  });
+
+  it('keeps a Command corner resize on the ratio the box already has', () => {
+    // The gate is on WHERE the press landed, not on WHICH key was held: a resize still pins the
+    // box's own ratio, which is what the Move tool, the text tool and the marquees read it for.
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 320, y: 195 }, down: { metaKey: true }, move: { metaKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 195, x2: 310, y2: 200 });
+  });
+
+  it('prefers the square over the ratio the consumer is configured with', () => {
+    // The crop's options bar can hold a Ratio while a fresh box is drawn, and Shift is Adobe's
+    // square rather than "the ratio, whichever it is".
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { aspectRatio: 2, constrainToSquare: true, fromCentre: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 300 });
+  });
+
+  it('keeps the configured ratio on a fresh drag held under no modifier', () => {
+    const onChange = dragFrom({ from: { x: 100, y: 100 }, to: { x: 300, y: 150 } }, { aspectRatio: 2 });
+
+    // 200x50 is wider than 2:1, so the width collapses to the 50px height doubled.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 200, y2: 150 });
   });
 });

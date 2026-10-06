@@ -200,14 +200,14 @@ describe('useSelectionClipboard layerViaCopy', () => {
     expect(input.bitmap).toBeInstanceOf(OffscreenCanvas);
   });
 
-  it.fails('translates the copied layer position from canvas space into document space', async () => {
-    // PROD DEFECT, not fixed: `src/contexts/useSelectionClipboard.ts:100`
-    // converts the snapshot position with `documentToCanvasPos`, while
-    // `copySelection` converts the very same snapshot position into the clipboard
-    // with `canvasToDocumentPos` at `src/contexts/useSelectionClipboard.ts:54`.
-    // Every other `createLayerFromBitmap` caller passes a document-space `pos`
-    // (see `src/components/Main/ShapeToolArea.tsx:153`), so on a cropped document
-    // the copied layer lands one frame-origin off.
+  it('lands the copied layer on the selection in document space, unshifted by the frame origin', async () => {
+    // `layerViaCopy` converts the selection into canvas space at
+    // `useSelectionClipboard.ts:92`, snapshots it there, and converts the snapshot's
+    // bounds back at `:100` — so the round trip is the identity on position and the
+    // layer must land exactly where the selection is, whatever the frame origin is.
+    // `createLayerFromBitmap` reads `pos` as document space: `layer-renderer.ts:115`
+    // hands `evaluation` to `drawEvaluatedPresentation` with `{ kind: 'document',
+    // frame }`, and `presentation-evaluator.ts:277` subtracts the frame there.
     storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
     storeState.totalSize = { width: 90, height: 80 };
     const api = renderProbe();
@@ -215,7 +215,7 @@ describe('useSelectionClipboard layerViaCopy', () => {
     await expect(api.layerViaCopy()).resolves.toBe(true);
 
     expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ pos: { x: 20, y: 30, width: 30, height: 40 } })
+      expect.objectContaining({ pos: { x: 10, y: 20, width: 30, height: 40 } })
     );
   });
 
