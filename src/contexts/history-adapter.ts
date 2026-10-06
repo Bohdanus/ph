@@ -21,7 +21,6 @@ import {
   cloneLayerSnapshot,
   collectDurableAssetIds,
   freezeDurableDocument,
-  refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
@@ -1129,6 +1128,36 @@ export function convertLegacyHistorySafely(
 /** Named alias used at the compatibility boundary by importers and callers. */
 export const convertLegacyHistory = legacyHistoryToDurable;
 
+/**
+ * The durable converter's source-to-runtime rule, and nothing but a delegation for
+ * the two fields the runtime rule owns.
+ *
+ * It used to re-derive the layer from the source here, binding the bare kind as
+ * `name` and folding `Math.max(-1, ...orders) + 1` for `order`. That was a second
+ * rule, and it disagreed with `createLayerSource` — the rule `replayHistory` builds
+ * a layer through, wired at `useHistory.ts` — on the first layer of any document:
+ * `'Blank'` at order `0` here, `'Blank 1'` at order `1` there, and no `ellipsify` on
+ * a long image name on this side. Two live tests pinned the two answers, so neither
+ * was accidental; the runtime rule is what the document means and this is the copy,
+ * so the copy derives through {@link deriveLayerNameAndOrder} — the derivation
+ * `createLayerSource` itself makes — rather than keeping a second one.
+ *
+ * `name` and `order` are read together because they are one derivation: the number
+ * in the name suffix IS the order, so taking one from the runtime rule and folding
+ * the other here would leave a third rule rather than one of the two.
+ *
+ * The layer set is read for its orders alone (`LayerOrderRecord`), so a durable
+ * snapshot is as good a witness as a runtime `Layer` — which is what makes the rule
+ * reachable at all, since every caller here holds the former. That is also why the
+ * empty map in {@link deriveReplaceLayerSourceEntry} stays meaningful: the derived
+ * order is discarded there, exactly as the old fold's was.
+ *
+ * The rest of the layer stays derived here, and deliberately: `createLayerSource`
+ * would also allocate a canvas per blank source and run a creator tool's
+ * `imageProcessor`, and this is a conversion that wants two fields. `pos` in
+ * particular is the authored box rather than the patched one, which is a separate
+ * question from the one this function was re-deriving.
+ */
 export function sourceToRuntimeLayer(
   id: LayerId,
   source: LayerSource,
@@ -1136,9 +1165,9 @@ export function sourceToRuntimeLayer(
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
-  const orderRecords: LayerOrderRecord = Object.create(null);
-  for (const [layerId, layer] of layers) orderRecords[layerId] = layer;
-  const { name, order } = deriveLayerNameAndOrder(orderRecords, source);
+  const orders: LayerOrderRecord = Object.create(null);
+  for (const [layerId, layer] of layers) orders[layerId] = layer;
+  const { name, order } = deriveLayerNameAndOrder(orders, source);
   return {
     id,
     name,
@@ -1164,12 +1193,8 @@ export function createDurableDocument(
 
 export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
   const history = [...document.history.slice(0, document.cursor + 1), next];
-  // One freeze, not two. `cloneDurableDocument` used to run here and the freeze it
-  // fed deep-copied its result immediately, so the retained prefix was copied twice
-  // per append and the first copy was observable in neither. The retained entries are
-  // carried across by reference when `document` is one of `history-model.ts`'s own
-  // frozen copies, and deep-copied when it is not.
-  return refreezeDurableDocument(document, {
+  return freezeDurableDocument({
+    ...cloneDurableDocument(document),
     history,
     cursor: history.length - 1,
     branchRevision: document.branchRevision + 1,
@@ -1183,9 +1208,9 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   const history = document.history.map((historyEntry, historyIndex) =>
     historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
   );
-  return refreezeDurableDocument(document, {
+  return freezeDurableDocument({
+    ...document,
     history,
-    cursor: document.cursor,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
   });
@@ -1195,5 +1220,5 @@ export function setDurableCursor(document: DurableDocument, cursor: number): Dur
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
   return cursor === document.cursor
     ? document
-    : refreezeDurableDocument(document, { cursor, durableRevision: document.durableRevision + 1 });
+    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
 }
