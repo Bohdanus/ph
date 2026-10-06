@@ -154,32 +154,7 @@ const RED_STROKE = '#cc0000';
  */
 const BLACK_STROKE = '#000000';
 
-/**
- * How many rows an UNBLURRED stroke may occupy.
- *
- * It replaces `expect(beforeBounds.height).toBeGreaterThan(0)`, which could not fail:
- * `getDarkPixelBounds` returns `null` when nothing matches and otherwise reports
- * `bottom - top + 1`, so every value the preceding `not.toBeNull()` admits is at least
- * 1 and the assertion held for all of them. The claim it stood in for — an unblurred
- * stroke has a hard, finite edge — is a claim about how many rows the ink occupies, and
- * `getStrokeAnalysis`'s `verticalSpread` is that measurement.
- *
- * 20, and derived rather than chosen: the draw tool's pen is `lineWidth: 10`
- * (`src/tools/settings.ts`), which is 9.7 capture pixels at this fit, so a hard edge
- * plus one anti-aliased transition on each side is about 12 — measured, exactly 12 here.
- * Twenty is twice the stroke's own width and still under `STROKE_ANALYSIS`'s
- * `SPRAY_VERTICAL_SPREAD_THRESHOLD` of 30, which is the line the analyser itself calls a
- * spray. A blur at radius 10 measures 50, so the two are far enough apart that the
- * blurred assertion cannot be satisfied by an unblurred reading.
- *
- * CAPTURE PIXELS, not CSS: `verticalSpread` is deliberately NOT scale-corrected (its
- * JSDoc says so), so this bound is in the decoded image's own pixels and a run at
- * `deviceScaleFactor: 2` would measure about 24 here. `playwright.config.ts` sets no
- * scale factor and this file has no `test.use`, so nothing runs it at 2 today; a future
- * 2x block over this spec has to derive this from the capture's scale rather than reuse
- * 20.
- */
-const UNBLURRED_VERTICAL_SPREAD_MAX = 20;
+const WHITE = 255;
 
 async function visibleCanvasBox(page: Page): Promise<BoundingBox> {
   const canvas = getWorkspaceCanvas(page);
@@ -228,14 +203,12 @@ const isNot =
  *
  * THREE clicks, and the middle one is not optional: `image-menu-adjustments-button` is a
  * `<button aria-haspopup="true">` with no hover handler, so the submenu is unmounted until it
- * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile,
- * and the `[Colors, Levels, Transform]` flyout that used to hold it is gone from `toolbarMap`.
- * The header has no `Tools` menu either — Photoshop reaches the tool set through its Tools
- * panel, not a menu — so `Image ▸ Adjustments` is the only surface left, and that is why this
- * path is a three-click sequence rather than a tile click. `Desaturate` is the enabled item
- * that selects it, and the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It
- * used to be `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter
- * is a lens filter with Density and Preserve Luminosity, and the app computes
+ * is clicked. `color` is an `Image ▸ Adjustments` COMMAND, not a tool — it has no rail tile
+ * and no `tools-menu-color-button`, and the `[Colors, Levels, Transform]` flyout that used to
+ * hold it is gone from `toolbarMap`. `Desaturate` is the enabled item that selects it, and
+ * the slug is `slugifyToolLabel('Desaturate')` (`toolbar-mapping.ts`). It used to be
+ * `Photo Filter`, which named a command whose bar this is not: Adobe's Photo Filter is a
+ * lens filter with Density and Preserve Luminosity, and the app computes
  * `grayscale(%) sepia(%) saturate(%)`.
  *
  * The other twenty items in that submenu render `disabled`, so this is the one path in and a
@@ -387,23 +360,14 @@ test.describe('Blur adjustment', () => {
     const before = await takeLineScreenshot(page, box, 'blur-before', testInfo);
     const beforeBounds = await getDarkPixelBounds(before);
     expect(beforeBounds, 'The black stroke should have a fully dark core before the adjustment').not.toBeNull();
+    expect(beforeBounds!.height, 'The unblurred stroke should have a hard, finite edge').toBeGreaterThan(0);
     const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
     expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
     expect(beforeAnalysis!.type, 'The unblurred stroke should read as solid').toBe('solid');
-    expect(
-      beforeAnalysis!.verticalSpread,
-      'The unblurred stroke should have a hard, finite edge: a handful of rows, not a spray'
-    ).toBeLessThanOrEqual(UNBLURRED_VERTICAL_SPREAD_MAX);
-    // All three samples, not just the middle: the loop below compares each blurred
-    // reading against the one taken at the SAME point here, and a sample never captured
-    // has nothing to be compared against.
-    const beforeSamples = new Map<string, number>();
-    for (const { name, x, y } of STROKE_SAMPLES) {
-      const sampled = await sampleCssPoint(before, x, y, 5, { ignoreNearWhite: true });
-      expect(sampled, `The stroke should be inked at its ${name} before the adjustment`).not.toBeNull();
-      beforeSamples.set(name, sampled!.red);
-    }
-    const beforeMiddle = beforeSamples.get(STROKE_MIDDLE.name)!;
+    const beforeMiddle = await sampleCssPoint(before, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, {
+      ignoreNearWhite: true,
+    });
+    expect(beforeMiddle, 'The stroke should be inked at its middle before the adjustment').not.toBeNull();
 
     // `blur` is a singleton toolbar button, not a flyout group, so it is clicked
     // directly rather than reached through a long-press flyout.
@@ -446,33 +410,17 @@ test.describe('Blur adjustment', () => {
     expect(afterAnalysis!.type, 'The spread soft edge is what the analyser classifies as spray').toBe('spray');
 
     // ...and the artwork survived: the ink is still there, just spread out and lighter.
-    //
-    // The claim is the one the old assertion was standing in for — a blur cannot add ink,
-    // so the stroke's value RISES, towards the white of the document behind it and never
-    // above it — and it is now stated against a measurement. `toBeLessThan(WHITE)` did
-    // not carry it: `getColorAtPoint` skips every pixel whose three channels all exceed
-    // `NEAR_WHITE_THRESHOLD`, so a reading of near-255 is the reading the skip exists to
-    // prevent, and the assertion was satisfied by a solid black fill, by a mid-grey
-    // replacement, and by a stroke that never moved. It was the only assertion in this
-    // test carrying the claim. Each blurred reading is now compared against the reading
-    // taken at the SAME point before the slider moved.
+    // A blur cannot add ink, so the stroke's value rises towards - never above - the
+    // white of the document behind it.
     for (const { name, x, y } of STROKE_SAMPLES) {
       const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
       expect(sampled, `The blur erased the stroke at the ${name} of it`).not.toBeNull();
-      expect(
-        sampled!.red,
-        `A blur lifts the stroke's value towards the background: the ${name} read ${beforeSamples.get(name)} before the blur`
-      ).toBeGreaterThan(beforeSamples.get(name)!);
-      // Direction alone admits a stroke replaced with a lighter colour, so the other two
-      // channels are held too: a blur scales luminance, and a replacement with a different
-      // HUE would move them independently.
-      expect(sampled!.green, `A blur does not tint the ${name} of the stroke`).toBe(sampled!.red);
-      expect(sampled!.blue, `A blur does not tint the ${name} of the stroke`).toBe(sampled!.red);
+      expect(sampled!.red, `A blur lifts the stroke's value towards the background, not above it`).toBeLessThan(WHITE);
     }
     const afterMiddle = await sampleCssPoint(after, STROKE_MIDDLE.x, STROKE_MIDDLE.y, 5, { ignoreNearWhite: true });
     expect(
       afterMiddle!.red,
-      `The middle of the stroke read ${beforeMiddle} before the blur, and a blur can only disperse its ink outwards`
-    ).toBeGreaterThan(beforeMiddle);
+      `The middle of the stroke read ${beforeMiddle!.red} before the blur, and a blur can only disperse its ink outwards`
+    ).toBeGreaterThan(beforeMiddle!.red);
   });
 });

@@ -105,6 +105,8 @@ type FreshDragModifiers = {
 };
 
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
+const RECT_BORDER_DASH_LENGTH = 5;
+const RECT_BORDER_DASH_SPEED = 0.4;
 
 /**
  * CANVAS px throughout: every point, size and rect read or computed below — and every rect handed
@@ -145,6 +147,8 @@ export function useRect({
 
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
+  const borderAnimationFrameRef = useRef<number | null>(null);
+  const borderDashOffsetRef = useRef(0);
 
   /** Whether a pointer gesture this hook owns is in flight. See `beginGesture`. */
   const isGestureActiveRef = useRef(false);
@@ -183,6 +187,10 @@ export function useRect({
 
   const endGesture = useCallback(() => {
     isGestureActiveRef.current = false;
+    if (borderAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(borderAnimationFrameRef.current);
+      borderAnimationFrameRef.current = null;
+    }
     if (borderMode === 'while-dragging') clearSelectionDragPreview();
     // `borderMode` is the only dependency because it is the only thing here that is not a ref or a
     // module function, and no consumer of this hook ever changes it — three pass nothing and the
@@ -214,7 +222,7 @@ export function useRect({
    * The overlay canvas outlives this hook: `Main.tsx:239-284` renders both overlay canvases
    * unconditionally and only toggles `display`, and toggling `display` never touches a backing
    * store. The effect above is the only other thing that clears it, and it cannot cover the AREA
-   * going away — `goToTool` appends the selection clear and
+   * going away — `goToTool` (`src/hooks/useApp.ts:167-196`) appends the selection clear and
    * dispatches `SET_TOOL_NAME` from one function body, React batches them, and the marquee's
    * component unmounts in the same commit that nulls the selection. An unmounted component's
    * effects do not run, so `initialRect` is never observed going null and the four `#007bff`
@@ -276,6 +284,35 @@ export function useRect({
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, dimensionsRef } =
     pointerPositionData;
 
+  function animateBorder() {
+    borderAnimationFrameRef.current = null;
+    if (borderMode !== 'while-dragging' || !isGestureActiveRef.current) return;
+
+    if (!isMouseDown.current || !rectUnsortedRef.current) {
+      if (rectUnsortedRef.current) drawMaskRef.current?.();
+      return;
+    }
+
+    const scale = dimensionsRef.current.scale;
+    const dashLength = RECT_BORDER_DASH_LENGTH / scale;
+    borderDashOffsetRef.current = (borderDashOffsetRef.current - RECT_BORDER_DASH_SPEED / scale) % (dashLength * 2);
+    drawMaskRef.current?.();
+    borderAnimationFrameRef.current = requestAnimationFrame(animateBorder);
+  }
+
+  function scheduleBorderAnimation() {
+    if (
+      borderMode === 'while-dragging' &&
+      isGestureActiveRef.current &&
+      isMouseDown.current &&
+      rectUnsortedRef.current &&
+      overlayRef.current?.getContext('2d') &&
+      borderAnimationFrameRef.current === null
+    ) {
+      borderAnimationFrameRef.current = requestAnimationFrame(animateBorder);
+    }
+  }
+
   /**
    * Where in the existing box a point lands, and NOTHING else — no decision, no recorded state.
    *
@@ -289,26 +326,18 @@ export function useRect({
       const { x1, y1, x2, y2 } = _initialRect;
       const { scale } = dimensionsRef.current;
       const h2 = HANDLE_SIZE / scale / 2;
-      // A corner grip is PAINTED over `[corner − h1, corner]` when `handlesOutside` is set, and the
-      // painted square is `h1` wide — twice the reach the ±`h2` hit test has always used. So three of
-      // its four quadrants fell through every test below, returned `null`, and `TextToolArea` read
-      // `null` as "this press placed a box": clicking a blue grip committed the open draft and
-      // published a fresh placeholder box under the pointer. The hit region therefore has to be the
-      // PAINTED region, which for the other three consumers is unchanged because they do not set the
-      // flag and keep the centred grip the ±`h2` band already described exactly.
-      const hc = handlesOutside ? HANDLE_SIZE / scale : h2;
 
       // check for tops
-      if (point.x >= x1 - hc && point.x <= x1 + h2 && point.y >= y1 - hc && point.y <= y1 + h2) {
+      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
         return 'top-left';
       }
-      if (point.x >= x2 - h2 && point.x <= x2 + hc && point.y >= y1 - hc && point.y <= y1 + h2) {
+      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
         return 'top-right';
       }
-      if (point.x >= x1 - hc && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + hc) {
+      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
         return 'bottom-left';
       }
-      if (point.x >= x2 - h2 && point.x <= x2 + hc && point.y >= y2 - h2 && point.y <= y2 + hc) {
+      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
         return 'bottom-right';
       }
 
@@ -428,10 +457,15 @@ export function useRect({
     if (borderMode === 'always' || (isGestureActiveRef.current && isMouseDown.current)) {
       ctx.strokeStyle = '#007bff';
       ctx.lineWidth = 2 / scale;
-      ctx.setLineDash([5 / scale, 5 / scale]);
+      ctx.setLineDash([RECT_BORDER_DASH_LENGTH / scale, RECT_BORDER_DASH_LENGTH / scale]);
+      ctx.lineDashOffset =
+        borderMode === 'while-dragging' && isGestureActiveRef.current && isMouseDown.current
+          ? borderDashOffsetRef.current
+          : 0;
       ctx.strokeRect(x, y, width, height);
     }
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
 
     // The handles stay in both modes, deliberately: they are the resize hit area and this hook's
     // only interactive affordance, and `'while-dragging'` stands the ants DOWN for the duration
@@ -705,6 +739,7 @@ export function useRect({
 
       calculateMaskRect(pendingPoint.current!);
       drawMask(true);
+      scheduleBorderAnimation();
     });
 
     return false;

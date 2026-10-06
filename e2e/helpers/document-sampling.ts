@@ -141,33 +141,24 @@ export function sampleCentreInImage(image: ImageSize, cssSize: { width: number; 
 /**
  * The whole-document rect inside the canvas box, in page-relative CSS pixels.
  *
- * WHAT THIS BUYS OVER `canvasRedrawClip`, stated precisely because the obvious version of
- * the claim is false. That helper does NOT let the letterbox in: it clamps its origin to
- * `max(CANVAS_REDRAW_CLIP, letterboxOrigin)`, so the region starts at or inside the
- * document's own edge and clamping can only move it further in. An earlier version of this
- * comment said a viewport three pixels shorter put the letterbox inside the clip; that is
- * contradicted by `canvasRedrawClip`'s own implementation and JSDoc.
+ * THIS IS NOT `canvasRedrawClip`. That one is a fixed 300x100 box-relative rect chosen to
+ * contain the standard test line, and it is not derived from the fit: at the suite's
+ * 974x583 box its left edge sits at box x 100 while the document's own left edge is at
+ * `offsetX = 98.33`, so a viewport 3px shorter — `offsetX` reaches 100 at a box height of
+ * 580.5 — puts the LETTERBOX inside it.
  *
- * So the difference is WHERE the guarantee comes from, not whether there is one.
- * `canvasRedrawClip` derives a 300x100 region from a fixed constant and then repairs its
- * origin — and the repair is a no-op at every box size the suite uses, since at 974x583 the
- * clamp is already satisfied (100 > 98.33). It starts to bite only when the letterbox
- * reaches 100px on an axis, and it cannot push the region off the standard line, because
- * nothing can be painted outside the document rect.
+ * That matters because the letterbox is a colour the dark predicates accept. In the light
+ * theme it is `#ffffff` and nothing false-passes; under DARK it is `#121212`, which is
+ * inside `hasDarkPixels` (all three channels under 60) with no stroke on the canvas at
+ * all, so a wait for the stroke returns on a frame containing nothing. In the other
+ * direction a negative wait — "wait until the stroke has LOST its dark core" — can never
+ * settle against a dark letterbox and times out instead, which is a false failure of a
+ * correct app.
  *
- * This rect carries the guarantee by CONSTRUCTION rather than by repair: the fitted
- * document rect is a SUBSET of the box (`scale = min(...)` makes `documentSize * scale` no
- * larger than either box axis), so the letterbox is outside it at every box size and no
- * viewport can change that. It is also the whole document rather than a window, so the
- * pixels waited for are the document's own by identity.
- *
- * The cost is the one this comment used to hide: this rect is the full document — 777x583 at
- * the suite's viewport against `canvasRedrawClip`'s 300x100 — so each poll decodes roughly
- * fifteen times the pixels, and a NEGATIVE wait ("wait until the stroke has lost its dark
- * core") must find no dark or red pixel anywhere in the document rather than in a window.
- * A second layer, a selection overlay or a text layer anywhere in the document will time
- * such a wait out. Prefer `canvasRedrawClip` where the standard line is what is being
- * waited for; this is for a wait whose subject is the document as a whole.
+ * A clip built from the contain fit cannot contain the letterbox, because the fitted
+ * document rect is a SUBSET of the box by construction (`scale = min(...)` makes
+ * `documentSize * scale` no larger than either box axis). So polling this rect instead is
+ * the spec-side statement that the pixels being waited for are pixels of the document.
  */
 export function documentClipInBox(
   box: BoundingBox,

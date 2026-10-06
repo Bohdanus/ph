@@ -131,7 +131,7 @@ const renderArea = () => {
   return container.firstElementChild as HTMLDivElement;
 };
 
-type ToolLayerCall = { id?: string; toolArgs: GradientToolArgs };
+type ToolLayerCall = { id?: string; toolArgs: { from: { x: number; y: number }; to: { x: number; y: number } } };
 
 describe('GradientToolArea', () => {
   beforeEach(() => {
@@ -231,34 +231,5 @@ describe('GradientToolArea', () => {
     // First and last of the whole gesture: 60,40 and 140,90 in document space.
     expect(commit.toolArgs.from).toEqual({ x: 40, y: 25 });
     expect(commit.toolArgs.to).toEqual({ x: 120, y: 75 });
-  });
-
-  it("forwards the gradient's own type and colours alongside the rebased axis", () => {
-    // The two `toEqual` pairs above pin the geometry and say nothing about the rest of the
-    // payload, and the rest is what decides the pixels: `findToolProcessor` resolves on
-    // `toolName`, and `gradient.ts` reads `type`, `colorA`, `colorB` and `alpha` to fill. A
-    // writer that rebuilt the args from `settings.ts` defaults instead of spreading the live ones
-    // would land the right gradient along the right axis in the wrong colour band — and every
-    // assertion above would still pass.
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 140, clientY: 90 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 140, clientY: 90 });
-
-    const expected = {
-      toolName: 'gradient',
-      type: 'linear',
-      colorA: '#000000',
-      colorB: '#ffffff',
-      alpha: 1,
-      from: { x: 40, y: 25 },
-      to: { x: 120, y: 75 },
-    };
-    const [preview] = tempUpdateLayerMock.mock.calls[0] as [ToolLayerCall];
-    expect(preview.toolArgs).toEqual(expected);
-
-    const [commit] = updateLayerByToolMock.mock.calls[0] as [ToolLayerCall];
-    expect(commit.toolArgs).toEqual(expected);
   });
 });

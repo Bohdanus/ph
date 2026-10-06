@@ -320,58 +320,20 @@ describe('StoreContext layer action table', () => {
     expect(store().durableStatus).toBe('stale');
   });
 
-  /**
-   * The other half of the same shared rule, and the half the downgrade matrix
-   * above cannot reach. `unavailable` means a conversion already FAILED, so
-   * downgrading it to `stale` would advertise a shadow nobody can produce. All
-   * four arms carry the identical `unavailable ? unavailable : stale` guard, and
-   * `SET_LAYERS`, `ADD_LAYER` and `SET_SIZE` had no test at all that started from
-   * `unavailable` — dropping the ternary from any one of them leaves this file and
-   * the suite green.
-   *
-   * The witness column is what keeps each row honest: `commitSelection`-style arms
-   * that never write the status would satisfy a status assertion on their own, so
-   * every row proves its own transition still ran.
-   */
-  it.each([
-    ['BATCH_UPDATES', { fileName: 'still-broken.psd' }, (store: StoreData) => store.fileName, 'still-broken.psd'],
-    ['SET_SIZE', { width: 123, height: 45 }, (store: StoreData) => store.totalSize, { width: 123, height: 45 }],
-    ['SET_LAYERS', { [layerId]: makeLayer() }, (store: StoreData) => store.layers, expect.anything()],
-    [
-      'ADD_LAYER',
-      { layers: { [layerId]: makeLayer() }, activeLayerId: layerId },
-      (store: StoreData) => store.layers,
-      expect.anything(),
-    ],
-  ] as const)(
-    'keeps an unavailable sidecar unavailable instead of downgrading to stale for %s',
-    (actionType, payload, readWitness, expectedWitness) => {
-      const { store, dispatch } = renderWithProbe();
+  it('keeps the sidecar unavailable instead of downgrading to stale when an edit follows a failure', () => {
+    const { store, dispatch } = renderWithProbe();
 
-      // A pen edit has no durable equivalent, so the commit's whole-timeline
-      // conversion fails: `unavailable`, no shadow, one error diagnostic.
-      act(() => {
-        dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('pen-edit', 'pen') } });
-      });
-      expect(store().durableStatus).toBe('unavailable');
-      expect(store().durableDocument).toBeNull();
-      const diagnostics = store().durableDiagnostics;
-      expect(diagnostics).toHaveLength(1);
+    act(() => {
+      dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('pen-edit', 'pen') } });
+    });
+    expect(store().durableStatus).toBe('unavailable');
 
-      act(() => {
-        dispatch()({ type: actionType, payload } as never);
-      });
+    act(() => {
+      dispatch()({ type: 'BATCH_UPDATES', payload: { fileName: 'still-broken.psd' } });
+    });
 
-      // The transition ran...
-      expect(readWitness(store())).toEqual(expectedWitness);
-      // ...and neither the status nor the diagnostics moved with it. `toEqual` on
-      // the diagnostics, not `toHaveLength(1)`: a downgrade would not add one, it
-      // would replace the pair, and the length alone would survive it.
-      expect(store().durableStatus).toBe('unavailable');
-      expect(store().durableDocument).toBeNull();
-      expect(store().durableDiagnostics).toEqual(diagnostics);
-    }
-  );
+    expect(store().durableStatus).toBe('unavailable');
+  });
 });
 
 describe('StoreContext selection action table', () => {

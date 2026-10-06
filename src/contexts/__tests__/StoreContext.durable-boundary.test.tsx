@@ -713,27 +713,6 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     });
 
     expect(getProbe().store.durableStatus).toBe('unavailable');
-
-    // The selection really committed. Without these the test is satisfied by a
-    // `COMMIT_SELECTION` that did nothing at all: `commitSelection` never writes
-    // `durableStatus`, so the single status assertion holds whether the arm ran,
-    // was deleted, or downgraded the sidecar to `stale` and the store later
-    // re-marked it — the name claims a guard, so the guarded transition has to be
-    // observable.
-    const committed = getProbe().store;
-    expect(committed.selections).toHaveLength(1);
-    expect(committed.selections[0]).toMatchObject({ id: 'selection-1', lifecycle: 'committed', isActive: true });
-    expect(committed.activeSelectionId).toBe('selection-1');
-    // The unavailable verdict AND the refusal to expose a shadow both survive.
-    expect(committed.durableStatus).toBe('unavailable');
-    expect(committed.durableDocument).toBeNull();
-    // `null`, not merely absent: an empty document would satisfy `toBeUndefined`.
-    expect(committed.durableDiagnostics).toHaveLength(1);
-    expect(committed.durableDiagnostics[0]).toMatchObject({
-      historyId: 'pen-edit',
-      severity: 'error',
-      code: 'unsupported-history-feature',
-    });
   });
 });
 

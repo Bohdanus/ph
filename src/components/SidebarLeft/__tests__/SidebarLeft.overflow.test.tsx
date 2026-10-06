@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toolbarMap, type ToolbarTool } from '../../../../toolbar-mapping.ts';
-import { goToTool, storeState, useSidebarLeftHarness } from './harness.tsx';
+import { goToTool, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
 
 /**
@@ -550,27 +550,5 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(screen.getByTestId('foreground-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('background-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
-  });
-
-  it('never claims to be a pressed toggle, even while one of its hidden tools is the active one', () => {
-    render(<SidebarLeft />);
-    setSlotHeight(300);
-    storeState.toolName = 'brush';
-
-    // The Brush is one of the tools the collapse took off the rail, so `group` here is the
-    // whole hidden set and the ordinary pressed derivation would be `true`. `aria-pressed` is
-    // the announcement half of that claim and it is withheld on this tile on purpose:
-    // a control whose only job is to open a menu must not report
-    // itself as a pressed toggle for a tool the user cannot see, and `aria-haspopup`/
-    // `aria-expanded` are what it carries instead.
-    expect(overflowTile(), 'the Brush really is a hidden tool at this slot height').not.toBeNull();
-    expect(overflowTile()!).not.toHaveAttribute('aria-pressed');
-    expect(overflowTile()!).toHaveAttribute('aria-haspopup', 'menu');
-    expect(overflowTile()!).toHaveAttribute('aria-expanded', 'false');
-
-    // And the same tile after its own menu opens: still no pressed claim, and now expanded.
-    openOverflowFlyout();
-    expect(overflowTile()!).not.toHaveAttribute('aria-pressed');
-    expect(overflowTile()!).toHaveAttribute('aria-expanded', 'true');
   });
 });

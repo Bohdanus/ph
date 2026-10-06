@@ -62,7 +62,6 @@ function makeSnapshot(
     blendMode: 'source-over' as GlobalCompositeOperation,
     order: 0,
     pos,
-    frame: { ...defaultFrame },
     source,
   });
 }
@@ -373,124 +372,6 @@ describe('materializeLayer safety (P0.3)', () => {
       expect(materialized.layerId).toBe('layer-1');
       expect(materialized.bitmap).toBeDefined();
       expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 100, height: 80 });
-
-      materialized.lease.release();
-    } finally {
-      toolProcessors.blur.imageProcessor = originalImageProcessor;
-    }
-
-    registry.shutdown();
-  });
-
-  it('widens a tight layer into the stroke frame BEFORE handing it to the processor', async () => {
-    // The durable half of the stroke-frame contract. The legacy staging path pads the presented
-    // raster into `rasterBounds`; if this loop did not, the durable composite would run the very
-    // same processor over a differently-sized raster and the two would publish different pixels
-    // for the same history entry. `processorInputs` is the only place that difference is visible,
-    // because a mock canvas cannot show its own size to the code under test.
-    const registry = new AssetRegistry();
-    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
-    const originalImageProcessor = toolProcessors.blur.imageProcessor;
-    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
-      processorInputs.push({ size: { ...params.size } });
-      return originalImageProcessor(params);
-    });
-
-    const layer = makeBlankLayer('layer-1', 100, 80, [
-      Object.freeze({
-        kind: 'apply-raster-processor' as const,
-        layerId: 'layer-1',
-        processorId: 'blur',
-        version: 1,
-        args: Object.freeze({
-          toolName: 'blur',
-          radius: 3,
-          points: Object.freeze([{ x: 120, y: 90 }]),
-          rasterBounds: Object.freeze({ x: -20, y: -20, width: 160, height: 140 }),
-        }),
-      }),
-    ]);
-
-    try {
-      const materialized = await materializeLayer(layer, makeRequest(registry));
-
-      expect(processorInputs).toEqual([{ size: { width: 160, height: 140 } }]);
-      // And the layer is PUBLISHED at the widened frame, which is what makes the transparent
-      // padding real pixels of the layer rather than a private buffer that vanishes on reload.
-      expect(materialized.bounds).toEqual({ x: -20, y: -20, width: 160, height: 140 });
-
-      materialized.lease.release();
-    } finally {
-      toolProcessors.blur.imageProcessor = originalImageProcessor;
-    }
-
-    registry.shutdown();
-  });
-
-  it('leaves a legacy whole-layer blur unwidened', async () => {
-    // The other side of the same split. An entry with no `points` is the retained whole-layer
-    // form, and it must keep handing the processor the layer's own geometry — otherwise every
-    // filter already on a timeline would silently gain transparent padding.
-    const registry = new AssetRegistry();
-    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
-    const originalImageProcessor = toolProcessors.blur.imageProcessor;
-    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
-      processorInputs.push({ size: { ...params.size } });
-      return originalImageProcessor(params);
-    });
-
-    const layer = makeBlankLayer('layer-1', 100, 80, [
-      Object.freeze({
-        kind: 'apply-raster-processor' as const,
-        layerId: 'layer-1',
-        processorId: 'blur',
-        version: 1,
-        args: Object.freeze({ toolName: 'blur', radius: 3 }),
-      }),
-    ]);
-
-    try {
-      const materialized = await materializeLayer(layer, makeRequest(registry));
-
-      expect(processorInputs).toEqual([{ size: { width: 100, height: 80 } }]);
-      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 100, height: 80 });
-
-      materialized.lease.release();
-    } finally {
-      toolProcessors.blur.imageProcessor = originalImageProcessor;
-    }
-
-    registry.shutdown();
-  });
-
-  it('does not widen when the stroke frame already is the layer', async () => {
-    const registry = new AssetRegistry();
-    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
-    const originalImageProcessor = toolProcessors.blur.imageProcessor;
-    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
-      processorInputs.push({ size: { ...params.size } });
-      return originalImageProcessor(params);
-    });
-
-    const layer = makeBlankLayer('layer-1', 100, 80, [
-      Object.freeze({
-        kind: 'apply-raster-processor' as const,
-        layerId: 'layer-1',
-        processorId: 'blur',
-        version: 1,
-        args: Object.freeze({
-          toolName: 'blur',
-          radius: 3,
-          points: Object.freeze([{ x: 10, y: 10 }]),
-          rasterBounds: Object.freeze({ x: 0, y: 0, width: 100, height: 80 }),
-        }),
-      }),
-    ]);
-
-    try {
-      const materialized = await materializeLayer(layer, makeRequest(registry));
-
-      expect(processorInputs).toEqual([{ size: { width: 100, height: 80 } }]);
 
       materialized.lease.release();
     } finally {
@@ -840,19 +721,7 @@ describe('materialization operation ordering (P1.10)', () => {
       expect(callsOf('filter')).toEqual([{ op: 'filter', args: ['blur(3px)'] }]);
 
       // The composed bounds, as the renderer offsets the source back into them.
-      //
-      // The affine product of `translate(10,20)` and `scale(2,2)` maps the 100x80 source into
-      // (20, 40, 200, 160): scale doubles the rectangle and translate then shifts it 10,20 of
-      // SOURCE pixels, which is 20,40 once doubled. The renderer negates that origin, because it
-      // has already allocated a surface exactly the size of the composed extent and is placing the
-      // source inside it.
-      //
-      // The blur's own spread is in those numbers: the surface has to HOLD the halo, so the extent
-      // is the composed affine extent grown by three sigmas of the radius-3 kernel — nine pixels on
-      // every edge — and the source is offset back by the GROWN origin, landing 9,9 inside the
-      // surface rather than at its corner. A translate of (-20, -40) here would be a surface that
-      // starts nine pixels before the content it was allocated for, with the halo cut at its edge.
-      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-11, -31] }]);
+      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-20, -40] }]);
       expect(callsOf('drawImage')).toEqual([{ op: 'drawImage', args: [expect.anything(), 0, 0, 100, 80] }]);
 
       // ORDER, and only the two orders that change pixels. `transform` post-

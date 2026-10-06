@@ -162,6 +162,7 @@ type PaintToolCase = {
 
 const FOCUS_GROUP = ['blur', 'sharpen', 'smudge'] as const;
 const DODGE_GROUP = ['dodge', 'burn'] as const;
+/** The tile the Gradient tool lives in. Only the ramp fixtures need it. */
 
 // The eraser is deliberately absent: it is not one of this tranche's new tools, it is already
 // owned by `erase-fill-eyedropper.spec.ts`, and the production eraser bar is Mode/Size/Opacity/Flow
@@ -319,6 +320,8 @@ async function readSection(
   }
   return entries;
 }
+
+/** A horizontal cross-section along a document row: it crosses a VERTICAL contrast edge. */
 
 /** A vertical cross-section down a document column: it crosses a HORIZONTAL contrast edge. */
 function readColumnProfile(
@@ -783,7 +786,7 @@ test.describe('Paint tools', () => {
 
       // Sharpen is a one-shot FILTER, not a gesture. Nothing is in history until
       // `commitDirtyTool` (`src/contexts/useLayer.ts:323`) promotes the preview, and a tool
-      // switch is what calls it (`goToTool()`). Undo BEFORE the
+      // switch is what calls it (`goToTool`, `src/hooks/useApp.ts:155-158`). Undo BEFORE the
       // switch would pop the draw instead, so the bake is part of the contract under test
       // rather than a convenience.
       await clickToolButton(page, 'reposition');

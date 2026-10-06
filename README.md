@@ -109,21 +109,13 @@ npm run tsc
 
 The project uses GitHub Actions for continuous integration:
 
-- **Check Job**: ESLint + Prettier, TypeScript (`tsc -b`, which also builds
-  `tsconfig.e2e.json`), an assertion that every tracked `.ts`/`.tsx` is inside some
-  project's `include`, unit tests, the production build, and then
-  `npm audit --audit-level=high` as the last GATE — not the last step, because the
-  coverage upload after it is `always()` and runs whatever the audit does. The audit is
-  still a gate and still high severity; it runs after the code gates so that a new
-  transitive advisory — which `npm audit` learns from a registry rather than from this
-  repository — cannot turn `main` red with no code change and stop the gates in front of
-  it from running. Triggers on a push to `main`, a pull request to `main`, and
-  `workflow_dispatch`.
-- **Integration Tests**: `npm run test:integration` is a local shortcut for two files,
-  `src/contexts/__tests__/psd-utils.test.ts` and `src/hooks/__tests__/useApp.psd.test.ts`
-  (PSD/file handling). Both live under `src/`, so `npm run test` collects them and the
-  Check Job gates them on every run; no CI job invokes the script by name, and it needs
-  none of its own.
+- **Check Job**: ESLint + Prettier, `npm audit --audit-level=high`, TypeScript
+  (`tsc -b`, which also builds `tsconfig.e2e.json`), an assertion that every
+  tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and the
+  production build, on every push/PR.
+- **Integration Tests**: `npm run test:integration` (PSD/file handling) is a script CI does
+  not invoke; those files are collected by the Check Job's own full-suite run, which is why
+  it needs no job of its own
 - **E2E Unit Job**: unit tests for the e2e helpers, then a coverage run, with
   `coverage-e2e/` uploaded as an artifact. It repeats no type-check: the Check
   Job's `tsc -b` already builds `tsconfig.e2e.json`. This is the **blocking** gate
@@ -137,7 +129,7 @@ The project uses GitHub Actions for continuous integration:
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
 - **Dependency licences**: the allow/deny list and the high-severity advisory
   threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
-  enforces them. `npm audit --audit-level=high` is a real gate step in the `ci` job, and
+  enforces them. `npm audit --audit-level=high` is a real step on every push, and
   it is the vulnerability half of that policy.
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
@@ -182,7 +174,6 @@ e2e/                  # Playwright end-to-end specs + their helper unit tests
 | `lint:check`                | Lint + format check                                                            |
 | `lint:fix`                  | Auto-fix lint issues                                                           |
 | `format`                    | Format with Prettier                                                           |
-| `inventory:verify`          | Report on this machine's worktrees; non-zero on a finding or a skipped check   |
 
 ## License
 

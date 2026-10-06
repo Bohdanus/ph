@@ -25,6 +25,7 @@ import {
   type ColorReplacementToolArgs,
 } from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
+import type { ColorSamplerToolArgs } from './colorSampler.ts';
 import type { RulerToolArgs } from './ruler.ts';
 import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from './quickSelection.ts';
@@ -242,6 +243,15 @@ export const defaultSettings = {
     sampleAllLayers: false,
     toolName: 'eyedropper',
   } satisfies EyedropperToolArgs,
+  // The Color Sampler's only setting is the Sample Size it shares with the Eyedropper, seeded to
+  // Point Sample because that is the footprint Adobe's own worked examples use and the one that
+  // reports a pixel rather than a neighbourhood. The samplers are NOT seeded here: they are placed by
+  // gesture and dropped when the document frame size changes, which is view state rather than
+  // document state (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
+  'color-sampler': {
+    sampleSize: 1,
+    toolName: 'color-sampler',
+  } satisfies ColorSamplerToolArgs,
   // The Ruler has no settings to seed: every number it reports belongs to the gesture that produced
   // it rather than to a choice the user made, so the args object is the tool's name and nothing
   // else. The measuring line itself is deliberately not here — it is view state, not document state

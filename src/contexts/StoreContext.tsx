@@ -22,13 +22,7 @@ import type {
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
-import {
-  cloneDocumentFrame,
-  documentFrameEquals,
-  documentFrameFromSize,
-  documentFrameSize,
-  type DocumentFrame,
-} from './document-frame.ts';
+import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
@@ -452,16 +446,6 @@ function appendBoundaryDiagnostics(
  * first one produced. When that copy was hand-written it silently dropped
  * `hasUnsavedChanges`, so after an undo the ref disagreed with the published
  * state. One function removes the class of bug rather than the instance.
- *
- * A FRAME CHANGE bumps `documentRevision` here, which is the half of HANDOFF §10
- * that no data type can carry. `DurableLayerSnapshot.frame` records which frame a
- * layer was authored against; this is what makes a crop refuse an in-flight durable
- * append, because `decideDurableAppend` already compares `documentRevision` against
- * the live state and would otherwise see an unchanged revision across a moved
- * frame. Bumping it on the frame alone would make every later append fall back to
- * reconversion forever, so the durable document is restamped with the SAME revision
- * in the same transition — which is what keeps the append gate's comparison
- * meaningful rather than permanently failing.
  */
 function projectPublishedTimeline(
   state: StoreData,
@@ -475,32 +459,19 @@ function projectPublishedTimeline(
 ): StoreData {
   const updates = payload.updates ?? {};
   const nextFrame = updates.documentFrame;
-  // Structural comparison, not identity: a writer that recomputed the same frame
-  // must not spend a revision, or an ordinary re-commit of an unchanged crop would
-  // invalidate a durable document it left perfectly faithful.
-  const frameChanged = !!nextFrame && !documentFrameEquals(state.documentFrame, nextFrame);
-  const documentRevision = frameChanged ? state.documentRevision + 1 : state.documentRevision;
   const durable = normalizeDurableProjection({
     document: payload.durableDocument,
     status: payload.durableStatus,
     diagnostics: payload.durableDiagnostics,
   });
-  const document =
-    frameChanged && durable.document
-      ? // The cursor is restated because `refreezeDurableDocument` requires it, and
-        // this document's own cursor is exactly what it already holds: the revision
-        // stamp is the only field this transition moves.
-        refreezeDurableDocument(durable.document, { cursor: durable.document.cursor, documentRevision })
-      : durable.document;
   return {
     ...state,
     ...updates,
     ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
-    documentRevision,
     history: [...payload.timeline.entries],
     historyIndex: payload.timeline.cursor,
     branchRevision: payload.timeline.branchRevision,
-    durableDocument: document,
+    durableDocument: durable.document,
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
     hasUnsavedChanges: true,
@@ -604,10 +575,6 @@ function sourceBackedEntryContext(
     documentId: state.documentId,
     registry,
     preLayers: durableLayersAtCursor(state.durableStatus === 'current' ? state.durableDocument : null),
-    // The live frame, cloned rather than shared: the snapshot records it as
-    // provenance and freezes its own copy, so no writer can reach through the
-    // planned entry and restate the frame the plan was made against.
-    documentFrame: cloneDocumentFrame(state.documentFrame),
     liveLayers: state.layers,
   };
 }
@@ -1244,7 +1211,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         entry: historyItem,
         planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
         documentRevision: currentState.documentRevision,
-        documentFrame: currentState.documentFrame,
         preLayerOrder,
         durableLayerOrder,
       });
@@ -1325,11 +1291,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         entry: action.payload.historyItem,
         planned: plannedEntry,
         documentRevision: currentState.documentRevision,
-        // The PRE-append frame, which is the one `sourceBackedEntryContext` stamped
-        // on a planned snapshot and the one a crop entry's `previous` names. This
-        // append may itself move the frame; the revision bump in
-        // `projectPublishedTimeline` is what records that, after the decision.
-        documentFrame: currentState.documentFrame,
         preLayers: sourceContext?.preLayers,
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');

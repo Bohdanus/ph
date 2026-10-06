@@ -50,7 +50,7 @@ const MagicWand: React.FC<{}> = () => {
     pasteSelectionClipboard();
   };
 
-  const handleDeselect = () => {
+  const handleClear = () => {
     clearSelections();
   };
 
@@ -106,13 +106,19 @@ const MagicWand: React.FC<{}> = () => {
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
           Paste
         </button>
-        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleDeselect}>
+        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleClear}>
           Deselect
         </button>
       </div>
 
       <div className="min-w-60 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-        <div>Click a color area to select connected similar pixels.</div>
+        {args.contiguous ? (
+          <div>Click a color area to select connected similar pixels.</div>
+        ) : (
+          <div role="status">
+            Non-contiguous mode keeps only the largest matching region; results with holes are canceled.
+          </div>
+        )}
         <div className="mt-1 text-[9px] opacity-75">
           {selectedPixelCount
             ? `${selectedPixelCount.toLocaleString()} pixels selected`

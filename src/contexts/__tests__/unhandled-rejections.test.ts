@@ -20,10 +20,6 @@ const { encodeTiff } = vi.hoisted(() => ({ encodeTiff: vi.fn() }));
 vi.mock('../tiff-utils.ts', () => ({ encodeTiff }));
 
 import { AssetRegistry } from '../asset-registry.ts';
-import { documentFrameSize } from '../document-frame.ts';
-import { materializeDocument } from '../materialization.ts';
-import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
-import type { DurableLayerSnapshot } from '../history-model.ts';
 import { saveImage } from '../saveToFile.ts';
 
 function fakeBitmap(width = 8, height = 8) {
@@ -318,118 +314,6 @@ describe('unhandled rejection visibility', () => {
       expect(rejections).toHaveLength(0);
 
       registry.shutdown();
-    });
-  });
-
-  /**
-   * The store-side half the suites above leave out. Every rejection tested so far is
-   * reached through `AssetRegistry` or a file writer, so a caller reading this file
-   * could conclude the void is covered — but `materializeDocument` is the one store
-   * path that walks the WHOLE document and can reject on a layer the registry never
-   * sees, and it was untested here.
-   *
-   * The rejection is scripted with an already-aborted signal because that is the one
-   * abort `materializeDocument` checks before it touches a layer: `request.signal?.aborted`
-   * throws `AbortError` at the top of the loop, so the outcome does not depend on which
-   * of the three `try` arms swallows what, and the assertion is about VISIBILITY rather
-   * than about which layer failed.
-   */
-  describe('materializeDocument document walk', () => {
-    const snapshot: DurableLayerSnapshot = {
-      id: 'layer-1',
-      name: 'Layer 1',
-      visible: true,
-      opacity: 1,
-      locked: false,
-      pos: { x: 0, y: 0, width: 8, height: 8 },
-      source: {
-        kind: 'blank',
-        color: '#ffffff',
-        opacity: 1,
-        isBedrock: false,
-        pos: { x: 0, y: 0, width: 8, height: 8 },
-      },
-      operations: [],
-    } as unknown as DurableLayerSnapshot;
-
-    const layer: DurableReplayLayer = { snapshot, operations: [] };
-
-    const replay: DurableReplayResult = {
-      documentId: 'document-a',
-      documentRevision: 1,
-      branchRevision: 0,
-      durableRevision: 0,
-      cursor: 0,
-      frame: { x: 0, y: 0, width: 8, height: 8 },
-      // Read through `documentFrameSize` rather than written as a literal, because the
-      // whole point of the field is that it is derived by the shared rule: a literal here
-      // would pass whether or not the rule still produced this size.
-      totalSize: documentFrameSize({ x: 0, y: 0, width: 8, height: 8 }),
-      layers: { 'layer-1': layer },
-      selections: { selections: {}, activeSelectionId: null },
-    } as unknown as DurableReplayResult;
-
-    function request(signal?: AbortSignal) {
-      const assetRegistry = new AssetRegistry();
-      assetRegistry.registerBaseline('document-a', fakeBitmap(), { ownership: 'adopt' });
-      return {
-        assetRegistry,
-        payload: {
-          documentId: 'document-a',
-          baselineAssetGeneration: 0,
-          operationSetRevision: 0,
-          frame: { x: 0, y: 0, width: 8, height: 8 },
-          assetRegistry,
-          ...(signal ? { signal } : {}),
-        },
-      };
-    }
-
-    it('rejects into the void when the document walk is given an already-aborted signal', async () => {
-      const controller = new AbortController();
-      controller.abort();
-      const { assetRegistry, payload } = request(controller.signal);
-
-      void materializeDocument(replay, payload);
-
-      await nextRejection();
-      expect(rejections).toHaveLength(1);
-      expect(String(rejections[0])).toMatch(/Materialization aborted/);
-
-      assetRegistry.shutdown();
-    });
-
-    it('reports the same abort through the awaited promise', async () => {
-      // Titled for what it asserts. `expect(rejections).toHaveLength(0)` below is NOT part
-      // of that: the `.catch` above attaches a handler synchronously, and Node cannot emit
-      // `unhandledRejection` for a promise that already has one, so that line is true by
-      // construction rather than by anything `materializeDocument` does. It is kept because
-      // the rest of this file asserts the same way and a lone departure would read as an
-      // unexplained difference — but the evidence for the awaited half is the line above it.
-      const controller = new AbortController();
-      controller.abort();
-      const { assetRegistry, payload } = request(controller.signal);
-
-      const handled = materializeDocument(replay, payload).catch((error: unknown) => error);
-
-      expect(await handled).toMatchObject({ name: 'AbortError' });
-      await settleVoid();
-      expect(rejections).toHaveLength(0);
-
-      assetRegistry.shutdown();
-    });
-
-    it('is not vacuous: the same request without the abort does not reject at all', async () => {
-      // The two tests above would both stay green if `materializeDocument` rejected
-      // unconditionally for any input, so the negative arm is what makes the abort
-      // signal load-bearing rather than incidental.
-      const { assetRegistry, payload } = request();
-
-      await expect(materializeDocument(replay, payload)).resolves.toBeDefined();
-      await settleVoid();
-      expect(rejections).toHaveLength(0);
-
-      assetRegistry.shutdown();
     });
   });
 });

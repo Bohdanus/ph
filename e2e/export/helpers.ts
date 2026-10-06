@@ -1225,7 +1225,7 @@ export async function setupIcoTest(page: Page): Promise<string> {
   // flow at the very next step instead. A blanket `page.on('dialog', …)` in a fixture or
   // in `global-setup.ts` is the thing that would swallow it, and it is still not done.
   // (One native prompt does still exist — the PSD import-limitations question at
-  // `setImageFromUpload()`'s PSD arm — and no export spec reaches it, because `verifyPsdInPhotopea`
+  // `src/hooks/useApp.ts:87` — and no export spec reaches it, because `verifyPsdInPhotopea`
   // hands its file to Photopea rather than to this app.)
   await page.getByTestId('header-file-new-button').click();
   await acceptDiscardPrompt(page);

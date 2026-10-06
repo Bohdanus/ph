@@ -64,6 +64,11 @@ export const RECOMMENDATION = {
   KEEP: 'keep',
   /** Cannot be classified from what is known. Do not remove. */
   UNKNOWN: 'unknown',
+  /**
+   * Stale on purpose: nobody will work on this again, but the branch ref is
+   * worth the one ref it costs. See {@link ACTION.LEGACY}.
+   */
+  LEGACY: 'legacy',
 };
 
 /**
@@ -89,6 +94,31 @@ export const ACTION = {
   KEEP: 'keep',
   /** Cannot be decided from what is known. */
   UNDECIDED: 'undecided',
+  /**
+   * Keep the BRANCH, drop the WORKTREE. A curated `legacy: true`.
+   *
+   * WHY THIS IS NOT `at-risk`. `at-risk` means a human must act before anything
+   * can be lost, and it reads that way in every list an operator opens. A legacy
+   * branch is the opposite of a pending problem: nobody is going to act on it,
+   * the merge may never be wanted, and the only thing at stake is a ref that
+   * costs one entry in `.git/refs`. Filing it as `at-risk` put a permanent entry
+   * on the at-risk list, which is the list a sweep reads first, so a branch that
+   * was never going to be worked on kept being re-investigated every pass.
+   *
+   * WHAT IT BUYS. The worktree directory is the expensive thing — a checkout, a
+   * `node_modules`, a `dist/` — and git holds a branch without any worktree at
+   * all. So `legacy` separates the two: `npm run dispose` removes the directory
+   * and skips `git branch -d`, and the branch stays recoverable for the small
+   * chance it is ever needed. Keeping the whole worktree instead would cost a
+   * filesystem entry per legacy branch forever and buy nothing git does not
+   * already do with the ref.
+   *
+   * IT IS A CURATED CLAIM, LIKE `mustNotPrune`, AND IT IS NOT FREE OF GIT. It
+   * says "do not merge this and do not forget it", never "this is safe to
+   * delete" — the worktree half is disposable precisely because `legacy` is the
+   * reason the directory is safe to remove.
+   */
+  LEGACY: 'legacy',
 };
 
 /**
@@ -260,6 +290,20 @@ export function classify(
     );
   }
 
+  // `read !== true`, NOT `read === false`. A missing `read` field is the ABSENCE of
+  // evidence that the tree was read, and this rule is affirmative evidence, not the
+  // absence of a complaint. The looser polarity looked equivalent while every
+  // production path set the field, and it is not: `read === false` treats "nothing
+  // said the tree was unreadable" as "the tree was read", which is the exact
+  // inversion of the rule stated above and in docs/ORCHESTRATION.md. Any caller that
+  // builds a `workingTree` without the field gets a legacy verdict it never earned.
+  let legacyUnknown = null;
+  if (curated?.legacy) {
+    if (wt.workingTree?.read !== true) legacyUnknown = 'the working tree could not be read';
+    else if (typeof wt.ahead !== 'number') legacyUnknown = 'the base branch could not be resolved';
+    else if (wt.branch === '(unknown)') legacyUnknown = 'the worktree has no branch to keep';
+  }
+
   let status;
   if (wt.detached) {
     // A detached HEAD is named here because the inventory cannot record WHICH
@@ -274,6 +318,15 @@ export function classify(
   } else if (wt.isPrimary) {
     status = STATUS.LANDED;
     reasons.push('this is the main worktree');
+  } else if (legacyUnknown !== null) {
+    // BEFORE THE CLEANLINESS ARMS, BECAUSE THEY STATE FACTS THEY DO NOT HAVE.
+    // An unreadable tree and an unresolvable base both arrive as zeros and nulls,
+    // which is what "clean" and "0 ahead" look like, so the arms below would
+    // publish "the branch is an ancestor of main and the working tree is clean"
+    // for a tree and a base git refused to read. The claim is about the branch
+    // being worth keeping, and it cannot be applied on evidence that is missing.
+    status = STATUS.UNREADABLE;
+    reasons.push(`a curated finding marks this branch legacy, but ${legacyUnknown}`);
   } else if (uncommitted && wt.ahead === 0) {
     status = STATUS.UNCOMMITTED_ONLY;
     reasons.push('the branch reports 0 commits ahead of main and is an ancestor of it');
@@ -296,7 +349,19 @@ export function classify(
   // branch is landed, because a curated finding is a human claim about work
   // that may only exist in this directory.
   const curatedBlocksPrune = Boolean(curated?.mustNotPrune);
+  const curatedLegacy = Boolean(curated?.legacy);
   const mergeState = mergeVerdict(wt);
+  // AFFIRMATIVE EVIDENCE, NOT THE ABSENCE OF A COMPLAINT, IS THE RULE ENCODED
+  // IN `legacyUnknown` ABOVE: a `legacy` verdict is built on a tree that was
+  // actually read as clean and a base comparison that actually produced a count.
+  // Both facts arrive as innocuous zeros and nulls when the command behind them
+  // failed, and zeros and nulls are exactly what "clean" and "no commits ahead"
+  // look like. `git.mjs` reports `read: false` rather than returning an empty
+  // tree for the same reason. Both guards were survivable while the only
+  // consequence was a wrong `prunable`; `legacy` makes them a licence to delete
+  // a directory, and it widens the reach — an unreadable worktree with a
+  // conflicting merge used to be `at-risk`, and with this flag it became
+  // `legacy`.
   let recommendation;
   if (wt.isPrimary) {
     // The main checkout is never a prune candidate, whatever git says about
@@ -320,6 +385,70 @@ export function classify(
               ).toISOString()}`
             : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
     );
+  } else if (
+    curatedLegacy &&
+    legacyUnknown === null &&
+    !curatedBlocksPrune &&
+    !uncommitted &&
+    !wt.detached &&
+    wt.tip !== null
+  ) {
+    // CHECKED HERE, NOT AT THE BOTTOM, AND ONLY FOR A CLEAN TREE.
+    //
+    // `uncommitted` is the load-bearing condition. `legacy` authorises removing
+    // the WORKTREE, so it is a licence to delete a directory — and a directory
+    // holding uncommitted changes is the only copy of them. A claim that the
+    // branch is worth keeping says nothing about files the branch has never
+    // seen, so allowing it here would let a prose field authorise the loss the
+    // whole program exists to prevent. A dirty legacy worktree therefore stays
+    // `at-risk`, which is where a human has to look.
+    //
+    // `!curatedBlocksPrune` IS THE OTHER GUARD THAT MATTERS, AND IT WAS THE ONE
+    // MISSING. An entry can carry both flags, and they are opposite claims about
+    // one tree: `mustNotPrune` says the work is in no commit and no ref, so the
+    // directory is the only copy; `legacy` says the directory may go. Without
+    // this condition the ladder below never reached either `curatedBlocksPrune`
+    // arm, so the pair filed the worktree as `legacy` — printed as "worktree
+    // disposable, BRANCH KEPT" and listed under NO protection, which is the
+    // opposite of what the flag pair says.
+    //
+    // `preflight` refuses `action: "legacy"` when the record also carries
+    // `mustNotPrune`, so nothing was lost through `npm run dispose` — but that
+    // made a second line of defence the only one, and the inventory is what a
+    // human reads. The precedence belongs HERE, where the verdict is formed.
+    // With it, the flag pair is self-contradictory in the safe direction: the
+    // entry reports `at-risk`, the claim about losing content wins, and the
+    // `legacy` flag is visibly inert rather than silently overriding.
+    //
+    // `detached` and an unreadable tip are excluded for the same reason
+    // `mustNotPrune` cannot rescue them: there is no branch to keep, so
+    // "keep the branch" has nothing to act on and would read as a clearance.
+    //
+    // It sits ABOVE the merge verdicts deliberately. A stale branch that no
+    // longer merges is the common case, not an exception — that is what "legacy"
+    // means — and leaving it `at-risk` is what put these on the list a sweep
+    // reads first, forever, for a branch nobody intends to reconcile.
+    recommendation = RECOMMENDATION.LEGACY;
+    reasons.push('a curated finding marks this branch legacy: keep the ref, drop the worktree');
+    if (wt.ahead > 0)
+      reasons.push(`${wt.ahead} commit(s) ahead of main are kept on the branch and not proposed for merge`);
+    // A legacy branch that no longer merges is the common case, not an exception,
+    // so the conflict is expected rather than news. It is still named, because a
+    // reader who sees "not proposed for merge" on a branch with three conflicting
+    // files would otherwise have to guess whether the conflict was considered.
+    if (mergeState === 'conflict') {
+      reasons.push(
+        `the merge conflicts on ${wt.merge?.files?.length ?? 'some'} path(s), and keeping the ref is why that is not being reconciled`
+      );
+    }
+  } else if (legacyUnknown !== null) {
+    // SAYS WHAT GIT COULD NOT ANSWER, INSTEAD OF THE ANSWER IT DID NOT GET.
+    // Reaching the ordinary arms here would publish a fabricated cleanliness fact
+    // — "the branch is an ancestor of main and the working tree is clean" — for a
+    // tree or a base that was never read. `undecided` is the honest verdict, and
+    // it is the one that keeps the directory.
+    recommendation = RECOMMENDATION.UNKNOWN;
+    reasons.push('the legacy claim cannot be applied on evidence git did not give, so the worktree is left alone');
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
     reasons.push('work here is not reachable from any commit on this branch');
@@ -403,6 +532,14 @@ export function classify(
     case RECOMMENDATION.KEEP:
       action = ACTION.KEEP;
       break;
+    case RECOMMENDATION.LEGACY:
+      // NOT read from `prunable`, unlike `dispose`. The worktree IS a disposal
+      // candidate — the tree is clean by the branch that got here — but the
+      // branch is not, and `prunable` means both at once. `npm run dispose` reads
+      // `action` and the skip is in the disposal program, so this is the one
+      // place the two halves can disagree.
+      action = ACTION.LEGACY;
+      break;
     default:
       action = ACTION.UNDECIDED;
   }
@@ -463,6 +600,14 @@ export function riskScore(verdict) {
       return 30;
     case RECOMMENDATION.KEEP:
       return 40;
+    case RECOMMENDATION.LEGACY:
+      // Below `PRUNE`, which is the surprising half and deliberate: a legacy
+      // branch is the LEAST work in the repository. Nothing is at risk, nobody is
+      // waiting on it, and the only remaining task is a ref somebody may never
+      // touch. It sorts under everything so it is the last thing a reader
+      // reaches, and last is where a thing with a 1% chance of mattering belongs
+      // — `PRUNE`'s 10 leaves room beneath it.
+      return 5;
     case RECOMMENDATION.PRUNE:
       return 10;
     default:

@@ -193,6 +193,16 @@ describe('MagicWand toolbar', () => {
       render(<MagicWand />);
 
       expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toBeChecked();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('warns that non-contiguous mode keeps only the largest region', () => {
+      toolArgs.contiguous = false;
+      render(<MagicWand />);
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Non-contiguous mode keeps only the largest matching region; results with holes are canceled.'
+      );
     });
 
     it('unchecking it patches the setting the tool area reads', () => {
@@ -597,7 +607,7 @@ describe('MagicWand toolbar', () => {
       expect(smoothingSlider).toHaveValue(String(initialSmoothing));
     });
 
-    it('allows enter/space to trigger copy, paste, and Deselect buttons', async () => {
+    it('allows enter/space to trigger copy, paste, and clear buttons', async () => {
       const user = userEvent.setup();
       withActivePolygonSelection();
       render(<MagicWand />);

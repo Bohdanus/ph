@@ -278,8 +278,8 @@ describe('useRect mask drawing', () => {
  * unconditionally and only toggles `display`, which never touches a backing store. So an area that
  * goes away has to clear the canvas itself.
  *
- * It cannot lean on the `[aspectRatio, initialRect]` effect in `useRect.ts` seeing `initialRect`
- * turn null. `goToTool` appends the selection clear and dispatches `SET_TOOL_NAME` from
+ * It cannot lean on the effect at `useRect.ts:58-70` seeing `initialRect` turn null. `goToTool`
+ * (`src/hooks/useApp.ts:167-196`) appends the selection clear and dispatches `SET_TOOL_NAME` from
  * one function body, React batches them, and the marquee's component unmounts in the same commit
  * that nulls the selection — and an unmounted component's effects do not run. That is what left the
  * `#007bff` outline, the four handles and the `rgba(0, 0, 0, 0.7)` blend on the next tool's
@@ -454,6 +454,58 @@ describe('useRect handle detection', () => {
     expect(target.style.cursor).toBe('');
     // The guard rejects before the coordinates are even read.
     expect(pointer.data.getLocalCoords).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRect marquee border animation', () => {
+  beforeEach(resetPointerMock);
+
+  it('advances the in-flight border at screen speed and stops on release', () => {
+    pointer.data.dimensionsRef.current.scale = 2;
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging' });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets).toContain(-0.2);
+    const paintedFrames = dashOffsets.length;
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(paintedFrames);
+  });
+
+  it('keeps the always-mode border static while dragging', () => {
+    const { ctx, result, event } = setup({ borderMode: 'always', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(210, 185));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(1);
+    expect(dashOffsets).toEqual([0]);
   });
 });
 

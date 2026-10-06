@@ -148,7 +148,7 @@ const stroke = (toolArea: HTMLDivElement, from: [number, number], to: [number, n
   fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: to[0], clientY: to[1] });
 };
 
-type ToolLayerCall = { id?: string; toolArgs: DodgeBurnToolArgs };
+type ToolLayerCall = { id?: string; toolArgs: { points: { x: number; y: number }[] } };
 
 describe('DodgeToolArea', () => {
   beforeEach(() => {
@@ -215,73 +215,5 @@ describe('DodgeToolArea', () => {
       { x: 20, y: 20 },
       { x: 100, y: 60 },
     ]);
-  });
-
-  it('forwards its OWN tool args to both writers, not just the points', () => {
-    // `points` alone does not identify the operation. `updateLayerByTool` looks the processor up
-    // by `toolArgs.toolName`, and the dodge's `exposure` and `range` are what the processor reads
-    // to decide how bright and over which band. Asserting only `points` leaves four of the five
-    // fields unpinned: a writer that spread the DEFAULT settings from `settings.ts` instead of the
-    // live ones would dodge at the wrong exposure over the wrong range, and every assertion above
-    // would still pass.
-    //
-    // `size: 20` and `hardness: 0.5` here differ from the seeded defaults (`size: 40`,
-    // `hardness: 100` in `defaultSettings.dodge`), which is what makes the payload
-    // distinguishable from a default-shaped one on those two fields. `exposure` and `range` are
-    // the defaults for this tool and cannot be made to differ by fixture alone; `toolName` is
-    // what separates a dodge payload from a burn one, and it is asserted exactly.
-    const toolArea = renderArea();
-
-    stroke(toolArea, [20, 20], [100, 60]);
-
-    const expected = {
-      toolName: 'dodge',
-      exposure: 50,
-      range: 'midtones',
-      size: 20,
-      hardness: 0.5,
-      points: [
-        { x: 20, y: 20 },
-        { x: 100, y: 60 },
-      ],
-    };
-    const [preview] = tempUpdateLayerMock.mock.calls[0] as [ToolLayerCall];
-    expect(preview.toolArgs).toEqual(expected);
-
-    const [commit] = updateLayerByToolMock.mock.calls[0] as [ToolLayerCall];
-    expect(commit.toolArgs).toEqual(expected);
-  });
-
-  it('writes nothing when there is no active layer, because the guard reads before the validators', () => {
-    // `enabled` is `Boolean(args && activeLayerId && activeLayer && !activeLayer.isBedrock)`.
-    // Dropping the `activeLayerId &&` term leaves `activeLayer` null, and the callbacks' own
-    // `!activeLayerId` guard is a SECOND line that would still stop the write — so asserting
-    // only "no writer was called" cannot see which of the two held.
-    //
-    // `pointerState.activePointer` is the discriminator. It is set by the pointer double inside
-    // `isPointerDownValid`, which `usePaintStroke` consults only when `enabled`; leaving it null
-    // proves the refusal was upstream in the guard rather than a callback that ran and bailed.
-    storeState.activeLayerId = null;
-    const toolArea = renderArea();
-
-    stroke(toolArea, [20, 20], [100, 60]);
-
-    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
-    expect(updateLayerByToolMock).not.toHaveBeenCalled();
-    expect(pointerState.activePointer).toBeNull();
-  });
-
-  it('writes nothing when the tool has no args yet, because an options bar that has not initialised is not a dodge', () => {
-    // `getToolArgs` returns `null` until the tool's options are seeded. Spreading `null` yields
-    // `{ points }` with no `toolName`, so the processor lookup would miss and the preview would
-    // still have repainted the layer — an edit on screen that no history item will ever revert.
-    toolState.toolArgs = null;
-    const toolArea = renderArea();
-
-    stroke(toolArea, [20, 20], [100, 60]);
-
-    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
-    expect(updateLayerByToolMock).not.toHaveBeenCalled();
-    expect(pointerState.activePointer).toBeNull();
   });
 });

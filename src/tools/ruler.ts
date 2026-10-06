@@ -30,66 +30,12 @@ export type RulerToolArgs = { toolName: 'ruler' };
  * `undefined` rather than `null` because the discriminated shape is `legEnd?: Point`: "no second
  * leg" and "a second leg at the origin" must not be the same value, and a `null`-defaulted
  * optional field cannot say so.
- *
- * `legAt` says WHICH end the leg hangs off. It is present exactly when the vertex is the `start`
- * end and ABSENT otherwise, because `'end'` is the overwhelmingly common case — a plain line, and a
- * leg pulled from its far end — and a field every measurement has to carry to say "the usual thing"
- * is a field that can be wrong. Adobe's gesture is "Alt-drag (Windows) or Option-drag (Mac OS) at an
- * angle from one end of the measuring line", so the leg can be pulled from either end and the vertex
- * is whichever one was grabbed.
- *
- * The obvious encoding — reversing `start` and `end` so the vertex is always `end` — is wrong, and
- * was the first version. `start` is not arbitrary: X and Y are "the starting location", so
- * reversing the pair makes the bar report the OTHER end's coordinates the instant the protractor
- * is pulled from the start, and W and H stay put while the meaning of two of the seven readouts
- * silently swaps under the pointer. Carrying the vertex as its own field keeps `start` meaning the
- * point the line was drawn from for the whole of its life.
  */
 export type RulerMeasurement = {
   start: Point;
   end: Point;
   legEnd?: Point;
-  legAt?: 'start' | 'end';
 };
-
-/** The end a protractor's leg hangs off. `'end'` unless the measurement names the start end. */
-export const rulerLegVertex = (measurement: RulerMeasurement): Point =>
-  measurement.legAt === 'start' ? measurement.start : measurement.end;
-
-/**
- * `measurement` with its vertex recorded, and nothing else changed.
- *
- * The `'end'` case DELETES `legAt` rather than leaving the measurement alone, and that is the whole
- * reason this is a function. Returning the argument unchanged — which is what it did first, to keep a
- * far-end leg byte-identical to the shape that existed before `legAt` — makes the field write-once: a
- * line whose leg was pulled from its START end can never have it moved back, so a second Alt-drag from
- * the other end draws its leg from the wrong endpoint and reports an angle and a D2 measured at the
- * wrong vertex. The shape saving was worth nothing next to a vertex that cannot move.
- *
- * So the invariant is maintained by writing the field only when it says `'start'`, and the absence of
- * the key means `'end'` — which is what `rulerLegVertex` already reads.
- */
-export const withRulerLegVertex = (measurement: RulerMeasurement, at: 'start' | 'end'): RulerMeasurement => {
-  if (at === 'end') {
-    if (measurement.legAt === undefined) return measurement;
-    const { legAt: _dropped, ...rest } = measurement;
-    return rest;
-  }
-  return { ...measurement, legAt: 'start' };
-};
-
-/**
- * `measurement` with `legAt` copied only when it is the start end.
- *
- * `legAt: measurement.legAt` in an object literal creates the key with value `undefined` when the
- * source has no `legAt` — which is the opposite of the invariant, and `'legAt' in moved` is then true
- * for a plain measuring line. `JSON.stringify` drops it and `toEqual` ignores it, so nothing notices
- * until something asserts on key presence. This copies the field through `withRulerLegVertex`, which
- * cannot create the key, rather than restating that rule at each of the three places a measurement is
- * rebuilt.
- */
-export const carryRulerLeg = <T extends RulerMeasurement>(measurement: T): Omit<T, 'legAt'> & Pick<T, 'legAt'> =>
-  measurement.legAt === undefined ? measurement : { ...measurement };
 
 /**
  * The seven numbers Adobe's Ruler page names, in its order: "The starting location (X and Y) /
@@ -153,21 +99,13 @@ export const constrainRulerAngle = (from: Point, to: Point): Point => {
  *
  * `acos` of a dot product is the unsigned angle. Adobe calls these "the two lengths traveled (D1
  * and D2)" and reuses `A` for the angle between them, and a protractor's angle is unsigned.
- *
- * The first vector radiates towards the end of the line that is NOT the vertex, which is why it is
- * named `otherEnd` rather than `start`: with the leg hanging off `end` — the common case — that is
- * `start`, and with it hanging off `start` it is `end`. Taking `start - vertex` unconditionally is
- * a zero vector in the second case, which returns `null` and renders as a blank angle for a
- * protractor the user can plainly see.
  */
 export const rulerProtractorAngle = (leg: RulerMeasurement): number | null => {
   if (!leg.legEnd) return null;
-  const vertex = rulerLegVertex(leg);
-  const otherEnd = leg.legAt === 'start' ? leg.end : leg.start;
-  const firstX = otherEnd.x - vertex.x;
-  const firstY = otherEnd.y - vertex.y;
-  const secondX = leg.legEnd.x - vertex.x;
-  const secondY = leg.legEnd.y - vertex.y;
+  const firstX = leg.start.x - leg.end.x;
+  const firstY = leg.start.y - leg.end.y;
+  const secondX = leg.legEnd.x - leg.end.x;
+  const secondY = leg.legEnd.y - leg.end.y;
   const firstLength = Math.hypot(firstX, firstY);
   const secondLength = Math.hypot(secondX, secondY);
   // A collapsed leg has no direction, so there is no angle between it and anything. Dividing by a
@@ -190,9 +128,8 @@ export const rulerProtractorAngle = (leg: RulerMeasurement): number | null => {
 export const measureRuler = (measurement: RulerMeasurement): RulerReadout => {
   const dx = measurement.end.x - measurement.start.x;
   const dy = measurement.end.y - measurement.start.y;
-  const vertex = rulerLegVertex(measurement);
   const secondLegLength = measurement.legEnd
-    ? Math.hypot(measurement.legEnd.x - vertex.x, measurement.legEnd.y - vertex.y)
+    ? Math.hypot(measurement.legEnd.x - measurement.end.x, measurement.legEnd.y - measurement.end.y)
     : null;
   const protractorAngle = rulerProtractorAngle(measurement);
 
@@ -225,48 +162,6 @@ export const measureRuler = (measurement: RulerMeasurement): RulerReadout => {
  * as the user zoomed out would stop being hittable at all.
  */
 export const RULER_ENDPOINT_HIT_RADIUS = 8;
-
-/**
- * How near the line's BODY a press must be to move it, in document pixels.
- *
- * Adobe states the gesture and not the tolerance: "To move the line, place the pointer on the line
- * away from either endpoint and drag the line." The `RULER_ENDPOINT_HIT_RADIUS` above is the same
- * kind of app decision, taken for the same reason — without a tolerance only a press exactly on the
- * line would move it, and the line is one pixel wide — so the two numbers are deliberately the same
- * size and the two gestures are one contiguous target: within 8 px of an end the press grabs that
- * end, and within 8 px of the line further along it grabs the whole line.
- *
- * Sharing the constant is also what makes the boundary between the two gestures predictable. They
- * meet at the midpoint of a short line, where every point is within the endpoint radius of both
- * ends, and the endpoint test is deliberately checked first so the nearer end wins rather than a
- * move that fights a resize.
- *
- * NOT divided by the contain fit, for the reason `RULER_ENDPOINT_HIT_RADIUS` is not: the tolerance
- * belongs to the image, so the same gesture is the same gesture at any zoom.
- */
-export const RULER_LINE_GRAB_RADIUS = RULER_ENDPOINT_HIT_RADIUS;
-
-/**
- * The distance from `point` to the segment `from`–`to`, zero on the segment itself.
- *
- * The perpendicular distance when the projection falls WITHIN the segment, and the distance to the
- * nearer end when it falls outside — which is what makes a press beyond an endpoint measure to that
- * endpoint rather than to the infinite line through it. A collapsed segment has no direction, so its
- * length is returned and the caller compares that against the endpoint radius it already uses.
- */
-export const distanceToSegment = (point: Point, from: Point, to: Point): number => {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) return Math.hypot(point.x - from.x, point.y - from.y);
-  const along = ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSquared;
-  const clamped = along < 0 ? 0 : along > 1 ? 1 : along;
-  return Math.hypot(point.x - (from.x + clamped * dx), point.y - (from.y + clamped * dy));
-};
-
-/** Whether `point` is near the line's body, and so a press there would MOVE it. */
-export const isOnRulerLine = (line: RulerMeasurement, point: Point): boolean =>
-  distanceToSegment(point, line.start, line.end) <= RULER_LINE_GRAB_RADIUS;
 
 /**
  * Formats one readout for the options bar.

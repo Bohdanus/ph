@@ -1,8 +1,8 @@
 # Eyedropper and Draw — research notes
 
-Family: `eyedropper`, `draw`, `ruler`. Data: `src/tools/descriptions/eyedropper-draw.ts`. Every source
-reference below names a unit — a declaration, a field, an `it(...)` title, a section — and each was
-re-derived against the tree in this worktree, not copied from the research corpus.
+Family: `eyedropper`, `color-sampler`, `draw`, `ruler`. Data: `src/tools/descriptions/eyedropper-draw.ts`.
+Every source reference below names a unit — a declaration, a field, an `it(...)` title, a section — and
+each was re-derived against the tree in this worktree, not copied from the research corpus.
 
 **Two passes, two verdicts, and the second one moved three of this file's load-bearing facts.** The
 first pass found the Eyedropper's Sample Size truncated to three entries and its `Sample All Layers`
@@ -77,8 +77,10 @@ shortcut: 'I' }]`, and its Draw entry is the Draw Tool tile at the end of the to
   (`https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html`). "Shift-click to
   choose" is the flyout-cycling gesture between two **tools**, so the two share a letter and a
   tile, not an options bar — and the current-version inventory confirms the Color Sampler is in the
-  `I` group rather than in the Eyedropper's bar. **The app has no Color Sampler at all**, which
-  `appNotes` records and `docs/TOOLS.md` inherits; see the tool-union evidence in the census below.
+  `I` group rather than in the Eyedropper's bar. **The app had no Color Sampler at all when this
+  paragraph was written**, which `appNotes` then recorded and `docs/TOOLS.md` inherited; the tool is
+  built now, so see `## Color Sampler Tool` below, and note that `docs/TOOLS.md` is generated from the
+  description that section's evidence stands behind.
 
 ### Prose
 
@@ -334,7 +336,7 @@ Three judgement calls worth stating, because each could reasonably have gone the
 ### App-side facts the census depends on
 
 - **No processor, by design.** `src/tools/toolProcessors.ts` — `PIXEL_FREE_TOOLS` —
-  `export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler'] as const satisfies readonly ToolName[]`. The
+  `export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[]`. The
   doc comment above it states the reason: rasterizes nothing, commits no pixels, records no
   history state. `src/tools/toolsMap.ts` — the `eyedropper` map entry — is the consequence —
   `eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper }`, no
@@ -367,9 +369,13 @@ Three judgement calls worth stating, because each could reasonably have gone the
   cycle and no spring-loaded temporary `I`** — both are divergences, and both are stated in
   `appNotes`. The `Shift+I` row is **kept** in `shortcuts`: the binding is real in Photoshop, and
   this file's rule is to record Photoshop's behaviour and disclose the app's divergence in
-  `appNotes` rather than delete the claim. The same check applies to the four tools Photoshop cycles
-  to — Color Sampler, Ruler, Note and Count are in none of the `ToolName` union
-  (`src/contexts/tool-types.ts`), so the group has no members in the app to cycle through.
+  `appNotes` rather than delete the claim. The same check applies to the tools Photoshop cycles
+  to: the **Note tool and the Count tool** are still in none of the `ToolName` union
+  (`src/contexts/tool-types.ts`), while the **Color Sampler has joined it** — so the union sentence
+  above and the `Shift+I` cycle this paragraph describes are now **both** out of date, and neither is
+  corrected here because doing it properly means editing the `eyedropper` record's own `Shift+I` row
+  alongside it, which is product code. Flagged for whichever pass owns that record; the Color
+  Sampler's own side of the tile is in `## Color Sampler Tool` below.
 - Defaults: `sampleSize: 1`, `sampleAllLayers: false` in the `eyedropper` block of `defaultSettings`
   in `src/tools/settings.ts`, pinned by `src/tools/__tests__/eyedropper.test.ts` — the
   `it('seeds the Photoshop defaults: a point sample, and every layer off')` title. **The app's
@@ -782,6 +788,383 @@ through these tools by pressing Shift+B."
   negative: two complete Tools-panel inventories that contain no Draw tool, and a shortcut table
   giving `B` to the Brush.
 
+## Color Sampler Tool
+
+**A measurement tool that reads pixels and commits nothing, and the thinnest-sourced tool in this
+family.** The Color Sampler is now the second member of the `I` tile in `toolbar-mapping.ts` —
+`{ label: 'Color Sampler Tool', name: 'color-sampler' }`, sitting between the Eyedropper and the
+Ruler in a group whose first entry keeps the letter — and `src/tools/toolProcessors.ts` —
+`PIXEL_FREE_TOOLS` — now lists it beside the Eyedropper and the Ruler, which is what classifies it
+as a tool that rasterizes nothing, has no `commit` kind and records no history state.
+`src/tools/descriptions/eyedropper-draw.ts` — the `color-sampler` entry — carries the prose. What
+follows is the evidence behind it, and two facts the entry cannot carry because neither has a
+resolution.
+
+**The first is that the cap is contested inside Adobe's own publishing** — four on two current
+documentation pages, ten on an Adobe-authored blog and on two dated third-party observations of the
+shipping product. **The second is that Adobe publishes no page for this tool at all**, so a
+twenty-five-year-old tool has exactly one paragraph of current Adobe prose about it, on a page
+whose subject is histograms. Everything a reader would most want to know — the marker's shape, the
+readout precision, what Photoshop does at the cap — is unsourced, and the two tables below are
+separated along exactly that line.
+
+### Research method: the one route that reaches `helpx.adobe.com`
+
+`webfetch` returns HTTP 403 on essentially every `helpx.adobe.com` path. That is already recorded in
+`### Sources — Eyedropper` above, and this pass hit it again on the first thing it tried, the
+histogram page. **The route that works is `https://r.jina.ai/<adobe-url>`**, which returns Adobe's
+full page body — the navigation, the article body, and the footer date. It fetched the histogram
+page, the painting-tools overview, the Info panel page, the non-printing Extras page and the missing
+dedicated page, none of which the direct fetch can reach.
+
+Three limits, all worth writing down because each one can be mistaken for a finding.
+
+- **A tracker probe is not a 404.** The first attempt on `.../show-or-hide-non-printing.html`
+  returned "A 1x1 image, likely be a tacker probe", and the first attempt on
+  `.../tool-techniques/color-sampler-tool.html` did the same; a retry returned the page in the first
+  case. A proxy that serves a pixel where a page should be is reporting its own failure, not Adobe's,
+  so a single "not found" reading from this route proves nothing on its own.
+- **A real 404 comes back as Adobe's own 404 body.** `.../using/color-sampler-tool.html` returns
+  "404 Error / Oops! Page not found" with the rest of Adobe's furniture around it, which is what
+  establishes the missing page as Adobe's rather than the fetch's.
+- **The route carries no date of its own.** `image-information.html` prints "Last updated on May 12,
+  2025" in its own body; `viewing-histograms-pixel-values.html` and `show-or-hide-non-printing.html`
+  print **no** last-updated line at all, so their vintage can only be labelled "current, undated" and
+  not dated. The painting-tools overview disagrees with itself: its body reads "Last updated on Feb
+  23, 2026" while the fetch metadata reports a published time of Oct 27, 2025. Where the two
+  disagree the visible footer is the one a reader can check, so it is the one recorded here.
+
+### The one Adobe page, and why there is only one
+
+**There is no dedicated Color Sampler page in current Adobe help, and the absence is Adobe's.**
+`https://helpx.adobe.com/photoshop/using/color-sampler-tool.html` returns Adobe's own 404, and an
+archive search over that path found no snapshot of it either. The `.../tool-techniques/` variant of
+the same guess resolves to a tracker probe rather than to a page. The mirrors were searched too, and
+the CS6 manual PDF carries no Color Sampler page — which is the whole of the finding: **a tool this
+old, in a product this documented, has one paragraph of current first-party prose.**
+
+That paragraph is
+`https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html`, and it is six
+sections rather than a page:
+
+- **View color values in an image** — the placement gesture, the Sample Size sentence, the four-sampler
+  sentence, and "These samplers are saved in the image, so you can refer to them repeatedly as you
+  work, even if you close and reopen the image."
+- **View color information while adjusting color** — "As you make adjustments, view the before and
+  after color values in the Info panel", "the color values under the color samplers appear in the
+  lower half of the Info panel", and the second way to place one: "select the Eyedropper tool and
+  Shift-click in the image".
+- **Adjusting color samplers** — the section that says what can happen to one afterwards.
+- **Move or delete a color sampler** — all four removals and the move, in one list.
+- **Hide or show color samplers in an image** — "Choose View> Extras."
+- **Change the display of color sampler information in the Info panel** — the panel-menu visibility
+  toggle and the colour-space switcher.
+
+Two further Adobe pages each carry exactly one Color Sampler sentence, and both are about a panel
+rather than about the tool. `https://helpx.adobe.com/photoshop/using/image-information.html` (Adobe,
+last updated **May 12, 2025**) carries the gamut warning — "the Info panel displays an exclamation
+point next to the CMYK values if the color beneath the pointer or color sampler is out of the
+printable CMYK color gamut" — and the before-and-after rule, "When any color adjustment dialog box
+(for example, Curves) is being used, the Info panel displays before-and-after color values for the
+pixels beneath the pointer and beneath color samplers."
+`https://helpx.adobe.com/photoshop/using/show-or-hide-non-printing.html` (Adobe-current, undated)
+carries the sentence the Extras section depends on: "Color samplers are affected by the Extras, All,
+and None commands, though they are not an option in the Show submenu."
+
+Everything else Adobe says about this tool is one table row: "Color Sampler tool | Displays color
+values for up to four areas." on
+`https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html`.
+**That one row is load-bearing in this app** — `src/tools/toolProcessors.ts` — the doc comment above
+`PIXEL_FREE_TOOLS` — quotes it as the reason the tool is pixel-free, and it is the only Adobe
+sentence about the tool that is short enough to sit in a code comment.
+
+**One correction the prose above forces, and it is a drift in a source rather than in the tool.** The
+`Change the display of the sample values` row of the `color-sampler` record quotes the histogram
+page's _function_ sentence and says outright that no source could be found for the options-bar label
+itself. That is right, and the reason is sharper than it looks: the current
+`https://helpx.adobe.com/photoshop/using/image-information.html` does not enumerate colour MODELS at
+all. Its Panel Options step names four **categories** — "Actual Color Displays values in the current
+color mode of the image", "Proof Color Displays values for the output color space of the image",
+"[Color mode] Displays the color values in that color mode", "Total Ink Displays the total percentage
+of all CMYK ink at the pointer's current location" — and then says that for the second readout you
+"can also click the eyedropper icon in the Info panel and choose readout options from the pop-up
+menu", with the menu itself shown only as a **screenshot**. Julieanne Kost's blog agrees on the shape
+from the other side: her Info panel section names the same four categories, "Actual/Proof Color,
+Color Mode, Total Ink/Opacity and Bit Depth", and no models. So the model list is not in Adobe's
+prose anywhere, and the string quoted in the doc comment above `ColorSamplerReadout` in
+`src/tools/colorSampler.ts` — "RGB/CMYK, HSB, Lab, XYZ, Web Hex" — could not be retrieved from any
+page this pass opened. **The data file does not repeat that string**, so nothing in the shipped
+description rests on it; the note belongs to the code comment, and it is item 17 under `Unverified`.
+
+### The cap is contested between Adobe's own sources
+
+Six statements about the same number, in two directions, from two publishers and three authors. Every
+one of them was opened this pass except where marked.
+
+| Where                                                                  | What it says                                                                                                                                                                              | Vintage                                                                                                 |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `viewing-histograms-pixel-values.html` — View color values in an image | "You can also use up to four Color Samplers to display color information for one or more locations in the image"                                                                          | Adobe-current, undated on the page                                                                      |
+| the same section, its step 3                                           | "If you selected the Color Sampler tool, place up to four color samplers on the image. Click where you want to place a sampler."                                                          | Adobe-current                                                                                           |
+| `painting-tools-overview.html`                                         | "Color Sampler tool \| Displays color values for up to four areas."                                                                                                                       | Adobe-current; footer says Feb 23, 2026, fetch metadata says Oct 27, 2025                               |
+| `jkost.com` — the Color Sampler Tool                                   | "To keep track of multiple color readouts, click in the image area to set up to ten color samplers. Use the Info panel (see below) to access the Color Sampler's color readouts."         | **Adobe-blog** — an Adobe staff blogger, not an Adobe page. Posted **2018-03-06**                       |
+| `insider.kelbyone.com` — Tip Tuesday: Color Sampler Tool               | "You can add up to 10 samples."                                                                                                                                                           | third party, **2024-11-12**; the page says the tip first ran in the June 2023 issue of _Photoshop User_ |
+| `glensmith.co.uk` — Colour Sampler Tool                                | "allows you to place up to 10 sample points in an image"; "You can select a maximum of 10 sample points."; "I have added 10 sample points, which is the maximum number (Photoshop 2024)." | third party, page updated **2026-07-18**                                                                |
+
+**No Adobe release note announcing a change in either direction was found.** The app takes **four**,
+at `src/tools/colorSampler.ts` — `COLOR_SAMPLER_MAX_SAMPLES`, which the
+`it('is four, because that is what Adobe states')` title in
+`src/tools/__tests__/colorSampler.test.ts` pins. Four is the right pick and it is worth saying why
+plainly, because the choice is a judgement and not a lookup: the authority ladder puts Adobe's
+documentation above an Adobe-authored blog post, and a blog post above a third party's observation of
+a running product; and four is the number Adobe states in the two places a reader is most likely to
+meet this tool, one of which is the tools table every reader of the manual has open.
+
+**The conflict is recorded rather than resolved away, because a reader who has used Photoshop will
+find four surprising.** That is why the same fact is item 16 under `Unverified` and not only here.
+
+### Gestures — what the app implements, and the source for each
+
+Every row below is sourced to
+`https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html` unless its evidence
+column says otherwise, and every row was re-derived against the tree in this worktree rather than
+read off the data file.
+
+| Gesture                                                   | Verdict                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Click places a sampler**                                | **TRUE**                                       | "Click where you want to place a sampler." The app: `ColorSamplerToolArea.tsx` — `handlePointerDown()`, whose last branch calls `addColorSampler(pointer, readback.color)`. Pinned by the `it('places one sampler carrying the colour the composited canvas reports at the clicked pixel')` title                                                                                                                                                                               |
+| **Drag a marker to move it**                              | **TRUE**                                       | "To move a color sampler, drag the sampler to the new location." The app: `handlePointerMove()` calling `moveColorSampler(dragging.id, …)`, with the drag armed in `handlePointerDown()` by the `colorSamplerAt(pointer)` hit                                                                                                                                                                                                                                                   |
+| **Drag a marker out of the document window to delete it** | **TRUE**                                       | "To delete a color sampler, drag the sampler out of the document window." The app tests on **release**, not during the move — `handlePointerUp()` calls `isInsideFrame(pointer, totalSize)` and deletes — pinned by the `it('deletes the sampler when a drag is released outside the document frame')` title and, at the boundary, the `it('keeps the sampler when a drag is released exactly on the document frame border')` title                                             |
+| **Alt/Option-click a marker to delete it**                | **TRUE**                                       | "Alternatively, hold down Alt (Windows) or Option (Mac OS) until the pointer becomes a scissors and click the sampler." The app checks it **before** the drag, in `handlePointerDown()`, because a drag would otherwise pick the same marker up; an Alt-click on empty canvas still places, which is the `it('deletes the sampler an Alt-click lands on, and treats an Alt-click on empty canvas as a placement')` title                                                        |
+| **Eyedropper `Shift`-click places a sampler**             | **TRUE**                                       | "select the Eyedropper tool and Shift-click in the image." The app: `EyedropperToolArea.tsx` — `shiftClickPlacesSampler()`, resolved **before** the Eyedropper's own readback because it does not use this tool's sample at all, and the shared `readColorSampler()` so the two call sites cannot disagree about which document pixel a point names                                                                                                                             |
+| **Eyedropper `Shift`-`Alt`-click deletes one**            | **TRUE, but the quoted string is not Adobe's** | See below. The app: `EyedropperToolArea.tsx` — `shiftClickPlacesSampler()` with a `hit && event.altKey` branch calling `removeColorSampler(hit.id)`                                                                                                                                                                                                                                                                                                                             |
+| **`Clear` deletes every sampler**                         | **TRUE**                                       | "To delete all color samplers, click Clear in the options bar." The app: `ColorSampler.tsx` — the `#color-sampler-clear` button calling `clearColorSamplers`, greyed while the list is empty, which is the `it('greys Clear while there is no sampler to clear and lights it once one exists')` title                                                                                                                                                                           |
+| **`Sample Size` sets the footprint**                      | **TRUE**                                       | "if necessary, choose a sample size in the options bar. Point Sample reads the value of a single pixel, other options read the average of a pixel area." The app: the `COLOR_SAMPLER_SAMPLE_SIZE_OPTIONS` list and `sampleColorAt()`'s `half`/`left`/`top`/`right`/`bottom` block, the `it('offers all seven Sample Size entries, in the order and with the labels Adobe prints')` title and the `it('CLIPS the block at the image edge rather than shifting it inward')` title |
+
+**The `Shift`-`Alt` row is the one place this table has something to add to the entry rather than
+confirm, and it is about a string rather than a behaviour.** The `color-sampler` record's `Shift`
+modifier row quotes "Option + Shift (Mac) | Alt + Shift (Win) -click on the Color Sampler to delete
+a Color Sampler (With the Eyedropper tool selected)". **That is the Adobe-blog wording, from
+`jkost.com`, not Adobe's current prose** — and Adobe's current page says something different for the
+same chord, under a condition: "To delete a color sampler while an adjustment dialog box is open, hold
+down Alt+Shift (Windows) or Option+Shift (Mac OS), and click the sampler." So Adobe's own current page
+documents `Alt`+`Shift` as the **Color Sampler tool's** delete **while an adjustment dialog is open**,
+while the string the record quotes documents it as the **Eyedropper's** delete at any time, from a
+blog. Both are implemented in the app by one `event.altKey` branch in each area, which covers the
+Adobe-current case as a side effect. Two things follow, and neither is changed here: the record's
+`sources` array does not contain `jkost.com` although the record quotes it, and the two conditions are
+different facts that a reader could easily collapse into one. Flagged for whichever pass owns the
+data file; the app side is not in question.
+
+**Adobe puts every readout in the Info panel, and this app has no Info panel.** That is the single
+structural reason the readouts live on the options bar, and it is Adobe's sentence rather than a
+preference: "the color values under the color samplers appear in the lower half of the Info panel",
+"To display or hide color sampler information in the Info panel, choose Color Samplers from the panel
+menu", and "To change the color space in which a color sampler displays values, move the pointer onto
+the color sampler icon in the Info panel". The `ruler` record in the same data file faces the same
+wall and takes the same exit, which is why the arrangement is described in this app's terms as the
+Ruler's.
+
+### Options bar — control census
+
+Two controls Adobe names for this bar, and two it names somewhere else. The census is of the
+**Color Sampler's own bar against the app's Color Sampler bar**, so a `present` here means the app's
+bar offers that Photoshop control with that Photoshop behaviour, and never that Adobe's Color Sampler
+bar is larger than this table.
+
+| #   | Photoshop control                         | Status    | App rendering                                                                                                                                  | Note                                                                                                                                                                                                                                                                                                                     |
+| --- | ----------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `Sample Size`                             | `present` | `src/components/ToolbarsRight/ColorSampler/ColorSampler.tsx` — the `#color-sampler-sample-size` `<select>`, handler `handleSampleSizeChange()` | All seven of Adobe's entries with Adobe's labels in Adobe's order, and **the same list object** the Eyedropper renders rather than a second copy of it. Seeded Point Sample. The app clips the block at the image edge instead of shifting it inward, so a wide footprint on a corner averages the pixels that exist     |
+| 2   | `Clear`                                   | `present` | `src/components/ToolbarsRight/ColorSampler/ColorSampler.tsx` — the `#color-sampler-clear` `<button>`, wired straight to `clearColorSamplers`   | Greyed while the list is empty, which is right rather than merely convenient: there is nothing for it to remove. `clearColorSamplers()` is itself guarded, so a no-op Clear publishes no new array and wakes no subscriber                                                                                               |
+| 3   | `Sample`                                  | `missing` | **no control rendered**; `sampleSize` is the only field on `ColorSamplerToolArgs`                                                              | The layer-source dropdown is Adobe's for the **Eyedropper**, named on the Eyedropper's page, and no Adobe source places it on this bar. The app cannot honour it either: it needs a composite read of a chosen layer stack and reads the composited workspace canvas. Recorded rather than omitted so the gap is visible |
+| 4   | `Change the display of the sample values` | `missing` | **no control rendered**; the readouts are `<output>` elements and a swatch                                                                     | Adobe documents the function and puts the switcher in the Info panel. See the drift note above: the concrete colour models are in no Adobe prose, and the row's own `control` string is therefore not Adobe-verbatim                                                                                                     |
+
+**Counts: present 2 · partial 0 · inert 0 · missing 2.**
+
+**Row 4 breaks the contract that governs `control`, and this file has already resolved that exact
+situation once.** `src/tools/descriptions/types.ts` — `ToolControl.control` — requires the field to be
+"The control's name in Photoshop's options bar, verbatim", and the reason the Eyedropper's sampling
+ring was **left out of that census entirely** rather than filed `missing` is that no Adobe page
+supplies the name — see the judgement call recorded under the Eyedropper's census and item 7 under
+`Unverified`. The Color Sampler's colour-space switcher is the same shape of problem and the entry
+resolves it the other way: the row exists, carries `missing`, and its `detail` says outright that no
+source could be found for the label. Both resolutions are defensible, **they are not consistent with
+each other**, and the reason to record it is that a later pass harmonising this file should pick one
+rather than discover the disagreement. Not changed here: the data file is product code and the choice
+belongs to whoever owns it.
+
+### App-side facts the census depends on
+
+- **The cap is on LIVE samplers, not on placements.** `samplerCapReached()` counts the current list,
+  so deleting one frees a slot and the next placement takes it — the
+  `it('frees a slot after a deletion, so the cap is on LIVE samplers')` title in
+  `src/tools/__tests__/color-sampler-store.test.tsx` pins it. What happens AT the cap is a **refusal**
+  and not a replacement: `samplerCapReached()` returns `{ ok: false, reason }` carrying
+  `COLOR_SAMPLER_CAP_REFUSAL`, the store changes nothing, and the caller logs it. No source describes
+  Photoshop replacing or deleting the oldest marker, and the one dated observation of the cap being
+  reached — `glensmith.co.uk`'s "If you try to add more sample points, you will see this message" —
+  describes a message, so a message is what this app produces. Pinned by the
+  `it('refuses at four and changes nothing, rather than replacing the oldest sampler')` title.
+- **The numbering counts placement order and does not renumber on delete.** `addColorSampler()`
+  assigns the next id from the **highest** existing id rather than from the count, so a deleted
+  sampler leaves a hole and "sampler 2" keeps meaning one point for the rest of the session. Two
+  titles pin it: the `it('does NOT renumber the survivors after a deletion, so "sampler 2" keeps
+meaning one point')` one and the
+  `it('continues the numbering from the HIGHEST id rather than from the count after a deletion')` one.
+  Adobe's own half of this is thin — the `#1`, `#2` labels are described by
+  `insider.kelbyone.com` ("those values will show up in the Info panel labeled #1, #2, etc") and by
+  `glensmith.co.uk` ("A sample point is added in your image, with a number"), not by an Adobe page —
+  so what is sourced here is that markers are **numbered**, and that they are numbered in placement
+  order is this app's rule.
+- **The store is module state, and that is the Ruler's rule rather than a new one.**
+  `src/tools/color-sampler-store.ts` holds `current`, `frameSize` and `listeners` at module scope and
+  publishes through `useSyncExternalStore`, the shape `src/tools/ruler-measurement-store.ts` and
+  `src/components/SidebarLeft/toolbar-fit-store.ts` already use. Nothing in it is history, nothing is
+  durable, nothing is exported, and a sampler that reached `StoreContext` would be a field undo has no
+  opinion about. `publish()` returns the same array when a call changes nothing, which is what keeps
+  a refused click from waking every subscriber.
+- **The first frame-size registration is NOT a size change**, and getting that wrong loses samplers
+  the moment the tool is first selected — including the ones the Eyedropper's `Shift`-click path
+  placed while a different tool held the tile, which is Adobe's own second way to add one.
+  `syncColorSamplerFrameSize()` treats an empty `frameSize` as "nothing observed yet" rather than as
+  "the document changed"; the `it('registers a first size WITHOUT dropping samplers, because nothing
+has been observed yet')` title pins it, and the
+  `it('drops samplers when the frame size changes from a KNOWN one, as a crop does')` title pins the
+  other half.
+- **Samplers survive a tool switch and are not drawn while another tool holds the tile.**
+  `src/components/Main/Main.tsx` gives the tool its own `interactionMode` and mounts
+  `ColorSamplerToolArea` for it alone, so the markers are drawn by that area's overlay effect and by
+  nowhere else — which means a sampler placed from the Eyedropper is in the store but invisible until
+  the Color Sampler is selected again, and then it reappears with its number. Adobe documents a
+  **panel** toggle for exactly this ("To display or hide color sampler information in the Info panel,
+  choose Color Samplers from the panel menu") and `View> Extras`, and says nothing about tool
+  selection; whether Photoshop gates samplers on the selected tool is item 20 under `Unverified`.
+
+### App divergences, re-derived
+
+Eight, each re-read from the tree this pass rather than taken from the record. The first two are the
+sharpest, and both are consequences of the two facts at the head of this section.
+
+| Divergence                                                                 | Verdict                                                  | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **The cap is four, where two sources say ten**                             | shipped, and the conflict is recorded rather than hidden | `COLOR_SAMPLER_MAX_SAMPLES = 4`, reasoned at length in the doc comment above it. The cap table above is the evidence; the ladder is the argument                                                                                                                                                                                                                                                                                                                                                                   |
+| **The readouts are RGB and hex, where Adobe offers a set of colour modes** | shipped                                                  | `samplerReadout()` returns `{ red, green, blue, hex }` from one `parseHexColor()` of the stored `#rrggbb`. Both halves of the hex pair come from the same four bytes. This app has no colour-management model at all, so an invented Lab or XYZ would be its arithmetic wearing Adobe's name                                                                                                                                                                                                                       |
+| **The readouts are frozen at placement**                                   | shipped, and stated as a loss rather than a feature      | `ColorSampler.color` is STORED, and `moveColorSampler()` explicitly keeps it — the `it('keeps the colour, because moving a marker is not re-sampling it')` title pins that. Adobe's readouts are live in a documented sense: "the color values under the color samplers appear in the lower half of the Info panel" while an adjustment is open                                                                                                                                                                    |
+| **Samplers are dropped when the document frame size changes**              | shipped, against an explicit Adobe sentence              | `syncColorSamplerFrameSize()` publishes an empty list on a size change. Adobe: "These samplers are saved in the image, so you can refer to them repeatedly as you work, even if you close and reopen the image." A size change is the cheapest available proxy for "a different document" and also covers a crop, whose sampler would otherwise sit against an origin that moved                                                                                                                                   |
+| **The eight-pixel hit radius is this app's number**                        | shipped, and declared to be                              | `COLOR_SAMPLER_HIT_RADIUS = 8`, in **document** pixels rather than CSS pixels so the gesture is the same at 25% and at 100% — the `it('has a hit radius in DOCUMENT pixels, which is the app decision it is declared to be')` title pins it. Adobe states the drag and publishes no tolerance, and the nearest of them is the Ruler's own eight-pixel protractor tolerance on the same tile                                                                                                                        |
+| **The scissors cursor is not drawn**                                       | shipped, and the gesture it marks is implemented         | The Alt-delete branch exists; the cursor does not, because the root `<div>` carries only `cursor-crosshair` and **this repository has no cursor registry at all** — the same fact the Eyedropper's sampling ring is absent for, and the same absence the `ruler` record records for its own pointer changes                                                                                                                                                                                                        |
+| **The readouts live in the options bar**                                   | shipped                                                  | `ColorSampler.tsx` renders one `<output>` row per sampler inside the bar. Adobe names the Info panel for the readouts and the options bar for the two controls; this app has the second and not the first, which is the Ruler's arrangement                                                                                                                                                                                                                                                                        |
+| **`Sample Size` is the Eyedropper's own list object**                      | shipped, deliberately                                    | `COLOR_SAMPLER_SAMPLE_SIZE_OPTIONS` **re-exports** `EYEDROPPER_SAMPLE_SIZE_OPTIONS` rather than retyping it, and `ColorSamplerToolArgs.sampleSize` is typed as `EyedropperSampleSize`. The `it('is the SAME list object the Eyedropper renders, because Adobe names one control for both')` title pins the identity. A second copy of the same seven labels would be two spellings of one Photoshop control — the exact cost `EYEDROPPER_SAMPLE_SIZE_OPTIONS` already records as the reason for its first spelling |
+
+**One app-side comment overclaims, and it is recorded rather than edited.** The doc comment above
+`samplerReadout()` in `src/tools/colorSampler.ts` is headed "The six numbers a sampler places in the
+bar, in Adobe's own order" and explains the order as "the X and Y of the point, then the three
+channels and the hex, then nothing". **The function returns four fields and no X or Y**, the bar
+renders three channel numbers and one hex string plus a swatch, and no Adobe source orders the
+sampler readouts that way — Adobe's ordering is by colour mode, which is the thing the adjacent
+comment above `ColorSamplerReadout` gets right. So the count, the fields and the "Adobe's own order"
+claim are all three wrong about the tree. It is product code and it is not this pass's to change;
+recorded here and as item 21 under `Unverified`.
+
+### The inventory row this pass found stale
+
+**`docs/TOOLS-INVENTORY.md`'s Painting table row for the Color Sampler is false of this tree, and it
+is named here rather than edited there.** Two clauses are stale, and they went stale in opposite
+directions.
+
+- The **headline-options** cell reads "a sample-size footprint and up to four samples", which is the
+  shape of a tool that has not been researched — the same cell's neighbours in that table carry
+  "not researched" and "Full bar not researched" for rows that genuinely have not been. The bar is
+  now censused above: two controls present, two named elsewhere and absent, and the count of four
+  is the contested one rather than a researched fact.
+- The **Source** cell's closing clause says that "`docs/TOOLS.md` records that three of the four
+  tools Photoshop cycles to with `Shift+I` are still outside this app's registry — the Ruler joined
+  the Eyedropper on that tile, so only the Color Sampler, the Note tool and the Count tool remain
+  absent". **The Color Sampler is no longer absent.** It is in `ToolArgsByName`
+  (`src/contexts/tool-types.ts`), it has a `toolsMap` entry, it holds the second slot of the `I`
+  group in `toolbar-mapping.ts`, it has an options bar, an icon, a tool area and a `ToolDescription`,
+  and `docs/TOOLS.md` is generated from that description. Only the Note tool and the Count tool remain
+  outside the registry.
+
+**This file does not edit it, and the reason is worth writing down so the omission is not read as an
+oversight: a parallel task deletes the row.** A row that describes an unbuilt tool is the wrong shape
+for a table of tools that exist, so the fix is deletion rather than correction, and correcting a row
+that is about to be deleted would produce a conflict in the same commit. Named here so the next pass
+does not re-derive it.
+
+### Sources — Color Sampler
+
+Opened this pass, in the order the sections above use them. `docs/TOOLS.md` is generated and is not
+touched by this pass or by anything recorded here.
+
+- https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html — Adobe,
+  **current and undated on the page** (it carries no last-updated line, so the vintage cannot be
+  narrowed further than that). The primary source for this tool and the only page of current Adobe
+  prose about it: "You can also use up to four Color Samplers to display color information for one or
+  more locations in the image"; "These samplers are saved in the image, so you can refer to them
+  repeatedly as you work, even if you close and reopen the image."; "Select (then Shift-click) the
+  Eyedropper tool or Color Sampler tool, and if necessary, choose a sample size in the options bar.
+  Point Sample reads the value of a single pixel, other options read the average of a pixel area.";
+  "If you selected the Color Sampler tool, place up to four color samplers on the image. Click where
+  you want to place a sampler."; "As you make adjustments, view the before and after color values in
+  the Info panel"; "the color values under the color samplers appear in the lower half of the Info
+  panel"; "To move a color sampler, drag the sampler to the new location."; "To delete a color sampler,
+  drag the sampler out of the document window. Alternatively, hold down Alt (Windows) or Option (Mac
+  OS) until the pointer becomes a scissors and click the sampler."; "To delete all color samplers,
+  click Clear in the options bar."; "To delete a color sampler while an adjustment dialog box is open,
+  hold down Alt+Shift (Windows) or Option+Shift (Mac OS), and click the sampler."; "Choose View>
+  Extras."; "To display or hide color sampler information in the Info panel, choose Color Samplers
+  from the panel menu."; "To change the color space in which a color sampler displays values, move the
+  pointer onto the color sampler icon in the Info panel."
+- https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html
+  — Adobe, current; **the footer reads "Last updated on Feb 23, 2026" and the fetch metadata reports a
+  published time of Oct 27, 2025.** One table row, "Color Sampler tool | Displays color values for up
+  to four areas.", and the only Adobe sentence about the tool short enough to sit in a code comment.
+- https://helpx.adobe.com/photoshop/using/image-information.html — Adobe, page last updated **May 12,
+  2025**. Two Color Sampler sentences, both about the Info panel: the printable-gamut exclamation and
+  the before-and-after rule under an open adjustment dialog. **It names colour-readout CATEGORIES and
+  does not enumerate colour MODELS** — the model list is shown only in a screenshot.
+- https://helpx.adobe.com/photoshop/using/show-or-hide-non-printing.html — Adobe, current and undated.
+  "Color samplers are affected by the Extras, All, and None commands, though they are not an option in
+  the Show submenu."
+- https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html — Adobe, page last
+  updated **Mar 22, 2024**, carried from this file's Eyedropper sources. In the `color-sampler` record
+  because the `Sample` layer-source row is Adobe's for the **Eyedropper** and this page is where the
+  Eyedropper's controls are named.
+- https://developer.adobe.com/photoshop/uxp/ps_reference/classes/colorsampler and the Adobe-hosted PDF
+  at `https://cdn.edex.adobe.com/v3/uploads/resourceFile/2023/c0c1aaee-43e8-4c03-9b2c-aaec2c3d9285/08d7c4a0-c2ba-4d6a-8fa2-396d2d99c346.pdf`
+  — both carried on the `color-sampler` record's `sources` from the pass that built the tool and **not
+  re-opened here**, so this file asserts nothing about their contents beyond their presence in that
+  record.
+- **Two Adobe paths that do not exist, established rather than assumed.**
+  `https://helpx.adobe.com/photoshop/using/color-sampler-tool.html` returns Adobe's own 404 body, and
+  an archive search found no snapshot of it. The
+  `https://helpx.adobe.com/photoshop/using/tool-techniques/color-sampler-tool.html` variant resolves
+  to a 1×1 tracker probe. Neither is in the record's `sources`, and neither should be: a citation to a
+  404 is a citation to an absence.
+- https://jkost.com/blog/2018/03/the-eyedropper-color-samplers-and-info-panel-in-photoshop-cc.html —
+  **Adobe-blog** (an Adobe staff blogger, not an Adobe page), posted **2018-03-06**. "To keep track of
+  multiple color readouts, click in the image area to set up to ten color samplers."; "Option -click
+  (Mac) | Alt -click (Win) the Color Sampler to delete it, (the icon will change to a pair of
+  scissors)"; "with the Eyedropper tool selected, Shift-click in the image area to set a Color Sampler.
+  Option + Shift (Mac) | Alt + Shift (Win) -click on the Color Sampler to delete a Color Sampler
+  (With the Eyedropper tool selected)"; the five `Sample` values; and the Info panel's four readout
+  CATEGORIES. **It is already in the `eyedropper` record's `sources` and is not in the `color-sampler`
+  record's**, which quotes it — see the `Shift`-`Alt` row of the gesture table.
+- https://insider.kelbyone.com/tip-tuesday-color-sampler-tool-removing-samples — third party, posted
+  **2024-11-12**, which states the tip "originally published in Colin Smith's 'Photoshop Tips' column
+  in the June 2023 issue of _Photoshop User_ magazine", so the observation's own vintage is 2023.
+  "You can add up to 10 samples."; "This looks like the Eyedropper but it includes a crosshair. Click
+  on the image with the Color Sampler and it will drop a little crosshair, and those values will show
+  up in the Info panel labeled #1, #2, etc."
+- https://glensmith.co.uk/photoshop/colour-sampler — third party, page updated **2026-07-18**. "allows
+  you to place up to 10 sample points in an image"; "You can select a maximum of 10 sample points.";
+  "I have added 10 sample points, which is the maximum number (Photoshop 2024)"; "A sample point is
+  added in your image, with a number"; and the only dated observation of **what happens at the cap** —
+  "If you try to add more sample points, you will see this message."
+- https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=126 and the other manual
+  mirrors carried in `### Sources — Eyedropper` above — searched for a Color Sampler page and **none
+  has one**, which is the negative result behind this section's first finding.
+
 ## Unverified
 
 Claims the research could not source. None of these appear in the data file as sourced fact, and each
@@ -935,6 +1318,159 @@ is listed with the URL that came closest.
     `phlearn` alone. Kept in `purpose` because it is true and useful, but recorded here so nobody
     reads it as Adobe prose. Closest:
     https://helpx.adobe.com/photoshop/using/painting-tools.html
+16. **NEW — the cap, which is CONTESTED inside Adobe's own publishing and is the sharpest unverified
+    fact in the file.** Two current Adobe pages say **four** — "You can also use up to four Color
+    Samplers to display color information for one or more locations in the image" and "place up to
+    four color samplers on the image", both in
+    `https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html`, plus the tools
+    table's "Color Sampler tool | Displays color values for up to four areas." at
+    `https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html`.
+    Against that, Adobe's own staff blogger Julieanne Kost writes "click in the image area to set up
+    to ten color samplers"
+    (`https://jkost.com/blog/2018/03/the-eyedropper-color-samplers-and-info-panel-in-photoshop-cc.html`,
+    2018-03-06), and two dated third-party observations of the **running product** say ten as well —
+    "You can add up to 10 samples."
+    (`https://insider.kelbyone.com/tip-tuesday-color-sampler-tool-removing-samples`, 2024-11-12, and
+    the observation itself first published in the June 2023 issue of _Photoshop User_) and "You can
+    select a maximum of 10 sample points."
+    (`https://glensmith.co.uk/photoshop/colour-sampler`, page updated 2026-07-18). **No Adobe release
+    note announcing a change in either direction was found.** The app takes four —
+    `COLOR_SAMPLER_MAX_SAMPLES` in `src/tools/colorSampler.ts` — because the authority ladder puts
+    Adobe's documentation above an Adobe-authored blog post and a blog post above a third party's
+    observation, and because four is where a reader of Adobe's pages meets the number. **The conflict
+    is recorded rather than resolved away, and it is recorded here as well as in the pass section
+    because a reader who has used Photoshop and placed ten samplers is a reader for whom four is a
+    bug report.** A later pass that finds an Adobe release note settles this; until then the app
+    keeps four and this item stays open. Closest:
+    https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html
+17. **NEW — the colour-model LIST, as distinct from the colour-model categories.** No Adobe page
+    opened this pass enumerates Adobe's readout models. The current
+    `https://helpx.adobe.com/photoshop/using/image-information.html` (last updated May 12, 2025)
+    names four **categories** — "Actual Color Displays values in the current color mode of the
+    image", "Proof Color Displays values for the output color space of the image", "[Color mode]
+    Displays the color values in that color mode", "Total Ink Displays the total percentage of all
+    CMYK ink at the pointer's current location" — and then hands the concrete models to a screenshot:
+    "For the second readout, choose a display option from the list in step 2. For the second readout,
+    you can also click the eyedropper icon in the Info panel and choose readout options from the pop‑up
+    menu." `jkost`'s blog independently agrees on the shape and names the same four categories and no
+    models. **The string quoted in the doc comment above `ColorSamplerReadout` in
+    `src/tools/colorSampler.ts` — "RGB/CMYK, HSB, Lab, XYZ, Web Hex" — could not be retrieved from any
+    page this pass opened.** The `color-sampler` record does not repeat the string, so nothing in the
+    shipped description rests on it; the claim lives in a code comment and is flagged here. Closest:
+    https://helpx.adobe.com/photoshop/using/image-information.html
+18. **NEW — the marker's GLYPH.** No Adobe sentence describes what a placed sampler looks like. Every
+    description agrees it is a small glyph plus a sequential number and disagrees about the glyph:
+    `insider.kelbyone.com` says the tool "includes a crosshair" and that a click will "drop a little
+    crosshair" (**third party**, 2024-11-12); another account describes a target icon. `glensmith.co.uk`
+    describes only "A sample point is added in your image, with a number" and shows the shape in a
+    screenshot. The app draws a crosshair, and the disagreement is the reason it is declared an app
+    decision rather than a fidelity claim — a crosshair is what this tool's own cursor already is.
+    **The numbering is better sourced than the glyph**: "labeled #1, #2, etc" (`insider.kelbyone.com`)
+    and "with a number" (`glensmith.co.uk`), still no Adobe page. Closest:
+    https://insider.kelbyone.com/tip-tuesday-color-sampler-tool-removing-samples
+19. **NEW — the options-bar LABEL for the colour-model switcher, and whether such a control is on this
+    tool's bar at all.** Adobe documents the **function** and puts the control in the **Info panel**:
+    "To change the color space in which a color sampler displays values, move the pointer onto the
+    color sampler icon in the Info panel. Then, hold down the mouse button, and choose another color
+    space from the menu." **No source places a colour-space switcher on the options bar**, and the
+    string "Change the display of the sample values" could not be retrieved from any page. This is the
+    second reason the `Change the display of the sample values` row of the `color-sampler` record
+    breaks `src/tools/descriptions/types.ts` — `ToolControl.control`, which requires Adobe's name
+    verbatim — while the Eyedropper's sampling ring was left out of its census for the same reason.
+    See the census note in the pass section. Closest:
+    https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html
+20. **NEW — the `Sample` layer-source dropdown on THIS tool's bar.** The five entry names — Current
+    Layer, Current & Below, All Layers, All Layers No Adjustments, Current and Below No Adjustments —
+    are Adobe-official for the **EYEDROPPER only**, at the `jkost` URL above, which this file already
+    records under item 13 for the same reason: four of the five are not verbatim from any Adobe page,
+    and Adobe's current set-colors page gives only "All Layers : Sample color from all layers". **No
+    Adobe source places the control on the Color Sampler's bar**, and the `color-sampler` record says
+    so in the row's own `detail` rather than asserting it. Recorded because the row is `missing` and
+    a reader who has used Photoshop may expect it here, as they may also expect the four the Eyedropper
+    side cannot honour. Closest:
+    https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html
+21. **NEW — whether a placed sampler re-reads its pixel after an edit is COMMITTED.** Adobe's page
+    establishes that the values are live while an adjustment dialog is open — "As you make
+    adjustments, view the before and after color values in the Info panel", and "the color values under
+    the color samplers appear in the lower half of the Info panel" — and
+    `https://helpx.adobe.com/photoshop/using/image-information.html` repeats it: "When any color
+    adjustment dialog box (for example, Curves) is being used, the Info panel displays before-and-after
+    color values for the pixels beneath the pointer and beneath color samplers." **Both sentences are
+    conditioned on a dialog being open, and neither says what the sampler reports after the dialog is
+    accepted.** So "Adobe's readouts track an edit" is half-sourced: true of the dialog, unstated
+    afterwards. The app stores the colour, which is why `appNotes` states this as a loss rather than
+    as agreement. Closest:
+    https://helpx.adobe.com/photoshop/using/image-information.html
+22. **NEW — what Photoshop does at the cap, beyond "a message appears".** No Adobe sentence describes
+    the state of a document at four samplers when a fifth is requested. The only dated observation is
+    third party: "If you try to add more sample points, you will see this message."
+    (`https://glensmith.co.uk/photoshop/colour-sampler`, page updated 2026-07-18), which confirms a
+    message and says nothing about whether the message replaces, deletes, or leaves everything alone.
+    The app refuses loudly and changes nothing, which is the shape the one observation supports and
+    the only shape no source contradicts. Closest:
+    https://glensmith.co.uk/photoshop/colour-sampler
+23. **NEW — whether Photoshop hides samplers when another tool is selected.** Adobe documents two
+    visibility controls, and both are about chrome rather than about the selected tool:
+    `https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html` gives "Choose View>
+    Extras. A check mark indicates that color samplers are visible." and
+    "To display or hide color sampler information in the Info panel, choose Color Samplers from the
+    panel menu", and `https://helpx.adobe.com/photoshop/using/show-or-hide-non-printing.html` adds
+    "Color samplers are affected by the Extras, All, and None commands, though they are not an option
+    in the Show submenu". **None of the three mentions tool selection**, and one third party claims
+    gating on the selected tool without an Adobe page behind it. The app's behaviour is now known and
+    is not one of the documented shapes: the markers live in a module store and survive a tool switch,
+    but `src/components/Main/Main.tsx` mounts `ColorSamplerToolArea` for its own `interactionMode`
+    alone, so nothing draws them until the tool is selected again — at which point they reappear with
+    their numbers. Closest:
+    https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html
+24. **NEW — a click on the canvas but OUTSIDE the document frame, and a `Sample Size` footprint larger
+    than the image.** Two gaps with the same shape: Adobe documents placement as "Click where you want
+    to place a sampler" and the footprint as a menu whose entries are all small odd-sided squares,
+    and says nothing about either edge case. The app answers both from engineering rather than from
+    Adobe: a press outside the frame is refused by `isPointerDownValid`, and `sampleColorAt()` clips
+    the block to the bitmap and returns `null` rather than reading out of bounds or sliding the
+    footprint inward — pinned by the
+    `it('CLIPS the block at the image edge rather than shifting it inward')` title in
+    `src/tools/__tests__/colorSampler.test.ts`. Both are app answers to unasked questions, and a
+    101-by-101 sample on a 60-by-60 image is the case where the two answers visibly differ from a
+    reader's expectation. Closest:
+    https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html
+25. **NEW — what samplers do across Image Size, Canvas Size and Crop, as distinct from closing the
+    image.** Adobe's one sentence is about reopening: "These samplers are saved in the image, so you
+    can refer to them repeatedly as you work, even if you close and reopen the image." **It says
+    nothing about a resize, a canvas change or a crop**, and the general non-printing-Extras page does
+    not mention samplers. The app's rule is a single proxy — `syncColorSamplerFrameSize()` drops every
+    sampler when the document frame SIZE changes — which happens to cover all three commands but is
+    visibly wrong for a resize that keeps the frame and for a canvas change that moves the origin
+    without changing the size. Recorded as a known gap in the app, not as a fidelity claim. Closest:
+    https://helpx.adobe.com/photoshop/using/show-or-hide-non-printing.html
+26. **NEW — the VINTAGE of "These samplers are saved in the image", and whether placing a sampler is an
+    undoable history state.** The saved-in-the-image sentence is on a page that carries **no
+    last-updated line**, so it cannot be dated beyond "current, undated", and it is the sentence the
+    app diverges from most sharply. Separately, **no Adobe sentence states whether placing a sampler
+    records a history state**, and this file's own item 4 says the same of the Eyedropper: a sample
+    mutates no pixel, so a deduction from the governing rule is not a citation. The tool's
+    pixel-free classification rests on Adobe's one-line summary — "Color Sampler tool | Displays color
+    values for up to four areas." — rather than on a stated history rule, and
+    `src/components/Main/__tests__/ColorSamplerToolArea.test.tsx` — the
+    `it('records NO history state, because a color sampler is nonprinting')` title — pins the app
+    side. Closest: https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html
+27. **NEW — the numeric precision and rounding of ANY readout, and one app-side comment that overclaims
+    on it.** Adobe publishes no rounding rule, no bit depth for a sampler readout, and no indication
+    of how a neighbourhood mean is reduced; the Info panel page says only that it "can display 8‑bit,
+    16‑bit, or 32‑bit values" and which of those is a panel option, not a per-tool statement. The
+    app's answer is `roundChannel()` in `src/tools/colorSampler.ts` — `Math.round(sum / count)` —
+    declared in its own doc comment as an app decision, and pinned by the
+    `it('rounds a fractional mean to a whole channel value')` and
+    `it('does not floor, which would bias every average down')` titles. **The comment directly above
+    it overclaims on three counts at once**: it is headed "The six numbers a sampler places in the
+    bar, in Adobe's own order", it explains the order as "the X and Y of the point, then the three
+    channels and the hex, then nothing", and the function it heads returns four fields with no X or Y
+    — so the count, the fields and the "Adobe's own order" claim are all wrong about the tree. Adobe's
+    ordering is by colour mode, which the adjacent comment above `ColorSamplerReadout` gets right and
+    this one contradicts. Product code, not changed by this pass; recorded so the next pass does not
+    read it as a sourced claim. Closest:
+    https://helpx.adobe.com/photoshop/using/image-information.html
 
 **Two unsourced defaults were removed rather than listed here, because they are no longer claims.**
 The `draw` family's `Opacity` and `Flow` rows both ended "Default: 100%." Adobe says "Opacity of

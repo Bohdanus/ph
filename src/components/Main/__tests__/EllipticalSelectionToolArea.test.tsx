@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { EllipticalSelectionToolArea } from '../EllipticalSelectionToolArea.tsx';
 import {
-  ELLIPSE_MAX_SAGITTA_PX,
   ELLIPTICAL_SELECTION_SOURCE_TOOL,
   type EllipticalSelectionToolArgs,
 } from '../../../tools/ellipticalSelection.ts';
@@ -75,7 +74,7 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
  *
  * The pointer ID matters more here than in the paint areas, because this surface carries the id
  * on its own drag record and refuses a move, a release or an abort whose id is not the one the
- * press took (`EllipticalSelectionToolArea.tsx:181`, `:228`, `:283`). A double that let every
+ * press took (`EllipticalSelectionToolArea.tsx:181`, `:221`, `:276`). A double that let every
  * event through would let a second pointer steer a drag it did not start, and every case below
  * would still pass.
  */
@@ -228,7 +227,7 @@ describe('EllipticalSelectionToolArea', () => {
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
 
-    // The arm that returns before the draft dispatch (`EllipticalSelectionToolArea.tsx:157-165`).
+    // The arm that returns before the draft dispatch (`EllipticalSelectionToolArea.tsx:155-165`).
     // A draft dispatched here would put a second, half-built selection into the store over the
     // one the drag is about to replace, and the drag's own commit would then resolve against a
     // selection the user never made.
@@ -323,29 +322,29 @@ describe('EllipticalSelectionToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
     fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
 
-    // `resolveUnclampedEllipseRect` returns null for a zero-extent box, so there is no ellipse to commit
+    // `resolveEllipseRect` returns null for a zero-extent box, so there is no ellipse to commit
     // — and the draft the press opened is closed rather than left half-built.
     expect(selectionEdits()).toEqual([]);
     expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
   });
 
   /**
-   * The regression for the accumulator a multi-frame drag needs: `handlePointerMove()` measures
-   * each frame's `delta` against `drag.origin`, which it then ADVANCES, so `delta` is this frame's
-   * STEP and the drag's displacement is the SUM of its steps — accumulated onto the running
-   * `drag.preview`, which the press seeded with `activeSelection`. Applied instead to
-   * `drag.baseline`, which never advances, the run held its LAST step alone: a pointer dragged out
-   * and back released the selection at (-60, -40), off the top-left corner of a document that
-   * starts at the origin, and `drag.preview` handed the ants channel that same wrong position for
-   * the whole gesture.
+   * TRIPWIRE — a known-broken behaviour, pinned as `it.fails`. Remove this case in the same
+   * change that fixes the move arm; `AGENTS.md` is explicit that a `test.fails` is a tripwire
+   * for broken behaviour and is deleted, not reworded, by the fix.
    *
-   * The one-frame move cases in this file cannot see the difference, and the reason is arithmetic
-   * rather than a missing branch: with a single `pointerMove` the last step IS the whole
-   * displacement, so `moveSelectionByDelta(baseline, delta)` and `moveSelectionByDelta(preview,
-   * delta)` return the same selection. Every other move-drag case here issues exactly one move,
-   * which is what left the geometry a drag commits unpinned until a case gave it two frames.
+   * `EllipticalSelectionToolArea.tsx:205-209` computes each frame's `delta` against `drag.origin`,
+   * which line 208 then ADVANCES, and applies it to `drag.baseline`, which never advances. So the
+   * net displacement of a multi-frame drag is not the sum of its frames — it is the LAST frame
+   * alone. A user who drags a selection out and back releases it somewhere they never took it.
+   *
+   * The one-frame move case above cannot see this, and the reason is arithmetic rather than a
+   * missing branch: with a single `pointerMove` the last delta IS the whole delta, so
+   * `moveSelectionByDelta(baseline, delta)` and `moveSelectionByDelta(preview, delta)` return the
+   * same selection. Every move-drag case in this file issues exactly one move, so the suite is
+   * blind to the difference by construction rather than by accident.
    */
-  it('commits nothing for a move drag that went out and came back to the press point', () => {
+  it.fails('commits nothing for a move drag that went out and came back to the press point', () => {
     storeState.selections = [coveringSelection()];
     storeState.activeSelectionId = 'selection-1';
     const baseline = storeState.selections[0];
@@ -360,9 +359,14 @@ describe('EllipticalSelectionToolArea', () => {
 
     // The claim is that the NET displacement is zero, and a zero net displacement is observed
     // through the release gate rather than through a committed position: the preview ends back on
-    // the baseline's own geometry, `hasSameSelectionGeometry` reports them equal, and the gesture
-    // writes nothing at all — the same contract the zero-delta case below pins for the one-frame
-    // shape of the same gesture.
+    // the baseline's own geometry, `hasSameSelectionGeometry` suppresses the commit
+    // (`EllipticalSelectionToolArea.tsx:235`), and the gesture writes nothing at all — the same
+    // contract the zero-delta case below pins for the one-frame shape of the same gesture.
+    //
+    // What it does today instead: `drag.origin` advanced to (160, 100) and then to (100, 60), so
+    // the second frame's delta of (-60, -40) is applied to the never-moved `drag.baseline`, and
+    // the commit lands the selection at (-60, -40) — off the top-left corner of a document that
+    // starts at the origin, for a gesture the user drew out and retracted in one piece.
     expect(selectionEdits()).toEqual([]);
 
     // The control that makes the assertion above about the out-and-back and nothing else: a
@@ -583,49 +587,5 @@ describe('EllipticalSelectionToolArea', () => {
         pos: { x: 20, y: 0, width: 20, height: 20 },
       }),
     });
-  });
-
-  it('clips the committed ellipse to the document when the drag ends past its right and bottom edges', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 150, clientY: 100 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 140 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 140 });
-
-    const [selection] = singleSelectionEdit().payload.updates.selections;
-    const absolute = getSelectionAbsolutePoints(selection);
-    const xs = absolute.map((point) => point.x);
-    const ys = absolute.map((point) => point.y);
-
-    // The store mock's `totalSize` is the bound, and `getLocalCoords` is mocked to raw client
-    // coordinates, so an unbounded commit would put a rightmost vertex at 260 and a lowest at
-    // 140 — a selection whose own `pos` reaches past the document it was drawn on. The bound
-    // CUTS the ring rather than resizing it: the drag's box is (150, 100) to (260, 140), so the
-    // left edge at 150 and the top at 100 are the ring's own and survive the cut untouched, and
-    // only the two edges past the document are replaced by the document's.
-    expect(Math.max(...xs)).toBe(200);
-    expect(Math.max(...ys)).toBe(120);
-    expect(Math.min(...xs)).toBeGreaterThanOrEqual(150);
-    expect(Math.min(...ys)).toBeGreaterThanOrEqual(100);
-  });
-
-  it('commits a shift-dragged ellipse that is squared first and clipped second, because the document is not square', () => {
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 0, clientY: 0 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 40, shiftKey: true });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 260, clientY: 40, shiftKey: true });
-
-    const [selection] = singleSelectionEdit().payload.updates.selections;
-    const ys = getSelectionAbsolutePoints(selection).map((point) => point.y);
-
-    // 260x40 squares to 260x260, which no 200x120 document holds, so what commits is that
-    // circle's cap on the canvas — a shape that reaches both the top and the bottom edge.
-    // Bounding the drag BEFORE the constraint would square 200x40 into a circle about
-    // (100, 200), whose only on-canvas part is the sliver where it touches y = 120, and the
-    // lowest vertex would be the bottom edge instead of the top. The two orders commit visibly
-    // different shapes, and the assertion is the one that can only be true of squaring first.
-    expect(Math.max(...ys)).toBe(120);
-    expect(Math.min(...ys)).toBeLessThanOrEqual(ELLIPSE_MAX_SAGITTA_PX);
   });
 });

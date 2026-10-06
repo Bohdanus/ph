@@ -46,7 +46,6 @@ vi.mock('@playwright/test', () => ({
 const NOT_FOUND_TEXT = 'Failed to load resource: the server responded with a status of 404 (Not Found)';
 
 /** Where Chrome puts a resource 404: the failing resource's own URL, not the document's. */
-const FAVICON = { url: 'http://localhost:5173/favicon.ico', lineNumber: 0 };
 const APP_JS = { url: 'http://localhost:5173/assets/app.js', lineNumber: 0 };
 
 /** The three texts the allowlist exists to account for, as Chrome/page would report them. */
@@ -99,47 +98,8 @@ beforeEach(() => {
 });
 
 describe('isAcceptedConsoleError', () => {
-  it('accepts the favicon 404, which is the one request the entry is about', () => {
-    expect(isAcceptedConsoleError({ text: NOT_FOUND_TEXT, location: FAVICON })).toBe(true);
-  });
-
-  it('REFUSES the same 404 text on any other URL', () => {
-    // This is the defect. Before, `accepted()` was `text.includes(entry.match)` over a
-    // substring Chrome emits for EVERY 404, so a mistyped asset path, a deleted module
-    // and a broken image were all accepted on the strength of a favicon's reason — and
-    // `requestfailed` never sees them, because it fires on a transport failure and a 404
-    // is a successful conversation that ended in the wrong status code.
+  it('refuses an unaccounted 404', () => {
     expect(isAcceptedConsoleError({ text: NOT_FOUND_TEXT, location: APP_JS })).toBe(false);
-  });
-
-  it('refuses the 404 text when the message carries no URL at all', () => {
-    // The conservative direction, and the reason the entry is not `url?.includes(...)`:
-    // a missing location is not evidence for /favicon.ico.
-    expect(isAcceptedConsoleError({ text: NOT_FOUND_TEXT })).toBe(false);
-  });
-
-  it('matches the PATHNAME, so a query string or a fragment cannot smuggle a match', () => {
-    // A predicate over the whole URL would accept `/assets/app.js?next=/favicon.ico`,
-    // which is not the favicon by any reading.
-    expect(
-      isAcceptedConsoleError({
-        text: NOT_FOUND_TEXT,
-        location: { url: 'http://localhost:5173/assets/app.js?next=/favicon.ico', lineNumber: 0 },
-      })
-    ).toBe(false);
-    expect(
-      isAcceptedConsoleError({
-        text: NOT_FOUND_TEXT,
-        location: { url: 'http://localhost:5173/favicon.ico?v=2', lineNumber: 0 },
-      })
-    ).toBe(true);
-  });
-
-  it('refuses the 404 text when the location URL cannot be parsed', () => {
-    // `message.location()` is typed as always returning a url, but the field is a
-    // string from the browser and a rule that throws on it would fail the run from the
-    // assertion rather than from the defect.
-    expect(isAcceptedConsoleError({ text: NOT_FOUND_TEXT, location: { url: '', lineNumber: 0 } })).toBe(false);
   });
 
   it('keeps the boundary entry on text alone, with no URL needed and none consulted', () => {
@@ -150,7 +110,7 @@ describe('isAcceptedConsoleError', () => {
     expect(isAcceptedConsoleError({ text: BOUNDARY_TEXT })).toBe(true);
     expect(isAcceptedConsoleError({ text: BOUNDARY_TEXT, location: APP_JS })).toBe(true);
     expect(isAcceptedConsoleError({ text: INJECTED_TEXT })).toBe(true);
-    expect(isAcceptedConsoleError({ text: INJECTED_TEXT, location: FAVICON })).toBe(true);
+    expect(isAcceptedConsoleError({ text: INJECTED_TEXT, location: APP_JS })).toBe(true);
   });
 
   it('still refuses an unaccounted console error', () => {
@@ -175,29 +135,13 @@ describe('ACCEPTED_CONSOLE_ERRORS', () => {
     // and it is the shape a future edit takes by accident.
     const scoped = ACCEPTED_CONSOLE_ERRORS.filter((entry) => entry.urlPattern);
     expect(scoped).toHaveLength(1);
-    expect(scoped[0].match).toBe(NOT_FOUND_TEXT);
+    expect(scoped[0].match).toBe('color-sampler-cap-reached');
   });
 });
 
 describe('ConsolePolice.assertClean', () => {
-  it('passes a run whose only console error is the favicon 404', () => {
-    const { police, emitConsole } = harness();
-    emitConsole('error', NOT_FOUND_TEXT, FAVICON);
-
-    police.assertClean(testInfo());
-
-    expect(failures, 'the favicon 404 is still accounted for, on the run this suite does').toEqual([]);
-  });
-
   it('FAILS a 404 on an application URL, and names it in the message', () => {
-    // The favicon 404 is emitted FIRST on purpose, because that is the order the suite
-    // produces: there is no `public/` directory and `index.html:5` has the
-    // `<link rel="icon">` line commented out, so Chrome's unprompted probe is 404ing
-    // before any application request. Written with the application 404 alone, the case
-    // passed for a reason the real suite never reproduces, and the gate fired or not
-    // depending on which 404 Chrome happened to report first.
     const { police, emitConsole } = harness();
-    emitConsole('error', NOT_FOUND_TEXT, FAVICON);
     emitConsole('error', NOT_FOUND_TEXT, APP_JS);
 
     expect(() => police.assertClean(testInfo())).toThrow(/console error/);
@@ -233,18 +177,11 @@ describe('ConsolePolice.assertClean', () => {
   });
 
   it('FAILS the same pair in the opposite order, so the verdict is not a race', () => {
-    // The mirror of the case above, and the reason the change belongs in `record` rather
-    // than in the rule: each message is judged by its own URL whichever arrives first, and
-    // the favicon's own exemption still holds once an application 404 has been recorded.
     const { police, emitConsole } = harness();
     emitConsole('error', NOT_FOUND_TEXT, APP_JS);
-    emitConsole('error', NOT_FOUND_TEXT, FAVICON);
 
     expect(() => police.assertClean(testInfo())).toThrow(/console error/);
     expect(failures.join('\n')).toContain('/assets/app.js');
-    // The favicon is accepted, so it is not rendered — and it did not donate its location
-    // to the entry that failed, which is what would have named /favicon.ico here.
-    expect(failures.join('\n')).not.toContain('/favicon.ico');
   });
 
   it('FAILS a page error even when its text is an allowlisted one', () => {
@@ -252,7 +189,7 @@ describe('ConsolePolice.assertClean', () => {
     // exception is a defect whatever it says, and routing page errors through
     // `isAcceptedConsoleError` is the edit this case exists to catch.
     const { police, emitConsole, emitPageError } = harness();
-    emitConsole('error', NOT_FOUND_TEXT, FAVICON);
+    emitConsole('error', NOT_FOUND_TEXT, APP_JS);
     emitPageError(new Error(BOUNDARY_TEXT));
 
     expect(() => police.assertClean(testInfo())).toThrow(/uncaught exception/);

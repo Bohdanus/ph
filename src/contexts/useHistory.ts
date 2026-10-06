@@ -11,7 +11,6 @@ import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
 import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
-import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -99,7 +98,7 @@ export const useHistory = () => {
             // the screen showed. An evaluator throw here fails the navigation closed through the
             // `catch` below, exactly as one from the publication does — `drawReplay` runs the same
             // evaluation over the same layer — so it adds no failure class, only an earlier failure.
-            const staged = stageProcessorInput(layer, bitmap, isRasterStrokeArgs(args) ? args.rasterBounds : undefined);
+            const staged = stageProcessorInput(layer, bitmap);
             const [canvas, patch] = processor.imageProcessor({ bitmap: staged.bitmap, size: staged.bounds })(args);
             // Published at the bounds that raster occupies, with the operations baked into it
             // dropped from the list the renderer evaluates again. Keeping both was the double

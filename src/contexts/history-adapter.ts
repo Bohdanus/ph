@@ -46,7 +46,6 @@ import {
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
 import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
-import { isRasterStrokeArgs } from '../util/typeGuards.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
   readonly code = 'unsupported-history-feature';
@@ -260,20 +259,7 @@ function convertSource(
   }
 }
 
-/**
- * `frame` is the document frame in effect where this layer is converted, not the
- * frame the conversion ends with: a layer created before a crop keeps the frame it
- * was authored against, and a baseline layer carries the frame that opened the
- * document. Callers hold that frame already — the baseline from the document
- * source, and every later conversion from the fold's `currentFrame` — so this
- * reads it rather than being handed the live store state it could not trust.
- */
-export function convertLayer(
-  layer: Layer,
-  documentId: string,
-  registry: AssetRegistry,
-  frame: DocumentFrame
-): DurableLayerSnapshot {
+export function convertLayer(layer: Layer, documentId: string, registry: AssetRegistry): DurableLayerSnapshot {
   if (!layer.source) {
     if (!layer.bitmap)
       throw new UnsupportedHistoryFeatureError(`Layer ${layer.id} has no durable source or raster materialization`);
@@ -289,7 +275,6 @@ export function convertLayer(
         blendMode: layer.blendMode,
         order: layer.order,
         pos: { ...layer.pos },
-        frame,
       },
       { kind: 'raster', assetId, width: layer.bitmap.width, height: layer.bitmap.height, isBedrock: layer.isBedrock }
     );
@@ -305,21 +290,15 @@ export function convertLayer(
       blendMode: layer.blendMode,
       order: layer.order,
       pos: { ...layer.pos },
-      frame,
     },
     convertSource(layer.source, layer, documentId, registry)
   );
 }
 
-function snapshotLayers(
-  layers: LayersRecord,
-  documentId: string,
-  registry: AssetRegistry,
-  frame: DocumentFrame
-): DurableLayerSnapshot[] {
+function snapshotLayers(layers: LayersRecord, documentId: string, registry: AssetRegistry): DurableLayerSnapshot[] {
   return Object.values(layers)
     .sort((left, right) => left.order - right.order)
-    .map((layer) => convertLayer(layer, documentId, registry, frame));
+    .map((layer) => convertLayer(layer, documentId, registry));
 }
 
 function frameFromLegacy(
@@ -699,17 +678,7 @@ export function operationForTool(
     });
   }
 
-  if (isRasterStrokeArgs(args)) {
-    return Object.freeze({
-      kind: 'apply-raster-processor',
-      layerId: item.layerId,
-      processorId: args.toolName,
-      version: processor.replay.version,
-      args: plainObject(args, `history:${item.id}.args`, compaction),
-    });
-  }
-
-  if (processor.commit === 'layer-operation' && !isRasterStrokeArgs(args)) {
+  if (processor.commit === 'layer-operation') {
     const filterArgs = plainObject(args, `history:${item.id}.args`, compaction);
     if (!['blur', 'color', 'levels'].includes(args.toolName)) {
       throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);
@@ -735,28 +704,6 @@ export function operationForTool(
     });
   }
   if (processor.commit === 'raster') {
-    // The same refusal the live append boundary makes, on the same registry field and in the same
-    // words: a processor that creates its raster from its own input rather than reading the layer's
-    // pixels has no retained operation to replay, because materialization would have to recreate
-    // the stroke that created it. `history-append.ts` reads this in `retainedToolOperationKind`
-    // (which returns `null` and degrades the one entry) and again in `translate()` (which refuses
-    // a plan it was handed); without the arm here the conversion path published an
-    // `apply-raster-processor` those two refuse, so the same timeline converted and appended
-    // differently.
-    //
-    // A throw rather than `null` because this is a tool that owes the timeline an edit and has no
-    // way to express it — the same answer as an unregistered tool, an unsupported filter and a
-    // tool that cannot be replayed durably. `null` is the shape for an argument set that plans
-    // nothing, which is not this. What a refusal costs is the SEVERITY, and that asymmetry between
-    // this path's `error` (which withholds the whole shadow document through
-    // `convertLegacyHistorySafely`) and the append boundary's per-entry `warning` is a separate
-    // open decision, not part of the rule.
-    if (processor.compositesOntoInput === false) {
-      throw new UnsupportedHistoryFeatureError(
-        `Tool ${args.toolName} creates a raster from its own input and cannot replay as a retained processor`,
-        item.id
-      );
-    }
     return Object.freeze({
       kind: 'apply-raster-processor',
       layerId: item.layerId,
@@ -772,17 +719,13 @@ export function operationForTool(
 function snapshotFromDocumentSource(item: HistoryItem, documentId: string, registry: AssetRegistry) {
   const documentSource = item.documentSource;
   if (!documentSource) return null;
-  // The frame is derived before the layers because it is the frame those layers
-  // were authored against: every snapshot in a baseline carries the document's
-  // opening frame, which is what `DurableLayerSnapshot.frame` records.
-  const frame = frameFromLegacy(item, documentSource.size);
-  const layers = snapshotLayers(documentSource.layers, documentId, registry, frame);
+  const layers = snapshotLayers(documentSource.layers, documentId, registry);
   const activeLayerId =
     item.layerId && layers.some((layer) => layer.id === item.layerId)
       ? item.layerId
       : (layers[layers.length - 1]?.id ?? null);
   return {
-    frame,
+    frame: frameFromLegacy(item, documentSource.size),
     layers,
     activeLayerId,
   };
@@ -890,10 +833,7 @@ export function legacyHistoryToDurable(
       const source = item.layerSource ?? asLegacyLayerSource(item.args);
       if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
-        // `currentFrame`, not the frame this conversion ends with: the layer is
-        // authored against the frame in effect here, and a later `set-document-frame`
-        // must not restate the provenance of a layer that predates it.
-        const layer = convertLayer(runtimeLayer, documentId, registry, currentFrame);
+        const layer = convertLayer(runtimeLayer, documentId, registry);
         if (enabled) currentLayers.set(layer.id, layer);
         operation = Object.freeze({ kind: 'create-layer', layer });
       } else if (isSetLayerPropertiesAction(item.actionName)) {
@@ -1022,10 +962,7 @@ export function legacyHistoryToDurable(
         }
       } else if (item.actionName === MERGE_ACTION && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
-        // The merge result is authored in the frame in effect at the merge, for the
-        // same reason the create-layer arm reads `currentFrame` rather than a frame
-        // this conversion reaches later.
-        const layer = convertLayer(runtimeLayer, documentId, registry, currentFrame);
+        const layer = convertLayer(runtimeLayer, documentId, registry);
         const removedLayerIds = [...currentLayers.keys()].filter((id) => id !== layer.id);
         if (enabled) currentLayers = new Map([[layer.id, layer]]);
         operation = Object.freeze({ kind: 'merge-document', result: layer, removedLayerIds });

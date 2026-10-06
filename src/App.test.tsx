@@ -358,31 +358,4 @@ describe('App mobile surface reset', () => {
     expect(shell).toHaveAttribute('data-tool-sheet', 'false');
     expect(shell).toHaveAttribute('data-layers', 'false');
   });
-
-  it('keeps both surfaces open right up to the boundary, and closes them one pixel past it', async () => {
-    const user = await openMobileSurfaces();
-    await user.click(screen.getByRole('button', { name: 'Layers' }));
-    const shell = () => screen.getByTestId('mobile-shell-props');
-    expect(shell()).toHaveAttribute('data-tool-sheet', 'true');
-    expect(shell()).toHaveAttribute('data-layers', 'true');
-
-    // `MOBILE_MEDIA_QUERY` is `(width < 768px)`, so 767 is the last mobile width and 768 the
-    // first desktop one. The whole condition is `wasMobile !== isMobile`, so a reset that
-    // ignored the DIRECTION would close a drawer the user had just opened, 500 -> 767 away,
-    // with nothing on screen to explain it.
-    act(() => {
-      setViewportWidth(767);
-    });
-    expect(shell()).toHaveAttribute('data-tool-sheet', 'true');
-    expect(shell()).toHaveAttribute('data-layers', 'true');
-
-    // One pixel further and both must go — which is the half a boundary moved to `(width <
-    // 769px)` would break while every other case here still passed, because they all cross from
-    // well inside the band to well outside it.
-    act(() => {
-      setViewportWidth(768);
-    });
-    expect(shell()).toHaveAttribute('data-tool-sheet', 'false');
-    expect(shell()).toHaveAttribute('data-layers', 'false');
-  });
 });

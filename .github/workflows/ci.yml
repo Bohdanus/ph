@@ -48,6 +48,9 @@ jobs:
       - name: Lint
         run: npm run lint:check
 
+      - name: Audit
+        run: npm audit --audit-level=high
+
       - name: Type-check
         # `tsc -b` builds tsconfig.app.json, tsconfig.node.json and tsconfig.e2e.json,
         # so this also type-checks the Playwright specs and their helper unit tests.
@@ -89,33 +92,6 @@ jobs:
       - name: Test
         run: npm run test -- --coverage
 
-      - name: Build
-        run: npm run build
-
-      - name: Audit
-        # The LAST GATE in this job, deliberately, and it was second before. Not
-        # the last STEP: the coverage upload below is `always()`, so it runs
-        # whatever this does, and burying a registry-dependent gate behind an
-        # `if-no-files-found: error` upload would add a second way for it not to
-        # run.
-        #
-        # `npm audit` asks a REGISTRY about advisories published SINCE the lockfile
-        # was written, so its answer changes with the calendar and not with this
-        # repository. Ordered second, it made a new transitive advisory anywhere in
-        # the tree turn `main` red with no code change AND abort the four gates
-        # behind it — a dependency nobody here can do anything about could stop the
-        # lint, type-check, test and build jobs from running at all. That is the
-        # hazard the `e2e` job's own comment gives as the reason it is a separate
-        # job: "within one job a failed step aborts the rest".
-        #
-        # It is still a GATE, and still `--audit-level=high`. Moving a step is not
-        # weakening it: every run still audits, and a high-severity advisory still
-        # fails this job. The difference is that it now fails AFTER the four code
-        # gates ahead of it — Lint, Type-check, the tracked-TS assertion and Test,
-        # with Build beside it — have reported, so a failure nobody here can act on
-        # is no longer hiding five that a human can.
-        run: npm audit --audit-level=high
-
       - name: Upload app coverage
         # The report is the point of `--coverage`; without an upload the run
         # computes lcov and throws it away, and a coverage regression can only be
@@ -138,8 +114,11 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # The licence policy for the dependency tree is in `DEPENDENCIES.md`, and it is
-  # not a gate: nothing reads it, by decision. The vulnerability half of the
+      - name: Build
+        run: npm run build
+
+  # The licence policy for the dependency tree is in `DEPENDENCIES.md`, and it
+  # is not a gate: nothing reads it, by decision. The vulnerability half of the
   # same policy is `npm audit --audit-level=high` in the `ci` job above, which
   # runs on every push to main and covers the whole tree rather than a diff.
 

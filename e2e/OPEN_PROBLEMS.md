@@ -266,165 +266,17 @@ exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps
 covered too. Add a dark-theme case that pins the direction this depends on, so the
 latent wrong-pass has a tripwire of its own rather than resting on a config default.
 
-## Every document load requests a favicon that does not exist
-
-Chrome requests `/favicon.ico` unprompted on every page load, and it always 404s:
-there is no `public/` directory in the repository, and `index.html`'s
-`<link rel="icon" type="image/svg+xml" href="/todo.svg" />` line is commented out, so
-there is no icon for the request to resolve to. The 404 is real, it is per-load, and
-`ACCEPTED_CONSOLE_ERRORS` in `e2e/helpers/console-police.ts` carries an entry whose
-reason is this fact, narrowed by `urlPattern: /^\/favicon\.ico$/` so that no other
-404 inherits it.
-
-Nothing trips on it: the entry accepts the message, the spec passes, and the run
-reports green. The cost is that every e2e page load carries a failed request that a
-test would otherwise see, and the allowlist entry outlives the moment it was written
-for.
-
-Fix: add `public/favicon.svg`, uncomment the icon link in `index.html`, and delete the favicon entry
-from `ACCEPTED_CONSOLE_ERRORS` in the same change — with the icon in place there is
-no 404 to account for, and per the lifecycle rule in `docs/DOCUMENTATION.md` the
-entry goes with it. Verify with `npm run test:e2e` and by confirming no 404 remains
-in the `console-police.json` report attachment.
-
-## P2 — one committed baseline set is asked to match every operating system's rasterisation
-
-`e2e/export/visual-regression.spec.ts` — `baselineFile()`, `compareScreenshots()`
-(`e2e/helpers/image-comparison.ts`), `e2e/helpers/canvas-helpers.ts` —
-`STROKE_ANALYSIS`, `measureInk()`, `e2e/README.md` — "Baseline layout",
-`.github/workflows/ci.yml`
-
-**What is committed.** `baselineFile()` resolves through `testInfo.snapshotDir`, not
-`testInfo.snapshotPath`, and its own docblock gives the reason: `snapshotPath`'s default
-template appends `-<projectName>-<platform>`, so it would resolve to a per-OS name that no
-two operating systems share. That decision is why ONE set of PNGs at
-`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/` has to match every
-rasteriser: seven of them, one per `browser-pixels` format in `browserVerifiedFormats`,
-each compared by `compareScreenshots()` at `threshold: 0.01` and `maxDiffPixels: 100`.
-The thresholds are two different numbers — `threshold` is pixelmatch's per-pixel YIQ
-distance (at 0.01 it forgives a uniform shift of 4 red, 3 green or 7 blue steps over the
-whole picture), `maxDiffPixels` is the count budget, and `includeAA: true` means an
-anti-aliased pixel counts as a difference. Over an 800x600 baseline the count budget is
-100 of 480,000 pixels, or 0.021%.
-
-**Two places document the OPPOSITE decision, and the fix changes both.** `e2e/README.md`
-— "Baseline layout" — states that committed baseline paths come from `testInfo.snapshotDir`
-and not `snapshotPath()`, "the latter appends the project name and the OS, which would make
-a baseline committed on one machine read as missing on another", and then lists the
-directory as a flat tree of seven `drawing.<ext>.png` files. The `baselineFile()` docblock
-in `e2e/export/visual-regression.spec.ts` is the second, and it is the longer of the two:
-it names the `snapshotPath` default template's `-<projectName>-<platform>` suffix and the
-resulting `drawing.png-Google-Chrome-darwin.png` as a file that is not committed. Both
-were right about `snapshotPath` and both are wrong the moment the path carries the platform
-itself, because the hazard they describe is a per-OS FILE NAME, not the absence of a
-directory level. A fix that changes only `baselineFile()` leaves two documents asserting
-the opposite rule, and one of them is the e2e suite's own documentation.
-
-**Why that budget does not survive an operating-system change.** The same call site's
-comment carries the measurement: a 0.0154-document-pixel **vertical** shift of the
-export line — the line is 174x11, so a vertical move relights every column of the band —
-produces **330** diff pixels against the committed baseline. A rasteriser that places an
-anti-aliased edge a fraction of a pixel differently does that on its own, with no code
-change anywhere. `measureInk()`'s own docblock in `e2e/helpers/canvas-helpers.ts`
-measures the same phenomenon at a different shift and reports **741** for a full
-1.0-document-pixel vertical shift, against 88 for that same 1.0-pixel shift
-horizontally. The two figures are consistent, not contradictory: the same 174x11 band
-measured at two shift magnitudes about sixty-five times apart, producing counts about
-twice apart. Both are far over the 100-pixel budget, while a whole document pixel
-sideways produces 88 and passes it. The asymmetry is real at either magnitude; only the
-distance you have to move the line differs, so quote the shift WITH the number — 330 is
-not a one-pixel shift and 741 is not a sub-pixel one.
-
-**Which platform recorded them is NOT recorded anywhere, and this entry does not claim
-one.** The operator's own runs are macOS, so the recording platform is an inference from
-the machine rather than a fact the tree carries, and `baselineFile()`'s docblock and the
-Chrome-version note at the same call site both say the stronger thing plainly: nothing in
-this repository records which rasteriser produced the committed pixels. Treat "recorded on
-macOS" as the likely answer and "recorded on which platform" as an open question the
-platform directory in the fix below would answer for the future.
-
-**Why it is a gate question now.** The `e2e` job in `.github/workflows/ci.yml` runs on
-`ubuntu-latest`, declares no `continue-on-error`, and installs its browser with `npx
-playwright install --with-deps chrome` — apt, unpinned, so the encoder on a given day is
-whatever the runner image and the archive currently offer. Its first run as a gate is
-also its first run on Linux at all. The export visual-regression specs are therefore
-expected to be red on that run, and that red is a rasterisation fact rather than a product
-defect. `assertExportGeometry()` runs after the pixel diff, so it reads the same baseline
-and reports the same mismatch in geometric form.
-
-**The same first run reports a second, independent rasteriser dependency.**
-`STROKE_ANALYSIS.DARK_THRESHOLD` (50) and `NEAR_WHITE_THRESHOLD` (250) in
-`e2e/helpers/canvas-helpers.ts` are calibrated to one palette and one rasteriser, with
-`hasDarkPixels()` reading `DARK_PIXEL_THRESHOLD` (60) beside them. A wait the committed
-calibration satisfies may never be satisfied on a Linux runner, so those specs are the
-second group to read out of the same run.
-
-**Do not "fix" this by widening a tolerance, skipping the specs, or re-recording.** The
-call site's own argument rules out the first — at `maxDiffPixels: 4800` this suite would
-pass a visibly different picture — and `AGENTS.md` and `docs/TESTING.md` rule out the
-third as a fix. Re-recording on Linux is worse than either: it deletes the oracle the
-operator's own runs are compared against, and leaves a single set that again matches
-exactly one operating system while the tree claims to be cross-platform. The transferred
-entry below on the unpinned Chrome version is the other half of the same record: nothing
-in this repository says which rasteriser produced the committed pixels.
-
-**Fix.** Give `baselineFile()` a platform component and commit one baseline set per
-platform — `export-baselines/<platform>/`, selected by `process.platform`, which is the
-shape `testInfo.snapshotPath` already names and this spec deliberately stepped around.
-`e2e/README.md` — "Baseline layout" — and the `baselineFile()` docblock change with it,
-because both currently state the rule this removes. Four consequences follow from that
-shape rather than from a tuning knob:
-
-1. **The fix LEAVES THE `e2e` JOB RED, and an operator must not discover that by pushing.**
-   A platform with no committed set fails as missing, so the moment the path carries
-   `process.platform`, every export visual-regression spec fails on `ubuntu-latest` with
-   `Baseline missing for <format>` until a Linux set exists. That is the job's FIRST run
-   as a gate as well as its first on Linux, so the red lands on the same run. It is a
-   deliberate intermediate state, not a regression and not a reason to put
-   `continue-on-error` back — but it is a state the tree cannot be merged into knowingly.
-2. **Recording the Linux set is an OPERATOR ACTION ON A LINUX RUNNER, not a code change.**
-   No other machine can produce a Linux rasterisation, so `npm run test:e2e:update-baselines`
-   has to be run on Linux, the resulting PNGs reviewed, and the diff committed. It cannot be
-   done from this repository's own checkout, by an agent, or as part of implementing the
-   change above; it is the second half of the work and it is the operator's. Whoever
-   schedules this has to sequence it against the merge, because step 1 says the job is red
-   in between.
-3. **`npm run test:e2e:update-baselines` becomes platform-aware** — it records the set for
-   the platform it runs on, and the spec's record branch writes into the same
-   platform-selected path, so the two cannot disagree about which file is the oracle.
-4. **A platform with no committed set must fail as missing**, which is the state the spec
-   already handles with `Baseline missing for <format>`, rather than falling back to
-   another platform's file. A silent fallback would put one rasteriser's oracle under
-   another's name.
-
-**It collides with the P3 entry below, and an operator renaming this directory by hand
-will meet it.** `Baseline layout` in `e2e/README.md` lists 17 files in
-`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`: the seven the spec
-reads, plus ten orphans — the raw `drawing.<ext>` exports, `drawing-icon.ico.png` and
-`source-baseline.png` — which the P3 entry records as safe to delete and undeleted
-pending authorisation. Moving the seven read baselines into `export-baselines/<platform>/`
-is a `git mv` of a directory whose ten remaining files are unrelated and are themselves an
-open deletion question. Sequence it: authorise the P3 deletion first and the move carries
-seven files, or move only the seven and leave the ten where they are — but do not let a
-platform directory be created by copying the whole directory, because that multiplies the
-orphans by the number of platforms and buries the P3 finding under copies of files nothing
-reads. `e2e/README.md`'s baseline tree is a third thing to update in the same change, for
-the reason given above.
-
-`STROKE_ANALYSIS` is calibrated the same way and needs its constants derived on the same
-Linux run, not adjusted until a suite goes green.
-
-## P3 — 10 orphaned committed baselines (2.05 MB)
+## P3 — 10 orphaned committed baselines (2.1 MB)
 
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
 
-The directory holds 17 files and 2,051,154 bytes. Seven are read — the formats whose `verification` is
+The directory holds 17 files. Seven are read — the formats whose `verification` is
 `browser-pixels` in `e2e/export/helpers.ts`, each read through
 `baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
 
 - the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
   `.avif`, and `drawing-icon.ico`) — no code writes or reads them any more, and
-  `drawing.bmp` alone is 1,920,070 bytes of the 2.05 MB
+  `drawing.bmp` alone is most of the 2.1 MB
 - `drawing-icon.ico.png` (256x256) — the ICO spec compares the export against the
   source canvas in-browser via `CHANGED_CHANNEL_THRESHOLD_ICO` and never calls
   `baselineFile()`
@@ -432,15 +284,6 @@ The directory holds 17 files and 2,051,154 bytes. Seven are read — the formats
 
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
-
-**This directory is also what the baseline-platform P2 entry above moves, so the two
-have to be sequenced.** That fix relocates the seven READ baselines into
-`export-baselines/<platform>/`, and this directory is where an operator doing that
-`git mv` by hand will land. Authorising this deletion first means the move carries seven
-files; leaving it open means the move must name the seven and not the directory, so the
-ten are neither carried along nor copied once per platform. Either order works; copying
-the whole directory into a platform subdirectory does not, because it multiplies the
-orphans and hides this entry under duplicates of files nothing reads.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 

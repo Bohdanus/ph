@@ -85,7 +85,7 @@ Read the top-level answers before the table:
 Per worktree, the fields that decide:
 
 - **`action`** — `land` is the target. The values are `land`, `at-risk`,
-  `dispose`, `in-use`, `keep`, `undecided`
+  `dispose`, `legacy`, `in-use`, `keep`, `undecided`
   (`ACTION` in `scripts/lib/worktree-inventory/classify.mjs`).
 - **`writeHistory.chatCount`** — who wrote a file here, **ever**. This is the
   freedom check that `chats` cannot do. `chats` is keyed on

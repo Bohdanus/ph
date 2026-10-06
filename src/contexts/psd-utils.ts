@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Size } from './general-types.ts';
 import type { LayersRecord } from './layer-types.ts';
 import { drawLayerSource } from './layer-renderer.ts';
-import { layerPresentationBounds } from './presentation-evaluator.ts';
+import { getLayerPresentationBounds } from './affine-transform.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 
 export interface PsdDocument {
@@ -222,13 +222,7 @@ export async function savePsd(
     if (![layer.pos.width, layer.pos.height].every((n) => Number.isFinite(n) && n > 0)) {
       throw new Error(`Invalid PSD layer dimensions: ${layer.name}`);
     }
-    // The extent the PSD layer's own canvas is allocated at, and the rectangle it is placed by,
-    // both from ONE rule: a retained blur draws outside the layer's raster, so an extent that
-    // accounted only for the affine matrix cut that spread off here and nowhere else on screen —
-    // the canvas the user was looking at drew the whole halo. `documentFrame` is subtracted AFTER,
-    // which is what keeps a nonzero frame origin from eating the margin: the frame moves the
-    // layer inside the document, it does not resize it.
-    const presentation = layerPresentationBounds(layer);
+    const presentation = getLayerPresentationBounds(layer);
     const localX = presentation.x - documentFrame.x;
     const localY = presentation.y - documentFrame.y;
     const left = Math.floor(localX);

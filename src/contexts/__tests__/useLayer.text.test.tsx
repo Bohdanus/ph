@@ -3,11 +3,11 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolArgs } from '../tool-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
-import type { Layer, ToolLayerSource, FilterLayerOperation } from '../layer-types.ts';
+import type { Layer } from '../layer-types.ts';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { useLayers } from '../useLayer.ts';
-import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
+import { documentFrameFromSize } from '../document-frame.ts';
 import { NEW_LAYER_ACTION, REPLACE_LAYER_SOURCE_ACTION } from '../../util/constants.ts';
 import { createLayerSource } from '../layer-utils.ts';
 
@@ -40,25 +40,6 @@ vi.mock('../layer-utils.ts', async (importActual) => {
     source: params.source as Layer['source'],
   }));
   return { ...actual, createLayerSource: mockCreateLayerSource as typeof actual.createLayerSource };
-});
-
-// `drawAllLayers` is stubbed so a REDRAW is observable as a call rather than as pixels: the two
-// paths below restore a raster the store already holds, and neither dispatches anything, so no
-// assertion on returned layers or history can tell a repaint from a canvas left showing the layer
-// without one. `drawAllLayers` returns early unless the store has a mounted canvas, so the tests
-// that care install one.
-type DrawLayersToCanvas = (
-  canvas: HTMLCanvasElement,
-  layers: readonly Layer[],
-  documentFrame: DocumentFrame,
-  silentMissingLayerIds?: ReadonlySet<string>
-) => boolean;
-
-const drawLayersToCanvas = vi.hoisted(() => vi.fn<DrawLayersToCanvas>(() => true));
-
-vi.mock('../layer-renderer.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../layer-renderer.ts')>();
-  return { ...actual, drawLayersToCanvas };
 });
 
 function makeTextArgs(overrides: Partial<ToolArgs> = {}): ToolArgs {
@@ -134,64 +115,6 @@ function setupSharedDraft() {
     result.current.tool.setToolArgs(makeTextArgs());
   });
   return result;
-}
-
-/**
- * A COMMITTED text layer, seeded rather than created.
- *
- * The `createLayerSource` stub is what makes a commit's own record unobservable: it stores the
- * source args it was handed, and the create arm's rect is the draft's while the replace arm's is
- * the MEASURED one, so no commit in this file produces the pair of records
- * `replaceLayerSource`'s unchanged-args arm is written for. Seeding writes both halves at once, and
- * the two paths under test here — the unchanged-args early return and the text-edit preview — are
- * both about a layer that already exists.
- */
-function committedTextLayer(
-  id: string,
-  overrides: Partial<Layer> = {},
-  args: TextToolArgs = makeTextArgs() as TextToolArgs
-): Layer {
-  const pos = { x: 0, y: 0, width: 100, height: 50 };
-  return {
-    id,
-    name: id,
-    isBedrock: false,
-    tmpCanvas: null,
-    bitmap: null,
-    visible: true,
-    opacity: 1,
-    locked: false,
-    blendMode: 'source-over',
-    order: 0,
-    pos: { ...pos },
-    operations: [],
-    source: { kind: 'tool', args, pos: { ...pos } } as ToolLayerSource,
-    ...overrides,
-  };
-}
-
-function setupCommittedLayers(layers: Layer[]) {
-  const canvas = document.createElement('canvas');
-  const { result } = renderHook(useLayerHarness, { wrapper: StoreProvider });
-  act(() => {
-    // `drawAllLayers` is a no-op without a canvas, so the mount precedes the seed.
-    result.current.store.canvasRef.current = canvas;
-    result.current.dispatch({
-      type: 'BATCH_UPDATES',
-      payload: {
-        layers: Object.fromEntries(layers.map((layer) => [layer.id, layer])),
-        activeLayerId: layers[0]?.id ?? null,
-        totalSize: { width: 800, height: 600 },
-        documentFrame: documentFrameFromSize({ width: 800, height: 600 }),
-        hasImage: true,
-      },
-    });
-  });
-  return { result, canvas };
-}
-
-function drawnLayers(callIndex = 0): readonly Layer[] {
-  return drawLayersToCanvas.mock.calls[callIndex][1];
 }
 
 describe('useLayers text commit idempotency boundary', () => {
@@ -401,110 +324,33 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
   });
 
-  it('replaces the layer named by editingLayerId even when the draft starts at another origin', () => {
-    // Mutation killed: reducing the replace arm's guard to the origin test alone —
-    // `if (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y)` with `requestedLayerId`
-    // dropped from it. Every test above it re-arms a draft at the SAME origin, so the origin test
-    // is satisfied and the mutation is invisible; `editingLayerId` is the explicit in-place signal
-    // and it is the only thing that survives a re-entry the user drags out to a new box.
+  it('commits nothing while the draft rect is cleared even if the text survives', () => {
     const result = setupTextTool();
 
     act(() => {
-      result.current.store.currentArgs.current = makeTextArgs();
-    });
-    act(() => {
-      result.current.layers.commitDirtyTool();
-    });
-    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
-
-    act(() => {
       result.current.store.currentArgs.current = {
-        ...makeTextArgs({ text: 'World', rect: { x1: 300, y1: 200, x2: 400, y2: 250 } }),
-        editingLayerId: 'mock-layer-1',
+        ...makeTextArgs(),
+        rect: null,
       } as ToolArgs;
     });
     act(() => {
       result.current.layers.commitDirtyTool();
     });
 
-    // ONE layer, and its SOURCE carries the box the re-entered editor measured. `layer.pos` is
-    // not readable here — the `createLayerSource` stub hands back its own fixed `pos`, so the
-    // committed position is read off the source the commit built. A create arm instead stacks a
-    // second text layer over the first, and the re-entry's own text is duplicated.
-    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
-    const layer = Object.values(result.current.store.layers)[0];
-    expect(layer?.source).toMatchObject({
-      kind: 'tool',
-      pos: { x: 300, y: 200 },
-      args: { text: 'World', rect: { x1: 0, y1: 0 } },
-    });
-    const storedRect = (layer?.source as (ToolLayerSource & { args: TextToolArgs }) | undefined)?.args.rect;
-    // LAYER-LOCAL again, which is what the measured origin at (300, 200) reduces to — the extent
-    // is the box's own, so the only thing a wrong origin changes here is the pair of zeros.
-    expect(storedRect && storedRect.x2 - storedRect.x1).toBe(100);
-    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
-    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
-    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
-    // The named layer kept its identity and its new text, and the re-entry marker never reaches
-    // the persisted source — it is what the next commit reads to decide this is still an edit.
-    expect(layer?.id).toBe('mock-layer-1');
-    expect(layer?.source).toMatchObject({ kind: 'tool', args: { text: 'World' } });
-    expect((layer?.source as ToolLayerSource | undefined)?.args).not.toHaveProperty('editingLayerId');
-  });
-
-  it('commits nothing while the draft rect is cleared even if the text survives', () => {
-    const result = setupTextTool();
-
-    // The POSITIVE this negative is measured against. Without a commit that does create a layer,
-    // every assertion below also holds for a `commitDirtyTool` that does nothing at all, which is
-    // why the pair of them proves the guard rather than the absence of the store.
-    act(() => {
-      result.current.store.currentArgs.current = makeTextArgs();
-    });
-    act(() => {
-      result.current.layers.commitDirtyTool();
-    });
-    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
-    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
-
-    const clearedRectDraft = { ...makeTextArgs({ text: 'Survivor' }), rect: null } as ToolArgs;
-    act(() => {
-      result.current.store.currentArgs.current = clearedRectDraft;
-    });
-    act(() => {
-      result.current.layers.commitDirtyTool();
-    });
-
-    // Unchanged by the refused commit, in every observable: one render, one layer, one history
-    // entry, and not even the draft rewritten — a commit that rewrote the draft would also
-    // disarm the Apply button the user is looking at.
-    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
-    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
-    expect(result.current.store.history).toHaveLength(1);
-    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
-    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(0);
-    expect(result.current.store.currentArgs.current).toBe(clearedRectDraft);
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+    expect(Object.keys(result.current.store.layers)).toHaveLength(0);
+    expect(result.current.store.history).toEqual([]);
   });
 
   it('leaves the text tool draft alone when the tool is not text', () => {
     const result = setupTextTool();
+    const args = makeTextArgs();
 
-    // The POSITIVE this negative is measured against, for the reason the test above gives: an
-    // empty store satisfies "nothing was committed" whether the commit path works or not.
-    act(() => {
-      result.current.store.currentArgs.current = makeTextArgs();
-    });
-    act(() => {
-      result.current.layers.commitDirtyTool();
-    });
-    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
-
-    const shapeDraft = makeTextArgs();
     act(() => {
       result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'shape' });
     });
     act(() => {
-      result.current.store.currentArgs.current = shapeDraft;
+      result.current.store.currentArgs.current = args;
     });
 
     act(() => {
@@ -512,13 +358,10 @@ describe('useLayers text commit idempotency boundary', () => {
     });
 
     // The text branch is keyed on the active tool, so switching away leaves the
-    // shared draft completely untouched — measured against the layer and the history
-    // entry the text tool itself produced a moment earlier.
-    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
-    expect(result.current.store.currentArgs.current).toBe(shapeDraft);
-    expect(Object.keys(result.current.store.layers)).toEqual(['mock-layer-1']);
-    expect(result.current.store.history).toHaveLength(1);
-    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    // shared draft completely untouched.
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+    expect(result.current.store.currentArgs.current).toBe(args);
+    expect(result.current.store.history).toEqual([]);
   });
 });
 
@@ -587,138 +430,5 @@ describe('useLayers text commit publishes the cleared draft', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
-  });
-});
-
-describe('useLayers retypes a text layer that carries a retained operation', () => {
-  beforeEach(() => {
-    drawLayersToCanvas.mockClear();
-  });
-
-  it('replaces the source in place and keeps the operation the layer already had', () => {
-    // The commit half of re-entering a filtered type layer. `textLayerEditTarget` now hands the
-    // editor a target for this layer, so the commit that follows is the one this file has to
-    // answer for: the source is replaced IN PLACE and the retained operation survives, which is
-    // what both replay authorities do (`replayHistory`'s replace arm and `replayDurableDocument`)
-    // and what both renderers assume when they re-apply it to the new source.
-    //
-    // A `nextLayer` built from the REPLACEMENT rather than spread over the existing layer drops the
-    // operation, and the failure is silent in the worst way: the layer still draws, the history
-    // still replays, and the user's blur is simply gone from the next render onward.
-    const blur: FilterLayerOperation = { id: 'op-blur', args: { toolName: 'blur', radius: 4 }, enabled: true };
-    const args = makeTextArgs() as TextToolArgs;
-    const { result } = setupCommittedLayers([
-      committedTextLayer('committed', { operations: [blur], tmpCanvas: new OffscreenCanvas(100, 50) }, args),
-    ]);
-    act(() => {
-      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'text' });
-    });
-
-    act(() => {
-      result.current.store.currentArgs.current = {
-        ...makeTextArgs({ text: 'Retyped' }),
-        editingLayerId: 'committed',
-      } as ToolArgs;
-    });
-    act(() => {
-      result.current.layers.commitDirtyTool();
-    });
-
-    // ONE layer, and it is the entered one: a create arm would stack a second over the first.
-    expect(Object.keys(result.current.store.layers)).toEqual(['committed']);
-    const replaced = result.current.store.layers.committed;
-    expect(replaced?.source).toMatchObject({ kind: 'tool', args: { text: 'Retyped' } });
-    // The stored rect is LAYER-LOCAL, reduced by the pos the commit derived from the measured box,
-    // which is the coordinate the creator renders from. The extent is the box's own, so only the
-    // pair of zeros reads the origin.
-    expect(replaced?.source).toMatchObject({ pos: { x: 0, y: 0 } });
-    expect(replaced?.operations).toEqual([blur]);
-    // And the commit is recorded, so the retyped source survives a replay rather than living only
-    // in the store's layer record.
-    expect(result.current.store.history.filter((h) => h.actionName === REPLACE_LAYER_SOURCE_ACTION)).toHaveLength(1);
-  });
-});
-
-describe('useLayers restores a committed text layer to the canvas', () => {
-  beforeEach(() => {
-    // `clearMocks` already rewinds this, so the rewind is here to be explicit about what the two
-    // call-count assertions below depend on: exactly one repaint, produced by the arm under test.
-    drawLayersToCanvas.mockClear();
-  });
-
-  it('redraws the layer after the unchanged-args early return, so its raster is not left off the canvas', () => {
-    // Mutation killed: deleting the `drawAllLayers();` inside `replaceLayerSource`'s unchanged-args
-    // early return. That arm deletes the layer's preview and returns the layer it was handed, so
-    // without the redraw the composited canvas keeps showing a document WITHOUT the raster the
-    // editor's contenteditable overlay was standing in for, and nothing repaints it: `Main`'s redraw
-    // effect is keyed on `layers`, which this arm does not change. MEASURED on the Esc-to-commit
-    // path — re-enter a text layer, press Esc without editing, and the type is gone while the store
-    // still holds it. Asserted as a repaint, not as the returned layer: the returned layer is
-    // identical with and without the mutation.
-    const raster = new OffscreenCanvas(100, 50);
-    const args = makeTextArgs() as TextToolArgs;
-    const layer = committedTextLayer('committed', { tmpCanvas: raster }, args);
-    const { result, canvas } = setupCommittedLayers([layer]);
-
-    // A holder rather than a `let`, because a variable assigned only inside `act` is narrowed to
-    // `never` at the assertion and the return value becomes untypeable.
-    const outcome: { returned: Layer | null } = { returned: null };
-    act(() => {
-      // Byte-identical args and the same origin: the arm this test is about, reached without a
-      // commit, so nothing about the draft or the measurement can move it off the early return.
-      outcome.returned = result.current.layers.replaceLayerSource('committed', {
-        kind: 'tool',
-        args,
-        pos: { x: 0, y: 0, width: 100, height: 50 },
-      });
-    });
-
-    expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
-    expect(drawLayersToCanvas.mock.calls[0][0]).toBe(canvas);
-    expect(drawnLayers().map((drawn) => drawn.id)).toEqual(['committed']);
-    // The repaint is the layer WITH its raster, which is the whole of what the early return owes
-    // the canvas: the store was already correct, and only the pixels were missing.
-    expect(drawnLayers()[0]?.tmpCanvas).toBe(raster);
-    expect(outcome.returned?.id).toBe('committed');
-    // Still the early return: no render, no dispatch, no history entry for a no-op commit.
-    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
-    expect(Object.values(result.current.store.layers)).toEqual([layer]);
-    expect(result.current.store.history).toEqual([]);
-  });
-
-  it('keeps exactly one text-edit preview, so entering a second layer cannot blank the first', () => {
-    // Mutation killed: deleting the loop in `beginTextLayerEdit` that deletes every other id from
-    // the preview map. The text arm of `commitDirtyTool` returns in all four of its branches before
-    // the map is cleared, so the earlier layer's preview survived: its raster is nulled, nothing
-    // re-renders a `text` source, and the silent-missing set suppresses the usual report — the first
-    // layer's type disappeared from the canvas and stayed gone across any number of tool switches
-    // while the export still contained it.
-    const first = committedTextLayer('first', { tmpCanvas: new OffscreenCanvas(100, 50) });
-    const second = committedTextLayer('second', { tmpCanvas: new OffscreenCanvas(100, 50), order: 1 });
-    const { result } = setupCommittedLayers([first, second]);
-
-    act(() => {
-      result.current.layers.beginTextLayerEdit('first');
-    });
-
-    // One preview, and it withholds only the runtime raster: the contenteditable overlay is the
-    // sole visible representation while the source is being edited.
-    expect(Object.keys(result.current.store.previewLayers.current)).toEqual(['first']);
-    expect(result.current.store.previewLayers.current.first?.layer.tmpCanvas).toBeNull();
-
-    act(() => {
-      result.current.layers.beginTextLayerEdit('second');
-    });
-
-    // ONE edit at a time. The earlier layer keeps its committed record and its raster — only its
-    // preview marker is gone, so it draws again the moment the overlay closes.
-    expect(Object.keys(result.current.store.previewLayers.current)).toEqual(['second']);
-    expect(result.current.store.previewLayers.current.second?.layer.bitmap).toBeNull();
-    expect(result.current.store.layers.first?.tmpCanvas).toBe(first.tmpCanvas);
-    // The repaint names only the entered layer as the one whose raster is expected to be missing,
-    // so the renderer's silent-missing report cannot describe either.
-    const published = drawLayersToCanvas.mock.calls.at(-1)![3]!;
-    expect([...published]).toEqual(['second']);
-    expect(drawnLayers(drawLayersToCanvas.mock.calls.length - 1).map((drawn) => drawn.id)).toEqual(['first', 'second']);
   });
 });

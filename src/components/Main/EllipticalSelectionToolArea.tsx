@@ -133,7 +133,6 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       fixedRatio: args.fixedRatio,
       fixedWidth: args.fixedWidth,
       fixedHeight: args.fixedHeight,
-      imageSize: totalSize,
       constrainToCircle: drag.constrainToCircle,
       fromCentre: drag.fromCentre,
     };
@@ -205,14 +204,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
 
     const documentPoint = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
     const delta = { x: documentPoint.x - drag.origin.x, y: documentPoint.y - drag.origin.y };
-    // `drag.preview`, not `drag.baseline`, and the two lines below are one fact: `drag.origin`
-    // advances with every frame, so `delta` is this frame's STEP rather than the whole
-    // displacement, and the run's displacement is the SUM of its steps. Accumulating onto the
-    // never-advancing `drag.baseline` instead left the run holding its LAST step alone, so a
-    // pointer dragged out and back released the selection at (-delta) — where it was never taken.
-    // `drag.preview` is seeded with `activeSelection` by the press, so the first frame needs no
-    // special case, and `drag.baseline` stays put as the geometry `handlePointerUp` gates on.
-    const preview = moveSelectionByDelta(drag.preview, delta);
+    const preview = moveSelectionByDelta(drag.baseline, delta);
     drag.origin = documentPoint;
     drag.preview = preview;
     // The ants canvas is what follows the selection, not this overlay. It owns the committed

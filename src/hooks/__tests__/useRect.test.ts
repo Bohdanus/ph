@@ -180,25 +180,6 @@ describe('useRect', () => {
     expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
   });
 
-  it('groups its return so that spreading it onto an element is a type error', () => {
-    const { result } = renderUseRect();
-    // The whole point of the grouping, stated as an exact member list rather than as
-    // "each handler exists". A flat return — or a fourth top-level member, which is what
-    // `<div {...pointerEvents}>` actually spread — is what put nine internal members on a
-    // DOM node for months; a `toBeDefined` per handler cannot see it, because every one
-    // of those members is still a function either way.
-    expect(Object.keys(result.current).sort()).toEqual(['pointerHandlers', 'pointerState', 'rectHandles']);
-    // The group meant to be spread holds the three DOM handlers and nothing internal.
-    expect(Object.keys(result.current.pointerHandlers).sort()).toEqual([
-      'onPointerDown',
-      'onPointerMove',
-      'onPointerUp',
-    ]);
-    expect(result.current.pointerState.dimensionsRef).toBe(usePointerPositionMock.mockData.dimensionsRef);
-    expect(result.current.pointerState.getLocalCoords).toBe(usePointerPositionMock.mockData.getLocalCoords);
-    expect(result.current.pointerState.isMouseDown).toBe(usePointerPositionMock.mockData.isMouseDown);
-  });
-
   it('initializes with initial rect', () => {
     const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
     const { result } = renderUseRect({ initialRect });
@@ -226,36 +207,6 @@ describe('useRect', () => {
       ).toBe(true);
     });
     expect(result.current.pointerState.currentEdgeRef.current).toBe('inside');
-  });
-
-  it('publishes the incoming rect once on mount, and does not repeat it for an equal one', () => {
-    const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
-    const onRepaint = vi.fn();
-    const props = (rect: typeof initialRect): UseRectProps => ({
-      aspectRatio: null,
-      imageSize: { width: 800, height: 600 },
-      initialRect: rect,
-      hideBlend: false,
-      isMoveTool: false,
-      containerRef: { current: testContext.containerElement },
-      overlayRef: { current: testContext.overlayCanvas },
-      onRepaint,
-      onChange: vi.fn(),
-      onChangeEnd: vi.fn(),
-    });
-
-    const { rerender } = renderHook((rect: typeof initialRect) => useRect(props(rect)), {
-      initialProps: initialRect,
-    });
-
-    expect(onRepaint).toHaveBeenCalledExactlyOnceWith(initialRect);
-
-    // A FRESH object with the same values is what a parent re-render delivers, and the
-    // effect's identity comparison would treat it as a change. `isEqual` is the guard:
-    // without it the marquee is repainted on every render of the tool area.
-    rerender({ x1: 100, y1: 100, x2: 300, y2: 250 });
-
-    expect(onRepaint).toHaveBeenCalledTimes(1);
   });
 
   it('returns false for pointer down on non-left button', () => {
