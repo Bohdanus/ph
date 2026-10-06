@@ -3832,50 +3832,53 @@ it will read it as its own.
 `scripts/lib/worktree-inventory/classify.mjs` (`classify()`, its `wt.isPrimary` status arm)
 ---
 
-## 159. A paint stroke committed after a crop renders at the old frame coordinates
+## 159. The reported post-crop stroke offset has no matching current-code diagnosis
 
-**Problem.** `usePaintStroke` records brush points in document coordinates, while the runtime
-compositor renders a cropped document with `layerCoordinate - documentFrame.origin`
-(`src/contexts/presentation-evaluator.ts`, in `drawEvaluatedPresentation`:
-`x = evaluation.position.x - (target.frame?.x ?? 0)`). After a crop the stroke is therefore offset by
-the frame origin.
+**Problem.** A post-crop stroke was reported in the wrong vertical band, but the recorded diagnosis
+does not match the current call path. The observation remains unresolved; do not apply the proposed
+frame subtraction until the current reproduction is traced end to end.
 
-**CONFIRMED by measurement, 2026-10-02.** A bar drawn entirely **after** a crop renders in the wrong
-band. Cropping to document `(80,270)-(720,570)` — a `640x300` document with a non-`{0,0}` origin —
-then drawing a bar across the middle of the cropped document:
+**Reported measurement, 2026-10-02; not reverified against current HEAD.** Cropping to document
+`(80,270)-(720,570)` — a `640x300` document with a non-`{0,0}` origin — then drawing a bar across
+the middle of the cropped document:
 
 |                                                                  | read bands                                |
 | ---------------------------------------------------------------- | ----------------------------------------- |
 | **control**: a bar on the UNCROPPED document, at 50% height      | `[false, true, false]` — strip 1, correct |
 | **after the crop**: a bar on the CROPPED document, at 50% height | `[true, false, false]` — strip 0          |
 
-The ink exists and is committed; it is drawn **one band too high**, which is the frame origin's
-signature. The control is what makes this a finding rather than a band-reading failure — the same
-helper reads the un-cropped bar in the strip the current fit names.
+The recorded measurement detected ink in strip 0 while the uncropped control landed in strip 1.
+However, the comment in `e2e/crop-history.spec.ts` says the post-crop bar renders no ink, and the
+test does not assert its pixels; these are conflicting observations, not a confirmed current result.
 
-**`e2e/crop-history.spec.ts` does not cover this**, and its case named "crop, then a bar" reads as
-though it did. That test draws its first bar BEFORE the crop and its second AFTER it, so it asserts
-history bookkeeping across the boundary, not where the post-crop bar lands.
+**Call-path conflict.** The cited `drawBar()` selects `draw`, which is implemented by
+`DrawToolArea`, not `usePaintStroke`. On pointer-up, `DrawToolArea` converts canvas-local points to
+document coordinates, computes the new layer's document-space bounds, then rebases the committed
+points to that layer's local origin. `createLayerFromTool` stores those coordinates, and
+`drawLayerSource` subtracts the document-frame origin from the layer position. The proposed change
+to `usePaintStroke.toDocumentPoint()` therefore does not affect this reproduction, and blindly
+subtracting the frame in the draw path risks applying the origin twice.
 
-**The neighbouring repair is NOT this defect.** `src/util/layer-space.ts` rebases document points onto
-the **layer** origin for six stroke tool areas (`documentPointsToLayerLocal`, 9 callers). That is a
-different axis: it fixes a stroke landing off a layer whose `pos` is not `{0,0}`, and does not touch
-the frame origin.
+**Nearby but unrelated helper.** `src/util/layer-space.ts` rebases document points onto the
+**layer** origin for six stroke tool areas (`documentPointsToLayerLocal`, 9 callers). That handles
+layer-local coordinates, not the document-frame origin, and is not called by this `draw` path.
 
-**What would close it.** Convert the committed stroke points out of document space into the frame's
-coordinate space before the history item is written — the layer-local rebase in `layer-space.ts` is
-the shape to copy, applied against `documentFrame` rather than `layer.pos`. Then add the
-crop-followed-by-stroke band assertion to `e2e/crop-history.spec.ts`, carrying the un-cropped control
-above, so a fix cannot pass by making the band read uniformly empty. Do not weaken the existing crop
-history assertions or add an accepted console error.
+**What would close it.** Reproduce the exact crop-and-draw gesture against current HEAD and record
+the committed tool-layer position and local points, the document frame, and pixel bounds before and
+after rendering. Trace those values through `createLayerFromTool`, layer source creation, and
+`drawLayerSource` to identify where ink is shifted or lost. Only after confirming a defect should
+the responsible transform be changed; keep layer-local coordinates and frame-origin adjustment
+applied exactly once. If reproducible, add a post-crop pixel-band assertion to
+`e2e/crop-history.spec.ts` with the uncropped control above. Do not weaken existing crop-history
+assertions or add an accepted console error.
 
-**Files.** `src/hooks/usePaintStroke.ts` (`toDocumentPoint()` — the path is under `hooks/`, not
-`tools/`, which is how an earlier version of this entry sent a reader to a file that does not
-exist), `src/contexts/presentation-evaluator.ts` (`drawEvaluatedPresentation()`, the frame
-subtraction), `src/util/layer-space.ts` (`documentPointsToLayerLocal()`, the layer-space rebase, a
-different axis), `e2e/crop-history.spec.ts` (the
-`test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back')` case —
-the one that does not cover this).
+**Files.** `src/components/Main/DrawToolArea.tsx` (the cited `drawBar()` path),
+`src/contexts/useLayer.ts` (`createLayerFromTool()` and `applyDocumentCrop()`),
+`src/contexts/layer-utils.ts` (tool-layer source creation),
+`src/contexts/layer-renderer.ts` (`drawLayerSource()` frame adjustment), and
+`e2e/crop-history.spec.ts` (the
+`test('crop, then a bar, then one undo leaves the crop in place and takes only the bar back')` case;
+it checks history and dimensions, not the post-crop bar's pixels).
 ---
 
 ## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
