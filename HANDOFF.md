@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5498,27 +5498,6 @@ else); `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`.
 **What would close it.** Delete the field and the four call sites. It was left rather than removed
 alongside the textarea because a concurrent session was editing `StoreContext.tsx`, and a three-line
 deletion resolved under merge pressure is a worse trade than a week of dead state.
-
-## 211. Layer hydration publishes a layer-local rect, so the in-place edit path opens at the document origin
-
-**Problem.** `createLayerFromTool`'s no-`pos` branch stores `args.rect` REDUCED — `reduceRect(worldRect,
-newPos)` — because the creator builds a `pos`-sized canvas and draws the type at the rect's own
-coordinates. `LayersTab`'s `selectLayer` publishes `source.args` verbatim, so the draft it opens is in
-LAYER-LOCAL space while the editor, `calculateNewRect` and both commit arms read CANVAS space. MEASURED:
-a text layer at document (120, 80) whose `source.args.rect` is (0, 0, 100, 60) opens its editor over the
-document's top-left corner; committing from there measures a rect around (0, 0), which does not match
-the active layer's origin, so the CREATE arm runs and a SECOND text layer appears at (0, 0) carrying the
-edited text while the original is untouched. The comment at the origin-equality guard — "Selection
-hydration preserves the active layer's origin" — describes an invariant the storage format does not
-provide.
-
-**Affected.** `src/components/SidebarRight/LayersTab.tsx` — `selectLayer`; the guard in
-`commitDirtyTool`'s text arm is correct and must keep comparing un-reduced canvas rects.
-
-**What would close it.** Hydrate in the space the commit path measures in: in `selectLayer`, translate
-`rect` by `layer.pos` and the document frame before publishing it, leaving `source.args.rect`
-layer-local as the create arm stores it. This is the same reduction the create arm performs, in the
-other direction.
 
 ## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
 
