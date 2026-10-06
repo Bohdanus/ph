@@ -266,27 +266,6 @@ exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps
 covered too. Add a dark-theme case that pins the direction this depends on, so the
 latent wrong-pass has a tripwire of its own rather than resting on a config default.
 
-## Every document load requests a favicon that does not exist
-
-Chrome requests `/favicon.ico` unprompted on every page load, and it always 404s:
-there is no `public/` directory in the repository, and `index.html`'s
-`<link rel="icon" type="image/svg+xml" href="/todo.svg" />` line is commented out, so
-there is no icon for the request to resolve to. The 404 is real, it is per-load, and
-`ACCEPTED_CONSOLE_ERRORS` in `e2e/helpers/console-police.ts` carries an entry whose
-reason is this fact, narrowed by `urlPattern: /^\/favicon\.ico$/` so that no other
-404 inherits it.
-
-Nothing trips on it: the entry accepts the message, the spec passes, and the run
-reports green. The cost is that every e2e page load carries a failed request that a
-test would otherwise see, and the allowlist entry outlives the moment it was written
-for.
-
-Fix: add `public/favicon.svg`, uncomment the icon link in `index.html`, and delete the favicon entry
-from `ACCEPTED_CONSOLE_ERRORS` in the same change — with the icon in place there is
-no 404 to account for, and per the lifecycle rule in `docs/DOCUMENTATION.md` the
-entry goes with it. Verify with `npm run test:e2e` and by confirming no 404 remains
-in the `console-police.json` report attachment.
-
 ## P3 — 10 orphaned committed baselines (2.1 MB)
 
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`

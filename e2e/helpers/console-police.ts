@@ -93,23 +93,6 @@ export interface AcceptedConsoleError {
  */
 export const ACCEPTED_CONSOLE_ERRORS: readonly AcceptedConsoleError[] = [
   {
-    match: 'Failed to load resource: the server responded with a status of 404 (Not Found)',
-    reason:
-      'Chrome requests /favicon.ico unprompted because index.html:5 has the ' +
-      '<link rel="icon"> line commented out. It is a browser default probe, not an ' +
-      'application request. Delete this entry and add a favicon when one is added.',
-    // The reason above is about ONE request, and the match string names none of them:
-    // every 404 in the app logs this exact text. Confirmed against Chrome during an e2e
-    // run, which reports `url="http://localhost:65420/favicon.ico"` for it — the
-    // failing resource's own URL, not the document's. That is what makes the path a
-    // usable second condition, and it is why a 404 on anything else now fails its test
-    // instead of being waved through by a favicon's reason. That second claim is not this
-    // line's work alone: it holds only because `record` keys the map on the location as
-    // well as the text, so the entry this rule judges carries the URL of the message it
-    // was recorded from. See `entryKey`.
-    urlPattern: /^\/favicon\.ico$/,
-  },
-  {
     match: 'color-sampler-cap-reached',
     reason:
       "The Color Sampler's own refusal at its four-sampler cap, and the refusal IS the behaviour " +
