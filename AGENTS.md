@@ -7,7 +7,7 @@ Photoshop clone
 The main checkout is **READ-ONLY**.
 Running `git status`, `git rev-parse`, `npm test` - will break.
 
-**Before doing ANYTHING, verify you are in your worktree:**
+**Before editing tracked files or running project commands, verify you are in your worktree:**
 
 ```bash
 git rev-parse --show-toplevel
@@ -16,12 +16,26 @@ git rev-parse --show-toplevel
 
 Every tracked-file change happens in worktree. `main` is for reading
 and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+If a task starts outside a worktree, the setup commands below are the only git
+commands to run before creating one.
 
 ```bash
-git rev-parse --show-toplevel
-# `git worktree list` puts the main checkout first; keep $MAIN absolute.
-MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
-git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+# Find the checkout actually on main; the first listed worktree can be a bare repo.
+MAIN="$(git worktree list --porcelain | awk '
+  /^worktree / { path = substr($0, 10) }
+  /^branch refs\/heads\/main$/ { print path; found = 1; exit }
+  END { if (!found) exit 1 }
+')" || { printf 'Could not find a worktree on refs/heads/main\n' >&2; exit 1; }
+
+# Pick a task-specific slug that is not already a branch or directory.
+SLUG=task-specific-name
+BRANCH="fix/$SLUG"
+TARGET="$MAIN/.kilo/worktrees/$SLUG"
+if git show-ref --verify --quiet "refs/heads/$BRANCH" || [ -e "$TARGET" ]; then
+  printf 'Branch or worktree path already exists; choose another SLUG\n' >&2
+  exit 1
+fi
+git worktree add -b "$BRANCH" "$TARGET"
 ```
 
 Every commit must carry `Chat: ses_<id>` trailer.
