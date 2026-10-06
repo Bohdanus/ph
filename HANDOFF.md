@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 226-227, 229-230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 226-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1324,8 +1324,9 @@ incidental, or a **loud** failure when a `NUMBERED` heading is retired without t
 listed retired items. The loud option is the only one that preserves both directions, and it is
 not local: it needs a field on `ParseResult` (whose exact shape
 `handoff-import.test.mjs` asserts on an empty document), and a caller in `agent-board.mjs` that
-actually reports it. Both are outside what a comment-level correction can reach, and the operator
-should choose which of the two behaviours a mistyped heading should have.
+actually reports it. The importer now reports duplicate numbered origins, but that does not
+identify this different status-word case. The operator should choose which of the two behaviours a
+mistyped heading should have.
 
 **Pinned while unfixed, as an `it.fails` tripwire.** `scripts/__tests__/handoff-import.test.mjs`
 holds the shape in `it.fails('keeps a LIVE numbered heading that ends in a status word as an open,
@@ -5690,29 +5691,6 @@ no independent derivation, an arithmetic restatement of a sibling assertion, and
 above, which is the only one of them that was a merge artefact rather than a defect present from the
 start. The fixture divergence was left unfixed because the mandate was
 test files only.
-
-## 222. `parseHandoffDoc()` drops a duplicate `## N.` heading with no warning and no test
-
-**The problem.** Two agents independently write `## 79.`, and a merge resolves the collision
-by keeping both headings. That is the shape `.skills/hard-merge.md` taxonomy class 4 exists
-for, and its fix — incumbent keeps the number, the newcomer takes `max + 1` — is a
-**document-level** decision. Nothing enforces it, and the machine that reads the result cannot
-see the violation: `parseHandoffDoc()` in `scripts/lib/agent-board/handoff-import.mjs` keys
-items by number, so the second heading overwrites or is dropped rather than reported.
-`parseHandoffDoc({ file: 'HANDOFF.md', text: '## 79. one … ## 79. two …' })` returns **one**
-item, titled `one`, with no warning and no entry in any diagnostics field.
-
-**Why it is still open.** `scripts/__tests__/handoff-import.test.mjs` has no duplicate-number
-case, so the suite is green on a document that has lost an entry. **There is no mechanical check
-anywhere**: `.skills/hard-merge.md` Phase 7.2 asserted one existed, which is false, and its own count
-sweep cannot catch it either — a duplicated number leaves `merged == ours + theirs − base` true. The
-only check is a set comparison between the two sides' number lists, run by hand.
-
-**What would close it.** `parseHandoffDoc()` should return a duplicate number as a finding rather
-than resolving it silently, in the shape it already uses for a retired heading (`deadNumbers` and
-the `DEAD_HEADING` consumed by `assemble`), and `scripts/__tests__/handoff-import.test.mjs` should
-gain the case: two headings, one number, one reported finding, and the heading count still two. §82
-is the same parser failing the same way on a different input, and the remedy is shared.
 
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 
