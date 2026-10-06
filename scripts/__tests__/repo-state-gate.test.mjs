@@ -73,6 +73,13 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 't@example.invalid',
 };
 
+const EXPLICIT_BARE_ENV = {
+  ...GIT_ENV,
+  GIT_CONFIG_COUNT: '1',
+  GIT_CONFIG_KEY_0: 'safe.bareRepository',
+  GIT_CONFIG_VALUE_0: 'explicit',
+};
+
 /** Run git and THROW unless it succeeded, for setup steps that must work. */
 const git = (cwd, ...args) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV });
@@ -134,6 +141,13 @@ function makeRepo() {
   writeFileSync(join(dir, 'f.txt'), 'base\n');
   git(dir, 'add', 'f.txt');
   git(dir, 'commit', '-m', 'base');
+  return dir;
+}
+
+function makeBareRepo(name) {
+  const dir = join(scratch(), name);
+  const result = spawnSync('git', ['init', '--quiet', '--bare', dir], { encoding: 'utf8', env: GIT_ENV });
+  expect(result.status, result.stderr).toBe(0);
   return dir;
 }
 
@@ -889,8 +903,7 @@ describe('the roster cannot be trusted on its own', () => {
     // "fatal: this operation must be run in a work tree" on every run. The tool was
     // therefore permanently red in a valid configuration, which is this module's own
     // stated reason for not being a hook: a report that is always red gets bypassed.
-    const bare = join(scratch(), 'mirror.git');
-    spawnSync('git', ['init', '--quiet', '--bare', bare], { encoding: 'utf8' });
+    const bare = makeBareRepo('mirror.git');
     const scanned = scanRepository(bare);
     expect(scanned.ok).toBe(true);
     expect(scanned.worktrees).toHaveLength(1);
@@ -902,12 +915,39 @@ describe('the roster cannot be trusted on its own', () => {
   it('still reports an operation in a bare repository, because that state is readable', () => {
     // The probe is skipped, not the reading: `MERGE_HEAD` in a bare git directory is
     // still `MERGE_HEAD`.
-    const bare = join(scratch(), 'mid-merge.git');
-    spawnSync('git', ['init', '--quiet', '--bare', bare], { encoding: 'utf8' });
+    const bare = makeBareRepo('mid-merge.git');
     writeFileSync(join(bare, 'MERGE_HEAD'), 'deadbeef');
     const scanned = scanRepository(bare);
     expect(scanned.worktrees[0].operations).toEqual([{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }]);
     expect(findings(scanned.worktrees)).toHaveLength(1);
+  });
+
+  it('scans bare repositories when Git requires them to be named explicitly', () => {
+    const bare = makeBareRepo('explicit-only.git');
+    writeFileSync(join(bare, 'MERGE_HEAD'), 'deadbeef');
+
+    const implicit = spawnSync('git', ['worktree', 'list', '--porcelain', '-z'], {
+      cwd: bare,
+      encoding: 'utf8',
+      env: EXPLICIT_BARE_ENV,
+    });
+    expect(implicit.status).not.toBe(0);
+
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, '../repo-state-gate.mjs'), '--json'], {
+      cwd: bare,
+      encoding: 'utf8',
+      env: EXPLICIT_BARE_ENV,
+    });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      scanned: 1,
+      ok: true,
+      findings: [
+        {
+          operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'deadbeef' }],
+        },
+      ],
+    });
   });
 });
 
