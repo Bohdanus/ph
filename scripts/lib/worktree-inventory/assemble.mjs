@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -37,7 +37,7 @@ function relativePathFor(root, absolute) {
   return absolute;
 }
 
-/** Build the inventory object. Pure with respect to every input except `nowMs`. */
+/** Build the inventory object from an evaluation clock and a generation clock. */
 export function buildInventory({
   worktrees,
   root,
@@ -48,6 +48,7 @@ export function buildInventory({
   writeAudit = null,
   readAudit = { available: false, byId: new Map(), records: [] },
   nowMs,
+  generatedAtMs = Date.now(),
   chatWindowMs = 24 * 60 * 60 * 1000,
   liveWindowMs = 30 * 60 * 1000,
   /**
@@ -74,12 +75,9 @@ export function buildInventory({
   // Every other source above is injected for the same reason.
   curatedOf = curatedFor,
 }) {
-  // `nowMs` is clamped to the newest thing the data can know about, on BOTH
-  // sides. `chats.mjs` clamps internally for its own classification, but
-  // `classify` was still handed the raw value, so a `--now` pinned in the past
-  // made `nowMs - lastActivity` negative — which passes the liveness test — and
-  // flipped a dozen worktrees from `salvage` to `in-use`. A flag whose purpose
-  // is reproducibility must not change the answer.
+  // Keep the evaluation clock separate from the wall-clock generation time.
+  // `--now` may deliberately reproduce recency decisions at another time, but
+  // it must never make a fresh inventory appear future-dated to `dispose`.
   const newestKnown = chatAudit?.newestSessionAt ?? 0;
   const effectiveNow = Math.max(nowMs, newestKnown);
 
@@ -351,7 +349,7 @@ export function buildInventory({
 
   return {
     schemaVersion: SCHEMA_VERSION,
-    generatedAt: new Date(effectiveNow).toISOString(),
+    generatedAt: new Date(generatedAtMs).toISOString(),
     generator: 'scripts/worktree-inventory.mjs',
     base,
     mainHead,

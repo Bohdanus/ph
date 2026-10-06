@@ -1025,6 +1025,23 @@ describe('the pinned clock', () => {
     expect(inv.worktrees[0].recommendation).toBe(RECOMMENDATION.SALVAGE);
   });
 
+  it('keeps the wall-clock generation stamp separate from the pinned evaluation time', () => {
+    const pinnedNow = NOW + 5 * 60 * 60_000;
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'x', ahead: 2, mergedIntoBase: false })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board: { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] },
+      chatAudit: { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+      nowMs: pinnedNow,
+      generatedAtMs: NOW,
+    });
+
+    expect(inv.generatedAt).toBe(new Date(NOW).toISOString());
+    expect(inv.ownership.asOf).toBe(new Date(pinnedNow).toISOString());
+  });
+
   it('still marks a genuinely live session in-use', () => {
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     // The map key MUST be the worktree's own path: `buildInventory` looks
@@ -2937,14 +2954,27 @@ describe('the CLI staleness check', () => {
   const { equivalent } = await_import_cli();
 
   const doc = (over = {}) =>
-    JSON.stringify({ generatedAt: '2026-01-01T00:00:00.000Z', totals: { worktrees: 2 }, worktrees: [], ...over });
+    JSON.stringify({
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      ownership: { asOf: '2026-01-01T00:00:00.000Z' },
+      totals: { worktrees: 2 },
+      worktrees: [],
+      ...over,
+    });
 
-  it('ignores only the generation timestamp', () => {
+  it('ignores generation and evaluation timestamps', () => {
     // This file is a live snapshot of a repository where agents message
-    // continuously, so a byte comparison fails on `generatedAt` alone and
-    // `--check` could never pass. A gate that always fails is noise that
-    // trains people to ignore it.
-    expect(equivalent(doc(), doc({ generatedAt: '2026-09-28T21:00:00.000Z' }))).toBe(true);
+    // continuously, so these clocks move while the verdict being checked can
+    // remain unchanged. Every verdict and per-worktree field is still compared.
+    expect(
+      equivalent(
+        doc(),
+        doc({
+          generatedAt: '2026-09-28T21:00:00.000Z',
+          ownership: { asOf: '2026-09-28T21:00:00.000Z' },
+        })
+      )
+    ).toBe(true);
   });
 
   it('still fails on a real change', () => {
