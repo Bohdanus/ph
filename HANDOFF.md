@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 208, 211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5438,28 +5438,6 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 **Files.** `src/contexts/useHistory.ts` — `getHistoryItemTitle()`,
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
-
-## 208. A committed type layer cannot be entered again
-
-**Problem.** The Type tool now has edit mode, and it is unreachable for anything already committed.
-Clicking the canvas places a draft, the draft is an in-place editor, and the draft commits into a
-raster layer — and then there is no way back: no double-click on the layer re-enters, selecting the
-layer with the Type tool and clicking inside it does not, and there is no `T` control in the options
-bar for a selected text layer. Adobe offers all three
-(`https://helpx.adobe.com/photoshop/using/creating-type.html`), and the double-click one is the one
-users reach for first.
-
-**Affected.** `src/components/Main/TextEditOverlay.tsx` derives its edit session from the current tool
-args rather than from a layer, and `src/components/SidebarRight/LayersTab.tsx` has no `onDoubleClick`
-on a row.
-
-**What would close it.** Add an entry route for committed text sources: clicking inside a selected text
-layer, double-clicking its layer thumbnail, or double-clicking the layer with the Type tool should
-hydrate the source args into the contenteditable overlay, select the existing characters, and commit
-through `replaceLayerSource`. Preserve the existing `replace-layer-source` durable operation; do not
-create a replacement layer or rasterize the source. Note that `commitDirtyTool`'s in-place arm replaces
-the active layer when the draft's origin equals that layer's, so an entry route must carry the layer id
-rather than relying on the origin match.
 
 ## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
 
