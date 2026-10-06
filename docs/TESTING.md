@@ -244,7 +244,10 @@ unquoted `$(...)` word-splits and globs into a silent pass.
 - `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion,
   coverage tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
-- `e2e`: headless Playwright.
+- `e2e`: headless Playwright. CI retries each failed test up to twice (three total
+  attempts); local runs use zero retries. `failOnFlakyTests` makes a test that passes
+  only after a retry fail the job, so investigate it as a defect rather than treating
+  it as a pass.
 - **Dependency licences are not a gate.** The allow/deny list and the high-severity
   threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit
 --audit-level=high` in `ci` is the vulnerability half and it does run.

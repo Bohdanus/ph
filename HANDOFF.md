@@ -5469,29 +5469,6 @@ The operator's own rule releases a chat's write ownership when its branch is mer
 this automatic on a landing — so the gap is a chat that finishes work it will never land: an
 abandoned feature, or one folded into another branch.
 
-## 217. CI retries every e2e test twice, and no document says so
-
-**Problem.** `playwright.config.ts` sets `retries: process.env.CI ? 2 : 0`. Locally that is `0`, so
-the local suite cannot observe the CI behaviour at all, and **a green CI e2e job is compatible with
-a locally-red defect**. The `e2e` job runs a bare `npx playwright test` with no `--retries`
-override, so it inherits the retry.
-
-`AGENTS.md` and `docs/TESTING.md` both describe only the local configuration. Exhaustive grep for
-`retries`, `process.env.CI` and `flaky` across both finds three hits, all about the local
-`retries: 0`, and one of them is an instruction not to add retries — which reads as a repo-wide rule
-and is in fact only true of the local run. There is no recorded CI run observed green while hiding a
-defect, so this is a **structural** claim: `retries: 2` plus a green job is definitionally
-compatible with a first-attempt failure, and nothing in the repository says a reader must treat
-"flaky, passed on retry" as a failure to investigate rather than a pass.
-
-**Affected.** `playwright.config.ts` — the `use` block's `retries`. `AGENTS.md` — _Known failures and
-how to read one_. `docs/TESTING.md` — its CI job list.
-
-**What would close it.** Two sentences: that CI retries twice, and that a "flaky, passed on retry"
-line is a **failure to investigate, not a pass**. **Whether CI should retry at all is the operator's
-call and is deliberately not decided here** — it is real practice and removing it is not obviously
-right. If the answer is "no", the fix is `retries: 0` in CI; if "yes", the fix is the two sentences.
-
 ## 218. The no-line-numbers gate covers three markdown documents, and 1,932 citations live outside it
 
 **Problem.** `scripts/__tests__/agents-citations.test.mjs` enumerates `git ls-files '*.md'`, and
