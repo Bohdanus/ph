@@ -131,28 +131,28 @@ that require an exact projection.
 
 ---
 
-## 10. `DurableLayerSnapshot` carries no frame, so a frame change cannot invalidate a replay
+## 10. An in-flight navigation composition can publish against a replaced frame
 
-**Problem.** `DurableLayerSnapshot` carries `id`, `name`, `isBedrock`, `visible`, `opacity`,
-`locked`, `blendMode`, `order`, `pos` and `source`. There is no `frame`, which contradicts the
-consolidated handoff's own drift note: a snapshot says nothing about the document frame it was
-taken against, so a frame change cannot invalidate it.
+**Problem.** `publishDurableNavigationPresentation` (`StoreContext.tsx`) awaits
+`composeDurableDocument`, then checks only `documentId`, `historyIndex` and `branchRevision` before
+publishing the materialized layers. A `REPLACE_DOCUMENT` with the same `documentId` can reset the
+cursor and branch to the same values while changing the frame and incrementing `documentRevision`.
+If an earlier composition resolves after that replacement, its bitmap can be published into the
+new document's runtime layers. The layer snapshot is correctly frame-agnostic: frame is
+document-level state carried by `DurableReplayResult`.
 
-The revision token that used to carry this half of the defect is gone — `replay-coordinator.ts`,
-which declared `ReplayRevisionToken` with no `frameRevision` either, was deleted as dead code
-rather than left unimported. What it was for survives the deletion: whoever schedules the first
-durable replay needs both halves, and this is the half that still has a file.
+**Why it matters.** This is reachable on the existing asynchronous navigation-presentation path,
+not only on a future scheduler. `PUBLISH_RUNTIME_PRESENTATION` verifies that layer records changed
+only by presentation; it cannot detect that the materialized bitmap belongs to an old document
+frame.
 
-**Why it matters.** An in-flight durable replay can complete against a document whose frame has
-since changed. Latent only while nothing schedules replays (item 1), but it is a required input
-for item 1.
+**Fix.** Before publishing, compare the live state with the captured document revision, branch,
+cursor, durable status and durable revision, and require `documentFrameEquals(latest.documentFrame,
+replay.frame)`. Keep frame at the document/replay boundary rather than duplicating it in every
+`DurableLayerSnapshot`. The focused same-id replacement regression belongs beside the presentation
+publication tests.
 
-**Fix.** Add `frame` to `DurableLayerSnapshot`, and bump `documentRevision` on every frame change
-so the existing comparison covers it. The first durable scheduler must take a token carrying a
-`frameRevision` too — re-derive that token's fields when the surface is chosen rather than
-restoring the deleted module.
-
-**Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
+**Files.** `src/contexts/StoreContext.tsx`, `src/contexts/__tests__/StoreContext.presentation.test.tsx`
 
 ---
 
