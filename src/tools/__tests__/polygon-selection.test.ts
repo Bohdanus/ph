@@ -197,7 +197,7 @@ describe('lasso selection output contract', () => {
     expect(toolsMap['freehand-lasso'].imageProcessor).toBe(toolsMap['polygonal-lasso'].imageProcessor);
     expect(toolProcessors['freehand-lasso'].commit).toBe('selection');
     expect(toolProcessors['polygonal-lasso'].commit).toBe('selection');
-    expect(toolProcessors['polygonal-lasso'].creator).toBe(true);
-    expect(toolProcessors['freehand-lasso'].creator).toBe(true);
+    expect(toolProcessors['polygonal-lasso'].creator).toBeUndefined();
+    expect(toolProcessors['freehand-lasso'].creator).toBeUndefined();
   });
 });
