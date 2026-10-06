@@ -35,12 +35,14 @@ import {
   locateInventory,
   preflight,
   protectedContentOnDisk,
+  readInventory,
   REFUSALS,
   readGitState,
   readOperationState,
   rebuildCommand,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
+import { SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 // Imported from its own module, not re-exported: the test asserts against the
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
@@ -404,14 +406,53 @@ describe('dispose preflight', () => {
     expect(codes(verdict)).toEqual(['board-unavailable', 'dirty-tree', 'sessions-unavailable']);
   });
 
-  it('accepts an inventory exactly at the age limit and refuses one millisecond past it', () => {
+  it('accepts an inventory exactly at the age limit in either direction and refuses one millisecond past it', () => {
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS }) }).ok).toBe(true);
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS - 1 }) }).ok).toBe(false);
+    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS }) }).ok).toBe(true);
+    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS + 1 }) }).ok).toBe(false);
+  });
+
+  it('refuses a future-dated inventory beyond the freshness limit', () => {
+    const verdict = green({
+      inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS + 1 }),
+    });
+    expect(codes(verdict)).toContain('inventory-stale');
+    expect(verdict.failures[0].message).toContain('generated in 15 min');
   });
 
   it('refuses an inventory whose generatedAt is unparseable rather than treating it as fresh', () => {
     const verdict = green({ inventory: greenInventory({ generatedAt: 'not-a-date', generatedAtMs: NaN }) });
     expect(codes(verdict)).toContain('inventory-stale');
+  });
+});
+
+describe('inventory schema', () => {
+  it.each([
+    ['missing', { generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
+    ['unsupported', { schemaVersion: SCHEMA_VERSION - 1, generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
+  ])('refuses an inventory with a %s schema', (_label, doc) => {
+    const path = writeFixture(`schema-${_label}.json`, JSON.stringify(doc));
+    const inventory = readInventory('/repo', greenState(), { nowMs: NOW, path });
+    expect(inventory).toMatchObject({ ok: false, reason: 'missing', path });
+
+    expect(codes(green({ inventory }))).toContain('inventory-missing');
+  });
+
+  it('reads the current inventory schema', () => {
+    const path = writeFixture(
+      'schema-current.json',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        generatedAt: new Date(NOW).toISOString(),
+        worktrees: [],
+      })
+    );
+    expect(readInventory('/repo', greenState(), { nowMs: NOW, path })).toMatchObject({
+      ok: true,
+      reason: null,
+      record: null,
+    });
   });
 });
 
