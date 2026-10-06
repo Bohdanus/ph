@@ -112,6 +112,9 @@ The default headless run has no failing E2E tests and three declared skips. Read
 [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) before investigating a failure; its entries
 are latent defects, not current failures.
 
+A CI E2E result marked flaky is a failed run even if a retry passed; investigate it rather
+than treating it as green. See [`docs/TESTING.md#ci`](docs/TESTING.md#ci) for the retry policy.
+
 A pin or `it.fails(...)` test is a tripwire for known broken behavior, not a skip. When the
 defect is fixed, remove its pin in the same change. Read failure artifacts from disk; never
 open a trace viewer or another browser window.
