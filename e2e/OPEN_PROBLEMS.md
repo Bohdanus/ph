@@ -471,16 +471,20 @@ differ by the box origin and nothing in the types distinguishes them.
 the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
 longer depends on where the app put the letterbox. That is the right idea and it works.
 
-**What does not.** The idea reached four production files, at seventeen call sites:
+**What remains.** The mapping now appears in five suite files, at eighteen call sites:
 `e2e/canvas-growth.spec.ts` (4), `e2e/filter-tools.spec.ts` (3), `e2e/shape-tools.spec.ts` (6) and
-`e2e/export/helpers.ts` (4), counting the calls and not the imports. `LINE_START_X`/`LINE_START_Y`/
-`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box",
-and thirteen specs import them: `adjustments`, `color`, `document-dialogs`,
-`erase-fill-eyedropper`, `example`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
-`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, the suite
-writes its gestures as `box.x + <something>` throughout, and **none of them invert the mapping back
-to document space**. Counted, with the counting command, because a number here without one is
-worse than none:
+`e2e/export/helpers.ts` (4), plus `e2e/example.spec.ts` (1), counting the calls and not the imports.
+`LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still
+"relative to the canvas box",
+and twelve specs import them: `adjustments`, `color`, `document-dialogs`,
+`erase-fill-eyedropper`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
+`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, many
+gestures still use box-relative offsets that change the document point when the window changes.
+Counted, with the counting command, because a number here without one is worse than none:
+
+`e2e/example.spec.ts` is the first simple gesture migrated: it maps seeded document points with
+`documentToCanvasOffset` and uses the resulting page clip for both redraw polling and capture.
+`drawLine` remains box-relative; the broader migration remains open.
 
 ```
 grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
