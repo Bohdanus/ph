@@ -485,11 +485,7 @@ export function preflight({
       refuse('inventory-stale', offsetFromNowMs, inventory.generatedAt);
     }
     const evaluationOffsetMs = nowMs - inventory.evaluationAtMs;
-    if (
-      !Number.isFinite(evaluationOffsetMs) ||
-      evaluationOffsetMs < 0 ||
-      evaluationOffsetMs > maxAgeMs
-    ) {
+    if (!Number.isFinite(evaluationOffsetMs) || evaluationOffsetMs < 0 || evaluationOffsetMs > maxAgeMs) {
       refuse('inventory-evaluation-stale', evaluationOffsetMs, inventory.evaluationAt);
     }
     if (!inventory.record) refuse('not-in-inventory');
