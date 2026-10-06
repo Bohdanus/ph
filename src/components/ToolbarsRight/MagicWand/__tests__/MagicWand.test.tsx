@@ -193,6 +193,16 @@ describe('MagicWand toolbar', () => {
       render(<MagicWand />);
 
       expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toBeChecked();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('warns that non-contiguous mode keeps only the largest region', () => {
+      toolArgs.contiguous = false;
+      render(<MagicWand />);
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Non-contiguous mode keeps only the largest matching region; results with holes are canceled.'
+      );
     });
 
     it('unchecking it patches the setting the tool area reads', () => {
