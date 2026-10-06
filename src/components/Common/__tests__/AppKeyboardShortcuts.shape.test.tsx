@@ -197,6 +197,7 @@ describe('AppKeyboardShortcuts shape selection', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'rectangle' });
     expect(goToToolMock).toHaveBeenCalledWith('shape');
+    expect(goToToolMock.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgsMock.mock.invocationCallOrder[0]);
     view.dispose();
   });
 
@@ -239,6 +240,11 @@ describe('AppKeyboardShortcuts shape selection', () => {
       expect((patchToolArgsMock.mock.calls[0]?.[1] as { figure?: string } | undefined)?.figure, label).toBe(
         to.figure ?? undefined
       );
+      if (to.figure) {
+        expect(goToToolMock.mock.invocationCallOrder[0], label).toBeLessThan(
+          patchToolArgsMock.mock.invocationCallOrder[0]
+        );
+      }
       view.dispose();
     }
   });
