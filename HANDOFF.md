@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -650,35 +650,6 @@ layer property.
 `src/contexts/history-replay.ts` — `replayHistory()`, `src/contexts/useHistory.ts` —
 `getHistoryItemTitle()`,
 `src/contexts/psd-utils.ts`
-
-## 57. The mobile shell has no colour control at all
-
-**Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx` — the `color-pickers`
-cluster).
-The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
-no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
-use whatever colour the document happened to be created with, and the foreground colour
-cannot be changed at all.
-
-An earlier draft of this feature carried a `MobileColorPalette` component. It was
-never imported by anything, so it shipped no reachable UI while its own test file
-passed against the component in isolation. It was deleted rather than wired, because
-choosing which tools expose it is a design decision on the lowest-priority surface in
-the app, and shipping an unreachable one is worse than shipping none.
-
-**Fix.** Port the desktop's swatch pair and swap into `MobileBottomBar` or
-`MobileLayersDrawer` — it is one `useStore` read of `color` and `backgroundColor`,
-and the same two hidden `<input type="color">` elements, so the colour model stays
-whatever the desktop uses. A richer picker (a palette, a hex field) is a separate
-decision. Note the swatches are 32px in the desktop rail; on a touch surface they need
-the same 44px floor as the other mobile controls, which is why they should be built
-for mobile rather than copied across.
-
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx` — the `color-pickers` cluster,
-`src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
-
----
 
 ## 60. The gesture gate still has one claim site that can strand the keyboard
 
