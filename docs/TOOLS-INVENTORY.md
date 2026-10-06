@@ -50,7 +50,7 @@ gap is worth more here than an invented sentence.
 ## The roster: two sources, and a discrepancy that is not resolved here
 
 This list took the roster over from `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits",
-which carried **30** absent tools in six Adobe groups and no longer names them.
+which carried **30** absent tools across the Adobe groups and no longer names them.
 `HANDOFF.md` §74 records the same exercise as **"36 present, 34 to add, 5 to
 delete"** out of a 41-`ToolName` → 70 target, and names absent tools the first list omits.
 **Six of them, not five:** Selection Brush, Adjustment Brush, Remove, Content-Aware Tracing,
@@ -106,21 +106,32 @@ someone who trusts the source material.
 
 ---
 
+## Drawing
+
+| Adobe tool | Group                                                                  | Shortcut                                             | Headline options                             | Source                                                                                                                              |
+| ---------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Star**   | Drawing — shapes flyout; exact position relative to Line is unresolved | none of its own; reached by cycling the shapes group | Points, corner radius, inner and outer radii | Adobe's drawing-tools overview and Star-tool page; see the sourced Shape-family research in `src/tools/descriptions/shape.notes.md` |
+
+**Star is the best-documented absent rail entry.** Adobe's separate Star-tool page names its
+points and inner/outer radii, and the sourced Shape-family research records its options and
+the app-side gap (`src/tools/descriptions/shape.notes.md`, Star-tool research).
+
+**Star is not Custom Shape.** Adobe documents Star as its own shapes-group tool
+([Star tool](https://helpx.adobe.com/photoshop/using/create-star-shape.html)); Custom Shape draws
+reusable vector graphics from a built-in or imported library
+([Custom Shape tool](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html)).
+The `.csh` parser and preset manager documented as blockers in
+[`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md) apply to Custom Shape, not to a parameterized Star tool.
+A canned star preset would not implement Custom Shape, but that is not a reason to treat Star
+itself as blocked by the preset format.
+
 ## Selection
 
-| Adobe tool             | Group                                                | Shortcut                                                                                                                | Headline options                                                                                                         | Source                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Star**               | Drawing — shapes flyout, seventh entry               | none of its own; reached by cycling the shapes group                                                                    | Point count, plus inner and outer radii — `TOOLS.md` §Polygon Tool records that Sides is _Polygon_’s control, not Star’s | Adobe's drawing-tools overview lists Star; `docs/TOOLS.md` and `src/tools/descriptions/shape.notes.md` §Star carry the two sources (the overview plus the Adobe page "Select the Star tool from the shapes tool group in the Tools panel")                                                                                                                      |
-| **Object Selection**   | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched                                                                                                           | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                                                                                              |
-| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched                                                                                                           | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                                                                                                |
-| **Content-Aware Move** | Selection                                            | not researched                                                                                                          | not researched                                                                                                           | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md` §74 names it, in the list headed "Largest, and they need a primitive the app does not have", beside Remove and its generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
-
-**Star is the notable one**, because it is a missing _entry_ rather than a missing tool. The
-shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbarMap`'s shape flyout, in `toolbar-mapping.ts`) — six of Adobe's seven — and Star is
-the one it lacks. The
-same custom-shape work is filed as too hard in [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md), so a
-hardcoded star is exactly what this repository's policy refuses.
+| Adobe tool             | Group                                                | Shortcut                                                                                                                | Headline options | Source                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Object Selection**   | Selection                                            | `W`, shared with the colour-based selection family — **third-party only, not confirmed against an Adobe shortcut page** | not researched   | Adobe's selection-tools overview carries the tool and its one-line description; the shortcut is from a third-party toolbar diagram                                                                                                                                                                                                                              |
+| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                                                                         | not researched   | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, "Lasso group". `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Options bar not researched.                                                                                                                                                |
+| **Content-Aware Move** | Selection                                            | not researched                                                                                                          | not researched   | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md` §74 names it, in the list headed "Largest, and they need a primitive the app does not have", beside Remove and its generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
 
 **The rest follow from what this app already lacks.** Object Selection needs an
 edge-following segmentation comparable to what the Quick Selection entry records as too hard.
@@ -159,8 +170,8 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and the six Adobe-group tables below hold **33 rows** in total
-(Selection 4, Retouch 7, Painting 5, Type 3, Navigation and measuring 11, Path 3), which is
+`src/contexts/tool-types.ts` — and the seven Adobe-group tables below hold **33 rows** in total
+(Drawing 1, Selection 3, Retouch 7, Painting 5, Type 3, Navigation and measuring 11, Path 3), which is
 neither 29 nor the 30 this file attributes to `TOOLS-TOO-HARD.md`: the two lists are counted
 separately and are not reconciled here. **Two claims the deleted row carried were themselves
 wrong**, and they are the reason this note exists rather than a bare `git log` entry:

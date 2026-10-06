@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1439,21 +1439,20 @@ fails if `xAnchor` is removed.
 
 ## 86. `useRect`'s border still sits still for the three callers that are not a selection
 
-**Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
+**Problem.** `useRect` strokes its border with a fixed dash pattern and only advances it in
+`'while-dragging'` mode:
 `ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
-(`useRect.ts` — `drawMask()`). No `lineDashOffset` is ever assigned, and the file's one
-`requestAnimationFrame` (also `useRect.ts` — `handlePointerMove()`) throttles the DRAG, not the
-border: it recomputes the rect and calls `drawMask(true)`, which redraws the same fixed dash. It
-looks alive during a drag only because the drag is RAF-throttled, so the line is redrawn at pointer
-rate — the dashes never move.
+(`useRect.ts` — `drawMask()`). The file's `requestAnimationFrame` in
+`handlePointerMove()` throttles the DRAG, not the border: it recomputes the rect and calls
+`drawMask(true)`, which redraws the same fixed dash. The three non-selection callers use `'always'`,
+where the offset stays zero.
 
-**What this costs is now ONE selection border, not three.** Every selection tool's committed
-border is now the same animated loop — `Main.tsx` — `SELECTION_INTERACTION_MODES` — admits all
+**The committed selection border is no longer the remaining gap.** Every selection tool's
+committed border is the same animated loop — `Main.tsx` — `SELECTION_INTERACTION_MODES` — admits all
 seven selection modes, `useSelectionMarchingAnts` strokes every active selection whatever made it,
 and the static stroke the elliptical marquee and quick selection used to hand-roll is gone from
-`selection.ts`. The rect is what is left: `rectangular-selection` strokes it only while a marquee is
-in flight (`borderMode: 'while-dragging'`, below), which §229 records, and the three callers that
-are not selections stroke it whenever the rect is drawn.
+`selection.ts`. The rectangular marquee's temporary border now advances while the gesture is in
+flight. The three callers that are not selections still use a static border.
 
 **`useMarchingAnts` is a fourth border and reaches none of them.** Its only production consumer is
 `MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a **hovered layer**
@@ -1472,23 +1471,21 @@ gate, and must not be applied to the handles, which are the resize hit area.
 `useRect()` call. Three of them stroke the still border whenever the rect is drawn; the rectangular
 selection strokes it only between press and release.
 
-**Fix.** Two shapes remain, and the choice is a recording decision rather than a mechanical one.
+**Fix.** The marquee's `'while-dragging'` stroke now has its own RAF loop and advances
+`lineDashOffset` at a scale-adjusted screen speed. The remaining decision is whether the three
+non-selection `'always'` borders should animate; do not extend the marquee loop to that mode without
+deciding their intended behavior.
 
-- Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
-  existing draw path, keeping the current colour and the four handles. It needs its own loop,
-  because `drawMask` is only called while something is changing. It must advance for
-  `borderMode: 'while-dragging'` without advancing for `'always'`, or the Move tool's own dashed rect
-  starts crawling under a different rule than the ants use. Fixes the three non-selection frames
-  and the in-flight marquee with it.
-- Or give the rect the treatment every other selection border already has: stop `useRect` stroking
-  it and let the ants canvas own it. Not a one-line change, and §229 says why: `useRect` draws the
-  dim-out scrim, the border and the corner handles in the same `drawMask()` pass, so the border and
-  the handles have to end up on different canvases or the scrim will wipe the ants mid-drag.
+- If a later change elects to animate those three borders, give that behavior an explicit mode and
+  focused coverage. `'always'` must remain static unless that decision is made.
+- Moving the rectangular marquee border to the ants canvas is a separate alternative, not needed
+  for its in-flight crawl: `useRect` draws the dim-out scrim, border and corner handles in one
+  `drawMask()` pass, so separating them would require moving the handles too or the scrim would wipe
+  the ants mid-drag.
 
-Whichever is chosen, the two `setLineDash` assertions in `useRect.drag.test.ts` — the
-`it('paints the initial selection, its blend cut-out, and the four handles')` and
-`it('scales the dash and the handles by the container scale')` titles — pin the current values and
-have to be updated in the same change.
+The dash pattern remains `[5 / scale, 5 / scale]`; the two existing `setLineDash` assertions in
+`useRect.drag.test.ts` remain valid. The focused animation coverage checks the offset advances in
+`'while-dragging'` and remains zero in `'always'`.
 
 **Files.** `src/hooks/useRect.ts` — `drawMask()`, `handlePointerMove()`; `src/hooks/useAnts.ts` —
 `useMarchingAnts()`; `src/components/Main/MoveToolArea.tsx` — `MoveToolArea`; `src/components/Main/CropToolArea.tsx` —
@@ -5933,28 +5930,5 @@ unfilled, record the divergence in `docs/OVERRIDES.md` — the tile is kept ther
 override is where a deliberate divergence belongs. Either way the `!!args.backgroundColor` half of
 the gate must survive the change: it is what stops a filled figure with no colour from painting with
 whatever `fillStyle` the shared overlay last carried.
-
----
-
-## 229. The rectangular marquee's in-flight border is the one piece of selection chrome that never crawls
-
-**Problem.** A selection's border is the marching ants for every selection tool, so the crawl is
-uniform across all of them. The exception is the rectangle BETWEEN press and release: while a gesture
-is in flight the ants stand down (`selection-drag-preview.ts` — published by `useRect`'s
-`beginGesture`) and the only border on screen is `useRect`'s own stroke, whose dashes are static for
-the reason in §86. The user sees the border appear — a dashed rectangle where there was none — and
-then not move, for the whole drag, on the one tool whose border is otherwise indistinguishable from
-the others at rest.
-
-**It is a smaller defect than it looks, and the fix is the fix.** The drag is RAF-throttled, so the
-rectangle itself tracks the pointer; only the dashes are frozen, and a still dash around a moving
-rectangle reads as a marquee rather than as a stalled border. Animating it means §86's loop, and
-that loop has to reach this case too: `borderMode: 'while-dragging'` is the only place the
-rectangle's stroke is on screen while `useRect` owns it, so the offset ref has to advance there
-without advancing for `'always'`, where the Move tool's own dashed rect would start crawling under a
-different rule than the ants use.
-
-**Files.** `src/hooks/useRect.ts` — `drawMask()`, `beginGesture()`;
-`src/hooks/selection-drag-preview.ts` — `publishSelectionDragPreview()`
 
 ---
