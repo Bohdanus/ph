@@ -5369,29 +5369,6 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
 
-## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
-
-**Problem.** `useRect`'s `drawMask` draws each corner and edge handle as a square CENTRED on the edge,
-`ctx.fillRect(x - h2, y - h2, h1, h1)` with `h2 = HANDLE_SIZE / scale / 2`, so six CSS px of every handle
-lies inside the type box — which is exactly the rectangle `TextEditOverlay` occupies, and
-`Main.tsx` mounts the overlay last so it is the topmost child. Every pointerdown in that band belongs to
-the editor. The outer six pixels of a handle still resize; the inner six place a caret instead.
-`edgeAtPoint`'s `'inside'` region is unreachable for the same reason, so `TextToolArea`'s
-`onChangeEnd` classification of an interior press as a move never fires while a draft is open, and the
-cursor feedback stops because `setMouseCursor` writes to an element that is no longer the event target.
-
-**Adobe allows both at once.** "You can adjust the bounding box while you enter type or after you create
-the type layer" (https://helpx.adobe.com/photoshop/using/creating-type.html).
-
-**Affected.** `src/components/Main/TextEditOverlay.tsx` — the element's box; `src/hooks/useRect.ts` —
-the handle size and where it sits.
-
-**What would close it.** Draw the handles OUTSIDE the rect (`x - h1` rather than `x - h2`, and the same
-for the right and bottom edges) and hit-test against `h2`. That removes the whole band from the
-editor's hit area with two constants in one file, and it is also Adobe's arrangement. Shrinking the
-editor instead is the wrong direction: the editor's box has to BE the type box for the caret to land
-where the user clicked.
-
 ## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
 
 **Problem.** `domOverlayStyle` emits `textDecorationLine` and `textDecorationColor` and nothing else,
