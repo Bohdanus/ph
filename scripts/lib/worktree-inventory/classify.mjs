@@ -309,9 +309,6 @@ export function classify(
         ? 'git cannot distinguish this from a branch that landed and was then edited'
         : 'the branch is not on main either'
     );
-  } else if (wt.patchEquivalence === 'absorbed') {
-    status = STATUS.LANDED;
-    reasons.push(wt.patchEquivalenceReason ?? 'every branch commit has an equivalent patch on the base');
   } else if (wt.isPrimary) {
     status = STATUS.LANDED;
     reasons.push('this is the main worktree');
@@ -319,6 +316,9 @@ export function classify(
     status = STATUS.UNMERGED_WORK;
     if (unmerged) reasons.push(`${wt.ahead} commit(s) ahead of main`);
     if (uncommitted) reasons.push('the working tree holds uncommitted changes');
+  } else if (wt.patchEquivalence === 'absorbed') {
+    status = STATUS.LANDED;
+    reasons.push(wt.patchEquivalenceReason ?? 'every branch commit has an equivalent patch on the base');
   } else {
     status = STATUS.LANDED;
     reasons.push('the branch is an ancestor of main and the working tree is clean');
