@@ -175,7 +175,8 @@ allowed. Produce counts from the suite rather than storing them here. If a dead
 Vite server causes a wall of `ERR_CONNECTION_REFUSED`, rerun on a fresh
 `PLAYWRIGHT_PORT` before treating the output as test failures.
 Hooks use a shared common-git entry rather than a per-worktree husky directory;
-`HUSKY=0 git commit` is the escape hatch.
+`HUSKY=0` disables the hooks and bypasses these gates; do not use it to get around
+a failing check.
 
 - `.husky/pre-commit` runs `npm run gate:commit`; `.husky/pre-push` runs
   `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
@@ -248,9 +249,9 @@ unquoted `$(...)` word-splits and globs into a silent pass.
   attempts); local runs use zero retries. `failOnFlakyTests` makes a test that passes
   only after a retry fail the job, so investigate it as a defect rather than treating
   it as a pass.
-- **Dependency licences are not a gate.** The allow/deny list and the high-severity
-  threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit
---audit-level=high` in `ci` is the vulnerability half and it does run.
+- **Dependency licences are not checked by CI.** `npm audit --audit-level=high`
+  checks vulnerability advisories, not licence terms. The README records this
+  limitation and the expectation to review dependency licences.
 
 **DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted
 assertions, or re-recorded baselines.** Fix the defect or leave the recording
@@ -273,12 +274,12 @@ decision to the operator.
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
 - **The default headless run has zero failures, and three tests are `test.skip` by
-  declaration.** Two need an external service or a manual gesture; the third is
-  `e2e/viewport-drawing.spec.ts`, skipped on the operator's decision of 2026-09-29
-  because it is intermittently red — 1 run in 4, with the failing case moving
-  between cases — and a suite that is randomly red trains agents to ignore the
-  gate. **It is a gate decision, not a fix and not a waiver:** the defect is still
-  open in `TEST-FLAKES.md` §12 with its exact remaining verification, and a skip is
-  not permission to loosen the assertion, raise the bound or add retries.
-- Read failures from `test-results/`; `trace.zip` needs a window, so ask the
-  operator.
+  declaration.** The Photopea round-trip needs an external service; the single-tool
+  right-click case is recorded under "Known-skip tests" in
+  `e2e/OPEN_PROBLEMS.md`; and `e2e/viewport-drawing.spec.ts` is skipped by the
+  operator's decision of 2026-09-29 because of intermittent capture drift. Its
+  frequency is unknown: `TEST-FLAKES.md` §12 explicitly says the observations have
+  not been reconciled into a rate. The skip is a gate decision, not a fix or waiver;
+  do not loosen the assertion or add retries.
+- Read failures from `test-results/`. Do not open `trace.zip` in a trace viewer,
+  because that opens a browser window; ask the operator to inspect it if needed.

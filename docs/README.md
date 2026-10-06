@@ -61,7 +61,6 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent                                  |
 | [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under                                   |
 | [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails                                  |
-| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it                        |
 | [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                                       |
 | [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec                           |
 | [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words                        |
