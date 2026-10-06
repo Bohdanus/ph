@@ -711,16 +711,13 @@ describe('opening an image kills the outgoing document history and layers', () =
     expectOutgoingDocumentIntact(result, intact);
   });
 
-  /**
-   * The other negative control: a failure inside the import must also leave the
-   * document alone. The raster arm resizes the canvas BEFORE it builds the layer
-   * (`useApp.ts:162`), so this pins the store half of that sequence — the canvas half
-   * is a separate defect, recorded in `HANDOFF.md` §102.
-   */
-  it('kills nothing when the import fails before the document is replaced', async () => {
+  it('keeps the document and canvas intact when raster decoding fails', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
     const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+    const canvas = result.current.store.canvasRef.current!;
+    canvas.width = PREVIOUS_SIZE.width;
+    canvas.height = PREVIOUS_SIZE.height;
     vi.stubGlobal(
       'createImageBitmap',
       vi.fn(async () => {
@@ -735,6 +732,7 @@ describe('opening an image kills the outgoing document history and layers', () =
     });
 
     expectOutgoingDocumentIntact(result, intact);
+    expect(canvas).toMatchObject(PREVIOUS_SIZE);
   });
 });
 
