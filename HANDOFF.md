@@ -155,17 +155,6 @@ no `durableEntry` is no longer evidence of a reconversion — `updateLayerByTool
 planned by the store. Passing a `durableEntry` remains necessary but not sufficient in the other
 direction: the store publishes only on `outcome === 'published'` and otherwise reconverts.
 
-**One exclusion is real, and it disagrees with the converter.** `sourceBackedEntryContext()` returns
-`null` for a `kind: 'tool'` layer source whose `args.toolName` is outside
-`text, shape, rectangle, ellipse, triangle, polygon, line`, on the stated ground that raster creator
-tools "have no durable source representation yet". That ground is no longer true:
-`durableSourceKindForTool()` (`history-adapter.ts`) types `draw`, `brush` and `pencil` as `'paint'`,
-`DurableLayerSource` has a `paint` arm, and `sourceBitmap()` (`materialization.ts`) materializes one
-through its generic creator arm. So the last conversion-only writer is
-`createLayerFromTool` (`useLayer.ts`) for a **paint** tool — `createLayerFromTool` for a text or
-shape tool, `createLayerFromBitmap`, `convertBedrockLayer` and a `kind: 'image'` source are all
-planned and published by the store today, raster asset included.
-
 Two writers still have no `durableEntry` concept at all and reconvert unconditionally:
 `resetHistoryTo` in `useHistory.ts` (`APPLY_HISTORY_REPLAY`) and `setImageFromUpload` in `useApp.ts`
 (`REPLACE_DOCUMENT`). `createBlankLayer` is only that on its `replaceDocument` path, because
@@ -173,9 +162,7 @@ Two writers still have no `durableEntry` concept at all and reconvert unconditio
 `addHistoryEntry` row this table used to carry is **deleted**: that symbol no longer exists anywhere
 in `src/`, and "see item 14" pointed at a reader that no longer had a referent.
 
-**Fix, in order.** Make the planner's exclusion list and `durableSourceKindForTool()` one rule rather
-than two, so a tool the converter will type is a tool the planner will admit. Every other append
-family is already published with the registry transaction around it, and `remove-layer` and the
+**Asset boundary.** Every append family is published with the registry transaction around it, and `remove-layer` and the
 `TOOL_ACTION` operations are asset-neutral regardless: a `remove-layer` carries only a `layerId`
 (the `'remove-layer'` case in `history-model.ts`), and a `TOOL_ACTION` carrying no layer source is
 derived by `operationForTool` (`history-adapter.ts`), whose every arm returns an operation with no
