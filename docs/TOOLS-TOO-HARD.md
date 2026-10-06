@@ -70,12 +70,14 @@ one. The bar's controls match Photoshop's; the segmentation underneath does not.
 
 ### Selection combination modes
 
-**What Photoshop does.** Every selection tool's options bar carries New / Add To / Subtract From /
-Intersect With, so the next drag combines with the selection already on the canvas, and Shift,
-Alt/Option and Shift+Alt/Option held during the drag set the same four modes.
+**What Photoshop does.** Selection tools can combine a new selection with the existing one using
+New / Add To / Subtract From / Intersect With where those controls are provided. Shift, Alt/Option
+and Shift+Alt/Option can set the same modes during a drag on tools that support them.
 
-**What this app does.** No selection tool's bar renders any of the four. A second selection appends
-and activates. The union is not a missing control over a present model — it is a change to the model.
+**What this app does.** Quick Selection's Mode dropdown offers Add and Subtract. No bar implements
+the complete Photoshop set; the other selection tools do not render combination controls. On tools
+without a mode selector, a second selection appends and activates. The union is not a missing
+control over a present model — it is a change to the model.
 `Selection` is a single point path (`general-types.ts` — `Selection`):
 
 ```ts
@@ -222,20 +224,24 @@ Photoshop grouping and naming are the specification, and the stub bar is the deb
 
 ### Custom Shape
 
-**What Photoshop does.** Draws from a library of preset shapes stored in `.csh` files, and the user
-can add to it with Edit ▸ Define Custom Shape and manage it in the Preset Manager. Star is the
-seventh entry in the shape flyout alongside Rectangle, Ellipse, Triangle, Polygon and Line.
+**What Photoshop does.** Draws reusable vector graphics from a built-in library, imported shapes,
+or shapes the user creates and saves. Adobe documents this separately from the Star tool, which is
+its own entry in the shapes group with adjustable points and inner/outer radii:
+[Custom Shape](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html),
+[Star](https://helpx.adobe.com/photoshop/using/create-star-shape.html).
 
 **What this app does.** `commit: 'unimplemented'` at `toolProcessors.ts` — its `'custom-shape'`
 entry — the same null-bitmap stub, and no gesture surface. The tool is in the rail under Adobe's name.
 
 **Why it is too hard.** It is three things, not one: a parser for the shape-preset format, the preset
 library itself, and the authoring and management surfaces. None of the format's structure is present,
-and shipping a hardcoded star would be exactly the fake this policy refuses.
+so drawing a built-in or imported Custom Shape is not implemented by adding a single preset.
 
 **What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the missing one, which `AGENTS.md`
-records as a requirement rather than an omission to be filled by a placeholder.
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), with Custom Shape present and Star absent.
+Star is a separate parametric shape tool, not a Custom Shape preset; its separate implementation
+does not require the `.csh` parser or library described above. Its behavior and options are already
+researched in `src/tools/descriptions/shape.notes.md` and the generated shape documentation.
 
 ### Live type
 
@@ -821,12 +827,13 @@ that name, at its Selection row.
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
 
-**Star is the notable one**, because it is not a missing tool so much as a missing entry: the
-shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the shape Adobe's list has that the
-flyout does not. It is listed there rather than filed here separately because the same custom-shape
-work is
-recorded as too hard above, and a hardcoded star would be the fake this policy refuses.
+**Star is the strongest documented absent rail entry**, and it is a separate candidate from Custom
+Shape. The flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), while Adobe documents Star as a separate tool
+with its own points and inner/outer radii. The sourced behavior and app-side gap are in
+`src/tools/descriptions/shape.notes.md` and `docs/TOOLS-INVENTORY.md`. The `.csh` parser and preset
+library that block Custom Shape do not block Star; the Star geometry, controls and integration still
+need implementation and verification.
 
 **The rest follow from this file.** The Pen family and Path Type are the work-path object that
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following

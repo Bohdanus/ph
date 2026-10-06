@@ -93,13 +93,16 @@ undo, redo, navigation, and history-panel state must agree. During migration,
 legacy-versus-durable differential checks are allowed; shipping two authorities
 is not.
 
-The retired coordination gate forbids production imports of
-`replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
-allows exactly one production importer for `materialization.ts`,
-`durable-compositor.ts`. The compositor is mounted for navigation presentation
-and its `tmpCanvas` is already consumed by render and export. The remaining
-cutover surfaces stay legacy-authoritative until their differential and
-ownership gates pass.
+The retired coordination gate forbids production imports of `replay-budget.ts`,
+`replay-coordinator.ts` and `replay-checkpoints.ts` by name.
+`replay-coordinator.ts` and `replay-checkpoints.ts` were deleted as dead code —
+nothing imported them outside `__tests__` — and the gate keeps both names rather
+than dropping them with the files, so reintroducing either is reported rather
+than silently absorbed. A separate plain assertion allows exactly one
+production importer for `materialization.ts`, `durable-compositor.ts`. The
+compositor is mounted for navigation presentation and its `tmpCanvas` is already
+consumed by render and export. The remaining cutover surfaces stay
+legacy-authoritative until their differential and ownership gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 

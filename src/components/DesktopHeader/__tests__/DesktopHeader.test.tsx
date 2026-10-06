@@ -568,6 +568,7 @@ describe('DesktopHeader menu commands', () => {
     ['tools-menu-crop-button', 'crop'],
     ['tools-menu-magic-wand-button', 'magic-wand'],
     ['tools-menu-custom-shape-button', 'custom-shape'],
+    ['tools-menu-color-sampler-button', 'color-sampler'],
   ] as const)('selects %s from the Tools menu', (testId, toolName) => {
     renderHeader();
 

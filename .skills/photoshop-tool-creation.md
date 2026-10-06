@@ -3277,9 +3277,11 @@ page — so two readings through two rects are not a comparison at all
 
 **Clip and coordinate helpers.** `takeLineScreenshot(page, box, name, testInfo, clip?)`
 (`canvas-helpers.ts` — `takeLineScreenshot()`) is the `page.screenshot` path; `captureCanvasScreenshot(page, box,
-testInfo, name, clip?)` (`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`) is the CDP path. Pass a **bare filename**
-as `name`: only `outputDir` is created, so a name with a separator fails `ENOENT` and a traversing
-name resolves outside it (`e2e/OPEN_PROBLEMS.md` §"P3 — the artifact name is interpolated into a path unsanitised"). **Never divide by `devicePixelRatio`** —
+testInfo, name, clip?)` (`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`) is the CDP path. Pass `name` as a
+**single path component** — a bare filename, with no separator and neither `.` nor `..`. The CDP path rejects anything
+else before it creates the directory or opens a CDP session, so a bad name is an error naming the helper rather than a
+file written somewhere else; the guard's own docblock is the home for why it rejects rather than sanitises
+(`cdp-helpers.ts` — the "So `name` has to be a single path component" comment). **Never divide by `devicePixelRatio`** —
 and note that rule lives in a comment, not a guard (`cdp-helpers.ts` — the "do not divide by devicePixelRatio" comment), so a future change can
 delete the reasoning without deleting anything that fails. Downstream code derives the scale from
 the decoded image dimensions instead, via `screenshotBoundsToCss` (`canvas-helpers.ts` — `screenshotBoundsToCss()`) and
@@ -3349,10 +3351,9 @@ failure is a new defect, never a known one. Characterised, not listed:
    different checkout's application", a **not-yet-merged reference**. **Set `PLAYWRIGHT_PORT` in
    every worktree**, and put it in the brief so a subagent cannot forget.
 
-Two more latent entries: a nearly transparent pixel counts at full weight in `dominantRed`
+One more latent entry: a nearly transparent pixel counts at full weight in `dominantRed`
 (`canvas-helpers.ts` — `dominantRed()`) and `getColorAtPoint` (`canvas-helpers.ts` — `getColorAtPoint()`), so a light or translucent stroke makes a
-colour assertion worthless (`e2e/OPEN_PROBLEMS.md` §"P3 — transparent pixels weighted as fully opaque (low confidence)"); and a bare `name` passed to
-`captureCanvasScreenshot` is interpolated into a path unsanitised (`e2e/OPEN_PROBLEMS.md` §"P3 — the artifact name is interpolated into a path unsanitised"). **Do not weaken a
+colour assertion worthless (`e2e/OPEN_PROBLEMS.md` §"P3 — transparent pixels weighted as fully opaque (low confidence)"). **Do not weaken a
 gate to get green:** no skips, no raised thresholds, no deleted assertions, no re-recorded visual
 baselines (`AGENTS.md`, "Gates" and "E2E failures").
 
@@ -3361,7 +3362,7 @@ baselines (`AGENTS.md`, "Gates" and "E2E failures").
 Baselines live in `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`, resolved
 through `testInfo.snapshotDir` rather than `snapshotPath()` so a baseline committed on one machine
 does not read as missing on another (`e2e/README.md` — the `testInfo.snapshotDir` paragraph under "Baseline layout"). The directory holds 17 committed
-files; 7 are read, one per format with `comparePixels: true` (`drawing.png.png`, `.jpeg`, `.webp`,
+files; 7 are read, one per format in `browserVerifiedFormats` (`drawing.png.png`, `.jpeg`, `.webp`,
 `.svg`, `.bmp`, `.gif`, `.avif`); the other 10 are orphans nothing references
 (`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes:14` marks the snapshot tree `binary` so
 line-ending normalisation can never rewrite the committed pixels.
@@ -4283,7 +4284,8 @@ is a diff nobody can review and a collision two agents cannot resolve. **Never h
 list, and treat any you find as a claim about a moment.
 
 **Read `action` first.** It is the whole answer: `land` merge it · `at-risk` save it, it needs a
-human · `dispose` delete it · `in-use` leave it alone · `keep` never a candidate · `undecided` do
+human · `dispose` delete it · `legacy` drop the worktree, keep the branch · `in-use` leave it
+alone · `keep` never a candidate · `undecided` do
 not remove it. Two things that catch people: a **`land` is a point-in-time answer**, only as fresh as
 `generatedAt`, so re-read `dirty` and `mergeConflict` before acting on one you did not generate; and
 **`mustNotPrune` vetoes `land` as well as `dispose`**, so a branch reading `land` with that flag set

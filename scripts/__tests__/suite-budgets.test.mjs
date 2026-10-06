@@ -87,6 +87,8 @@ const BUDGETED = [
   'merge-release.test.mjs',
   'merge-takeover-guard.test.mjs',
   'merge-takeover-guard-install.test.mjs',
+  'orphan-branches.test.mjs',
+  'repo-state-gate.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
 ];
@@ -186,14 +188,18 @@ describe('the scripts suites declare a budget their own work fits inside', () =>
   }
 
   it('still lets a per-test argument override the file budget, so an expensive test can declare its own', () => {
-    // The file budget is a floor for the ordinary case, not a ceiling. Two tests in
-    // `worktree-inventory.test.mjs` read git in every worktree in the repository and
-    // measure 21.5s, and they declare `60_000` individually; if the file budget ever
-    // became a hard cap, those two would start failing in a way that looks like a
-    // worktree-count problem.
+    // The file budget is a floor for the ordinary case, not a ceiling. Three tests in
+    // `worktree-inventory.test.mjs` read git in every worktree in the repository, so
+    // their cost scales with the fleet rather than with the file, and they declare
+    // `60_000` individually; if the file budget ever became a hard cap, those three
+    // would start failing in a way that looks like a worktree-count problem.
     //
-    // Checked across every budgeted suite, not just the one the two declarations happen
-    // to live in: the first version looked at `worktree-inventory.test.mjs` alone, so a
+    // No figure is recorded here on purpose: the cost is a property of how many
+    // worktrees the repository has at the moment, so a number written into this
+    // comment goes stale with the fleet rather than with the code.
+    //
+    // Checked across every budgeted suite, not just the one the three declarations
+    // happen to live in: the first version looked at `worktree-inventory.test.mjs` alone, so a
     // low per-test override anywhere else would have gone unnoticed, which is the same
     // mistake as the hard-coded list above pointed at a different file.
     const overrides = BUDGETED.flatMap((file) =>

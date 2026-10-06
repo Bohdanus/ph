@@ -117,6 +117,13 @@ were 1–2 _document_ px: sub-pixel and smeared below 1:1, proportionally heavy 
 crawl speed (`SPEED`, document px per frame) varied with zoom too. **This was observable before
 the fix, at DPR 1, with no retina involved.**
 
+**Two rows above are now historical only.** `selection.ts`'s `drawSelectionOutline` — the `lineWidth=2`,
+`dash [6,4]` painter — has been deleted, along with `drawClosedSelectionPath`; the ants are the
+committed selection's border for every selection tool, and no tool area paints a committed outline
+on the tool overlay. And `SPEED` is 0.4, not 1, so a 12px dash cycle takes 30 frames rather than 12.
+The scaling half of the table is unchanged and still current. See `HANDOFF.md` for the open half of
+the border work, which is the `useRect` frame for the Move tool, Crop and Text.
+
 `useSelectionAnts.ts` is the one the original audit missed, and it is the more visible of the two:
 it owns the animated border around every committed polygon selection, and it was added to `main`
 after the original report was written. The original defect list named three painters; there were

@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 5, 7, 9, 13, 14, 16-19, 21-29, 33-35, 37-42, 44, 47, 48-54, 65, 67, 69-71, 73, 75, 84-85, 87-89, 100, 104-105, 111, 112, 125, 127, 128, 131, 141, 154, 161, 191-192, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -18,15 +18,15 @@ and the verification is `git log`, not this file.
 
 ## 1. P0 — the durable replay path is only mounted as a navigation presentation cache
 
-**Problem.** Four of the five modules the migration was built around are imported by nothing outside
-`src/contexts/__tests__/`:
+**Problem.** Two modules the migration was built around — `replay-coordinator.ts` and
+`replay-checkpoints.ts` — were imported by nothing outside `src/contexts/__tests__/`, and have
+been deleted rather than left as an unimported coordination layer that a later surface could
+mount by accident. The two durable modules that remain:
 
-| module                               | non-test importing files                                              |
-| ------------------------------------ | --------------------------------------------------------------------- |
-| `src/contexts/materialization.ts`    | 1 — `durable-compositor.ts`                                           |
-| `src/contexts/replay-coordinator.ts` | **0**                                                                 |
-| `src/contexts/replay-checkpoints.ts` | **0**                                                                 |
-| `src/contexts/durable-replay.ts`     | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
+| module                            | non-test importing files                                              |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `src/contexts/materialization.ts` | 1 — `durable-compositor.ts`                                           |
+| `src/contexts/durable-replay.ts`  | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
 
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
 `useHistory.ts`) for logical navigation and runtime `Layer` state. `StoreContext.tsx` now composes
@@ -97,30 +97,42 @@ should return `unavailable`. `b027de3` already establishes the vocabulary for th
 offending entry rather than failing the conversion — so the pattern exists; apply it to the
 severity check too.
 
+**Status contract to resolve before implementation.** `src/contexts/history-adapter.ts` defines only
+`current` and `unavailable`, while `src/contexts/StoreContext.tsx` documents `current` as an exact,
+transactionally converted shadow. `buildDurableDocument()` forwards the converter's status, and
+`normalizeDurableProjection()` plus the `SET_DURABLE_STATUS` branch clear the document for any status
+other than `current`; navigation and reorder consumers likewise read only a current document.
+Therefore, simply returning a partial document as `current` would violate the store contract, while
+introducing a partial status without tracing these paths could either discard the retained document or
+let an incomplete shadow appear exact. Represent partial availability explicitly and keep it out of
+paths that require an exact projection; do not remove the severity gate alone.
+
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/StoreContext.tsx`
 
 ---
 
-## 10. `ReplayRevisionToken` cannot be invalidated by a frame change
+## 10. `DurableLayerSnapshot` carries no frame, so a frame change cannot invalidate a replay
 
-**Problem.** `ReplayRevisionToken` (`replay-coordinator.ts`) carries `documentId`,
-`documentRevision`, `durableRevision`, `branchRevision`, `cursor`, `baselineAssetGeneration`,
-`operationSetRevision`, `sourceGeneration`. There is no `frameRevision`, so a document-frame change
-cannot invalidate a token. `DurableLayerSnapshot` likewise has no `frame` field, which contradicts
-the consolidated handoff's own drift note.
+**Problem.** `DurableLayerSnapshot` carries `id`, `name`, `isBedrock`, `visible`, `opacity`,
+`locked`, `blendMode`, `order`, `pos` and `source`. There is no `frame`, which contradicts the
+consolidated handoff's own drift note: a snapshot says nothing about the document frame it was
+taken against, so a frame change cannot invalidate it.
 
-`isCurrent` was already hardened to fail closed (it no longer trusts a self-check), so the guard
-works — it is the token's _inputs_ that are incomplete. An in-flight durable replay can complete
-against a document whose frame has since changed.
+The revision token that used to carry this half of the defect is gone — `replay-coordinator.ts`,
+which declared `ReplayRevisionToken` with no `frameRevision` either, was deleted as dead code
+rather than left unimported. What it was for survives the deletion: whoever schedules the first
+durable replay needs both halves, and this is the half that still has a file.
 
-Latent only while nothing schedules replays (item 1), but it is a required input for item 1.
+**Why it matters.** An in-flight durable replay can complete against a document whose frame has
+since changed. Latent only while nothing schedules replays (item 1), but it is a required input
+for item 1.
 
-**Fix.** Add `frameRevision` to the token and `frame` to `DurableLayerSnapshot`, and bump
-`documentRevision` on every frame change so the existing comparison covers it.
+**Fix.** Add `frame` to `DurableLayerSnapshot`, and bump `documentRevision` on every frame change
+so the existing comparison covers it. The first durable scheduler must take a token carrying a
+`frameRevision` too — re-derive that token's fields when the surface is chosen rather than
+restoring the deleted module.
 
-**Files.** `src/contexts/replay-coordinator.ts`, `src/contexts/history-model.ts`
-
----
+**Files.** `src/contexts/history-model.ts` — `DurableLayerSnapshot`
 
 ---
 
@@ -355,7 +367,7 @@ replay authority.
 
 ---
 
-## 45. The codecs' raster ceilings disagree, and four of six have no budget at all
+## 45. The codecs' raster ceilings disagree, and two of seven have no budget at all
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
 all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
@@ -372,13 +384,16 @@ Adobe rather than this. The remaining work is the other-format gap below, not th
 **The rule that must survive.** Above a ceiling the file is **rejected with an error, never clamped
 or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
 rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
-`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
-`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample, in
-`UTIF.js` — `UTIF.decodeImage()`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at
-8 bytes per pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
-different number defensible if the ceiling is ever revisited.
+`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, which is what
+`UTIF.decodeImage` allocates for the **page** of a 4-sample RGBA file (`Math.min(32, t258[0])` bits
+per sample, times the four samples an RGBA page carries) — and `MAX_TIFF_PIXELS` is that same budget
+read at 8 bytes per pixel, so the two agree by construction rather than by coincidence. That
+derivation is what makes a different number defensible if the ceiling is ever revisited. It is a
+budget on the page term, though, not on every byte UTIF can allocate: a tiled page adds a second
+buffer sized by `t322`/`t323`, so what the ceiling is compared against is the page and tile together
+and a page nowhere near this figure can still exceed it.
 
-**Five ceilings exist and two are below what the dialog can create:**
+**Five ceilings exist and three are below what the dialog can create:**
 
 | ceiling                             | value       | where                                              |
 | ----------------------------------- | ----------- | -------------------------------------------------- |
@@ -390,72 +405,51 @@ different number defensible if the ceiling is ever revisited.
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
-as PSD — and the PSD cap is recorded nowhere. "One exported `MAX_RASTER_PIXELS`" would have to
-reconcile **five** constants, not one.
+as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one, and
+that reconciliation is the reason the BMP ceiling below is filed rather than fixed: choosing a number
+is cheap, and choosing it in one place is the decision nobody has taken.
 
-**And four of the six codecs have no budget at all, or check theirs too late.**
+**Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
 
-| codec | loader budget                   | encoder budget            | check before the allocation?                 |
-| ----- | ------------------------------- | ------------------------- | -------------------------------------------- |
-| avif  | yes                             | yes                       | yes                                          |
-| tiff  | yes (pixels + bytes)            | yes (+ a dead byte check) | yes — the only genuine pre-decode load check |
-| bmp   | **none** — bounded by file size | **none**                  | n/a                                          |
-| gif   | **none**                        | 65535/axis                | **no**                                       |
-| ico   | **none**                        | 1..256/axis               | **no**                                       |
-| svg   | **none**                        | **none**                  | n/a                                          |
-| psd   | yes                             | yes                       | yes — the reference implementation           |
+| codec | loader budget | encoder budget | check before the allocation it bounds? |
+| ----- | ------------- | -------------- | -------------------------------------- |
+| avif  | yes           | yes            | yes                                    |
+| tiff  | yes           | yes            | yes                                    |
+| bmp   | **none**      | **none**       | n/a                                    |
+| gif   | **none**      | 65535/axis     | yes, on the encoder                    |
+| ico   | 256/axis      | 1..256/axis    | yes, on both                           |
+| svg   | **none**      | **none**       | n/a                                    |
+| psd   | yes           | yes            | yes — the reference implementation     |
 
-The three that are actionable without an architecture decision, all in files no campaign owns:
+`psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
+`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
+rather than an exception to it. What the table leaves open is the loader column for `gif`, `svg` and
+`bmp`, and the whole of `bmp` in both directions.
 
-- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts` —
-  `predictDecodeBytes()` is the whole predictor and never reads `t322` (TileWidth) or `t323`
-  (TileLength), but `UTIF.js` — `UTIF.decodeImage()` allocates a **separate** per-tile buffer for a
-  tiled page. The page
-  `{t256:[1000], t257:[1000], t258:[8,8,8,8], t322:[23170], t323:[23170]}` predicts 4,000,000 bytes
-  — comfortably inside the 1.6 GB ceiling — while UTIF allocates **2,147,395,600 (2.15 GB)**. A
-  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism the doc comment above
-  `tiff-utils.ts` — `predictDecodeBytes()` documents as the module's reason for existing. Fix: also
-  predict
-  `Math.ceil(t322[0] * t323[0] * bitsPerPixel / 8)` and return the larger; a present `t322` with a
-  missing `t323` should return `null`, which `tiff-utils.ts` — `assertByteBudget()` already refuses
-  like over-ceiling.
-- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts` — `encodeGif()` runs
-  `getCanvasImageData(canvas)` before its own `65535` check, so a 70000×100000 canvas allocates
-  28 GB before the line that would refuse it — the same ordering defect this item's AVIF half had.
-  `gif-utils.test.ts` — the `it('rejects canvases that exceed the 65535 pixel limit')` title cannot
-  catch it: it mocks `getContext` to report a width no real canvas has and never asserts
-  `getImageData` was not called. Fix: hoist both checks above the `getCanvasImageData(canvas)` call.
-- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts` — `encodeIco()`
-  runs `canvasToPngBlob` before its 256 check, so `Save as ICO` on a 10000×10000 document pays a full
-  PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte blob,
-  so nothing detects it. Fix: move the 256 check above the `canvasToPngBlob(canvas)` call.
-
-**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts` — `decodeBmpIcon()`) validates only
-`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling in
-`ico-utils.ts` — `loadIcoFile()` is used for **entry selection** only, and the geometry actually
-decoded is read from the DIB in `ico-utils.ts` — `decodeBmpIcon()` and never compared to 256.
-**A file that opens cannot be saved back.**
+**The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
+entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
+`ico-utils.ts` reads the former directly and the latter out of the PNG's `IHDR` chunk before
+handing the bytes to the browser. Both are held to the same 256 the encoder enforces, so that a file
+which opens can be saved back. The consequence worth knowing before changing it: an ICO whose
+selected entry decodes above 256 on either axis — a 512×512 PNG entry, which Windows opens, because
+it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
+loosening the load side reintroduces documents this build then cannot write.
 
 **BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
 byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
 `32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
 absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 7×4, so no
-test can reach an interesting ratio.
+test can reach an interesting ratio. The fix is one comparison before the `width * height * 4`
+allocation; the open question is the number, and it has to be one of the five above rather than a
+sixth.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
 `new Image()`. That is where a shared load-side ceiling would have to live for those two formats.
-Separately, TIFF's save-side byte check in `tiff-utils.ts` — `encodeTiff()` is provably dead
-(`MAX_TIFF_PIXELS * 4` is always below
-`MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
-finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
-`createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
 
-**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
-`src/contexts/bmp-utils.ts`, `src/contexts/gif-utils.ts`,
-`src/contexts/ico-utils.ts`,
-`src/contexts/image-load-save-utils.ts`, `src/contexts/affine-transform.ts`,
-`src/contexts/psd-utils.ts`
+**Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
+`src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
+`src/contexts/affine-transform.ts`, `src/contexts/psd-utils.ts`
 
 ---
 
@@ -515,14 +509,13 @@ the session store instead — every `apply_patch` / `edit` / `write` target in a
 
 Re-derive the table from the entries this file still carries rather than reading it off this entry —
 the entries it was built from have been deleted. Collecting every `src/` path named in the `Files`
-paragraph of a numbered entry and comparing it against the manifest returns **82** the manifest does
+paragraph of a numbered entry and comparing it against the manifest returns **78** the manifest does
 not list — one of them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
 names in that form — and the omissions are exactly where the migration's own boundary lives:
 
 | not in the manifest                                           | live entries whose `Files` line names it |
 | ------------------------------------------------------------- | ---------------------------------------- |
 | `src/contexts/history-model.ts`                               | 10, 56, 172, 197                         |
-| `src/contexts/replay-coordinator.ts`                          | 10, 199                                  |
 | `src/contexts/presentation-evaluator.ts`                      | 1, 159, 163                              |
 | `src/contexts/durable-replay.ts`                              | 94                                       |
 | `src/contexts/psd-utils.ts`                                   | 45, 56, 147, 166, 169, 172               |
@@ -557,15 +550,14 @@ only there.
 ```bash
 awk '/^## [0-9]/{f=0;s=0;next} f&&/^\*\*[A-Z]/{f=0} !s&&/^\*\*Files\.\*\*/{f=1;s=1} f' HANDOFF.md \
   | grep -o '`src/[^`]*`' | tr -d '`' | sort -u > /tmp/handoff_paths.txt
-comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 82
+comm -23 /tmp/handoff_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | wc -l   # -> 78
 ```
 
-Those paragraphs name 132 distinct `src/` paths, 50 of them in the manifest. `sort -u` is what makes
-the answer a count of paths rather than of entry-path pairs, which is 260. Two `Files` paragraphs in
+Those paragraphs name 125 distinct `src/` paths, 47 of them in the manifest. `sort -u` is what makes
+the answer a count of paths rather than of entry-path pairs, which is 244. Two `Files` paragraphs in
 the file are deliberately outside the extraction and neither changes the count: §142 carries a second
-one that names no `src/` path at all, and §159's section ends in a `**Problem.**` / `**Files.**` pair
-that no heading opens — its `src/tools/usePaintStroke.ts` is a path that does not exist, the real file
-being `src/hooks/usePaintStroke.ts`.
+one that names no `src/` path at all. The live §159 entry is headed and its `Files` paragraph names
+the real `src/hooks/usePaintStroke.ts` path.
 
 **Reproduce the session-store half.** The count was 72 `src/` files on 2026-09-27 and is not
 re-derivable cheaply — the store is large and grows. The `lightshopy.com` clone is the reason both
@@ -701,80 +693,6 @@ for mobile rather than copied across.
 
 ---
 
-## 59. Seven selection tools claim `creator: true` and cannot create anything
-
-**Problem.** `materializeLayer` trusts the `creator` flag as its only gate
-(`materialization.ts` — `sourceBitmap()`, the `processor?.creator` refusal). **Seven**
-`commit: 'selection'` entries claim it — `polygonal-lasso`, `freehand-lasso`,
-`rectangular-selection`, `elliptical-selection`, `quick-selection`,
-`single-row-marquee` and `single-column-marquee` (all seven in `toolProcessors.ts`
-— `toolProcessors`). The two marquee entries were added after this entry was first
-written and reuse `rectangularSelection`, so they are pass-throughs exactly as
-the rectangular marquee is. All seven processors are pass-throughs over a
-`bitmap` that is
-`undefined` on a creator call:
-
-```ts
-export const rectangularSelection =
-  ({ bitmap }: ProcessorToolParams) =>
-  () => [bitmap];
-```
-
-- `rectangular-selection`, `single-row-marquee`, `single-column-marquee`,
-  `elliptical-selection` and `quick-selection` → `[undefined]`, caught by
-  `if (!created) throw` (`materialization.ts` — `sourceBitmap()`), message blames
-  the tool. `ellipticalSelection.ts` and
-  `quickSelection.ts` are the same pass-through, so the second and third fail
-  identically.
-- `polygonal-lasso` / `freehand-lasso` with empty `points` → `copyPolygonToCanvas` returns a **1×1
-  canvas**, which is truthy, so the guard **accepts it** and the layer silently materializes blank.
-  With non-empty points it throws an unrelated `SelectionCanvasContextError`.
-
-**Why this is a landmine rather than a typo.** No production path reads the flag
-for a selection tool today, and the reason is named in code rather than inferred:
-`durableSourceKindForTool()` (`history-adapter.ts`) types only `text`, the six
-shape names and `draw`/`brush`/`pencil`, so a selection tool's layer source stays
-`legacy-tool`; `sourceBitmap()` throws on that kind, and
-`publishDurableNavigationPresentation()` (`StoreContext.tsx`) refuses the whole
-document before it reaches materialization. The converter agrees — the
-`'selection'` arm of `operationForTool` (`history-adapter.ts`) returns `null`, so
-a selection history item derives no durable operation at all. So the lie is
-invisible today and becomes live the moment any of those gates admits a selection
-source, which makes it a trap laid for whoever does that work.
-
-**Fix.** Drop `creator: true` from all seven. They are `commit: 'selection'` mutators, not creators.
-Every genuine creator was checked and honours its curried `params.size`; a repo-wide grep for
-`Math.random|Date.now|new Date(|performance.now|crypto.` across `src/tools/` returns **zero**, so the
-flag is a sound determinism signal wherever it is honestly set.
-
-**Test that fails without the fix.** For every entry claiming `creator: true`, call
-`imageProcessor({ size: { width: 8, height: 8 } })(args)` and assert a returned bitmap with finite
-`width`/`height` ≥ 1. Fails today for all seven, and for none of the honest creators.
-
-**Three pins assert the current roster, and each is a tripwire by its own admission.**
-`tool-processors.test.ts` — the `it('only labels source-creating tools as creators, and each creator
-commits as a source')` title hard-codes the 17-name creator roster including all seven and
-asserts `expect(['source', 'selection', 'raster']).toContain(commit)`, so it passes on the lie rather
-than catching it; the `it('hands a creator-param lasso call no source bitmap, because selection consumes
-one (the lasso entries in toolProcessors.ts)')` title records it in prose — "Both lasso tools are
-flagged creators, yet
-`selection` reads `bitmap` … The behaviour is pinned here so the registry/param-type mismatch stays
-visible"; and the `it('selects the polylasso processor for the lasso and the shape processor for
-figure variants')` title names `elliptical-selection` and `quick-selection` as "The two newer
-selection tools", which the two marquee entries have since overtaken. Delete or re-point all three in
-the same change as the fix.
-
-**Files.** `src/tools/toolProcessors.ts` — the `commit: 'selection'` entries,
-`src/tools/selection.ts` — `selection()`,
-`src/tools/rectangularSelection.ts` — `rectangularSelection()` (also the
-`single-row-marquee` and `single-column-marquee` processor),
-`src/tools/ellipticalSelection.ts` — `ellipticalSelection()`,
-`src/tools/quickSelection.ts` — `quickSelection()`,
-`src/contexts/materialization.ts` — `sourceBitmap()`,
-`src/tools/__tests__/tool-processors.test.ts` — the three roster pins named above
-
----
-
 ## 60. The gesture gate still has one claim site that can strand the keyboard
 
 `PolygonClickToolArea.captureSelectionPointer` writes `selectionPointerIdRef.current` **before** it
@@ -897,58 +815,6 @@ returns, which is a product decision rather than a test one.
 
 ---
 
-## 68. A committed shape is painted twice, and nothing removes the overlay
-
-**Problem.** `src/components/Main/ShapeToolArea.tsx` never clears the tool overlay during a gesture,
-not even on a successful commit. `handlePointerUp` ends with a `flushDrawingFrame()`
-(in `ShapeToolArea.tsx` — `handlePointerUp()` calling `flushDrawingFrame()`), whose last act is
-clear-and-**redraw** (the `clearRect` then `setShapeCtx`/`drawShape` inside `flushDrawingFrame()`),
-and `createLayerFromTool(fullArgs)`
-then commits it as a layer while the overlay keeps the painted shape. For as long as the
-shape tool stays selected the same shape exists twice: once in the document, once on the overlay
-above it. Only the unmount `useEffect` cleanup in `ShapeToolArea.tsx` clears it, so it disappears on
-a tool switch, which
-is not the same thing as not painting it.
-
-The file says so itself, in the comment above that same unmount cleanup: "This area never clears the
-overlay on pointer up at all:
-`handlePointerUp`'s last `flushDrawingFrame` REDRAWS the shape and the commit leaves it
-there … without it the preview stays painted over the next tool's document — and over this one, for
-as long as the shape tool stays selected."
-
-**A unit test now pins the double paint**, which is a finding in its own right:
-`ShapeToolArea.test.tsx` — the `it('clears the preview a committed shape leaves painted, which nothing
-else removes')` title, its own
-comment reads "The shape is now a layer AND is painted
-twice", and it asserts `clearRect` is called **exactly once** — only at unmount. **A
-fix must delete that test in the same change**, per `AGENTS.md`: a pin left behind turns the fix
-into a red suite.
-
-**Fix.** Clear the overlay as part of the commit, after `createLayerFromTool`, so the committed layer
-is the only copy. Do not add a second `clearRect` inside `flushDrawingFrame` — it is the batched
-draw path and clearing there would blank a frame that has not been committed yet
-(`ShapeToolArea.tsx` — `handlePointerMove()`'s `requestAnimationFrame(flushDrawingFrame)` re-arms
-it).
-
-**The coordinate-space half of the earlier version of this entry was wrong, and the suite already
-covers what it claimed was uncovered.** `ShapeToolArea.test.tsx`'s deliberately non-zero `DOCUMENT_FRAME`
-constant, which `beforeEach` installs onto the store state, so every test in the file runs
-under a frame. The `it('computes the committed bounds from the same geometry the preview draws')`
-title asserts that the committed `start`/`end` equal the preview's **plus** `DOCUMENT_FRAME`
-minus `pos` — preview in canvas space, commit the same geometry in document space. §132 derives that
-same division of labour, and §68's "they can disagree" claim is refuted by a passing test.
-
-**Files.** `src/components/Main/ShapeToolArea.tsx` — `flushDrawingFrame()`, `handlePointerUp()` and
-the unmount `useEffect` cleanup,
-`src/components/Main/__tests__/ShapeToolArea.test.tsx` — the `it('clears the preview a committed
-shape leaves painted, which nothing else removes')` title
-
----
-
----
-
----
-
 ---
 
 ## 72. A duplicated `/**` makes `DrawToolArgs.composite`'s doc comment a comment about itself
@@ -1041,8 +907,12 @@ tool goes, and the engine should be renamed to stop pretending to be one.
 Row and Single Column Marquee (SHIPPED 2026-10-01, `src/tools/singleRowColumnMarquee.ts`; the
 phrase "two lines of geometry reusing `rectangularSelection`" held up), Sponge, Red
 Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
-is the measurement band — Color Sampler, Ruler, Note, Count — because these are `PIXEL_FREE_TOOLS`
-like the Eyedropper, committing no pixels and needing no durable operation.
+is the measurement band — Color Sampler, Note, Count — because these are `PIXEL_FREE_TOOLS` like
+the Eyedropper and the Ruler, committing no pixels and needing no durable operation. **The Ruler is
+built**: `src/tools/ruler.ts` for the arithmetic, `src/components/Main/RulerToolArea.tsx` for the
+gesture and the nonprinting overlay, and `src/components/ToolbarsRight/Ruler/Ruler.tsx` for the
+readout bar. What it still lacks is the `Image ▸ Analysis` measurement scale, which is a menu
+command rather than a tool and belongs with the menu gaps rather than here.
 
 **Largest, and they need a primitive the app does not have:** Object Selection, Spot Healing,
 Content-Aware Move, Remove (a generative backend), History Brush and Art History Brush (a read-out
@@ -1567,75 +1437,55 @@ fails if `xAnchor` is removed.
 
 ---
 
-## 86. No `useRect` border animates, so the crop, move, text and rectangular-selection rects all sit still
+## 86. `useRect`'s border still sits still for the three callers that are not a selection
 
-**Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
+**Problem.** `useRect` strokes its border with a fixed dash pattern and only advances it in
+`'while-dragging'` mode:
 `ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
-(`useRect.ts` — `drawMask()`). No `lineDashOffset` is ever assigned, and the file's one
-`requestAnimationFrame` (also `useRect.ts` — `handlePointerMove()`) throttles the DRAG, not the
-border: it recomputes the rect and calls `drawMask(true)`, which redraws the same fixed dash. It
-looks alive during a drag only because the drag is RAF-throttled, so the line is redrawn at pointer
-rate — the dashes never move.
+(`useRect.ts` — `drawMask()`). The file's `requestAnimationFrame` in
+`handlePointerMove()` throttles the DRAG, not the border: it recomputes the rect and calls
+`drawMask(true)`, which redraws the same fixed dash. The three non-selection callers use `'always'`,
+where the offset stays zero.
 
-**`useRect` is the one border in the app that redraws without advancing, and THREE selection
-borders are drawn that way — not one.** `useMarchingAnts`
-(`useAnts.ts` — `useMarchingAnts()`) is the real marching-ants loop, and its only production
-consumer is `MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a
-**hovered layer** in `reposition` mode. So
-"marching ants on a rectangle" is the Move tool's layer outline.
+**The committed selection border is no longer the remaining gap.** Every selection tool's
+committed border is the same animated loop — `Main.tsx` — `SELECTION_INTERACTION_MODES` — admits all
+seven selection modes, `useSelectionMarchingAnts` strokes every active selection whatever made it,
+and the static stroke the elliptical marquee and quick selection used to hand-roll is gone from
+`selection.ts`. The rectangular marquee's temporary border now advances while the gesture is in
+flight. The three callers that are not selections still use a static border.
 
-**Three selection borders still sit still, not one.** A polygon selection animates
-(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx` — the
-`POLYGON_SELECTION_MODES` list. The elliptical and quick selection tools are deliberately absent
-from it and map to their own `interactionMode`s (`Main.tsx` — the `interactionMode` mapping in
-`Main`), so their borders stay the static
-`drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
-(`createCommittedPolygonSelection`, `selection.ts` — whose `geometry: 'polygon'` is the value it
-returns), so nothing about the selection's
-own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
-(`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
-of the choice below — would leave two behind, which is why they are named here together.
+**`useMarchingAnts` is a fourth border and reaches none of them.** Its only production consumer is
+`MoveToolArea.tsx` — its `useMarchingAnts()` call, which paints the outline of a **hovered layer**
+in `reposition` mode. So "marching ants on a rectangle" is the Move tool's layer outline, and the
+crop rectangle, the move rectangle and the text frame have no loop that could reach them.
 
-**The rectangle and the polygon no longer match each other** in colour or weight (`#007bff` at 2px,
-plus four square handles, versus black/white ants at 1px), and the two marquee tools match neither.
+**The one thing NOT to change here.** `borderMode: 'while-dragging'` is load-bearing for the
+rectangular selection and must keep its current meaning (`useRect.ts` — `drawMask()`): the marquee
+being dragged is the only evidence of itself, because a marquee in progress has not been committed
+and so has no ants, and the ants stand down for the duration so the committed rectangle does not
+appear beside the one being dragged. Animating the border must not move it out from under that
+gate, and must not be applied to the handles, which are the resize hit area.
 
 **It affects four tools, not one.** `useRect` is shared by `MoveToolArea` — its `useRect()` call —
 `CropToolArea`, `RectangularSelectionToolArea` and `TextToolArea`, each reached through their own
-`useRect()` call, so the crop rectangle, the move
-rectangle, the text frame and the rectangular selection all have the same still border.
+`useRect()` call. Three of them stroke the still border whenever the rect is drawn; the rectangular
+selection strokes it only between press and release.
 
-**Fix.** Three shapes, and the choice is a recording decision rather than a mechanical one. Fixing
-the rectangle alone is a real option, but it is not the same task as fixing all three still
-borders, and the entry above says which is which — pick the scope deliberately.
+**Fix.** The marquee's `'while-dragging'` stroke now has its own RAF loop and advances
+`lineDashOffset` at a scale-adjusted screen speed. The remaining decision is whether the three
+non-selection `'always'` borders should animate; do not extend the marquee loop to that mode without
+deciding their intended behavior.
 
-- Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
-  existing draw path, keeping the current colour and the four handles. Cheapest, and the only option
-  that covers all four callers at once. It needs its own loop, because `drawMask` is only called while
-  something is changing. Fixes the rectangle and the crop, move and text frames with it; leaves the
-  two marquee tools static.
-- Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
-  `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
-  (`useSelectionMarchingAnts` currently skips rectangles on the assumption that `useRect` still
-  paints one), and let the ants canvas own the rect. Note the constraint this has to respect:
-  `useRect` also draws the dim-out scrim and, in the same `drawMask()` pass, the border and the
-  corner handles, so the border and the handles have to
-  end up on different canvases or the scrim will wipe the ants mid-drag.
-- Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
-  three: add `'elliptical-selection'` and `'quick-selection'` to `Main.tsx`'s
-  `POLYGON_SELECTION_MODES` and stop those two tool areas calling `drawSelectionOutline`. This one
-  is not only a
-  mode list, because both commit `sourceTool: 'magic-wand'` — `ellipticalSelection.ts` —
-  `ELLIPTICAL_SELECTION_SOURCE_TOOL` and `quickSelection.ts` — `QUICK_SELECTION_SOURCE_TOOL`, the
-  constant each borrows from the wand —
-  and `drawSelectionAnchors` skips that source, so the anchors have to be taught the difference
-  between a wand selection and a marquee selection or the two tools lose their handles as well as
-  their border. `EllipticalSelectionToolArea.test.tsx`'s 'strokes a committed selection border' pins
-  the current ownership and will fail until this is done on purpose.
+- If a later change elects to animate those three borders, give that behavior an explicit mode and
+  focused coverage. `'always'` must remain static unless that decision is made.
+- Moving the rectangular marquee border to the ants canvas is a separate alternative, not needed
+  for its in-flight crawl: `useRect` draws the dim-out scrim, border and corner handles in one
+  `drawMask()` pass, so separating them would require moving the handles too or the scrim would wipe
+  the ants mid-drag.
 
-Whichever is chosen, the two `setLineDash` assertions in `useRect.drag.test.ts` — the
-`it('paints the initial selection, its blend cut-out, and the four handles')` and
-`it('scales the dash and the handles by the container scale')` titles — pin the current values and
-have to be updated in the same change.
+The dash pattern remains `[5 / scale, 5 / scale]`; the two existing `setLineDash` assertions in
+`useRect.drag.test.ts` remain valid. The focused animation coverage checks the offset advances in
+`'while-dragging'` and remains zero in `'always'`.
 
 **Files.** `src/hooks/useRect.ts` — `drawMask()`, `handlePointerMove()`; `src/hooks/useAnts.ts` —
 `useMarchingAnts()`; `src/components/Main/MoveToolArea.tsx` — `MoveToolArea`; `src/components/Main/CropToolArea.tsx` —
@@ -1717,62 +1567,6 @@ does not, or the same change regresses with the suite green.
 **Files.** `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`'s `initialSize` binding and
 its `initial` fallback object, and `frameFromFirstEntryBedrock()`;
 `src/contexts/__tests__/history-adapter.branches.test.ts`
-
----
-
----
-
-## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
-
-**Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts` —
-`createLayerSource()`),
-which `replayHistory` reaches through its `createLayer` dependency (its two
-`dependencies.createLayer` calls, wired at `useHistory.ts` — the `createLayer` dependency). The
-converter builds the same layer through a **second, re-derived** rule,
-`sourceToRuntimeLayer` (`history-adapter.ts`), called from the create-layer arm and
-the merge arm of `legacyHistoryToDurable()`. The two still disagree on two fields, on the first layer
-of any document:
-
-| field   | runtime (`layer-utils.ts` — `createLayerSource()`)                                                  | shadow (`history-adapter.ts` — `sourceToRuntimeLayer()`)               |
-| ------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `name`  | `` `${getNameFromSource(source)} ${maxOrder}` `` — the `name` it binds                              | the bare kind, with no order suffix — the `name` it binds              |
-| `order` | `maxLayerOrder(layers) + 1` — the `order` it binds; `0` for an empty record, from `maxLayerOrder()` | `Math.max(-1, …) + 1` — the `order` it binds, so `0` for an empty fold |
-
-Executed against the real converter on a blank source added to an empty document: the runtime layer
-is `{ name: 'Blank 1', order: 1 }` and the durable snapshot is `{ name: 'Blank', order: 0 }`. A second
-disagreement rides along in the same line:
-`getNameFromSource` applies `ellipsify` (`layer-utils.ts` — `getNameFromSource()`), so a long image
-name is truncated in
-the document and not in the shadow.
-
-**The `opacity` half of this entry is closed.** The two rules used to disagree here too — the runtime
-bound `opacity: 1` and `sourceToRuntimeLayer()` bound `source.opacity` for a blank — and
-`convertLayer()` copies whatever `sourceToRuntimeLayer()` produced into the snapshot, so the snapshot
-recorded a layer-level `0.5` for an alpha the document held in the bitmap. `sourceToRuntimeLayer()`
-now binds `opacity: 1` for every source, so both models agree at `1` and that hazard is no longer
-reachable from the converter. The pixels-versus-field question this raised is §56's, and it is still
-open there.
-
-**User-visible failure.** The shadow describes a differently **named** layer than the document for the
-same edit. The `order` half is quieter but not free: it puts the first layer of a document at order
-`0` in one model and `1` in the other.
-
-**Two existing tests pin the two answers, which is why neither side is accidental.** The `it('names a
-blank layer Blank and a tool layer after its tool')` title in
-`layer-utils.createLayerSource.test.ts` pins the runtime (`'Blank 1'`, `'shape 1'`) and the `it('create-layer
-makes a new layer visible at the tip and absent at prior cursors')` title in
-`durable-replay.layer-operations.test.ts` pins the shadow (`'Blank'`). **A fix has to flip the
-second one.**
-
-**Fix — this is a decision, not an edit, and the decision comes first.** The obvious move is to have
-the converter call the runtime rule rather than re-implement it, and that is what should happen: the
-layer's `name` and `order` are what the runtime rule means, and the shadow is the re-derived copy.
-Decide that the runtime rule wins, then make the converter derive through it and update the durable pin
-in the same change. Do not "fix" one field without the other: a partial fix leaves the converter
-deriving `name` from the runtime rule and `order` from its own fold, which is a third rule rather
-than one of the two.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/layer-utils.ts`
 
 ---
 
@@ -2085,8 +1879,6 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
 The append-boundary test citations were a separate drift cluster, not part of this file's
 `history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
 outstanding.
-
----
 
 ---
 
@@ -3872,8 +3664,6 @@ its two JSX wirings,
 `src/components/Main/RectangularSelectionToolArea.tsx` — `handlePointerCancel`,
 `src/tools/singleRowColumnMarquee.ts` — `singleRowMarqueeRect`'s doc comment.
 
----
-
 ## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
@@ -4800,8 +4590,6 @@ change closed.
 
 ---
 
----
-
 ## 174. The discard prompt has no Save option, and adding one is a product decision
 
 **Problem.** `ConfirmDialog` (`src/components/ConfirmDialog/ConfirmDialog.tsx`) is the app's
@@ -4845,53 +4633,12 @@ the operator's to write.
 dialog is rendered with), `src/components/SaveDialog/SaveDialog.tsx` (its own title),
 `src/contexts/StoreContext.tsx` (`projectPublishedTimeline()`), `docs/FEATURES.md`
 
-## 175. Paste places a layer at a canvas-space position that the layer reader treats as document space
-
-**Problem.** `pasteSelectionClipboard` (the `centerPos` it builds, in
-`src/contexts/useSelectionClipboard.ts`) builds
-
-```ts
-x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2));
-```
-
-`totalSize` is the DOCUMENT size — `documentFrameSize(nextFrame)` at the two
-`totalSize:` assignments in `src/contexts/StoreContext.tsx` — so `(totalSize.width - width) / 2` is
-already the document-space offset that centres
-the pasted layer. Adding `documentFrame.x` converts it to canvas space, and the result is passed
-as `pos` to `createLayerFromBitmap()` (the `await createLayerFromBitmap({ … })` call in the same
-function), which reads
-`pos` as DOCUMENT space. On a cropped document the pasted layer therefore lands `documentFrame.x`
-pixels right and `documentFrame.y` pixels down of centre, by exactly the frame origin.
-
-**This is enshrined as correct by three passing tests**, which is what makes it a trap: the
-`it('clones the clipboard bitmap and centers the new layer inside the document frame')` case in
-`src/contexts/__tests__/useSelectionClipboard.test.tsx` asserts `pos {47, 37}` against a frame
-`{x: 12, y: 7, width: 100, height: 100}`, where the document-space centre is `{35, 30}` — the
-asserted value is `{35, 30}` plus the frame origin. The companions are the
-`it('clamps a clipboard larger than the document to the document frame origin')` and
-`it('prefers the clipboard position size over the bitmap size')` cases. Those
-three assertions must be re-pointed in the same change that fixes the code; they are not evidence
-that the current behaviour is right.
-
-**The sibling path is correct**, which is why this reads as a copy/paste asymmetry rather than a
-shared convention: `layerViaCopy` (the `documentToCanvasPos` call on its way out and the
-`canvasToDocumentPos` call on its way back, both in `src/contexts/useSelectionClipboard.ts`) is
-a proven round-trip identity, pinned by
-`src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx`'s round-trip identity case. The
-pin that used to sit
-there asserted the double-count this entry describes, and was deleted on that evidence — its stated
-mechanism (naming `documentToCanvasPos`) named a call the line does not make.
-
-**Fix.** Drop `documentFrame.x` / `documentFrame.y` from the `centerPos` centring expression, and
-re-point the three assertions above. No conversion is needed in the other direction: the reader
-already treats `pos` as document space.
-
 ## 176. Copy clamps canvas-space points against the document size
 
 **Problem.** `layerViaCopy` converts the selection out of document space
 (`documentToCanvasPos` in `src/contexts/useSelectionClipboard.ts`) and then hands the
 canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` in the
-same call. `totalSize` is the document size (see §175), and the copy path clamps against it —
+same call. `totalSize` is the document size from `documentFrameSize` in `StoreContext.tsx`, and the copy path clamps against it —
 `getSelectionCanvasBounds()` in `src/util/selection.ts` does
 `maxX = Math.min(imageSize.width, maxX)`. Canvas coordinates run as high as
 `frame.x + totalSize.width`, so the rightmost `frame.x` pixels and the bottom `frame.y` pixels of a
@@ -5113,20 +4860,20 @@ making the mask authoritative rather than derived, not before.
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
 loops, classifies them into outer contours and holes, and then keeps exactly one outer contour:
 `selectLargestBoundaryLoop()` returns the single loop with the largest absolute area. Every other
-matched region is dropped, and nothing in `magicWand.ts` warns or logs it.
+matched region is dropped. The utility does not warn or log this reduction; the options bar now
+discloses it when Contiguous is unchecked.
 
 It is not gated on an option. The bar renders `Contiguous`, the checkbox writes `contiguous`, and this
 reduction runs unconditionally on every click — unchecking Contiguous feeds the same call, so the loss
-bites hardest exactly when the user has asked for the whole image rather than one region. No control
-on this bar offers that mode by name.
+bites hardest exactly when the user has asked for the whole image rather than one region.
 
 **Where it is already recorded.** The header comment on `src/util/floodFill.ts` states that the wand
 "keeps only the largest outer loop", for the sibling module's own reasons, and `selectLargestBoundaryLoop()`'s
-own neighbour explains the magnitude comparison that drops the rest. So the behaviour is not undocumented
-in the repository — but it appears only in source comments, with no entry in `docs/` and nothing in the
-wand's own tool record, and the user-visible consequence is stated nowhere. The `floodFill.ts` comment
-also cites the reduction by line range, and those citations have drifted past the end of the file it
-points at.
+own neighbour explains the magnitude comparison that drops the rest. The Magic Wand options bar now
+states the limitation when Contiguous is off, and its `appNotes` records the underlying single-polygon
+constraint. These disclosures mitigate the surprise but do not make the selection include every
+matching region. The `floodFill.ts` comment also cites the reduction by line range, and those citations
+have drifted past the end of the file it points at.
 
 **Distinct from the recorded hole refusal.** The same function also refuses the whole selection when
 any hole is present. That refusal is recorded, but for a different tool: the sentence lives in the
@@ -5140,37 +4887,8 @@ reduction; `classifyBoundaryLoops()` is what separates outer contours from holes
 
 **What would close it.** Keep every outer contour and commit them as subpaths, which needs the
 selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
-declines. Until that exists, the smallest honest change is to make the loss visible rather than
-silent, because a selection that is quietly smaller than the click that made it is the harder bug
-to diagnose later.
-
-## 186. A tool description says the Magic Wand cannot reach the top two thirds of Photoshop's colour range, and the code says it can
-
-**Problem.** The Magic Wand `appNotes` in `src/tools/descriptions/selection.ts` states that a
-"0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32" means "the app cannot reach the
-top two thirds of Photoshop's color range". The implementation says otherwise.
-`getToleranceDistance()` in `src/util/flood-fill.ts` maps the slider across the full colour
-distance — the reading divided by one hundred, times `MAX_COLOR_DISTANCE`, which is the ceiling of
-the four-channel RGBA distance — so a reading of one hundred reaches every colour that can possibly
-match. That file's own header says this is what the top of the slider means.
-
-The claim is false as written, and it is not confined to the source: the note is data, so it is
-generated into `docs/TOOLS.md` under the Magic Wand tool. The checked-in per-tool specification
-therefore carries a false statement about the app's reach.
-
-**What survives, and is already recorded.** The metric really does differ from Adobe's scale — a
-four-channel Euclidean RGBA distance is not Adobe's — and the default differs from a figure
-`src/tools/descriptions/selection.ts` itself records as a third-party claim with no Adobe citation.
-Neither needs this entry.
-
-**Affected.** `src/tools/descriptions/selection.ts` — the Magic Wand record's `appNotes`, which
-`npm run docs:tools` then renders into `docs/TOOLS.md` — and `src/util/flood-fill.ts` —
-`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand. The
-`fix/audit-falsehoods` branch leaves both untouched, so it does not own this.
-
-**What would close it.** Correct the note at source and regenerate. Do not widen the slider to match
-the sentence: the code is right about the range and the sentence is wrong about it, and "fixing"
-the code to agree with a false note would trade a documentation defect for a behavioural one.
+declines. The options-bar warning is an interim mitigation; keep this entry open until the selected
+geometry can represent and commit every matching region.
 
 ## 187. The Brush's `Mode` row promises 29 blend modes and the bar renders 16
 
@@ -5181,58 +4899,67 @@ Clear". That is twenty-nine. `Paint.tsx` renders `{PAINT_BLEND_MODES.map(...)}`,
 values it does not, and the row is data — `npm run docs:tools` renders it into `docs/TOOLS.md`, so the
 generated per-tool specification carries the overcount as the app's own description of its bar.
 
-The source comment on `PAINT_BLEND_MODES` makes a smaller version of the same mistake. It says
-"Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract, Divide, Behind,
-Clear)" — thirteen absent values, of which it names eight. The five it omits are Darker Color, Lighter
-Color, Linear Dodge (Add), Linear Light and Hard Mix. None appears in the comment, and none is an alias
-of a name that does, so the omission is not a naming choice. `brush.test.ts` pins the sixteen values and
-not this sentence, so nothing catches the enumeration drifting.
+**The comment on `PAINT_BLEND_MODES` states the counts and names all thirteen, and nothing checks
+them.** It is a comment, so `brush.test.ts` — which pins the sixteen values exhaustively — cannot see
+it, and a mode added to the array would leave the comment quietly wrong. The array is a closed literal
+union precisely because `src/contexts/layer-utils.ts` reads a value back off stored history, but
+nothing requires a new member to be one Photoshop lists or one a canvas can express. That gap is the
+whole of what is left on this side, and it is a documentation check rather than a code one.
+
+One of the thirteen needs a caveat a future editor could get wrong. `plus-lighter` **is** a canvas
+value, and for opaque pixels it computes `src + dst`, which is what Linear Dodge (Add) does — it
+diverges only for translucent strokes. The comment's claim is that there is no _exact_ equivalent,
+which holds; a reader who takes it as "no such value exists" would be wrong.
 
 **What is already right.** The Brush's `appNotes` in the same file state the shortfall correctly —
 "sixteen canvas compositing operations rather than Photoshop's 29 for this tool" — and the reasoning
 beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
 would ship a dead option.
 
-**Affected.** `src/tools/descriptions/paint.ts` — the Brush's `Mode` row, whose "offering" sentence is
-the overcount and whose `appNotes` is the correct statement it contradicts;
-`src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, for the five omitted names.
+**Owned, so recorded not fixed: the four blend-mode `Mode` rows.** `src/tools/descriptions/paint.ts`
+carries the twenty-seven phrasing in four rows — the Brush, the Pencil, the Paint Bucket and the Clone
+Stamp — and each states what Photoshop offers while the two rows beside it in the same file state
+what the bar renders.
 
-**What would close it.** Correct the row to say the bar offers the sixteen the component actually
-renders, keeping the `appNotes` sentence as the statement of the shortfall. That is the half a reader
-is misled by, and it regenerates into `docs/TOOLS.md`. Adding the five missing names to the source
-comment is the smaller half, and it makes the comment agree with the row rather than the reverse.
+**The two halves need different fixes, and only two of the four rows have a control to describe.**
+`PaintBucket.tsx` and `CloneStamp.tsx` contain no `blendMode` reference at all; their rows are
+`status: 'missing'` and their own `appNotes` say the control is absent outright. Writing "the sixteen
+the component renders" into those two would be a new falsehood in a data file. Their rows are already
+right about Photoshop and already say the control is missing, so what they need is the twenty-seven
+sentence marked as Adobe's rather than read as the app's — the same fix as the `status` field, not a
+new count.
 
-## 188. A test's stated reason is false: it says no selection tool has the combination modes, and one renders two of them
+The Brush and the Pencil are the two that render a control, because both live in `Paint.tsx`, which
+maps `PAINT_BLEND_MODES`. Each row overcounts — the Brush's says twenty-nine and the Pencil's
+twenty-eight — and each is contradicted by its own `appNotes` in the same file, which already states
+sixteen correctly. Those two are the whole of the correction: state the sixteen the component renders
+and keep `appNotes` as the statement of the shortfall.
 
-**Problem.** The
-`it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them')`
-title in `src/components/ToolbarsRight/SingleRowColumnMarquee/__tests__/SingleRowColumnMarquee.test.tsx`
-carries a comment asserting the modes are "absent for EVERY selection tool here". `QuickSelection.tsx`
-renders Add and Subtract in a `Mode` dropdown over `QUICK_SELECTION_MODES`, so the universal claim is
-false — and the falsehood is in the `it()` title as well as the comment, so it survives a reader who
-skips the body.
+**That is filed rather than fixed because the row is data and the generated file is spoken for.**
+`npm run docs:tools` renders these rows into `docs/TOOLS.md`, and both files are claimed by work in
+flight — `src/tools/descriptions/paint.ts` by `fix/rail-drop-draw`. Editing the source without
+regenerating leaves the two inconsistent, and regenerating rewrites a file another branch is editing.
 
-**Why the test does not already fail on it.** The file imports and renders only
-`SingleRowColumnMarquee`, so Quick Selection is never in the tree and no query strategy would surface
-its dropdown. The assertion is true of what it mounts; only its stated reason is wrong.
+**Related, and the same phrase in a third file.** `src/tools/descriptions/paint.notes.md` cites the UXP
+`BlendMode` enum to establish that Dissolve is one of the twenty-seven, and writes it as "`DISSOLVE` in
+the list at the UXP constants reference, alongside `PASSTHROUGH` and the 25 others". The enum has
+**twenty-eight** members — the twenty-seven real modes plus `PASSTHROUGH`, which the Layers panel lists
+separately — so "the 25 others" is twenty-six. The same file gets the count right further down, where
+it calls `PASSTHROUGH` "a twenty-eighth entry", so the file contradicts itself. The four rows above
+are not what propagates it — they are being told to state sixteen and stop citing a Photoshop census —
+so this is a fix to that file alone. `docs/luna-psd-currency` claims it.
 
-**The same falsehood is recorded in prose, twice over.** `docs/TOOLS-TOO-HARD.md` — Selection
-combination modes says "No selection tool's bar renders any of the four". And the per-tool data
-repeats it in two records of its own: the single-row and single-column marquee notes in
-`src/tools/descriptions/selection.ts` each explain their `missing` modes with "they are absent for
-every selection tool in the application", while the Quick Selection record in the same file correctly
-states that its dropdown offers Add and Subtract. So the capability is not new, and the contradiction
-is not confined to a test — it is in the data that generated document is built from, which makes the
-per-tool documentation propagate it too.
+**Affected.** `src/tools/descriptions/paint.ts` — the Brush, Pencil, Paint Bucket and Clone Stamp
+`Mode` rows; `src/tools/descriptions/paint.notes.md` — the enum citation; `docs/TOOLS.md`, which
+regenerates from the first; `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, whose
+counts and enumeration no gate checks.
 
-**Affected.** The single test file above, for the title and the comment; the two marquee records in
-`src/tools/descriptions/selection.ts` for the prose; and `docs/TOOLS-TOO-HARD.md` — Selection
-combination modes, which owns the capability and states the overreach.
-
-**What would close it.** Narrow the title and the comment to what the assertion proves — that this bar
-renders the four as neither buttons nor a select — and narrow the two per-tool records to the tools
-they actually describe. Deleting the pin is not the fix and would be a gate being weakened: the
-combination buttons are still absent from every selection bar.
+**What would close the `brush.ts` half.** A source-reading test that asserts the comment's counts and
+names against `PAINT_BLEND_MODES` — the same technique the three `readFileSync` tests under
+`src/contexts/__tests__/` already use — so a member added to the array that is neither on Photoshop's
+list nor a canvas value fails instead of quietly making the comment wrong. That is a check on prose,
+which is unusual, and it is worth it only because the alternative is a comment whose whole value is
+that a reader can trust its count.
 
 ## 189. Three fields on a tool's replay declaration are read by tests and by nothing else
 
@@ -5354,56 +5081,6 @@ rather than a bug fix:
 **Provenance.** Found by review of the Type tool against its own requirements document, not by a
 failing test: no current run trips it, which is exactly why the clamp was allowed to stand.
 
-## 194. Every button built on `buttonStyles.ts` has no keyboard focus indicator
-
-**Problem.** `PRIMARY_BUTTON`, `PRIMARY_BUTTON_LARGE`, `SECONDARY_BUTTON`, `SECONDARY_BUTTON_LARGE`
-and `ICON_BUTTON` all carry `focus:outline-none` and none carries a `focus-visible` replacement. Tailwind's
-`focus:` compiles to `:focus`, which outranks the user agent's `:focus-visible` outline, so the ring is
-removed and nothing restores it. A keyboard user tabbing through any panel that uses these styles gets
-no visible focus at all. `FontSelect`'s trigger gets it right in the same bar, which is what makes the
-omission look like an oversight rather than a deliberate style.
-
-**Affected.** `src/components/ToolbarsRight/buttonStyles.ts`. `SECONDARY_BUTTON`'s missing `disabled:`
-variant was a separate half of this and is fixed; the focus ring is not.
-
-**What would close it.** Add `focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2`
-(or an outline equivalent) to the five styles. Do NOT do it as a drive-by inside a feature change: it
-alters how every focused control renders, across panels that have nothing to do with each other, and
-the visual-regression baselines are recorded per panel. It wants its own change and its own check.
-
-## 195. Alignment does nothing for point type, and the bar does not say so
-
-**Problem.** `renderText` anchors `align` INSIDE the box: for a point box, `boxLeft` is `x1 + TEXT_PADDING`
-and `boxRight` is `x2 - TEXT_PADDING`, and a point box is exactly `inkWidth + 2 * TEXT_PADDING` by
-construction. All three settings therefore compute the same `x`, so Left, Centre and Right render
-pixel-identically for every point draft — the control is live, focusable, and does nothing.
-
-This was investigated as a `calculateNewRect` defect and is NOT one. The growth arm in
-`calculateNewRect` is correctly gated on `requiredWidth > currentWidth`: it places the growth when the
-text outgrows a box that has no slack to distribute, and leaves the box alone when there is slack —
-because `renderText` then anchors within it. Moving that arm outside the guard was tried and reverted:
-it moves the box AND lets `renderText` anchor inside the moved box, so the ink shifts by twice the
-slack. The defect is the interaction, and there is nothing to fix in the geometry.
-
-**Affected.** `src/util/rect.ts` (`calculateNewRect`'s point arm) and `src/tools/text.ts`
-(`renderText`'s anchor). Both carry comments describing the division of labour. No test pins the
-no-op, which is why it survived.
-
-**What would close it.** Disable the control while the draft is point type and say why in the bar.
-Adobe answers the question this entry was holding open: "You can align type to one edge of a paragraph
-(left, center, or right for horizontal type). Alignment options are available only for paragraph
-type" (`formatting-paragraphs.html`), and "You can align and justify only paragraph text. To manage
-spacing for point text, convert it to paragraph text by selecting Type > Convert to Paragraph Text"
-(`setup-paragraph-formatting.html`). So the control is not merely ineffective for point type, it is not
-offered — the fix belongs in the bar, and the reconstruction to make is that this app offers it anyway.
-
-**The geometry is now pinned in the direction Adobe names.** `calculateNewRect`'s point arm recomputes
-the width on every call and keeps `x1` for all three alignments, so a point box hugs its ink and does
-not move. Two older tests pinned the opposite (`does not change width when text fits within the
-current width`, and `centers wider text for center align`); both were pins of behaviour Adobe
-contradicts and both are gone. Do not reintroduce an `align`-driven point box on the strength of the
-`HANDOFF.md` history above — the reconciliation it records was superseded.
-
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
 **Problem.** New documents and opened images begin with one bedrock layer. The enabled predicates
@@ -5474,16 +5151,15 @@ runner with active-time, step-count, deadline, abort, stale-revision, and explic
 outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
 materialization boundary is safe only if it stages a result and never publishes partial work.
 The runner now contains cleanup failures as failed outcomes and falls back from a suspended
-`requestAnimationFrame`; the retired coordinator is not a production integration seam.
+`requestAnimationFrame`.
 
 **What is needed.** Choose the first durable production surface and give it an explicit materialization
 caller, revision token, user setting, and publication policy. On an over-budget result, prompt for
 explicit raster-baseline acceptance; never rasterize automatically. Close the empty-history baseline
-failure and asset publication transaction before exposing that prompt. Keep the retired coordinator
-and this runner out of production until that surface is staged and failure-safe.
+failure and asset publication transaction before exposing that prompt. Keep this runner out of
+production until that surface is staged and failure-safe.
 
 **Files.** `src/contexts/replay-budget.ts` — `runReplayUnderBudget()`;
-`src/contexts/replay-coordinator.ts` — retired reference only;
 `src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
 and the empty-history/baseline tests.
 
@@ -5692,28 +5368,6 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
 
-## 208. A committed type layer cannot be entered again
-
-**Problem.** The Type tool now has edit mode, and it is unreachable for anything already committed.
-Clicking the canvas places a draft, the draft is an in-place editor, and the draft commits into a
-raster layer — and then there is no way back: no double-click on the layer re-enters, selecting the
-layer with the Type tool and clicking inside it does not, and there is no `T` control in the options
-bar for a selected text layer. Adobe offers all three
-(`https://helpx.adobe.com/photoshop/using/creating-type.html`), and the double-click one is the one
-users reach for first.
-
-**Affected.** `src/components/Main/TextEditOverlay.tsx` derives its edit session from the current tool
-args rather than from a layer, and `src/components/SidebarRight/LayersTab.tsx` has no `onDoubleClick`
-on a row.
-
-**What would close it.** Add an entry route for committed text sources: clicking inside a selected text
-layer, double-clicking its layer thumbnail, or double-clicking the layer with the Type tool should
-hydrate the source args into the contenteditable overlay, select the existing characters, and commit
-through `replaceLayerSource`. Preserve the existing `replace-layer-source` durable operation; do not
-create a replacement layer or rasterize the source. Note that `commitDirtyTool`'s in-place arm replaces
-the active layer when the draft's origin equals that layer's, so an entry route must carry the layer id
-rather than relying on the origin match.
-
 ## 209. The in-place editor covers its own box, so the inner half of every resize handle is dead
 
 **Problem.** `useRect`'s `drawMask` draws each corner and edge handle as a square CENTRED on the edge,
@@ -5736,42 +5390,6 @@ for the right and bottom edges) and hit-test against `h2`. That removes the whol
 editor's hit area with two constants in one file, and it is also Adobe's arrangement. Shrinking the
 editor instead is the wrong direction: the editor's box has to BE the type box for the caret to land
 where the user clicked.
-
-## 210. `textareaRef` is dead state in the store
-
-**Problem.** The options bar's `<textarea id="text-input">` is gone, so `textareaRef` is written by
-`StoreContext` and read by nothing in `src/` or `e2e/` — a store field, a `useRef` and a default that
-exist to point at an element that no longer exists.
-
-**Affected.** `src/contexts/StoreContext.tsx` — the field on the store's shape, the `useRef` and the
-value returned; `src/__tests__/fixtures/store.ts`; `src/contexts/__tests__/StoreContext.test.tsx` and
-`StoreContext.reducer.test.tsx` (both enumerate the refs, so removing one changes a test about something
-else); `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`.
-
-**What would close it.** Delete the field and the four call sites. It was left rather than removed
-alongside the textarea because a concurrent session was editing `StoreContext.tsx`, and a three-line
-deletion resolved under merge pressure is a worse trade than a week of dead state.
-
-## 211. Layer hydration publishes a layer-local rect, so the in-place edit path opens at the document origin
-
-**Problem.** `createLayerFromTool`'s no-`pos` branch stores `args.rect` REDUCED — `reduceRect(worldRect,
-newPos)` — because the creator builds a `pos`-sized canvas and draws the type at the rect's own
-coordinates. `LayersTab`'s `selectLayer` publishes `source.args` verbatim, so the draft it opens is in
-LAYER-LOCAL space while the editor, `calculateNewRect` and both commit arms read CANVAS space. MEASURED:
-a text layer at document (120, 80) whose `source.args.rect` is (0, 0, 100, 60) opens its editor over the
-document's top-left corner; committing from there measures a rect around (0, 0), which does not match
-the active layer's origin, so the CREATE arm runs and a SECOND text layer appears at (0, 0) carrying the
-edited text while the original is untouched. The comment at the origin-equality guard — "Selection
-hydration preserves the active layer's origin" — describes an invariant the storage format does not
-provide.
-
-**Affected.** `src/components/SidebarRight/LayersTab.tsx` — `selectLayer`; the guard in
-`commitDirtyTool`'s text arm is correct and must keep comparing un-reduced canvas rects.
-
-**What would close it.** Hydrate in the space the commit path measures in: in `selectLayer`, translate
-`rect` by `layer.pos` and the document frame before publishing it, leaving `source.args.rect`
-layer-local as the create arm stores it. This is the same reduction the create arm performs, in the
-other direction.
 
 ## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
 
@@ -6312,3 +5930,5 @@ unfilled, record the divergence in `docs/OVERRIDES.md` — the tile is kept ther
 override is where a deliberate divergence belongs. Either way the `!!args.backgroundColor` half of
 the gate must survive the change: it is what stops a filled figure with no colour from painting with
 whatever `fillStyle` the shared overlay last carried.
+
+---

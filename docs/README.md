@@ -92,16 +92,17 @@ Two more recovered from that same stash sit in this directory. They are **not
 current**, nothing in the live set depends on them, and they are not part of this
 hierarchy.
 
-| File                                     | What it is                                                                                                 |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete |
-| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                  |
-| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them             |
-| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                   |
-| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                |
-| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                           |
-| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                |
-| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it          |
+| File                                     | What it is                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
+| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
+| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
+| `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
+| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
+| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                  |
+| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
+| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                  |
+| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it            |
 
 They are still where they are because `scripts/lib/worktree-inventory/curated.mjs`
 keys on four of the root paths as `ref:` values, and the two `docs/*.md` rows

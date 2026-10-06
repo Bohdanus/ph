@@ -27,7 +27,7 @@ import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
   collectDurableAssetIds,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type DurableDocument,
   type DurableHistoryEntry,
   type DurableLayerSnapshot,
@@ -338,6 +338,37 @@ type StoreAction = Action | InternalAction;
 export type PublicAction = Action;
 export type StoreDispatch = Dispatch<PublicAction>;
 
+/**
+ * The action kinds `dispatchAction` handles itself, in the order the chain below
+ * tests them.
+ *
+ * Each one either needs a side effect the reducer cannot perform — asset
+ * transactions, bitmap liveness, closing a superseded cache — or must publish a
+ * committed payload whose durable fields only the dispatcher can compute. A kind
+ * that needs neither belongs in the reducer, and this list is where saying so is
+ * checked: `dispatchAction`'s trailing assertion only compiles while the chain
+ * above covers exactly these names, so deleting a branch or adding one without
+ * adding the name here fails `npm run tsc` rather than quietly changing which
+ * transitions bypass the default.
+ *
+ * The exported name is the list a test pins, not a second place to register a
+ * kind: the assertion at the end of `dispatchAction` is what ties it to the
+ * branches.
+ */
+export const INTERCEPTED_STORE_ACTION_TYPES = [
+  'PROMOTE_LAYER_PRESENTATIONS',
+  'ADOPT_LAYER_BITMAPS',
+  'PUBLISH_RUNTIME_PRESENTATION',
+  'REORDER_LAYERS',
+  'COMMIT_DOCUMENT_EDIT',
+  'APPLY_HISTORY_REPLAY',
+  'REPLACE_DOCUMENT',
+] as const satisfies readonly StoreAction['type'][];
+
+const INTERCEPTED_STORE_ACTIONS: ReadonlySet<StoreAction['type']> = new Set(INTERCEPTED_STORE_ACTION_TYPES);
+
+type UninterceptedActionType = Exclude<StoreAction['type'], (typeof INTERCEPTED_STORE_ACTION_TYPES)[number]>;
+
 const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
 const initialState: StoreData = {
@@ -615,6 +646,12 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return { ...state, hasUnsavedChanges: action.payload };
     case 'SET_FILE_NAME':
       return { ...state, fileName: action.payload };
+    case 'SET_ORIGINAL_IMAGE':
+      // Typed no-op. No writer dispatches this and `StoreData` carries no
+      // original-image record, so the arm exists to keep the switch exhaustive;
+      // deleting the action kind is the change that removes it (see the arm's
+      // registration sites in `StoreContext.boundary-gates.test.ts`).
+      return state;
     case 'SET_SIZE':
       if (state.totalSize.width === action.payload.width && state.totalSize.height === action.payload.height) {
         return state;
@@ -678,6 +715,12 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       }
       return published === state.layers ? state : { ...state, layers: published };
     }
+    case 'ADOPT_LAYER_BITMAPS':
+      // Ownership bookkeeping, not a transition: the dispatcher registers the
+      // rasters with the presentation scope and deliberately does not forward
+      // this action here. The arm is a no-op that keeps the switch exhaustive,
+      // so a new action kind cannot be added without a transition of its own.
+      return state;
     case 'BATCH_UPDATES':
       // Metadata-only in production (the sole writer passes `fileName` and
       // `hasUnsavedChanges`). The wider legacy payload type still admits
@@ -814,8 +857,19 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         selectionDraft: { status: 'idle' },
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
       };
-    default:
+    default: {
+      // Load-bearing, and the `never` is the point: `StoreAction` is a closed
+      // union, so a kind added to `Action` or `InternalAction` without an arm
+      // above fails `tsc` here rather than reaching the caller as a dispatch that
+      // quietly does nothing. `return state` is kept so a runtime untyped caller
+      // still gets the no-op the old `default` gave it, because `useReducer` must
+      // not throw inside a render. The two arms that exist only to be written down
+      // — `SET_ORIGINAL_IMAGE` and `ADOPT_LAYER_BITMAPS` — are named above in
+      // their alphabetical positions rather than here.
+      const _exhaustive: never = action;
+      void _exhaustive;
       return state;
+    }
   }
 }
 
@@ -840,7 +894,11 @@ function buildDurableDocument(
         : -1;
     return {
       status: converted.status,
-      document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+      // `converted.document` is already a deep-frozen copy this module froze, and the
+      // cursor is the only field that moves here, so the navigation write reuses the
+      // baseline and the whole timeline instead of deep-copying both to change a
+      // number. Any other base falls back to the full freeze.
+      document: converted.document ? refreezeDurableDocument(converted.document, { cursor }) : null,
       diagnostics: converted.diagnostics,
       legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
     };
@@ -1032,6 +1090,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
+    if (!INTERCEPTED_STORE_ACTIONS.has(action.type)) {
+      // The default transition, stated rather than fallen into. Every kind in
+      // INTERCEPTED_STORE_ACTION_TYPES returns from its own branch below, so this
+      // is what the rest of the union gets: one reducer call outside React, so a
+      // second dispatch in the same batch is decided against the state the first
+      // one produced, then one `rawDispatch`.
+      latestStateRef.current = reducer(currentState, action);
+      rawDispatch(action);
+      return;
+    }
     if (action.type === 'PROMOTE_LAYER_PRESENTATIONS') {
       // A promotion is accepted only while the layer still holds the requesting
       // canvas. A superseded bitmap can never reach a layer, so the dispatcher
@@ -1227,7 +1295,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       const boundaryHasError = boundaryDiagnostics.some((diagnostic) => diagnostic.severity === 'error');
       const publishPlanned = planned.outcome === 'published' && !boundaryHasError;
-      let publicationFailed = false;
 
       if (!publishPlanned) {
         plannerTransaction?.rollback();
@@ -1246,64 +1313,110 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A planned durable append can carry a newly registered asset-bearing
       // operation. Open the document transaction only after the pure decision
       // succeeds, publish the state, then commit and reconcile the exact set the
-      // published document names. If any step fails, rollback before rebuilding.
+      // published document names.
+      //
+      // The `try` covers the FALLIBLE work and nothing else, and its catch is
+      // therefore the one place the rebuild below may be reached from: the whole
+      // conversion rebuild and its dispatch run only when no state has moved
+      // yet, so the append is still un-published and rolling the transaction
+      // back is exactly right.
+      //
+      // Publication itself is deliberately OUTSIDE it. `latestStateRef.current`
+      // and `rawDispatch` are the point of no return — an exception from
+      // `transaction.commit`, `reconcileDocumentAssets` or the retirement walk
+      // used to land in the same catch, fall out of this `if`, and dispatch a
+      // SECOND `COMMIT_DOCUMENT_EDIT` for one append. The rebuild derives its
+      // projection from `currentState`, the pre-publication record, so the second
+      // dispatch both re-published a transition that had already happened and
+      // computed it from a state the store no longer held.
       if (publishPlanned) {
         let transaction: DocumentAssetTransaction | undefined = plannerTransaction;
+        let published:
+          | {
+              transaction: DocumentAssetTransaction;
+              converted: DurableProjection;
+              action: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload };
+              state: StoreData;
+            }
+          | undefined;
         try {
           transaction ??= registry.beginDocumentAssetTransaction(currentState.documentId);
           const converted = appendBoundaryDiagnostics(
             { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
             boundaryDiagnostics
           );
-          const committedAction: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
+          const committed: { type: 'COMMIT_DOCUMENT_EDIT'; payload: CommitDocumentEditCommittedPayload } = {
             type: 'COMMIT_DOCUMENT_EDIT',
             payload: commitPayload(converted),
           };
-          const nextState = projectPublishedTimeline(currentState, {
-            updates: committedAction.payload.updates,
-            timeline,
-            durableDocument: converted.document,
-            durableStatus: converted.status,
-            durableDiagnostics: converted.diagnostics,
-          });
-          latestStateRef.current = nextState;
-          rawDispatch(committedAction);
-          transaction.commit();
-          if (converted.document) {
-            registry.reconcileDocumentAssets(currentState.documentId, collectDurableAssetIds(converted.document));
-          }
-          // Retirement runs after the transition is published, and only against
-          // the record that transition actually produced.
-          retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
-          return;
+          published = {
+            transaction,
+            converted,
+            action: committed,
+            state: projectPublishedTimeline(currentState, {
+              updates: committed.payload.updates,
+              timeline,
+              durableDocument: converted.document,
+              durableStatus: converted.status,
+              durableDiagnostics: converted.diagnostics,
+            }),
+          };
         } catch (error) {
-          publicationFailed = true;
+          // The transaction is the local one, and nothing below reads
+          // `plannerTransaction`: a rollback here releases exactly what the plan
+          // registered and nothing has named it yet.
           transaction?.rollback();
-          console.error('Unable to publish a planned durable append; rebuilding the durable document', error);
+          console.error('Unable to plan a durable append publication; rebuilding the durable document', error);
+        }
+        if (published) {
+          latestStateRef.current = published.state;
+          rawDispatch(published.action);
+          // Past `rawDispatch` the append is published, so a failure here is
+          // contained: reported, and never re-entered through the rebuild. The
+          // rollback is dropped with the fall-through — `rollback()` on a settled
+          // transaction is a no-op anyway, and the publication has named the very
+          // assets it would have released. Retirement that does not run is
+          // deferred to the next transition that consults the scope, which is
+          // safe because the same walk would have closed nothing the store still
+          // reaches.
+          try {
+            published.transaction.commit();
+            if (published.converted.document) {
+              registry.reconcileDocumentAssets(
+                currentState.documentId,
+                collectDurableAssetIds(published.converted.document)
+              );
+            }
+            // Retirement runs after the transition is published, and only against
+            // the record that transition actually produced.
+            retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, published.state);
+          } catch (error) {
+            console.error('Unable to finalize a published durable append; the append itself is committed', error);
+          }
+          return;
         }
       }
 
-      let converted: DurableProjection =
-        planned.outcome === 'published' && !boundaryHasError && !publicationFailed
-          ? appendBoundaryDiagnostics(
-              { status: 'current', document: planned.document, diagnostics: currentState.durableDiagnostics },
-              boundaryDiagnostics
-            )
-          : appendBoundaryDiagnostics(
-              buildDurableDocument(
-                nextFrame
-                  ? {
-                      ...currentState,
-                      documentFrame: cloneDocumentFrame(nextFrame),
-                      totalSize: documentFrameSize(nextFrame),
-                    }
-                  : currentState,
-                [...timeline.entries],
-                timeline.cursor,
-                timeline.branchRevision
-              ),
-              boundaryDiagnostics
-            );
+      // Reached only when the fast path above did NOT publish: the plan was not
+      // publishable, or its publication could not be prepared. Nothing has moved
+      // in either case, so the whole-timeline conversion is both the correct and
+      // the only remaining route to an append — which is what makes this the sole
+      // fallback, rather than one of several.
+      let converted: DurableProjection = appendBoundaryDiagnostics(
+        buildDurableDocument(
+          nextFrame
+            ? {
+                ...currentState,
+                documentFrame: cloneDocumentFrame(nextFrame),
+                totalSize: documentFrameSize(nextFrame),
+              }
+            : currentState,
+          [...timeline.entries],
+          timeline.cursor,
+          timeline.branchRevision
+        ),
+        boundaryDiagnostics
+      );
       if (planned.outcome === 'mismatch') {
         converted = {
           ...converted,
@@ -1417,8 +1530,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
-    latestStateRef.current = reducer(currentState, action);
-    rawDispatch(action);
+    // Unreachable at runtime: the chain above returns for every intercepted
+    // kind, and the default at the top of `dispatchAction` returns for the rest.
+    // It exists to be a compile-time assertion rather than a comment — if a
+    // branch is removed from the chain without removing its name from
+    // INTERCEPTED_STORE_ACTION_TYPES, the narrowed `action.type` no longer fits
+    // `UninterceptedActionType` and `npm run tsc` fails.
+    const _everyInterceptedKindReturns: UninterceptedActionType = action.type;
+    void _everyInterceptedKindReturns;
   };
   const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
   const dispatch: StoreDispatch = (action) => dispatchAction(action);

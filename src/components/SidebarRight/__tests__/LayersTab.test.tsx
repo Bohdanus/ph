@@ -45,6 +45,7 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
     removeLayer: vi.fn(),
     moveLayerAfter: vi.fn(),
     setActiveLayer: vi.fn(),
+    beginTextLayerEdit: vi.fn(),
     updateLayer: vi.fn(),
   };
   return {
@@ -77,6 +78,10 @@ vi.mock('@/contexts/useLayer.ts', () => ({
 
 vi.mock('@/contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => currentToolState,
+}));
+
+vi.mock('@/hooks/useApp.ts', () => ({
+  useApp: () => ({ goToTool: vi.fn() }),
 }));
 
 function seed(layers: LayersRecord = mockLayers, activeLayerId: LayerId | null = 'layer-2') {
@@ -296,6 +301,7 @@ describe('LayersTab', () => {
 
     expect(currentToolState.setToolArgs).toHaveBeenCalledWith({
       ...args,
+      editingLayerId: 'text',
       rect: { x1: 80, y1: 60, x2: 180, y2: 120 },
     });
   });

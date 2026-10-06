@@ -266,27 +266,6 @@ exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps
 covered too. Add a dark-theme case that pins the direction this depends on, so the
 latent wrong-pass has a tripwire of its own rather than resting on a config default.
 
-## Every document load requests a favicon that does not exist
-
-Chrome requests `/favicon.ico` unprompted on every page load, and it always 404s:
-there is no `public/` directory in the repository, and `index.html`'s
-`<link rel="icon" type="image/svg+xml" href="/todo.svg" />` line is commented out, so
-there is no icon for the request to resolve to. The 404 is real, it is per-load, and
-`ACCEPTED_CONSOLE_ERRORS` in `e2e/helpers/console-police.ts` carries an entry whose
-reason is this fact, narrowed by `urlPattern: /^\/favicon\.ico$/` so that no other
-404 inherits it.
-
-Nothing trips on it: the entry accepts the message, the spec passes, and the run
-reports green. The cost is that every e2e page load carries a failed request that a
-test would otherwise see, and the allowlist entry outlives the moment it was written
-for.
-
-Fix: add `public/favicon.svg`, uncomment the icon link in `index.html`, and delete the favicon entry
-from `ACCEPTED_CONSOLE_ERRORS` in the same change — with the icon in place there is
-no 404 to account for, and per the lifecycle rule in `docs/DOCUMENTATION.md` the
-entry goes with it. Verify with `npm run test:e2e` and by confirming no 404 remains
-in the `console-police.json` report attachment.
-
 ## P3 — 10 orphaned committed baselines (2.1 MB)
 
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
@@ -305,50 +284,6 @@ The directory holds 17 files. Seven are read — the formats whose `verification
 
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
-
-## P3 — the artifact name is interpolated into a path unsanitised
-
-`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
-
-Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
-name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
-directory that was never created, and a name that traverses (`../escaped`) resolves
-outside `outputDir` — the file is written there, attached from there, and is not
-removed by anything that cleans the output dir. Severity is low only because
-`outputDir` is a throwaway per-test directory under `test-results/`.
-
-Fix: **reject, do not sanitise.** Validate that `name` is a single path component
-(no separator, not `.` or `..`) and throw an error naming the helper, for the same
-reason the `outputDir` guard throws: the caller passed something impossible, and
-silently rewriting it would attach the report under a name the test never asked
-for. Sanitising would also let two distinct names collide into one artifact.
-
-Pinned by `treats a name containing a path separator as a path, not a filename`
-and `writes outside the output directory when the name traverses out of it` in
-`e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
-pins in the same change; the first one's own comment names sanitisation as the
-shape a fix must not take.
-
-## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
-
-`e2e/helpers/cdp-helpers.ts` — the `outputDir` guard in `captureCanvasScreenshot()`
-
-The guard exists and is the same shape as the one at the top of
-`takeLineScreenshot()` in `canvas-helpers.ts`, but it is
-the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — the second
-statement of `captureCanvasScreenshot()` — uncovered, against 100% of its
-functions. The sibling guard is pinned by
-`it('names the helper and the missing field when testInfo has no output directory')`
-in `e2e/helpers/__tests__/canvas-interaction.unit.test.ts`, so nothing fails
-if this one is deleted, and the raw V8 failure it exists to replace
-(`The "path" argument must be of type string. Received undefined`) returns with it.
-
-Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
-`TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
-own message and that no CDP session was opened. `createTestInfoMock()`
-in `e2e/helpers/__tests__/canvas-helpers.fixtures.ts` already makes `outputDir`
-optional, so the double needs no change.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
@@ -528,7 +463,7 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
-## P1 — the document-space oracle reached a handful of call sites, so most of the suite still moves when the frame does
+## P1 — the document-space oracle reached four production files, so most of the suite still moves when the frame does
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
 
@@ -536,30 +471,30 @@ differ by the box origin and nothing in the types distinguishes them.
 the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
 longer depends on where the app put the letterbox. That is the right idea and it works.
 
-**What does not.** The idea reached exactly one caller. `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/
-`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box", and nine
-specs import them: `adjustments`, `color`, `document-dialogs`, `erase-fill-eyedropper`, `example`,
-`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, the suite writes its
-gestures as `box.x + <something>` throughout, and **none of them invert the mapping back to document
-space**. Counted, with the counting command, because a number here without one is worse than none
-and an earlier draft of this entry got it wrong twice — once by 7x:
+**What does not.** The idea reached four production files, at seventeen call sites:
+`e2e/canvas-growth.spec.ts` (4), `e2e/filter-tools.spec.ts` (3), `e2e/shape-tools.spec.ts` (6) and
+`e2e/export/helpers.ts` (4), counting the calls and not the imports. `LINE_START_X`/`LINE_START_Y`/
+`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box",
+and thirteen specs import them: `adjustments`, `color`, `document-dialogs`,
+`erase-fill-eyedropper`, `example`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
+`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, the suite
+writes its gestures as `box.x + <something>` throughout, and **none of them invert the mapping back
+to document space**. Counted, with the counting command, because a number here without one is
+worse than none:
 
 ```
-grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 25  canvas-relative LITERALS
-grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 63  any box-relative offset
+grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
+grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 209  any box-relative offset
 grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
 ```
 
-So: 25 gestures add a bare number to the box origin, and 63 add something box-relative. The 63 is
-the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
+So: 36 gestures add a bare number to the box origin, and 209 add something box-relative. The 209
+is the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
 through a named constant rather than a literal — those are the ones the first pattern misses
-entirely, and a count that only looked for literals is how the first draft of this entry said
-"twelve" and the second said "eighty-three". Both were wrong; the zero on the third line is the
-part that matters, because `e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25`
-and that is the one form that survives a layout change by construction.
-
-The ICO export path is still canvas-relative as well: `ICON_STROKE` in `e2e/export/helpers.ts`
-is a set of box offsets, read by the two `documentToCanvasOffset()` calls in `setupIcoTest()`.
+entirely, and a count that only looked for literals sees under a fifth of the sites. The zero on
+the third line is the part that matters, because
+`e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25` and that is the one form
+that survives a layout change by construction.
 
 **Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
 are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
@@ -590,7 +525,7 @@ neither pins a pixel. The panel's 250 is the same defect and still needs the sam
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
 `box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
-box instead of the window. That is the shape every one of the eighty-three should take, via
+box instead of the window. That is the shape every one of them should take, via
 `documentToCanvasOffset`.
 
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
@@ -737,12 +672,15 @@ record of what it was. The commit that carried them in is `4d47904`; the one tha
 them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
 
-**Three `## P…` entries appear below this line, and only two of them are those two.** The
-third, `P3 — re-verification: the tablet band's option-row floor…`, was filed by a later
-pass against this tree and is not one of the 33. It is here rather than above the section
-because it was raised while auditing the fixes, and moving it would break the audit trail
-for no gain — but a reader counting the entries to work out which findings survived will
-count three, and the two-line arithmetic above is the one to trust.
+**Four `## P…` entries appear below this line, and only two of them are those two** —
+`P2 — the visual baselines record no Chrome version, and a pin cannot be invented` and
+`P3 — no mobile or HiDPI project, and no touch anywhere`. The other two,
+`P3 — re-verification: the tablet band's option-row floor…` and
+`P2 — the mobile bottom bar scrolls 615px with no affordance…`, were filed by later passes
+against this tree and are not among the 33. They are here rather than above the section
+because they were raised while auditing the fixes, and moving them would break the audit
+trail for no gain — but a reader counting the entries to work out which findings survived will
+count four, and the two-line arithmetic above is the one to trust.
 
 The source repository is frozen at `78be956` and its own ledger is not maintained, so that
 review has no other home. The list of what it claimed and what turned out to be already

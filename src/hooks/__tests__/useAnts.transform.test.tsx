@@ -1,8 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AffineTransform } from '../../contexts/affine-transform.ts';
-import { LINE_WIDTH } from '../useAnts.ts';
-import { useMarchingAnts } from '../useAnts.ts';
+import { DASH_LENGTH, LINE_WIDTH, SPEED, useMarchingAnts } from '../useAnts.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
@@ -194,8 +193,9 @@ describe('useMarchingAnts transformed layers', () => {
     frame();
     frame();
 
-    // black, white, black, white -- advancing by SPEED each frame.
-    expect(offsets).toEqual([0, 6, -1, 5]);
+    // black, white, black, white -- advancing by SPEED each frame, written against the
+    // constant so a rate change is not a number in this file that stops being the rate.
+    expect(offsets).toEqual([0, DASH_LENGTH, -SPEED, DASH_LENGTH - SPEED]);
     expect(rafMocks.frames.size).toBe(1);
 
     act(() => result.current.clear());

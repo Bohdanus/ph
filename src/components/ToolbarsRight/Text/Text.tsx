@@ -13,6 +13,7 @@ import {
   MIN_LINE_HEIGHT,
   TRACKING_MAX,
   TRACKING_MIN,
+  resolveTextKind,
   resolveTextStyle,
 } from '../../../tools/text.ts';
 import {
@@ -25,7 +26,7 @@ import {
 
 const Text: React.FC<{}> = () => {
   const [{ canvasRef, totalSize, documentFrame: currentDocumentFrame, activeLayerId, layers }] = useStore();
-  const { createLayerFromTool, replaceLayerSource } = useLayers();
+  const { createLayerFromTool, replaceLayerSource, cancelLayerPreview } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
   /**
@@ -44,6 +45,7 @@ const Text: React.FC<{}> = () => {
   }
 
   const style = resolveTextStyle(toolArgs);
+  const alignmentEnabled = resolveTextKind(toolArgs) === 'paragraph';
   const { text = '', rect = null, color } = toolArgs;
   /** A placed box remains an edit session even after the user deletes every character. */
   const editing = Boolean(rect);
@@ -180,15 +182,16 @@ const Text: React.FC<{}> = () => {
     if (!editing || !text || !rect) return;
     if (appliedArgsRef.current === toolArgs) return;
     const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
-    const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+    const editingLayerId = toolArgs.editingLayerId;
+    const activeLayer = editingLayerId ? layers[editingLayerId] : activeLayerId ? layers[activeLayerId] : undefined;
     const localPos = sortedRectToPos(sortRect(measuredRect));
     const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
-    const committedArgs = { ...toolArgs, placeholderUntouched: false, rect: measuredRect };
+    const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
+    const committedArgs = { ...persistedArgs, placeholderUntouched: false, rect: measuredRect };
     const editsActiveLayer =
       activeLayer?.source?.kind === 'tool' &&
       activeLayer.source.args.toolName === 'text' &&
-      pos.x === activeLayer.pos.x &&
-      pos.y === activeLayer.pos.y;
+      (Boolean(editingLayerId) || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y));
     if (editsActiveLayer && activeLayer) {
       // Layer-LOCAL rect, as the create arm stores it and as the creator renders it: the raster is
       // built at `pos` size and the type is drawn at the rect's own coordinates. An unreduced
@@ -196,7 +199,7 @@ const Text: React.FC<{}> = () => {
       // origin. `commitDirtyTool`'s replace arm reduces for the same reason.
       replaceLayerSource(activeLayer.id, {
         kind: 'tool',
-        args: { ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
+        args: { ...persistedArgs, ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
         pos,
       });
     } else {
@@ -209,11 +212,13 @@ const Text: React.FC<{}> = () => {
       createLayerFromTool({ args: committedArgs });
     }
     appliedArgsRef.current = toolArgs;
-    onChange({ ...toolArgs, text: '', rect: null });
+    onChange({ ...persistedArgs, text: '', rect: null });
   };
 
   const clear = () => {
-    onChange({ ...toolArgs, text: '', rect: null });
+    if (toolArgs.editingLayerId) cancelLayerPreview(toolArgs.editingLayerId);
+    const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
+    onChange({ ...persistedArgs, text: '', rect: null });
   };
 
   return (
@@ -368,6 +373,8 @@ const Text: React.FC<{}> = () => {
             id="align-select"
             value={style.align}
             onChange={handleAlignChange}
+            disabled={!alignmentEnabled}
+            aria-describedby={!alignmentEnabled ? 'align-help' : undefined}
             className="rounded border border-gray-300 bg-white px-1 h-9 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
           >
             <option value="left">Left</option>
@@ -375,6 +382,11 @@ const Text: React.FC<{}> = () => {
             <option value="right">Right</option>
           </select>
         </div>
+        {!alignmentEnabled && (
+          <span id="align-help" className="sr-only">
+            Alignment is available for paragraph text only
+          </span>
+        )}
       </div>
 
       {/*

@@ -51,6 +51,71 @@ export default defineConfig({
   // discriminate — `!!process.env.CI` is already `true` under CI.
   forbidOnly: true,
   retries: process.env.CI ? 2 : 0,
+  // A FLAKY test is one that failed an attempt and passed a later one, and
+  // Playwright REPORTS that as a pass: `ok()` accepts `"expected"`, `"flaky"` and
+  // `"skipped"` alike, and the process exit code is `status === "passed" ? 0 : 1`.
+  // The `retries: 2` above is what makes the state reachable at all, so without
+  // this key a green `e2e` job is COMPATIBLE WITH A FIRST-ATTEMPT FAILURE, and
+  // nothing in the repository says otherwise — which is HANDOFF.md §217.
+  //
+  // Playwright's own default is `false`, and the key gates ONLY the flaky term of a
+  // five-term disjunction, so its absence is not a permissive default that happens
+  // to be inherited: it is the reason the other four terms are the only ones that
+  // can turn a run red.
+  //
+  // UNCONDITIONAL, and deliberately not `!!process.env.CI`, for the opposite reason
+  // to the one above `forbidOnly`. `retries` is 0 locally, so a local test cannot be
+  // flaky in the sense this key measures — `computeTestCaseOutcome` answers `"flaky"`
+  // only when a test has at least one expected AND one unexpected RESULT, which
+  // requires a second attempt to exist — so the key is TRUE LOCALLY AND CANNOT FIRE.
+  // Stating it costs a developer nothing, and it stops a value this file does not
+  // declare from being what decides the question.
+  failOnFlakyTests: true,
+  // The WHOLE-RUN clock, and deliberately BELOW the `e2e` job's
+  // `timeout-minutes: 30` in .github/workflows/ci.yml. Playwright's default is `0`,
+  // which is unbounded, so today a hung suite is stopped by GitHub killing the job
+  // — and a job killed for exceeding `timeout-minutes` runs NONE of its remaining
+  // steps: no HTML report, no `test-results/results.json`, no trace, no diff image.
+  // The timeout and the evidence it was meant to preserve cancel out, and that is
+  // the whole reason this number is not 1800 or more.
+  //
+  // The arithmetic, with the job's 1800 s split three ways:
+  //   SETUP  <= 480 s  checkout, setup-node, `npm ci` (431 packages, 347 MB of
+  //                   node_modules, and `cache: 'npm'` misses on every
+  //                   package-lock.json change) and `npx playwright install
+  //                   --with-deps chrome`, which the workflow deliberately does not
+  //                   cache at all
+  //   TESTS  <= 900 s  this key, under CI
+  //   UPLOAD <= 180 s  actions/upload-artifact@v4 zipping `playwright-report/` plus
+  //                   `test-results/`, whose per-retry traces are the bulk of it
+  // 480 + 900 + 180 = 1560 s = 26 min, which leaves 4 min INSIDE the 30-minute job
+  // kill. Raise it to 1800 s and GitHub wins that race, so a hang produces no diff
+  // image at all — the exact loss the timeout was added to prevent.
+  //
+  // 900 s against a measured ~8 min for all 447 tests at `workers: 1` on this
+  // machine, which is an UPPER bound for the job: CI resolves `workers` to "50%" of
+  // 4 vCPUs, so it runs 2 of them. Roughly 3x the real test phase, so the bound can
+  // only fire on a hang.
+  //
+  // LOCAL is a different machine and gets a different number, which is why this is
+  // not one literal. The two bounds are incompatible as one value: anything above a
+  // local run's ceiling is at or past the CI budget, and anything inside the CI
+  // budget is within reach of a loaded local run. `retries` and `workers` above
+  // resolve on `process.env.CI` for the same reason — the right value depends on the
+  // machine, not on the code. 2700 s is ~5x the measured local duration, and it is
+  // still strictly stricter than today's unbounded `0`: this repository serializes
+  // e2e runs with the `scripts/e2e-run.mjs` lock, so a suite never competes with
+  // another suite but does compete with an app vitest run on the same Mac.
+  //
+  // What the deadline BUYS is a report, and the reason it has one is
+  // `finishTaskRun`: a timed-out run's status is `"timedout"`, which is not
+  // `"passed"`, so `onEnd` still runs and the HTML and JSON reporters still write
+  // their files. That status is not `"interrupted"` either, so the exit code is 1
+  // and not 130: a hung suite is a FAILURE that arrives with its evidence.
+  //
+  // `--debug` RESETS this to 0, so an interactive debugging session is never killed
+  // by it.
+  globalTimeout: process.env.CI ? 15 * 60_000 : 45 * 60_000,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
   // local runs stay sequential so a failure is readable one test at a time and the
   // machine is not running two browsers per core. The port argument that used to sit

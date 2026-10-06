@@ -137,6 +137,24 @@ describe('useRect mask drawing', () => {
     expect(ctx.lineWidth).toBe(2);
 
     const handle = HANDLE_SIZE;
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - half, 100 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 100 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - half, 250 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
+  });
+
+  /**
+   * `handlesOutside` is the Type tool's alone, and the default above is Adobe's: a grip straddling
+   * the corner is grabbable across its whole width, because `edgeAtPoint` takes
+   * `HANDLE_SIZE / scale / 2` either side of the corner either way. Painting the grip wholly outside
+   * left the outer half of every visible handle unclickable on the marquee, the crop and the Move
+   * tool, and `e2e/select-move.spec.ts` — `stretches selected line` — caught exactly that.
+   */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
     expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
     expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
     expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
@@ -251,7 +269,7 @@ describe('useRect mask drawing', () => {
     expect(ctx.setLineDash).toHaveBeenCalledWith([2.5, 2.5]);
     expect(ctx.lineWidth).toBe(1);
     const handle = HANDLE_SIZE / 2;
-    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle / 2, 100 - handle / 2, handle, handle);
   });
 });
 
@@ -436,6 +454,58 @@ describe('useRect handle detection', () => {
     expect(target.style.cursor).toBe('');
     // The guard rejects before the coordinates are even read.
     expect(pointer.data.getLocalCoords).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRect marquee border animation', () => {
+  beforeEach(resetPointerMock);
+
+  it('advances the in-flight border at screen speed and stops on release', () => {
+    pointer.data.dimensionsRef.current.scale = 2;
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging' });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets).toContain(-0.2);
+    const paintedFrames = dashOffsets.length;
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(paintedFrames);
+  });
+
+  it('keeps the always-mode border static while dragging', () => {
+    const { ctx, result, event } = setup({ borderMode: 'always', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(210, 185));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(1);
+    expect(dashOffsets).toEqual([0]);
   });
 });
 
@@ -785,10 +855,11 @@ describe('useRect painting outside the canvas', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 800, 600);
 
     const handle = HANDLE_SIZE;
-    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - handle, -50 - handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, -50 - handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - handle, 60, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, 60, handle, handle);
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -50 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-100 - half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
   });
 
   it('leaves the clamped painting and handles in place for a consumer that does not opt in', () => {
@@ -800,10 +871,11 @@ describe('useRect painting outside the canvas', () => {
     // The handles are derived from the painted rect, so the clamp moves them too — which is the
     // snap-back this prop exists to switch off, pinned for everyone who does not set it.
     const handle = HANDLE_SIZE;
-    expect(ctx.fillRect).toHaveBeenCalledWith(-handle, -handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, -handle, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(-handle, 60, handle, handle);
-    expect(ctx.fillRect).toHaveBeenCalledWith(50, 60, handle, handle);
+    const half = handle / 2;
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, -half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(-half, 60 - half, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(50 - half, 60 - half, handle, handle);
   });
 
   it('paints a rect that stays inside the document identically with and without the prop', () => {

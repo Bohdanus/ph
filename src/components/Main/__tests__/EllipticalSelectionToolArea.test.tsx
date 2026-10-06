@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { EllipticalSelectionToolArea } from '../EllipticalSelectionToolArea.tsx';
 import {
   ELLIPTICAL_SELECTION_SOURCE_TOOL,
   type EllipticalSelectionToolArgs,
 } from '../../../tools/ellipticalSelection.ts';
+import { clearSelectionDragPreview, readSelectionDragPreview } from '../../../hooks/selection-drag-preview.ts';
 import { getSelectionAbsolutePoints, hasSameSelectionGeometry, moveSelectionByDelta } from '../../../util/selection.ts';
 import type { Point, Selection } from '../../../contexts/general-types.ts';
 
@@ -72,9 +73,10 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
  * claims the pointer, and only that pointer's move/up are valid.
  *
  * The pointer ID matters more here than in the paint areas, because this surface carries the id
- * on its own drag record and refuses a move or a release whose id is not the one the press took
- * (`EllipticalSelectionToolArea.tsx:181, 212, 263`). A double that let every event through would
- * let a second pointer steer a drag it did not start, and every case below would still pass.
+ * on its own drag record and refuses a move, a release or an abort whose id is not the one the
+ * press took (`EllipticalSelectionToolArea.tsx:181`, `:221`, `:276`). A double that let every
+ * event through would let a second pointer steer a drag it did not start, and every case below
+ * would still pass.
  */
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
@@ -140,12 +142,28 @@ const coveringSelection = (): Selection => ({
   ],
 });
 
-const renderArea = () => {
+/**
+ * A committed polygon over the TOP-LEFT 20x20 of the document, so a case can press outside it.
+ *
+ * `points` are NORMALIZED to the selection's own origin and `pos` offsets them
+ * (`getSelectionAbsolutePoints`), so its absolute corners are (0,0) to (20,20) — which is what
+ * makes the hit test's answer readable, and why a press at (100, 60) opens a draft while a press
+ * at (10, 10) grabs this one.
+ */
+const cornerSelection = (): Selection => ({
+  ...coveringSelection(),
+  pos: { x: 0, y: 0, width: 20, height: 20 },
+  points: [
+    { x: 0, y: 0 },
+    { x: 20, y: 0 },
+    { x: 20, y: 20 },
+    { x: 0, y: 20 },
+  ],
+});
+
+const renderArea = (ctx = createOverlayContext()) => {
   const { container } = render(
-    <EllipticalSelectionToolArea
-      className="test-elliptical-selection-area"
-      overlayCtxRef={{ current: createOverlayContext() }}
-    />
+    <EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: ctx }} />
   );
 
   return container.firstElementChild as HTMLDivElement;
@@ -191,6 +209,15 @@ describe('EllipticalSelectionToolArea', () => {
     storeState.selections = [];
     storeState.activeSelectionId = null;
     storeState.documentFrame = null;
+    // The drag channel is a module-level slot that outlives any one mount, so an entry a case
+    // leaves behind is read by the ants loop of the NEXT one — which is the same reason
+    // `document-gesture.ts` needs its own reset. Cleared on both sides of every case so neither a
+    // leak out of one nor an inherited entry into another can be what an assertion below sees.
+    clearSelectionDragPreview();
+  });
+
+  afterEach(() => {
+    clearSelectionDragPreview();
   });
 
   it('starts no selection draft for a press inside the active selection, because that press moves it', () => {
@@ -230,9 +257,11 @@ describe('EllipticalSelectionToolArea', () => {
 
     // The source tool is a BORROWED value, deliberately: `SelectionSourceTool` has no
     // `'elliptical-selection'` member, and borrowing `'magic-wand'` is the one borrowed value
-    // that is also the right behaviour — `drawSelectionOutline` and `findSelectionAnchorAtPoint`
-    // both skip the per-vertex anchor dots for it, and a tessellated ellipse must carry neither
-    // 141 draggable handles nor an anchor hit-test (`src/tools/ellipticalSelection.ts:38-48`).
+    // that is also the right behaviour — it is what `drawSelectionAnchors` returns before painting
+    // for, and what `findSelectionAnchorAtPoint` returns `null` for, and a tessellated ellipse must
+    // carry neither per-vertex handles nor an anchor hit-test. `src/tools/ellipticalSelection.ts:37`-`:48`
+    // is where that rule is stated once; the border itself no longer consults the source at all,
+    // because the marching ants stroke every active selection whatever made it.
     // Pinned through the constant so the day the real member lands, this is the one place to read.
     expect(draftDispatches()).toEqual([
       { type: 'START_SELECTION_DRAFT', payload: { sourceTool: ELLIPTICAL_SELECTION_SOURCE_TOOL } },
@@ -304,8 +333,8 @@ describe('EllipticalSelectionToolArea', () => {
    * change that fixes the move arm; `AGENTS.md` is explicit that a `test.fails` is a tripwire
    * for broken behaviour and is deleted, not reworded, by the fix.
    *
-   * `EllipticalSelectionToolArea.tsx:200-204` computes each frame's `delta` against `drag.origin`,
-   * which line 203 then ADVANCES, and applies it to `drag.baseline`, which never advances. So the
+   * `EllipticalSelectionToolArea.tsx:205-209` computes each frame's `delta` against `drag.origin`,
+   * which line 208 then ADVANCES, and applies it to `drag.baseline`, which never advances. So the
    * net displacement of a multi-frame drag is not the sum of its frames — it is the LAST frame
    * alone. A user who drags a selection out and back releases it somewhere they never took it.
    *
@@ -330,9 +359,9 @@ describe('EllipticalSelectionToolArea', () => {
 
     // The claim is that the NET displacement is zero, and a zero net displacement is observed
     // through the release gate rather than through a committed position: the preview ends back on
-    // the baseline's own geometry, `hasSameSelectionGeometry` (`:222`) suppresses the commit, and
-    // the gesture writes nothing at all — the same contract the zero-delta case below pins for
-    // the one-frame shape of the same gesture.
+    // the baseline's own geometry, `hasSameSelectionGeometry` suppresses the commit
+    // (`EllipticalSelectionToolArea.tsx:235`), and the gesture writes nothing at all — the same
+    // contract the zero-delta case below pins for the one-frame shape of the same gesture.
     //
     // What it does today instead: `drag.origin` advanced to (160, 100) and then to (100, 60), so
     // the second frame's delta of (-60, -40) is applied to the never-moved `drag.baseline`, and
@@ -386,32 +415,28 @@ describe('EllipticalSelectionToolArea', () => {
     expect(hasSameSelectionGeometry(baseline, jittered)).toBe(true);
   });
 
-  it('strokes a committed selection border, because this tool area is not one the ants canvas serves', () => {
-    // THE tripwire for the border's ownership. `POLYGON_SELECTION_MODES` in `Main.tsx` covers the
-    // lasso, the feather magnetic lasso and the magic wand; the elliptical and quick selection
-    // tools are deliberately absent, so their border is the static `drawSelectionOutline` stroke
-    // and there is no ants canvas behind them. Both commit with `sourceTool: 'magic-wand'` — the
-    // constant each borrows from the wand — and `drawSelectionAnchors` SKIPS that source, so
-    // repointing the call site at the anchors would leave this tool with no border at all, and
-    // the rest of this file would stay green because it only ever read dispatches.
-    //
-    // `QuickSelectionToolArea.tsx:104` is the OTHER caller and has no test anywhere — the module is
-    // mocked away in `Main.toolAreas.test.tsx` and there is no QuickSelection spec. So the ownership
-    // is guarded for one of the two, and the second is a live gap rather than a covered one.
-    //
-    // The fixture below is a selection this tool ITSELF commits, which is the part that makes
-    // this a tripwire rather than a paint test: it carries `ELLIPTICAL_SELECTION_SOURCE_TOOL`,
-    // not the polygonal lasso the shared fixture uses. That constant is `'magic-wand'`, and
-    // `drawSelectionAnchors` returns early on that source — so this exact fixture is the one
-    // that would render NOTHING if the call site were repointed at the anchors.
+  /**
+   * THE tripwire for the border's ownership — inverted, because the ownership moved.
+   *
+   * The ants canvas is the selection border for EVERY selection tool, this one included, and not
+   * for the polygon ones alone; the reasoning and Adobe's own selection-tools table behind that are
+   * `Main.tsx:39`-`:51`. So the claim here is a NEGATIVE one: a committed selection sitting in the
+   * store puts nothing on this overlay. The static stroke that used to stand here painted the same
+   * selection twice, in two colours on two canvases, and the second copy could not follow the
+   * pointer — which is why the move arm has no representation here at all and publishes instead.
+   *
+   * The fixture is a selection this tool ITSELF commits, carrying `ELLIPTICAL_SELECTION_SOURCE_TOOL`
+   * rather than the polygonal lasso the shared fixture uses, so that the case stays about the tool
+   * that produces the selection it is asked to ignore. `points` are NORMALIZED to the selection's
+   * own origin and `pos` offsets them (`getSelectionAbsolutePoints`), so its border would have been
+   * drawn at pos + points — the coordinate the first assertion below is written against, and the
+   * one a re-added stroke would come back with.
+   */
+  it('paints no committed border on the tool overlay, because the ants canvas owns it', () => {
     storeState.selections = [
       {
         ...coveringSelection(),
         sourceTool: ELLIPTICAL_SELECTION_SOURCE_TOOL,
-        // `points` are NORMALIZED to the selection's own origin and `pos` offsets them
-        // (`getSelectionAbsolutePoints`), so the drawn border is at pos + points — which is what
-        // the assertions below read. Writing absolute coordinates in both would double the offset
-        // and the test would pin the wrong border.
         pos: { x: 20, y: 30, width: 100, height: 60 },
         points: [
           { x: 0, y: 0 },
@@ -423,15 +448,129 @@ describe('EllipticalSelectionToolArea', () => {
     ];
     storeState.activeSelectionId = 'selection-1';
     const ctx = createOverlayContext();
-    render(<EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: ctx }} />);
+    const toolArea = renderArea(ctx);
 
-    // The dashed border: a path through every vertex, stroked once, with the marching dash that
-    // the polygon's border gave up when it moved to the ants canvas.
-    expect(ctx.moveTo).toHaveBeenCalledWith(20, 30);
-    expect(ctx.lineTo).toHaveBeenCalledWith(120, 30);
-    expect(ctx.lineTo).toHaveBeenCalledWith(120, 90);
-    expect(ctx.lineTo).toHaveBeenCalledWith(20, 90);
-    expect(ctx.closePath).toHaveBeenCalled();
+    // The mount repaint is the observation. Not one dash, not one vertex, not one `arc`: this
+    // overlay paints the live marquee or nothing at all.
+    expect(ctx.moveTo).not.toHaveBeenCalledWith(20, 30);
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.setLineDash).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+
+    // The control that makes those five mean something: the SAME context, on the SAME mount,
+    // strokes the dashed marquee as soon as a NEW ellipse is being dragged — and the committed
+    // selection's own corner is still absent from it. So the overlay is not silent because it
+    // cannot paint; it is silent about the committed border specifically.
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 60, clientY: 40 });
+
     expect(ctx.setLineDash).toHaveBeenCalledWith([6, 4]);
+    expect(ctx.stroke).toHaveBeenCalled();
+    expect(ctx.moveTo).not.toHaveBeenCalledWith(20, 30);
+  });
+
+  it('publishes the DRAGGED selection to the ants channel, and the release clears it', () => {
+    storeState.selections = [coveringSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    // The press alone publishes nothing: a preview exists only once a frame has run, and the ants
+    // have the committed selection to paint until then.
+    expect(readSelectionDragPreview()).toBeNull();
+
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
+    // `follow`, not `marquee`: the ants must keep showing THIS selection's border and hold its dash
+    // while it moves, rather than clearing their canvas for a draft nobody drew. And the geometry
+    // is the dragged one — the stored baseline was at (0, 0) and the pointer moved it by (20, 20).
+    expect(readSelectionDragPreview()).toEqual({
+      kind: 'follow',
+      selection: expect.objectContaining({
+        id: 'selection-1',
+        pos: { x: 20, y: 20, width: 200, height: 120 },
+      }),
+    });
+
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
+    // The slot is a module-level variable that outlives the gesture, so the release is what gives
+    // the ants their crawl back; a stale `follow` would freeze the border for every later tool.
+    expect(readSelectionDragPreview()).toBeNull();
+  });
+
+  it('clears the ants channel on the abort route, which leaves the store holding the un-moved band', () => {
+    storeState.selections = [coveringSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    // Read before the abort, so the `null` below is a clearing rather than a slot that was empty.
+    expect(readSelectionDragPreview()).not.toBeNull();
+
+    fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
+    expect(readSelectionDragPreview()).toBeNull();
+    // Nothing was committed either, and nothing needed to be: the store still shows the un-moved
+    // selection, so the ants pick its geometry up again the moment the preview above is gone.
+    expect(selectionEdits()).toEqual([]);
+  });
+
+  it('clears the ants channel on unmount, which is the route that looks least like a gesture', () => {
+    storeState.selections = [coveringSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    // Rendered here rather than through `renderArea` because this is the one case that needs the
+    // `unmount` handle; every other case only wants the element.
+    const { container, unmount } = render(
+      <EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: null }} />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    expect(readSelectionDragPreview()).not.toBeNull();
+
+    unmount();
+
+    // Nothing about an unmount looks like a pointer event, so this is the route that gets dropped
+    // when the other three are wired. The slot outlives the mount; an entry left in it would freeze
+    // the ants on a selection this tool no longer serves.
+    expect(readSelectionDragPreview()).toBeNull();
+  });
+
+  it('publishes NOTHING during a create gesture, so the committed border behind it keeps marching', () => {
+    storeState.selections = [cornerSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    const toolArea = renderArea();
+
+    // (100, 60) is outside the 20x20 committed polygon, so this press opens a draft and aims a
+    // NEW ellipse rather than moving the committed one.
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
+    // Silence, and it is deliberate: a new ellipse is a different shape from the committed one, so
+    // both are true at once and Photoshop shows both — the marquee on the overlay and the committed
+    // border crawling behind it. Publishing `marquee` instead would tell the ants to clear their
+    // canvas (`selection-drag-preview.ts:19`-`:21`, and the branch that reads it at
+    // `useSelectionAnts.ts:129`), and the committed border would blink out under the drag.
+    expect(readSelectionDragPreview()).toBeNull();
+    expect(draftDispatches()).toHaveLength(1);
+
+    // The control that makes the `null` above mean something: the press INSIDE the same committed
+    // polygon on the same mount is the move arm, and the very same reader returns its band. So the
+    // create arm is silent, not the channel.
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 30, clientY: 10 });
+
+    expect(readSelectionDragPreview()).toEqual({
+      kind: 'follow',
+      selection: expect.objectContaining({
+        id: 'selection-1',
+        pos: { x: 20, y: 0, width: 20, height: 20 },
+      }),
+    });
   });
 });

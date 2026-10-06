@@ -55,6 +55,21 @@ const fillGroup = ['paint-bucket', 'gradient'] as const satisfies readonly ToolN
 /** `O`: the whole toning flyout — the Dodge, the Burn and the Sponge, in Adobe's order. */
 const tonalGroup = ['dodge', 'burn', 'sponge'] as const satisfies readonly ToolName[];
 const penGroup = ['pen', 'freeform-pen', 'curvature-pen'] as const satisfies readonly ToolName[];
+/**
+ * `I`: the measurement-and-sampling tile.
+ *
+ * Adobe cycles the family with `Shift+I` and names five members — "Eyedropper, Color Sampler,
+ * Ruler, Note, and Count Tool I" (`src/tools/descriptions/eyedropper-draw.notes.md`) — of which this
+ * app has three. The two it does not have are absent from the group rather than listed as members it
+ * cannot select, because `cycleToolGroup` advances through whatever the array holds: a name that is
+ * not a working tool would make `Shift+I` land on `DummyToolArea`.
+ *
+ * The cycle ORDER is not Adobe's, because Adobe publishes no order for it: the Eyedropper leads
+ * because it is the tile's first entry, and a tile's name is its first entry, so leading with
+ * anything else would rename the tile and move every `tool-button-eyedropper` selector with it. The
+ * Color Sampler sits second because it is the other member that reads a pixel.
+ */
+const measurementGroup = ['eyedropper', 'color-sampler', 'ruler'] as const satisfies readonly ToolName[];
 
 /**
  * The tools whose options bar carries a tip, and the field each one spells it with.
@@ -122,6 +137,20 @@ export const AppKeyboardShortcuts = () => {
     goToTool(brushGroup.includes(toolName as (typeof brushGroup)[number]) ? toolName : 'brush');
   };
 
+  const selectMeasurementTool = (shiftKey = false) => {
+    const inGroup = measurementGroup.includes(toolName as (typeof measurementGroup)[number]);
+
+    if (shiftKey) {
+      const current = inGroup ? toolName : 'eyedropper';
+      goToTool(cycleToolGroup(current as ToolName, measurementGroup as readonly ToolName[]));
+      return;
+    }
+
+    // The unshifted key keeps a tool that is already in the group, which is what every other group
+    // selector in this file does: pressing `I` while the Ruler is selected stays on the Ruler.
+    goToTool(inGroup ? toolName : 'eyedropper');
+  };
+
   const selectLassoTool = (shiftKey = false) => {
     if (shiftKey) {
       const current = lassoGroup.includes(toolName as (typeof lassoGroup)[number]) ? toolName : 'freehand-lasso';
@@ -172,8 +201,8 @@ export const AppKeyboardShortcuts = () => {
         return;
       }
 
-      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
       goToTool('shape');
+      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
       return;
     }
 
@@ -182,8 +211,8 @@ export const AppKeyboardShortcuts = () => {
       return;
     }
 
-    patchToolArgs('shape', { figure: 'rectangle' });
     goToTool('shape');
+    patchToolArgs('shape', { figure: 'rectangle' });
   };
 
   const selectMarqueeTool = (shiftKey = false) => {
@@ -400,11 +429,23 @@ export const AppKeyboardShortcuts = () => {
     onKeyDown: () => goToTool('reposition'),
   });
 
+  // `shift: true` is required rather than optional: `matchesShortcut` compares `event.shiftKey`
+  // against the field whenever it is declared, so a shifted `I` would fall through to the plain
+  // registration without it — the omission the Eyedropper's own `appNotes` used to record as a
+  // divergence and no longer does.
   useKeyDownShortcut({
     key: 'i',
     mod: false,
     enabled: hasImage,
-    onKeyDown: () => goToTool('eyedropper'),
+    onKeyDown: (event) => selectMeasurementTool(event.shiftKey),
+  });
+
+  useKeyDownShortcut({
+    key: 'i',
+    mod: false,
+    shift: true,
+    enabled: hasImage,
+    onKeyDown: (event) => selectMeasurementTool(event.shiftKey),
   });
 
   useKeyDownShortcut({
@@ -584,17 +625,15 @@ export const AppKeyboardShortcuts = () => {
     onKeyDown: (event) => selectTonalTool(event.shiftKey),
   });
 
-  // The three tiles that hold a single tool get one plain registration each, exactly as
+  // The two tiles that hold a single tool get one plain registration each, exactly as
   // `t` and the old `w` did: there is nothing to cycle, so a `shift: true` twin would
   // select the same tool twice. Each key matches the `shortcut` on its `toolbar-mapping.ts`
-  // line — I for the eyedropper (:56), E for the eraser (:70), S for the clone stamp (:74).
-  useKeyDownShortcut({
-    key: 'i',
-    mod: false,
-    enabled: hasImage,
-    onKeyDown: () => goToTool('eyedropper'),
-  });
-
+  // line — E for the eraser (:70), S for the clone stamp (:74).
+  //
+  // `i` is NOT one of them and used to be: it was registered twice here and above with identical
+  // bodies, and the later registration won on `useKeyboardEvents`' last-registered-wins, so the
+  // earlier one was dead code. The pair that replaced the dead arm is the `I`-family cycle, and a
+  // tile's key belongs to the tile rather than to one member of it.
   useKeyDownShortcut({
     key: 'e',
     mod: false,
