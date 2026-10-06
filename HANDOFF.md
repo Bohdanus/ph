@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 191-192, 195-196, 200, 204, 208, 210-211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 191-192, 194-196, 200, 204, 208, 210-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5105,23 +5105,6 @@ rather than a bug fix:
 
 **Provenance.** Found by review of the Type tool against its own requirements document, not by a
 failing test: no current run trips it, which is exactly why the clamp was allowed to stand.
-
-## 194. Every button built on `buttonStyles.ts` has no keyboard focus indicator
-
-**Problem.** `PRIMARY_BUTTON`, `PRIMARY_BUTTON_LARGE`, `SECONDARY_BUTTON`, `SECONDARY_BUTTON_LARGE`
-and `ICON_BUTTON` all carry `focus:outline-none` and none carries a `focus-visible` replacement. Tailwind's
-`focus:` compiles to `:focus`, which outranks the user agent's `:focus-visible` outline, so the ring is
-removed and nothing restores it. A keyboard user tabbing through any panel that uses these styles gets
-no visible focus at all. `FontSelect`'s trigger gets it right in the same bar, which is what makes the
-omission look like an oversight rather than a deliberate style.
-
-**Affected.** `src/components/ToolbarsRight/buttonStyles.ts`. `SECONDARY_BUTTON`'s missing `disabled:`
-variant was a separate half of this and is fixed; the focus ring is not.
-
-**What would close it.** Add `focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2`
-(or an outline equivalent) to the five styles. Do NOT do it as a drive-by inside a feature change: it
-alters how every focused control renders, across panels that have nothing to do with each other, and
-the visual-regression baselines are recorded per panel. It wants its own change and its own check.
 
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 

@@ -8,13 +8,13 @@
  * Used for main actions (Apply, Save, Open File, etc.)
  */
 export const PRIMARY_BUTTON =
-  'rounded bg-blue-600 px-3 h-9 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none disabled:opacity-50';
+  'rounded bg-blue-600 px-3 h-9 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50';
 
 /**
  * Primary button style - for larger buttons
  */
 export const PRIMARY_BUTTON_LARGE =
-  'rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2';
+  'rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2';
 
 /**
  * Secondary button style - Light gray background, dark text
@@ -29,21 +29,15 @@ export const PRIMARY_BUTTON_LARGE =
  * been dragged yet, and there is no other signal on the control: a `disabled` attribute is invisible
  * to a sighted user and to a screenshot. The opacity matches `PRIMARY_BUTTON`'s, so the two styles
  * read as one system.
- *
- * The missing `focus:` ring is a REAL omission and is deliberately NOT fixed here: `focus:outline-none`
- * compiles to `:focus`, which outranks the user agent's `:focus-visible` outline, so every button
- * built on this style has no keyboard focus indicator at all. Repairing it repo-wide changes how every
- * focused control renders and needs its own change with its own visual-regression check, so
- * `HANDOFF.md` carries it rather than this file quietly growing a half-applied ring.
  */
 export const SECONDARY_BUTTON =
-  'rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Secondary button style - for larger buttons
  */
 export const SECONDARY_BUTTON_LARGE =
-  'rounded border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Toggle button style - shows active/inactive states
@@ -63,7 +57,7 @@ export const TOGGLE_BUTTON_INACTIVE =
  * Dark theme: gray-700 bg with gray text, hover to darker gray
  */
 export const ICON_BUTTON =
-  'rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-200 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
+  'rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-900';
 
 /**
  * Small toggle button style (like mirror buttons)
@@ -126,7 +120,7 @@ export const MENU_ITEM_BUTTON =
  * Dark theme: gray text, gray background, hover to darker gray
  */
 export const DIALOG_SECONDARY_BUTTON =
-  'mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-200 focus:outline-none dark:text-gray-400 dark:hover:bg-gray-600';
+  'mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:text-gray-400 dark:hover:bg-gray-600';
 
 /**
  * Transparent icon button on dark background (like history controls)
