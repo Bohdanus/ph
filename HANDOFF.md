@@ -4001,46 +4001,6 @@ a mechanical edit.
 
 ---
 
-## 163. Every paint stroke is bilinearly resampled, at DPR 1, because the layer box is fractional
-
-`src/util/draw.ts` — `pointsBoundingPos()`'s return — `src/tools/draw.ts` — `draw()`
-
-`pointsBoundingPos` returns `width: maxX - minX + 2 * lineWidth` with no rounding of any kind,
-and its inputs are pointer coordinates divided by the contain fit, so `pos.width` is generally
-fractional. `draw()` in `tools/draw.ts` then does `new OffscreenCanvas(size.width, size.height)`,
-whose
-constructor **truncates** — the mechanism `shapeGeometryBounds()`'s doc comment in
-`src/tools/shape.ts` already documents. The
-composite draws at the _untruncated_ size (`drawEvaluatedPresentation()` in
-`src/contexts/presentation-evaluator.ts`,
-`ctx.drawImage(bitmap, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height)`) with
-`imageSmoothingEnabled` at its default `true`, because nothing in the composite path sets it.
-
-So every brush, pencil and `penType: 'pen'` stroke is stretched by
-`pos.width / trunc(pos.width)` onto a fractional destination x. For a 200px pencil drag that is
-a 0.12% horizontal stretch — an order of magnitude weaker than the retina blur, and it bites
-hardest on exactly the 1–3px strokes, where the fixed sub-pixel destination offset is largest
-relative to the stroke.
-
-**This is in `CANVAS-RESOLUTION-PLAN.md`'s "Blast radius" table, in its "Paint algorithms —
-CLEAR — do not touch" row, and
-that row is wrong for this file.** The correct pattern is four lines away in concept and already
-in the tree: `shapeGeometryBounds()` in `src/tools/shape.ts` floors the origin and ceils the
-far edge, producing four integers.
-
-**Fix.** Round `pointsBoundingPos` outward the way `shapeGeometryBounds` does. Verify against
-the `test('… commits a stroke that spans the drag gesture')` cases in
-`e2e/paint-tool-pixels.spec.ts`, whose `edge.height < 30` is a **capture-pixel**
-measurement with no scale correction and is recorded in DPR-1 numbers — a 0.12% resample moves
-it, and it sits closest to its limit of anything in the suite.
-
-**Files.** `src/util/draw.ts` (`pointsBoundingPos()` and `drawPen()`), `src/tools/draw.ts`
-(`draw()`), `src/contexts/presentation-evaluator.ts` (`drawEvaluatedPresentation()`),
-`CANVAS-RESOLUTION-PLAN.md` (the "Blast radius" table), `e2e/paint-tool-pixels.spec.ts` (the
-`test('… commits a stroke that spans the drag gesture')` cases)
-
----
-
 ## 164. No stroke geometry is aligned to the pixel grid, so a 1px line is two half-grey rows
 
 `src/tools/shape.ts` — `setShapeCtx()`, `src/tools/draw.ts` — `setupDrawCtx()`, `src/util/draw.ts` —

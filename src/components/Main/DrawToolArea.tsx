@@ -5,7 +5,7 @@ import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/docume
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { drawLine, pointsBoundingPos } from '../../util/draw.ts';
+import { drawLine, pointsBoundingPosOutward } from '../../util/draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
@@ -131,7 +131,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     }
 
     const oldPoints = pointsRef.current.map((point) => canvasToDocumentPoint(point, documentFrame));
-    const pos = pointsBoundingPos({ points: oldPoints, lineWidth: args.lineWidth });
+    const pos = pointsBoundingPosOutward({ points: oldPoints, lineWidth: args.lineWidth });
     const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
 
     const finalArgs = { ...args, points: newPoints };
