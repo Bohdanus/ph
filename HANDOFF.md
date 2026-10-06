@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224, 226-227, 229-230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5731,39 +5731,6 @@ per-worktree audit trail before it can clear any refusal; until then, retain the
 behavior and do not use the global override as a workaround. Whether an agent may clear its own
 name at all is an architecture judgement and belongs to the operator. The global
 `--no-live-writers` override remains unsafe and is not a self-scoped release.
-
-## 225. The `mustNotPrune` veto is advertised in a refusal message and can never fire
-
-**The problem.** `dispose`'s refusal text tells a reader the way out of a disposal it is about to
-refuse: _"A curated finding sets `mustNotPrune`, which vetoes `dispose` as well as `land`. It
-records work git cannot see in a clean tree."_ The mechanism behind that sentence is real —
-`classify.mjs` reads `Boolean(curated?.mustNotPrune)` into `curatedBlocksPrune`, and
-`dispose-worktree.mjs` refuses `must-not-prune` on the same field. **No input sets it.**
-
-```bash
-node --input-type=module -e "import {CURATED} from './scripts/lib/worktree-inventory/curated.mjs'; \
-  console.log(Object.entries(CURATED).filter(([,v])=>Object.hasOwn(v,'mustNotPrune')))"
-# → []      (160 entries, 0 with the field)
-```
-
-The field was removed from every entry when the curated summary was re-derived from git — the
-reasoning recorded in `curated.mjs` is that the hand-maintained list was the thing that rotted.
-One entry that carried it retracts it explicitly, on the grounds that git now proves the work
-committed. So the guard is not wrong, and it is not a lie: it is a **guard with no reachable input**,
-and the removal deleted the branch that read it.
-
-**Why it matters.** This is the one mechanism standing between "git says this worktree is
-disposable" and a worktree holding work that exists nowhere else. The scenario it exists for is real
-and has happened — the 2026-10-01 incident was a worktree whose only copy of someone's work was
-uncommitted. Today the guard cannot catch it, because the only way to arm it is for a human to edit
-a source file by hand, and nothing tells them to.
-
-**What would close it.** `dispose` should offer the claim rather than assert it: when it refuses on
-liveness or staleness and the worktree has uncommitted or untracked content, say that arming
-`mustNotPrune` is what a human does, and where. That is a wording fix, it costs nothing, and it
-stops the refusal message from implying a path that requires hand-editing `curated.mjs`. Whether a
-subagent may ever set the flag is a separate question and belongs to the operator — the field
-records a _human_ claim, so a subagent setting it would make the guard self-served.
 
 ## 228. Every shape draws unfilled by default, and no entry records whether that is the ruling
 
