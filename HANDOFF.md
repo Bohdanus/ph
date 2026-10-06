@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5151,39 +5151,6 @@ variant was a separate half of this and is fixed; the focus ring is not.
 (or an outline equivalent) to the five styles. Do NOT do it as a drive-by inside a feature change: it
 alters how every focused control renders, across panels that have nothing to do with each other, and
 the visual-regression baselines are recorded per panel. It wants its own change and its own check.
-
-## 195. Alignment does nothing for point type, and the bar does not say so
-
-**Problem.** `renderText` anchors `align` INSIDE the box: for a point box, `boxLeft` is `x1 + TEXT_PADDING`
-and `boxRight` is `x2 - TEXT_PADDING`, and a point box is exactly `inkWidth + 2 * TEXT_PADDING` by
-construction. All three settings therefore compute the same `x`, so Left, Centre and Right render
-pixel-identically for every point draft — the control is live, focusable, and does nothing.
-
-This was investigated as a `calculateNewRect` defect and is NOT one. The growth arm in
-`calculateNewRect` is correctly gated on `requiredWidth > currentWidth`: it places the growth when the
-text outgrows a box that has no slack to distribute, and leaves the box alone when there is slack —
-because `renderText` then anchors within it. Moving that arm outside the guard was tried and reverted:
-it moves the box AND lets `renderText` anchor inside the moved box, so the ink shifts by twice the
-slack. The defect is the interaction, and there is nothing to fix in the geometry.
-
-**Affected.** `src/util/rect.ts` (`calculateNewRect`'s point arm) and `src/tools/text.ts`
-(`renderText`'s anchor). Both carry comments describing the division of labour. No test pins the
-no-op, which is why it survived.
-
-**What would close it.** Disable the control while the draft is point type and say why in the bar.
-Adobe answers the question this entry was holding open: "You can align type to one edge of a paragraph
-(left, center, or right for horizontal type). Alignment options are available only for paragraph
-type" (`formatting-paragraphs.html`), and "You can align and justify only paragraph text. To manage
-spacing for point text, convert it to paragraph text by selecting Type > Convert to Paragraph Text"
-(`setup-paragraph-formatting.html`). So the control is not merely ineffective for point type, it is not
-offered — the fix belongs in the bar, and the reconstruction to make is that this app offers it anyway.
-
-**The geometry is now pinned in the direction Adobe names.** `calculateNewRect`'s point arm recomputes
-the width on every call and keeps `x1` for all three alignments, so a point box hugs its ink and does
-not move. Two older tests pinned the opposite (`does not change width when text fits within the
-current width`, and `centers wider text for center align`); both were pins of behaviour Adobe
-contradicts and both are gone. Do not reintroduce an `align`-driven point box on the strength of the
-`HANDOFF.md` history above — the reconciliation it records was superseded.
 
 ## 197. Multi-layer bedrock conversion remains intentionally unavailable
 
