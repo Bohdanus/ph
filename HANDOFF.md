@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 208, 211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 208, 210-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5461,21 +5461,6 @@ for the right and bottom edges) and hit-test against `h2`. That removes the whol
 editor's hit area with two constants in one file, and it is also Adobe's arrangement. Shrinking the
 editor instead is the wrong direction: the editor's box has to BE the type box for the caret to land
 where the user clicked.
-
-## 210. `textareaRef` is dead state in the store
-
-**Problem.** The options bar's `<textarea id="text-input">` is gone, so `textareaRef` is written by
-`StoreContext` and read by nothing in `src/` or `e2e/` — a store field, a `useRef` and a default that
-exist to point at an element that no longer exists.
-
-**Affected.** `src/contexts/StoreContext.tsx` — the field on the store's shape, the `useRef` and the
-value returned; `src/__tests__/fixtures/store.ts`; `src/contexts/__tests__/StoreContext.test.tsx` and
-`StoreContext.reducer.test.tsx` (both enumerate the refs, so removing one changes a test about something
-else); `src/components/ToolbarsRight/Text/__tests__/Text.test.tsx`.
-
-**What would close it.** Delete the field and the four call sites. It was left rather than removed
-alongside the textarea because a concurrent session was editing `StoreContext.tsx`, and a three-line
-deletion resolved under merge pressure is a worse trade than a week of dead state.
 
 ## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
 
