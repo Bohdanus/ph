@@ -105,6 +105,8 @@ type FreshDragModifiers = {
 };
 
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
+const RECT_BORDER_DASH_LENGTH = 5;
+const RECT_BORDER_DASH_SPEED = 0.4;
 
 /**
  * CANVAS px throughout: every point, size and rect read or computed below — and every rect handed
@@ -145,6 +147,8 @@ export function useRect({
 
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
+  const borderAnimationFrameRef = useRef<number | null>(null);
+  const borderDashOffsetRef = useRef(0);
 
   /** Whether a pointer gesture this hook owns is in flight. See `beginGesture`. */
   const isGestureActiveRef = useRef(false);
@@ -183,6 +187,10 @@ export function useRect({
 
   const endGesture = useCallback(() => {
     isGestureActiveRef.current = false;
+    if (borderAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(borderAnimationFrameRef.current);
+      borderAnimationFrameRef.current = null;
+    }
     if (borderMode === 'while-dragging') clearSelectionDragPreview();
     // `borderMode` is the only dependency because it is the only thing here that is not a ref or a
     // module function, and no consumer of this hook ever changes it — three pass nothing and the
@@ -275,6 +283,35 @@ export function useRect({
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, dimensionsRef } =
     pointerPositionData;
+
+  function animateBorder() {
+    borderAnimationFrameRef.current = null;
+    if (borderMode !== 'while-dragging' || !isGestureActiveRef.current) return;
+
+    if (!isMouseDown.current || !rectUnsortedRef.current) {
+      if (rectUnsortedRef.current) drawMaskRef.current?.();
+      return;
+    }
+
+    const scale = dimensionsRef.current.scale;
+    const dashLength = RECT_BORDER_DASH_LENGTH / scale;
+    borderDashOffsetRef.current = (borderDashOffsetRef.current - RECT_BORDER_DASH_SPEED / scale) % (dashLength * 2);
+    drawMaskRef.current?.();
+    borderAnimationFrameRef.current = requestAnimationFrame(animateBorder);
+  }
+
+  function scheduleBorderAnimation() {
+    if (
+      borderMode === 'while-dragging' &&
+      isGestureActiveRef.current &&
+      isMouseDown.current &&
+      rectUnsortedRef.current &&
+      overlayRef.current?.getContext('2d') &&
+      borderAnimationFrameRef.current === null
+    ) {
+      borderAnimationFrameRef.current = requestAnimationFrame(animateBorder);
+    }
+  }
 
   /**
    * Where in the existing box a point lands, and NOTHING else — no decision, no recorded state.
@@ -420,10 +457,15 @@ export function useRect({
     if (borderMode === 'always' || (isGestureActiveRef.current && isMouseDown.current)) {
       ctx.strokeStyle = '#007bff';
       ctx.lineWidth = 2 / scale;
-      ctx.setLineDash([5 / scale, 5 / scale]);
+      ctx.setLineDash([RECT_BORDER_DASH_LENGTH / scale, RECT_BORDER_DASH_LENGTH / scale]);
+      ctx.lineDashOffset =
+        borderMode === 'while-dragging' && isGestureActiveRef.current && isMouseDown.current
+          ? borderDashOffsetRef.current
+          : 0;
       ctx.strokeRect(x, y, width, height);
     }
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
 
     // The handles stay in both modes, deliberately: they are the resize hit area and this hook's
     // only interactive affordance, and `'while-dragging'` stands the ants DOWN for the duration
@@ -697,6 +739,7 @@ export function useRect({
 
       calculateMaskRect(pendingPoint.current!);
       drawMask(true);
+      scheduleBorderAnimation();
     });
 
     return false;
