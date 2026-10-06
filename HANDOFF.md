@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -680,80 +680,6 @@ for mobile rather than copied across.
 
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx` — the `color-pickers` cluster,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
-
----
-
-## 59. Seven selection tools claim `creator: true` and cannot create anything
-
-**Problem.** `materializeLayer` trusts the `creator` flag as its only gate
-(`materialization.ts` — `sourceBitmap()`, the `processor?.creator` refusal). **Seven**
-`commit: 'selection'` entries claim it — `polygonal-lasso`, `freehand-lasso`,
-`rectangular-selection`, `elliptical-selection`, `quick-selection`,
-`single-row-marquee` and `single-column-marquee` (all seven in `toolProcessors.ts`
-— `toolProcessors`). The two marquee entries were added after this entry was first
-written and reuse `rectangularSelection`, so they are pass-throughs exactly as
-the rectangular marquee is. All seven processors are pass-throughs over a
-`bitmap` that is
-`undefined` on a creator call:
-
-```ts
-export const rectangularSelection =
-  ({ bitmap }: ProcessorToolParams) =>
-  () => [bitmap];
-```
-
-- `rectangular-selection`, `single-row-marquee`, `single-column-marquee`,
-  `elliptical-selection` and `quick-selection` → `[undefined]`, caught by
-  `if (!created) throw` (`materialization.ts` — `sourceBitmap()`), message blames
-  the tool. `ellipticalSelection.ts` and
-  `quickSelection.ts` are the same pass-through, so the second and third fail
-  identically.
-- `polygonal-lasso` / `freehand-lasso` with empty `points` → `copyPolygonToCanvas` returns a **1×1
-  canvas**, which is truthy, so the guard **accepts it** and the layer silently materializes blank.
-  With non-empty points it throws an unrelated `SelectionCanvasContextError`.
-
-**Why this is a landmine rather than a typo.** No production path reads the flag
-for a selection tool today, and the reason is named in code rather than inferred:
-`durableSourceKindForTool()` (`history-adapter.ts`) types only `text`, the six
-shape names and `draw`/`brush`/`pencil`, so a selection tool's layer source stays
-`legacy-tool`; `sourceBitmap()` throws on that kind, and
-`publishDurableNavigationPresentation()` (`StoreContext.tsx`) refuses the whole
-document before it reaches materialization. The converter agrees — the
-`'selection'` arm of `operationForTool` (`history-adapter.ts`) returns `null`, so
-a selection history item derives no durable operation at all. So the lie is
-invisible today and becomes live the moment any of those gates admits a selection
-source, which makes it a trap laid for whoever does that work.
-
-**Fix.** Drop `creator: true` from all seven. They are `commit: 'selection'` mutators, not creators.
-Every genuine creator was checked and honours its curried `params.size`; a repo-wide grep for
-`Math.random|Date.now|new Date(|performance.now|crypto.` across `src/tools/` returns **zero**, so the
-flag is a sound determinism signal wherever it is honestly set.
-
-**Test that fails without the fix.** For every entry claiming `creator: true`, call
-`imageProcessor({ size: { width: 8, height: 8 } })(args)` and assert a returned bitmap with finite
-`width`/`height` ≥ 1. Fails today for all seven, and for none of the honest creators.
-
-**Three pins assert the current roster, and each is a tripwire by its own admission.**
-`tool-processors.test.ts` — the `it('only labels source-creating tools as creators, and each creator
-commits as a source')` title hard-codes the 17-name creator roster including all seven and
-asserts `expect(['source', 'selection', 'raster']).toContain(commit)`, so it passes on the lie rather
-than catching it; the `it('hands a creator-param lasso call no source bitmap, because selection consumes
-one (the lasso entries in toolProcessors.ts)')` title records it in prose — "Both lasso tools are
-flagged creators, yet
-`selection` reads `bitmap` … The behaviour is pinned here so the registry/param-type mismatch stays
-visible"; and the `it('selects the polylasso processor for the lasso and the shape processor for
-figure variants')` title names `elliptical-selection` and `quick-selection` as "The two newer
-selection tools", which the two marquee entries have since overtaken. Delete or re-point all three in
-the same change as the fix.
-
-**Files.** `src/tools/toolProcessors.ts` — the `commit: 'selection'` entries,
-`src/tools/selection.ts` — `selection()`,
-`src/tools/rectangularSelection.ts` — `rectangularSelection()` (also the
-`single-row-marquee` and `single-column-marquee` processor),
-`src/tools/ellipticalSelection.ts` — `ellipticalSelection()`,
-`src/tools/quickSelection.ts` — `quickSelection()`,
-`src/contexts/materialization.ts` — `sourceBitmap()`,
-`src/tools/__tests__/tool-processors.test.ts` — the three roster pins named above
 
 ---
 
