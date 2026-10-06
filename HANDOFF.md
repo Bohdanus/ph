@@ -5710,18 +5710,27 @@ which left landed branches accumulating behind a gate nobody could open.
 
 **What the refusal does and does not tell you.** Only the **write** arm names a chat id, and it
 expires at `LIVE_WINDOW_MS`, thirty minutes. The **I/O** arm is `RECENT_IO_WINDOW_MS`, four hours,
-counts **reads** as well as writes, and prints "a chat" with no id. The **session** and **board**
-arms print no id either — `chatLive` is `session.directory` plus `time_updated`, and `liveAgent` is
-a board row, so neither is a record of a call inside the directory. `docs/ORCHESTRATION.md` —
+and comes from recent shell commands in the worktree; the separate `readHistory` is not part of
+`derivedLive`. The refusal still prints "a chat" for this arm because it does not identify the
+shell actor. The **session** and **board** arms print no id either — `chatLive` is `session.directory`
+plus `time_updated`, and `liveAgent` is a board row, so neither is a record of a call inside the
+directory. `docs/ORCHESTRATION.md` —
 §"`derived-live-writer` can refuse the session that is asking" — is the one home, and both skills
 defer to it rather than restating it.
 
 **What is missing.** A lever that is **safe**. The shape that would close this without weakening the
 guard is a self-scoped one: a refusal is cleared when the named `derivedChatIds` are **this session's
 own** ids and nothing else is live, recorded in `ownership.suppressed` beside the signals it
-overrode, so the file stays auditable rather than believed. Whether an agent may clear its own name
-at all is an architecture judgement and belongs to the operator. **A lever already exists and is not
-safe — see §224**, which is where that defect belongs.
+overrode, so the file stays auditable rather than believed. The current evidence is not sufficient
+to implement that safely: `resolveIdentity()` uses `KILO_RUN_ID`, which subagents inherit, while
+`rootSessionId()` rolls their calls up to the parent and the inventory emits no per-actor liveness
+for the worktree. A matching root id therefore cannot prove that a child is not still using it.
+Also, `ownership.suppressed` is a global flag for the all-worktree `--no-live-writers` override,
+not a per-worktree release record. A safe implementation needs actor-level recent activity and a
+per-worktree audit trail before it can clear any refusal; until then, retain the fail-closed
+behavior and do not use the global override as a workaround. Whether an agent may clear its own
+name at all is an architecture judgement and belongs to the operator. **A lever already exists and
+is not safe — see §224**, which is where that defect belongs.
 
 ## 224. `--now` with a future clock can still shift liveness and formerly defeated freshness
 
