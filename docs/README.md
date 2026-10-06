@@ -56,6 +56,7 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                                               |
 | [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
+| [`CHAT-ID.md`](CHAT-ID.md)                             | Resolving the host-native chat ID used in commit trailers                                   |
 | [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds                     |
 | [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent                                  |
 | [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under                                   |
