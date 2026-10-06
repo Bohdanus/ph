@@ -533,40 +533,6 @@ box instead of the window. That is the shape every one of them should take, via
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
 a moving letterbox before `e8f17ba` specified the line in document space.
 
-## P2 — the dialog spec's `documentSize` pins a read that no longer proves the resize happens
-
-`e2e/document-dialogs.spec.ts`
-
-The spec's claim is that the dialog's dimensions are the thing under test, and it pins the
-document size to prove the app resized its canvas to it. The read is real: the size comes
-off the canvas backing store rather than being assumed, and asserting it is what makes that
-read observable. But the resize it is taken to prove is not, and it is not close.
-
-Neighbouring `src/hooks/useApp.ts` resizes the same element at **two** sites —
-`handleImageCreate()` and `setImageFromUpload()` — and `createSnapshotSurface()` in
-`src/contexts/layer-renderer.ts` resizes it again. Neutering the call the
-spec's comment names, and leaving the other two live, turns all four dialog tests green.
-So a build in which `useApp`'s resize is dead still passes every one of them.
-
-The draft-outline wait in the same file has the same shape, one level up: it proves the
-DRAG happened, not that the commit did. The pixel containment assertion is what proves the
-commit, and it is the one that would fail if a resize were wrong.
-
-**Fix.** Pin the resize where it happens rather than at a distance: assert that the
-document canvas's backing store equals the size the dialog committed, after the resize path
-that owns it has run, and name which of the three sites the test is covering. Until then,
-`documentSize` proves the READ and the word "resized" in its comment is doing work the test
-does not do.
-
-> **Re-verification baseline, restated.** Every line-numbered citation in this file —
-> above and below this line — was re-derived against this tree as it stands after the
-> e2e campaign branch merged into main, by content match and not by offset arithmetic,
-> and the ones the merge moved were corrected. That is the whole authority behind the
-> numbers here: they describe one tree, and the next merge moves them again, so
-> re-derive a `file:NNN` from the claim before acting on it.
-
----
-
 ## P2 — a collapsed tool's selection assertion is GROUP-level, so it passes for any member of the collapsed set
 
 **Found 2026-09-30 while fixing the 17 `aria-pressed` failures, and it survives that fix.** The

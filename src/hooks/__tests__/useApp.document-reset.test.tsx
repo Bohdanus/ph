@@ -486,6 +486,19 @@ describe('the outgoing document fixture is one production could really have prod
 });
 
 describe('creating a new image kills the outgoing document history and layers', () => {
+  it('resizes the workspace canvas in handleImageCreate when creating a blank image', async () => {
+    const result = setup();
+    const canvas = result.current.store.canvasRef.current;
+    expect(canvas).not.toBeNull();
+
+    await act(async () => {
+      result.current.app.setBlankImage(BLANK);
+    });
+
+    expect(canvas?.width).toBe(BLANK.size.width);
+    expect(canvas?.height).toBe(BLANK.size.height);
+  });
+
   it('leaves nothing undoable or redoable and no outgoing state after setBlankImage', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
