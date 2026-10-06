@@ -417,11 +417,10 @@ describe('dispose preflight', () => {
     expect(codes(verdict)).toEqual(['board-unavailable', 'dirty-tree', 'sessions-unavailable']);
   });
 
-  it('accepts an inventory exactly at the age limit in either direction and refuses one millisecond past it', () => {
+  it('accepts a past inventory at the age limit but refuses any future timestamp', () => {
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS }) }).ok).toBe(true);
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS - 1 }) }).ok).toBe(false);
-    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS }) }).ok).toBe(true);
-    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS + 1 }) }).ok).toBe(false);
+    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + 1 }) }).ok).toBe(false);
   });
 
   it('refuses a future-dated inventory beyond the freshness limit', () => {
@@ -445,9 +444,9 @@ describe('inventory schema', () => {
   ])('refuses an inventory with a %s schema', (_label, doc) => {
     const path = writeFixture(`schema-${_label}.json`, JSON.stringify(doc));
     const inventory = readInventory('/repo', greenState(), { nowMs: NOW, path });
-    expect(inventory).toMatchObject({ ok: false, reason: 'missing', path });
+    expect(inventory).toMatchObject({ ok: false, reason: 'version', path });
 
-    expect(codes(green({ inventory }))).toContain('inventory-missing');
+    expect(codes(green({ inventory }))).toContain('inventory-version');
   });
 
   it('reads the current inventory schema', () => {
@@ -569,8 +568,11 @@ describe('dispose execution', () => {
 
   it('writes no anchor when even the slugged ref is invalid', () => {
     const { run, fs, calls } = harness({ 'check-ref-format refs/keep/disposed/weird': new Error('bad name') });
-    dispose('/repo', greenState({ branch: '(weird)', name: '(weird)' }), { run, fs });
+    const result = dispose('/repo', greenState({ branch: '(weird)', name: '(weird)' }), { run, fs });
     expect(calls.some((c) => c[0] === 'update-ref')).toBe(false);
+    expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
   });
 
   it('never passes --force or -f to worktree remove', () => {
@@ -792,6 +794,8 @@ describe('dispose execution', () => {
     expect(result.salvage.failed[0]).toContain('untracked.tar');
     // And the caller says so out loud rather than returning quietly.
     expect(result.steps.join('\n')).toContain('SALVAGE INCOMPLETE');
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
   });
 
   it('salvages nothing, and says so, when there is nothing uncommitted', () => {

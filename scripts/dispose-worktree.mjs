@@ -473,7 +473,7 @@ export function preflight({
     else refuse('not-in-inventory');
   } else {
     const offsetFromNowMs = nowMs - inventory.generatedAtMs;
-    if (!Number.isFinite(offsetFromNowMs) || Math.abs(offsetFromNowMs) > maxAgeMs) {
+    if (!Number.isFinite(offsetFromNowMs) || offsetFromNowMs < 0 || offsetFromNowMs > maxAgeMs) {
       refuse('inventory-stale', offsetFromNowMs, inventory.generatedAt);
     }
     if (!inventory.record) refuse('not-in-inventory');
@@ -915,9 +915,8 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
   } catch {
     return { ok: false, reason: 'unreadable', path };
   }
-  if (doc?.schemaVersion !== SCHEMA_VERSION) return { ok: false, reason: 'missing', path };
-  if (doc.schemaVersion !== SCHEMA_VERSION) {
-    return { ok: false, reason: 'version', version: doc.schemaVersion ?? null, path };
+  if (doc?.schemaVersion !== SCHEMA_VERSION) {
+    return { ok: false, reason: 'version', version: doc?.schemaVersion ?? null, path };
   }
   const generatedAtMs = Date.parse(doc.generatedAt);
   const record =
@@ -1264,6 +1263,17 @@ export function dispose(
   const ref = keepBranch ? null : anchor(cwd, gitState, { run });
   if (ref) steps.push(`anchored ${gitState.tip} at ${ref}`);
   else if (keepBranch) steps.push(`no anchor ref: the branch ${gitState.branch} is being kept`);
+  else {
+    steps.push(`KEPT worktree ${gitState.absolutePath}: could not create a recovery anchor`);
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: null,
+      salvage: null,
+      branchKept: false,
+    };
+  }
 
   const saved = salvage(cwd, gitState, { run, fs, tar });
   // NAMES WHAT, or says there was nothing. `salvaged  to /path` — an empty join
@@ -1272,6 +1282,17 @@ export function dispose(
   if (saved && saved.written?.length) steps.push(`salvaged ${saved.written.join(', ')} to ${saved.dir}`);
   else if (saved) steps.push(`salvaged nothing to ${saved.dir} (no patch and no archive had content)`);
   if (saved?.failed?.length) steps.push(`SALVAGE INCOMPLETE — ${saved.failed.join('; ')}`);
+  if (saved?.failed?.length) {
+    steps.push(`KEPT worktree ${gitState.absolutePath}: salvage was incomplete`);
+    return {
+      steps,
+      branchDeleted: false,
+      worktreeRemoved: false,
+      anchorRef: ref,
+      salvage: saved,
+      branchKept: keepBranch,
+    };
+  }
 
   // Catching git's refusal rather than propagating it. An uncaught throw here
   // produced a stack trace AFTER the anchor ref had already been written — an
