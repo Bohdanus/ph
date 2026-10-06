@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 226, 229-230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 226-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5838,38 +5838,6 @@ liveness or staleness and the worktree has uncommitted or untracked content, say
 stops the refusal message from implying a path that requires hand-editing `curated.mjs`. Whether a
 subagent may ever set the flag is a separate question and belongs to the operator — the field
 records a _human_ claim, so a subagent setting it would make the guard self-served.
-
-## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
-
-**Problem.** `src/contexts/useSelectionHistory.ts` builds both of its `SelectionSnapshot` baselines by
-hand — `{ selections: existing, activeSelectionId }` in `clearSelections()` and again in
-`commitSelection()` — where `existing` is the store's live `selections` array, not a copy of it. The
-same object is then stored in the legacy entry's `args.previousSelectionState` and passed as
-`currentSelections` to `planHistoryAppend()`, so one aliased array reaches both the legacy timeline
-and the durable `before` baseline.
-
-This contradicts the rule the shared helper already states. `selectionSnapshot()` in
-`src/contexts/selection-baseline.ts` is documented as "the clone both replay paths use to keep a
-selection snapshot off the legacy history args", and it deep-copies `points`, `pos` and `metadata`
-and freezes the wrapper, yet neither writer calls it.
-
-Nothing writes through the alias today, so this is latent rather than a live wrong answer:
-`COMMIT_DOCUMENT_EDIT` replaces `selections` with a fresh array instead of mutating the old one,
-`history-replay.ts` copies each selection when it replays `nextSelectionState`, and
-`history-adapter.ts` copies `currentSelections` and leans on the document's later deep freeze. The
-hazard is that the invariant is currently enforced by those three call sites' restraint rather than
-by the snapshot itself, and the recorded `before` is the one value a future in-place write would
-silently rewrite.
-
-**Affected.** `src/contexts/useSelectionHistory.ts` — the `previousSelectionState` construction in
-`clearSelections()` and in `commitSelection()`; `src/contexts/selection-baseline.ts` —
-`selectionSnapshot()`, which already owns the rule.
-
-**What would close it.** Route both baselines through `selectionSnapshot(existing, activeSelectionId)`.
-Leave `nextSelectionState` alone: its own comment records that `next` is deliberately the object this
-dispatch publishes, so freezing it would freeze live store state. A test asserting the recorded
-`previousSelectionState.selections` is not the same array reference as the store's would fail before
-the change and pass after it, which is the only shape of proof this needs.
 
 ## 228. Every shape draws unfilled by default, and no entry records whether that is the ruling
 
