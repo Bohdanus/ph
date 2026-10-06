@@ -88,6 +88,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
+import { SCHEMA_VERSION } from './lib/worktree-inventory/assemble.mjs';
 import { ACTION, LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import {
   abortCommand,
@@ -150,9 +151,15 @@ export const REFUSALS = {
   'derived-live-writer': (ids) =>
     `The inventory records this worktree as derived-live: ${ids} wrote a file in it inside the live window. \`classify.mjs\` reports \`live\` as false only when \`--no-live-writers\` suppressed it, so the \`dispose\` beside it is a suppression, not a clearance.`,
   'inventory-missing': () =>
-    'WORKTREES.json is absent. Run `node scripts/worktree-inventory.mjs` first — a disposal with no inventory is a guess.',
-  'inventory-stale': (age, generatedAt) =>
-    `WORKTREES.json was generated ${Math.round(age / 60000)} min ago (${generatedAt}), over the ${MAX_INVENTORY_AGE_MS / 60000} min limit. Re-run \`node scripts/worktree-inventory.mjs\` and read the new verdict; a decision about a live worktree is exactly the one that goes stale.`,
+    'WORKTREES.json is absent or uses an unsupported schema. Run `node scripts/worktree-inventory.mjs` first — a disposal without a current inventory is a guess.',
+  'inventory-stale': (offsetFromNowMs, generatedAt) => {
+    const relativeTime = !Number.isFinite(offsetFromNowMs)
+      ? 'at an invalid time'
+      : offsetFromNowMs < 0
+        ? `in ${Math.round(-offsetFromNowMs / 60000)} min`
+        : `${Math.round(offsetFromNowMs / 60000)} min ago`;
+    return `WORKTREES.json was generated ${relativeTime} (${generatedAt}), outside the ${MAX_INVENTORY_AGE_MS / 60000} min limit. Re-run \`node scripts/worktree-inventory.mjs\` and read the new verdict; a decision about a live worktree is exactly the one that goes stale.`;
+  },
   'not-in-inventory': () =>
     'The inventory has no entry for this worktree, so its action is unknown. Regenerate, or add a curated entry if it is a real finding.',
   'action-not-dispose': (action) =>
@@ -470,8 +477,10 @@ export function preflight({
     if (inventory?.reason === 'missing') refuse('inventory-missing');
     else refuse('not-in-inventory');
   } else {
-    const age = nowMs - inventory.generatedAtMs;
-    if (!Number.isFinite(age) || age > maxAgeMs) refuse('inventory-stale', age, inventory.generatedAt);
+    const offsetFromNowMs = nowMs - inventory.generatedAtMs;
+    if (!Number.isFinite(offsetFromNowMs) || Math.abs(offsetFromNowMs) > maxAgeMs) {
+      refuse('inventory-stale', offsetFromNowMs, inventory.generatedAt);
+    }
     if (!inventory.record) refuse('not-in-inventory');
     else {
       // `legacy` IS a disposal candidate, and the check that separates it from
@@ -892,7 +901,7 @@ function liveSignal(board, sessions) {
  * with different messages, because "absent" and "stale" call for different
  * next steps.
  */
-function readInventory(cwd, gitState, { nowMs = Date.now(), path = locateInventory(cwd) } = {}) {
+export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locateInventory(cwd) } = {}) {
   if (!existsSync(path)) return { ok: false, reason: 'missing', path };
   let doc;
   try {
@@ -900,6 +909,7 @@ function readInventory(cwd, gitState, { nowMs = Date.now(), path = locateInvento
   } catch {
     return { ok: false, reason: 'unreadable', path };
   }
+  if (doc?.schemaVersion !== SCHEMA_VERSION) return { ok: false, reason: 'missing', path };
   const generatedAtMs = Date.parse(doc.generatedAt);
   const record =
     (doc.worktrees ?? []).find((w) => realpathIfExists(w.absolutePath ?? w.path) === gitState.absolutePath) ?? null;

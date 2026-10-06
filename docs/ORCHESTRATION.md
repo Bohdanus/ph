@@ -565,7 +565,8 @@ re-read this file before the destructive command.
 
 It refuses, and says which signal refused, unless all of these hold:
 
-- the generated inventory is **less than 15 minutes old** and calls this
+- the generated inventory is **within 15 minutes of the current clock in either
+  direction** and calls this
   worktree `action: "dispose"` — or `action: "legacy"`, which permits removing
   the worktree while keeping the branch;
 - **no board claim, no board file lock and no live board agent** names it;

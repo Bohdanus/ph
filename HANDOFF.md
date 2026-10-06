@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 229-230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 226, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -5759,48 +5759,46 @@ overrode, so the file stays auditable rather than believed. Whether an agent may
 at all is an architecture judgement and belongs to the operator. **A lever already exists and is not
 safe — see §224**, which is where that defect belongs.
 
-## 224. `--now` with a future clock defeats both the liveness arm and the staleness arm of `dispose`
+## 224. `--now` with a future clock can still shift liveness and formerly defeated freshness
 
 **The problem.** `node scripts/worktree-inventory.mjs --now <ms>` is documented as "pin the
 clock, for reproducible output". `scripts/lib/worktree-inventory/assemble.mjs` computes
 `const effectiveNow = Math.max(nowMs, newestKnown)` — a clamp that bounds a **past** clock and
 lets a **future** one through untouched. Everything downstream is then evaluated against that
 clock: `classify()`'s recency tests (`hasRecentIo()`, and the `LIVE_WINDOW_MS` filter that builds
-`derivedChatIds`) see every signal as expired, and `generatedAt` is stamped with the same future
-value, so `dispose`'s freshness check `nowMs - inventory.generatedAtMs > maxAgeMs` computes a
-**negative** age and passes.
+`derivedChatIds`) can see signals as expired. `generatedAt` is stamped with the same future value.
+The disposal consumer now rejects timestamps more than `MAX_INVENTORY_AGE_MS` away in either
+direction, closing the direct freshness bypass, but a future pin within that tolerance can still
+shift the liveness verdict.
 
-**Reproduced on an unchanged tree.** `disposalCandidates` and `ownership.liveWriterCount` go from
+**Originally reproduced on an unchanged tree.** Before the consumer guard,
+`disposalCandidates` and `ownership.liveWriterCount` went from
 their honest values to `51` and `0`; the worktree running the measurement came back
 `derivedLive: false` with all four `liveSignals` false and `writeHistory.derivedChatIds: []`.
 **Only the far-side figures are stable** — with every window expired the candidate set is a pure
 git function, so 51 reproduces exactly; the honest-side count moves as the repository moves, and
 this session's own call counters rise every minute. Re-derive both halves. Worktrees the honest run classified `in-use` on a live
-`derivedLive` became disposal candidates. **It clears three refusals, not one, and the staleness hole is the wider of the two.** A future
-stamp makes `action-not-dispose` read as satisfied as well as `inventory-stale` and
-`derived-live-writer`, and `preflight()` returns `ok: true` with an empty failure list on a clean
-worktree. The two paths need different amounts of clock: **+2 seconds is enough for the staleness
-check alone**, because a negative age is never `> maxAgeMs`, while the liveness arm needs more than
-four hours. So the staleness hole is roughly 8 000× the easier one to fall into, and the two are
-independent — which is the argument for fixing the consumer side first.
+`derivedLive` became disposal candidates. **The previously vulnerable path cleared three refusals,
+not one.** A far-future stamp made `action-not-dispose` read as satisfied as well as
+`inventory-stale` and `derived-live-writer`, and `preflight()` returned `ok: true` with an empty
+failure list on a clean worktree. **A +2-second pin made the freshness age negative, but it remained
+inside the 15-minute freshness window;** shifting liveness far enough to clear the recorded signals
+needed more than four hours. The new consumer guard refuses future timestamps outside its freshness
+window without trusting the generator.
 
-**The clamp's stated purpose is backwards, and that matters for the fix.** `assemble.mjs` claims
+**The clamp's stated purpose is backwards, and that matters for the remaining fix.** `assemble.mjs` claims
 `Math.max(nowMs, newestKnown)` is what makes `--now` reproducible. It is not: a **past** pin is
 _discarded_ and replaced by the newest session row, so two different past pins produce two different
 `generatedAt` values. The clamp's real value is defensive — it stops a negative age from passing the
 liveness test — and any symmetric bound needs a written rule for what a pin is allowed to be, or
 `--now` becomes a no-op in one direction and a lie in the other.
 
-**What would close it.** Two changes, and the second holds even if another generator grows the
-flag. **First**, the smaller one: `dispose` should refuse an inventory whose age is outside the
-staleness ceiling in **either** direction — `Math.abs(nowMs - generatedAtMs) > maxAgeMs`, not the
-one-sided test — because a future stamp is the whole bypass and this does not require trusting the
-generator. One assertion pins it: `preflight()` with a `generatedAtMs` of `nowMs + 2_000` over a
-clean record must refuse as `inventory-stale`. **Second**, the generator: stop `generatedAt` being
-authoritative about time — emit the wall-clock stamp beside the pinned one and let every recency test
-read the pinned value, which makes a pin incapable of moving a freshness verdict and is what
-`assemble.mjs`'s own honesty rule already claims. That is a schema bump, and it must land with the
-`schemaVersion` check §225 asks for.
+**What would close it.** The consumer-side freshness check and its `preflight()` regression are
+now in place. The remaining generator fix is to make `generatedAt` a wall-clock stamp and keep the
+pinned time separate for reproducible recency calculations. This makes a pin incapable of moving a
+freshness verdict and is what `assemble.mjs`'s own honesty rule already claims. That is a schema
+bump, and `readInventory()` now rejects an inventory whose `schemaVersion` does not match the
+supported version.
 
 **Related, and the same shape.** The refusal message prints a chat id only when `derivedChatIds` is
 non-empty, which is the **write** arm alone; the `io`, session and board arms all print "a chat", and
@@ -5840,35 +5838,6 @@ liveness or staleness and the worktree has uncommitted or untracked content, say
 stops the refusal message from implying a path that requires hand-editing `curated.mjs`. Whether a
 subagent may ever set the flag is a separate question and belongs to the operator — the field
 records a _human_ claim, so a subagent setting it would make the guard self-served.
-
-## 226. `dispose` reads two record keys that it never checks a version for
-
-**The problem.** `dispose-worktree.mjs` gates its liveness refusal on
-`inventory.record.derivedLive === true || (writeHistory?.derivedChatIds ?? []).length > 0`. Both are
-**duck-typed**: an absent key is neither `true` nor a non-empty list, so it reads as safe. The
-inventory carries `schemaVersion`, but `dispose` never reads it — the string does not appear in the
-file at all — and `readInventory` performs no version check.
-
-Probed directly against `preflight()`:
-
-```
-record WITH derivedLive + derivedChatIds            → ok=false  [derived-live-writer]
-record WITHOUT derivedLive, no writeHistory          → ok=true   []
-record WITHOUT derivedLive, empty writeHistory      → ok=true   []
-```
-
-**Why it is still open.** `scripts/__tests__/dispose-worktree.test.mjs` writes `derivedLive`
-explicitly in every fixture, so no case covers its absence and the suite is green either way. The
-reachable path today is a `WORKTREES.json` written by a pre-`6eaeef6c` build, which is narrow — but
-the shape is the general one: **a consumer that reads two keys it does not version will eventually
-read a file where they are missing, and it will fail toward disposal rather than toward refusal.**
-Every other guard in this program fails closed.
-
-**What would close it.** `readInventory` should refuse a `schemaVersion` it does not recognise, the
-way it already refuses a missing or unreadable file, and the refusal should be the existing
-`inventory-missing` shape rather than a new code. Then the liveness keys may be read as an
-invariant instead of as a hope. This should land with the `generatedAt` half of §224, which is the
-same schema and the same file.
 
 ## 227. Two selection-history baselines record the store's live `selections` array instead of a copy
 
