@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 196, 200, 204, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -6117,38 +6117,3 @@ different rule than the ants use.
 `src/hooks/selection-drag-preview.ts` — `publishSelectionDragPreview()`
 
 ---
-
-## 230. Seven selection options bars label a deselect `Clear`, and the word is Adobe's pixel eraser
-
-**Problem.** The button that ends a selection is labelled `Clear` on every selection options bar:
-`RectangularSelection.tsx`, `EllipticalSelection.tsx`, `QuickSelection.tsx`, `MagicWand.tsx`,
-`FreehandLasso.tsx`, `FeatherMagneticLasso.tsx` and `SingleRowColumnMarquee.tsx` each render the
-label over a handler that calls `clearSelections()` (`useSelectionHistory.ts`), which publishes
-`appendSelectionClear()`. Nothing on that path deletes a pixel.
-
-`Clear` is not a neutral word here. In Photoshop it is `Edit > Clear`, which deletes the selected
-pixels, and none of the seven bars offers any other control that does — so a reader who knows the
-word reads this button as a destructive pixel operation on a bar that cannot perform one. Adobe
-names the deselect `Deselect` and puts it on `Ctrl+D`; no selection bar of Adobe's carries a
-`Clear`.
-
-**It is a label defect and nothing else, which is why every gate passes.** The handler is right,
-the disabled conditions are right, and no test fails: nothing measures the word. The orphan branch
-`docs/handoff-reconcile-landed-and-new` filed it under `204`, a number this file has since
-tombstoned for an unrelated entry, so merging that branch would either resurrect `204` or lose this
-defect. It is recorded here under a number of its own instead.
-
-**What is needed.** Rename the label to `Deselect` in all seven bars, in the same change. The call
-sites that pin the word move with it: `getByRole('button', { name: 'Clear', exact: true })` in
-`e2e/freehand-lasso.spec.ts` and `e2e/selection-gestures.spec.ts`, and
-`screen.getByRole('button', { name: 'Clear' })` in the seven bars' `__tests__`. `src/tools/descriptions/`
-describes the control by the same word and `docs/TOOLS.md` is generated from it, so the description
-source moves too.
-
-**Files.** `src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx`,
-`src/components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx`,
-`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx`,
-`src/components/ToolbarsRight/MagicWand/MagicWand.tsx`,
-`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
-`src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx`,
-`src/components/ToolbarsRight/SingleRowColumnMarquee/SingleRowColumnMarquee.tsx`
