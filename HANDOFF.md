@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 191-192, 195-196, 200, 204, 208, 210-211, 230 — deleted
+### Items 0, 2-3, 5-9, 11-14, 16-30, 33-44, 47-54, 58-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 191-192, 195-196, 200, 204, 208, 210-211, 230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4882,34 +4882,6 @@ reduction; `classifyBoundaryLoops()` is what separates outer contours from holes
 selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
 declines. The options-bar warning is an interim mitigation; keep this entry open until the selected
 geometry can represent and commit every matching region.
-
-## 186. A tool description says the Magic Wand cannot reach the top two thirds of Photoshop's colour range, and the code says it can
-
-**Problem.** The Magic Wand `appNotes` in `src/tools/descriptions/selection.ts` states that a
-"0–100 slider defaulting to 28 where Photoshop runs 0–255 from 32" means "the app cannot reach the
-top two thirds of Photoshop's color range". The implementation says otherwise.
-`getToleranceDistance()` in `src/util/flood-fill.ts` maps the slider across the full colour
-distance — the reading divided by one hundred, times `MAX_COLOR_DISTANCE`, which is the ceiling of
-the four-channel RGBA distance — so a reading of one hundred reaches every colour that can possibly
-match. That file's own header says this is what the top of the slider means.
-
-The claim is false as written, and it is not confined to the source: the note is data, so it is
-generated into `docs/TOOLS.md` under the Magic Wand tool. The checked-in per-tool specification
-therefore carries a false statement about the app's reach.
-
-**What survives, and is already recorded.** The metric really does differ from Adobe's scale — a
-four-channel Euclidean RGBA distance is not Adobe's — and the default differs from a figure
-`src/tools/descriptions/selection.ts` itself records as a third-party claim with no Adobe citation.
-Neither needs this entry.
-
-**Affected.** `src/tools/descriptions/selection.ts` — the Magic Wand record's `appNotes`, which
-`npm run docs:tools` then renders into `docs/TOOLS.md` — and `src/util/flood-fill.ts` —
-`getToleranceDistance()` and `MAX_COLOR_DISTANCE`, which are correct as they stand. The
-`fix/audit-falsehoods` branch leaves both untouched, so it does not own this.
-
-**What would close it.** Correct the note at source and regenerate. Do not widen the slider to match
-the sentence: the code is right about the range and the sentence is wrong about it, and "fixing"
-the code to agree with a false note would trade a documentation defect for a behavioural one.
 
 ## 187. The Brush's `Mode` row promises 29 blend modes and the bar renders 16
 
