@@ -3881,7 +3881,7 @@ assertions or add an accepted console error.
 it checks history and dimensions, not the post-crop bar's pixels).
 ---
 
-## 160. Dark is the shipped default, and one contrast pair below AA is invisible to the only gate that could see it
+## 160. The accessibility gate misses incomplete contrast checks and several live surfaces
 
 `ThemeContext.tsx` hard-codes `DEFAULT_THEME = 'dark'` and the
 `prefers-color-scheme` fallback is gone, so dark is what every first-time visitor sees. The e2e
@@ -3897,25 +3897,21 @@ asserts the
 green if every `dark:` Tailwind variant in the app stopped applying. No other spec exercises a
 single `dark:` class. **Nothing measures how dark renders.**
 
-**The defect that gap hides, measured.** The dock's collapse glyph is a single `«`/`»` character
-at `text-sm`, in the collapse-glyph `<button>` in `SidebarRight.tsx`:
+**The measured contrast failure is fixed.** The dock's collapse glyph is a single `«`/`»` character
+at `text-sm`, in the collapse-glyph `<button>` in `SidebarRight.tsx`. Its colors now exceed AA in
+both themes:
 
-- light: `text-gray-500` (#6b7280) on `bg-gray-200` (#e5e7eb) = **3.90:1**
-- dark: `dark:text-gray-400` (#9ca3af) on `dark:bg-gray-700` (#374151) = **4.06:1**
+- light: `text-gray-600` (#4b5563) on `bg-gray-200` (#e5e7eb) = **6.10:1**
+- dark: `dark:text-gray-300` (#d1d5db) on `dark:bg-gray-700` (#374151) = **7.00:1**
 
-WCAG AA for normal text is **4.5:1**, so this fails in both themes. axe cannot judge it: it returns
-`incomplete` on both with "Element content is too short to determine if it is actual text
-content", and `e2e/accessibility.spec.ts`'s header bullet records that **`incomplete` is never
-asserted** — as does the doc comment on `expectNoViolations()`, "attached but NOT asserted". So this is a live AA failure that the only accessibility gate
-in the repository structurally cannot see, and it is not a dark-only problem: dark being the
-default raises its visibility, it does not create it.
+WCAG AA for normal text is **4.5:1**. The glyph remains an axe `incomplete` check because its text is
+too short to evaluate, and `e2e/accessibility.spec.ts` does not assert the `incomplete` bucket. That
+is still a coverage gap: future contrast regressions on controls axe cannot judge can go unnoticed.
 
-**Fix.** Either raise the glyph's contrast above 4.5:1 in both themes (`dark:text-gray-300` on
-`gray-700` is 7.00:1, and it is the value `PANEL_TAB_CLASS` in `PanelGroup.tsx` already uses for the same surface), or
-give the button a real accessible name with a visible label and stop rendering the glyph alone as
-the only text. Then either assert the `incomplete` bucket in the axe helper or assert that a
-specific node is absent from it — a gate that logs a bucket it never checks reports "0 violations"
-about a page whose failing control it printed.
+**Remaining coverage work.** The dock glyph's visible contrast is corrected, but the automated
+gate still does not assert `incomplete`, and the live flyout and mobile toolbar findings below
+remain unaddressed. Update the stale accessibility-test header to describe the current scans and
+their limitations before relying on it as an audit record.
 
 ### Also live, and found while measuring the above
 
