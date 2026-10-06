@@ -165,6 +165,14 @@ export const REFUSALS = {
         : `${Math.round(offsetFromNowMs / 60000)} min ago`;
     return `WORKTREES.json was generated ${relativeTime} (${generatedAt}), outside the ${MAX_INVENTORY_AGE_MS / 60000} min limit. Re-run \`node scripts/worktree-inventory.mjs\` and read the new verdict; a decision about a live worktree is exactly the one that goes stale.`;
   },
+  'inventory-evaluation-stale': (offsetFromNowMs, evaluationAt) => {
+    const relativeTime = !Number.isFinite(offsetFromNowMs)
+      ? 'at an invalid time'
+      : offsetFromNowMs < 0
+        ? `in ${Math.round(-offsetFromNowMs / 60000)} min`
+        : `${Math.round(offsetFromNowMs / 60000)} min ago`;
+    return `WORKTREES.json evaluated liveness ${relativeTime} (${evaluationAt}), outside the ${MAX_INVENTORY_AGE_MS / 60000} min limit. Re-run \`node scripts/worktree-inventory.mjs\` without \`--now\`; a pinned clock cannot authorize disposal.`;
+  },
   'not-in-inventory': () =>
     'The inventory has no entry for this worktree, so its action is unknown. Regenerate, or add a curated entry if it is a real finding.',
   'inventory-not-prunable': () =>
@@ -475,6 +483,14 @@ export function preflight({
     const offsetFromNowMs = nowMs - inventory.generatedAtMs;
     if (!Number.isFinite(offsetFromNowMs) || offsetFromNowMs < 0 || offsetFromNowMs > maxAgeMs) {
       refuse('inventory-stale', offsetFromNowMs, inventory.generatedAt);
+    }
+    const evaluationOffsetMs = nowMs - inventory.evaluationAtMs;
+    if (
+      !Number.isFinite(evaluationOffsetMs) ||
+      evaluationOffsetMs < 0 ||
+      evaluationOffsetMs > maxAgeMs
+    ) {
+      refuse('inventory-evaluation-stale', evaluationOffsetMs, inventory.evaluationAt);
     }
     if (!inventory.record) refuse('not-in-inventory');
     else {
@@ -919,6 +935,8 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
     return { ok: false, reason: 'version', version: doc?.schemaVersion ?? null, path };
   }
   const generatedAtMs = Date.parse(doc.generatedAt);
+  const evaluationAt = doc.ownership?.asOf ?? null;
+  const evaluationAtMs = Date.parse(evaluationAt);
   const record =
     (doc.worktrees ?? []).find((w) => realpathIfExists(w.absolutePath ?? w.path) === gitState.absolutePath) ?? null;
   return {
@@ -927,6 +945,8 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
     path,
     generatedAt: doc.generatedAt ?? null,
     generatedAtMs: Number.isNaN(generatedAtMs) ? NaN : generatedAtMs,
+    evaluationAt,
+    evaluationAtMs: Number.isNaN(evaluationAtMs) ? NaN : evaluationAtMs,
     record,
   };
 }

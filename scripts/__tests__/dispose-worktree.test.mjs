@@ -90,6 +90,8 @@ function greenInventory(overrides = {}) {
     reason: null,
     generatedAt: new Date(NOW - 60_000).toISOString(),
     generatedAtMs: NOW - 60_000,
+    evaluationAt: new Date(NOW - 60_000).toISOString(),
+    evaluationAtMs: NOW - 60_000,
     record: {
       action: ACTION.DISPOSE,
       prunable: true,
@@ -423,6 +425,17 @@ describe('dispose preflight', () => {
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW + 1 }) }).ok).toBe(false);
   });
 
+  it('refuses any future pinned evaluation clock even when generation is current', () => {
+    const verdict = green({
+      inventory: greenInventory({ evaluationAtMs: NOW + 1 }),
+    });
+
+    expect(codes(verdict)).toContain('inventory-evaluation-stale');
+    expect(verdict.failures.find((failure) => failure.code === 'inventory-evaluation-stale').message).toContain(
+      'without `--now`'
+    );
+  });
+
   it('refuses a future-dated inventory beyond the freshness limit', () => {
     const verdict = green({
       inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS + 1 }),
@@ -441,8 +454,8 @@ describe('inventory schema', () => {
   it.each([
     ['missing', { generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
     ['unsupported', { schemaVersion: SCHEMA_VERSION - 1, generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
-  ])('refuses an inventory with a %s schema', (_label, doc) => {
-    const path = writeFixture(`schema-${_label}.json`, JSON.stringify(doc));
+  ])('refuses an inventory with a %s schema', (label, doc) => {
+    const path = writeFixture(`schema-${label}.json`, JSON.stringify(doc));
     const inventory = readInventory('/repo', greenState(), { nowMs: NOW, path });
     expect(inventory).toMatchObject({ ok: false, reason: 'version', path });
 
@@ -455,12 +468,14 @@ describe('inventory schema', () => {
       JSON.stringify({
         schemaVersion: SCHEMA_VERSION,
         generatedAt: new Date(NOW).toISOString(),
+        ownership: { asOf: new Date(NOW).toISOString() },
         worktrees: [],
       })
     );
     expect(readInventory('/repo', greenState(), { nowMs: NOW, path })).toMatchObject({
       ok: true,
       reason: null,
+      evaluationAtMs: NOW,
       record: null,
     });
   });

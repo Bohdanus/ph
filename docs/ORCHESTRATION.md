@@ -565,8 +565,8 @@ re-read this file before the destructive command.
 
 It refuses, and says which signal refused, unless all of these hold:
 
-- the generated inventory is **within 15 minutes of the current clock in either
-  direction** and calls this
+- the inventory's wall-clock `generatedAt` and evaluation time `ownership.asOf` are
+  **not in the future and no more than 15 minutes old**, and it calls this
   worktree `action: "dispose"` — or `action: "legacy"`, which permits removing
   the worktree while keeping the branch;
 - **no board claim, no board file lock and no live board agent** names it;
@@ -652,9 +652,10 @@ carrying `action: "dispose"` and `prunable: true` with every git fact correct. L
 the directory, and **say in the report that the removal is pending** — a harvest that reports its
 landing and silently leaves the directory is indistinguishable from one that forgot.
 
-**A flag does clear it, which is why a sweep must not reach for one.** `HANDOFF.md` §224 has the
-mechanism and the reproduction; the short form is that `--now` moves the clock every window is
-measured against, and a clock in the future expires them all.
+**A clock pin cannot authorize disposal.** `--now` may change a reproducible recency verdict, but
+`ownership.asOf` records the evaluation time separately from wall-clock `generatedAt`, and
+`dispose` rejects either timestamp if it is in the future or more than 15 minutes old. Regenerate
+without `--now` before disposing a worktree.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 

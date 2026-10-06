@@ -51,7 +51,7 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   --stdout            print the inventory instead of writing it
   --base <branch>     compare against <branch> (default: main)
   --window-hours <n>  chat window in hours (default: 24)
-  --now <ms>          pin the clock, for reproducible output
+  --now <ms>          pin recency evaluation; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
   --no-live-writers   declare that NO chat is writing to any worktree right now,
                       and record WHY in the file. Overrides the recency
@@ -383,6 +383,7 @@ function main() {
     return;
   }
 
+  const generatedAtMs = Date.now();
   const inventory = buildInventory({
     worktrees,
     root,
@@ -393,6 +394,7 @@ function main() {
     writeAudit,
     readAudit,
     nowMs,
+    generatedAtMs,
     chatWindowMs: windowMs,
     liveWindowMs: LIVE_WINDOW_MS,
     liveWritersSuppressed: opts.noLiveWriters,
@@ -446,20 +448,18 @@ function main() {
 }
 
 /**
- * Are two documents the same up to the moment they were generated?
+ * Are two documents the same apart from their generation and evaluation times?
  *
- * `generatedAt` is excluded, and it has to be. This file is a live snapshot of
- * a repository where agents are continuously messaging, so a byte comparison
- * fails on the timestamp alone and `--check` could never pass — a gate that
- * always fails is not a gate, it is noise that trains people to ignore it.
- * Everything else, including every per-worktree field and every chat state, is
- * compared.
+ * Both timestamps move on every ordinary run. The evaluation time is metadata
+ * for the recency decisions, while `generatedAt` is the freshness clock used by
+ * disposal. Every verdict and per-worktree field remains part of the comparison.
  */
 export function equivalent(aText, bText) {
   try {
     const strip = (text) => {
       const doc = JSON.parse(text);
       delete doc.generatedAt;
+      if (doc.ownership && typeof doc.ownership === 'object') delete doc.ownership.asOf;
       return JSON.stringify(doc);
     };
     return strip(aText) === strip(bText);
