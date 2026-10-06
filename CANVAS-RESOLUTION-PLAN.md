@@ -186,17 +186,17 @@ divide-by-zero.
 
 ## Blast radius
 
-| Area                                  | Files                                                                   | Verdict                         |
-| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------- |
-| Paint algorithms                      | 10 tool files + `util/draw.ts`                                          | **CLEAR — do not touch**        |
-| Export / persistence / clipboard      | 8 files + `export-canvas.ts`                                            | **CLEAR — decoupled at source** |
-| Pointer mapping                       | `usePointerPosition.ts`                                                 | CLEAR and correct; keep pinned  |
-| Unit conversion (text/shape/gradient) | 5 files                                                                 | CLEAR; no pt/px bug             |
-| Overlay chrome                        | `useAnts.ts`, `useSelectionAnts.ts`, `selection.ts`                     | **D3 — fixed**                  |
-| Option-bar thumbnails                 | 3 files                                                                 | **D2a — fixed**                 |
-| Display surfaces                      | `Main.tsx`, `layer-renderer.ts`, `useApp.ts`, `util/canvas.ts`          | **D2c — Phase 4, unblocked**    |
-| Export coupling                       | `DesktopHeader.tsx`, `MobileHeader.tsx`, `MobileMenuDrawer.tsx`         | **D2b — fixed, decoupled**      |
-| e2e export gates                      | `visual-regression.spec.ts`, `export/helpers.ts`, `image-comparison.ts` | **Must not weaken**             |
+| Area                                  | Files                                                                   | Verdict                                                |
+| ------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+| Paint algorithms                      | 10 tool files + `util/draw.ts`                                          | **CLEAR for DPR changes; integer bounds are separate** |
+| Export / persistence / clipboard      | 8 files + `export-canvas.ts`                                            | **CLEAR — decoupled at source**                        |
+| Pointer mapping                       | `usePointerPosition.ts`                                                 | CLEAR and correct; keep pinned                         |
+| Unit conversion (text/shape/gradient) | 5 files                                                                 | CLEAR; no pt/px bug                                    |
+| Overlay chrome                        | `useAnts.ts`, `useSelectionAnts.ts`, `selection.ts`                     | **D3 — fixed**                                         |
+| Option-bar thumbnails                 | 3 files                                                                 | **D2a — fixed**                                        |
+| Display surfaces                      | `Main.tsx`, `layer-renderer.ts`, `useApp.ts`, `util/canvas.ts`          | **D2c — Phase 4, unblocked**                           |
+| Export coupling                       | `DesktopHeader.tsx`, `MobileHeader.tsx`, `MobileMenuDrawer.tsx`         | **D2b — fixed, decoupled**                             |
+| e2e export gates                      | `visual-regression.spec.ts`, `export/helpers.ts`, `image-comparison.ts` | **Must not weaken**                                    |
 
 ## Adjacent findings from the original audit that this document does NOT carry
 
