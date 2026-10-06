@@ -862,10 +862,14 @@ export function legacyHistoryToDurable(
               .sort((left, right) => left.order - right.order)
               .map((layer, index) => [layer.id, index])
           );
-          const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
-          const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
-          remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
-          const orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
+          let orderByLayerId = order;
+          // Reordering a layer after itself preserves the runtime sequence.
+          if (afterWhichLayerId !== layerToMoveId) {
+            const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
+            const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
+            remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
+            orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
+          }
           operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
           if (enabled) {
             for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
