@@ -72,6 +72,19 @@ describe('the import of the handoff documents', () => {
     expect(first.dead).toContain('HANDOFF.md#4');
   });
 
+  it('reports duplicate headings and leaves their ambiguous origin unfiled', async () => {
+    writeFileSync(
+      join(dir, 'HANDOFF.md'),
+      ['## 79. First entry', '', 'First body.', '', '## 79. Second entry', '', 'Second body.'].join('\n')
+    );
+    const board = boardFor();
+    const result = await importDocuments({ board, files: ['HANDOFF.md'], cwd: dir });
+
+    expect(result.duplicates).toEqual(['HANDOFF.md#79']);
+    expect(result.created).toEqual([]);
+    expect(board.listIssues()).toHaveLength(0);
+  });
+
   it('takes no file locks for imported items', async () => {
     writeFileSync(join(dir, 'HANDOFF.md'), ['## 1. Something in a file', '', 'Fix `src/c.ts` now.', ''].join('\n'));
     const board = boardFor();
