@@ -5439,36 +5439,6 @@ merge_ — and there is no program behind it. **The disposition of the 12 unmerg
 the operator**, because only the operator may stop a writing chat, and that is deliberately not
 decided here.
 
-## 215. `kilo.jsonc` matches one spelling of the destructive commands it names, and the others return `allow`
-
-**Problem.** The permission table denies `git worktree remove` and `rm -rf` against a path containing
-`kilo/`, and puts `git branch -D` behind `ask`. Its own comment says `-D` "reaches a human rather
-than a silent block" — which reads as a property of force-deleting a branch and is a property of
-one token. Verified `allow` today:
-
-```
-git branch --delete --force <b>    semantically identical to -D, no prompt
-git branch -d -f <b>               split short flags
-git update-ref -d refs/heads/<b>   deletes a local branch, no flag at all
-git push origin --delete <b>       deletes the REMOTE branch
-git worktree prune                 drops registrations for vanished directories
-```
-
-`git branch -D` has in fact been executed twice in this repository against branches then lost
-outright. `update-ref -d` is the sharpest: no flag and no `-d`/`-D` distinction, so it deletes a
-local branch outright where a careful agent choosing `-d` would have been stopped by git's own
-unmerged-branch refusal.
-
-**Affected.** `kilo.jsonc` — the `permission.bash` table.
-
-**What would close it.** Literal-glob additions for the three local spellings, each with a comment
-naming the documented claim it protects, and a `kilo/`-scoped `deny` for `worktree prune`. **Say in
-the comment that this layer matches command strings and is a speed bump**, which
-`docs/ORCHESTRATION.md` already says; every demonstrated bypass here was spelling, not evasion.
-**Remote branch deletion is not an agent's call and is deliberately not listed** — it is the only
-one of the five whose loss is not recoverable from `refs/keep/disposed/`, and it belongs to the
-operator.
-
 ## 216. An agent cannot release its own recorded ownership, so `npm run dispose` refuses its own caller
 
 **Problem.** `collectOwnership()` keys every signal on the worktree's **absolute path** and never
