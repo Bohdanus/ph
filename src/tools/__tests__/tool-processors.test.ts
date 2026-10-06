@@ -289,7 +289,7 @@ describe('toolProcessors registry', () => {
     expect(toolProcessors.draw.replay.kind).toBe('source');
   });
 
-  it('marks only raster-producing tools as requiring raster', () => {
+  it('marks raster and selection processors as requiring raster', () => {
     const requiresRaster = processorNames.filter((toolName) => findToolProcessor(toolName)!.replay.requiresRaster);
 
     expect(requiresRaster.sort()).toEqual(
@@ -299,14 +299,21 @@ describe('toolProcessors registry', () => {
         'clone-stamp',
         'color-replacement',
         'dodge',
+        'elliptical-selection',
         'eraser',
         'feather-magnetic-lasso',
+        'freehand-lasso',
         'gradient',
         'magic-eraser',
         'magic-wand',
         'paint-bucket',
         'pencil',
+        'polygonal-lasso',
+        'quick-selection',
+        'rectangular-selection',
         'sharpen',
+        'single-column-marquee',
+        'single-row-marquee',
         'smudge',
         'sponge',
       ].sort()
@@ -381,25 +388,7 @@ describe('toolProcessors registry', () => {
     const creators = processorNames.filter((toolName) => findToolProcessor(toolName)!.creator);
 
     expect(creators.sort()).toEqual(
-      [
-        'brush',
-        'draw',
-        'ellipse',
-        'elliptical-selection',
-        'freehand-lasso',
-        'line',
-        'pencil',
-        'polygon',
-        'polygonal-lasso',
-        'quick-selection',
-        'rectangle',
-        'rectangular-selection',
-        'shape',
-        'single-column-marquee',
-        'single-row-marquee',
-        'text',
-        'triangle',
-      ].sort()
+      ['brush', 'draw', 'ellipse', 'line', 'pencil', 'polygon', 'rectangle', 'shape', 'text', 'triangle'].sort()
     );
     for (const toolName of creators) {
       expect(['source', 'selection', 'raster'], `${toolName} creator commit`).toContain(
@@ -491,9 +480,6 @@ describe('toolProcessors registry', () => {
     expect(featherSource).not.toBe(lassoSource);
     expect(magicWandSource).not.toBe(lassoSource);
     expect(rectSelectionSource).not.toBe(lassoSource);
-    // The two newer selection tools are `creator: true` like the rectangular marquee,
-    // but they are not the same module: reusing `selection` for either would hand an
-    // elliptical or region-growing tool the polygon's mask.
     expect(ellipseSelectionSource).not.toBe(lassoSource);
     expect(ellipseSelectionSource).not.toBe(rectSelectionSource);
     expect(quickSelectionSource).not.toBe(lassoSource);
@@ -1342,22 +1328,6 @@ describe('toolProcessors dispatch for every tool name', () => {
       expect(canvas.width, toolName).toBe(1);
       expect(canvas.height, toolName).toBe(1);
     }
-  });
-
-  it('hands a creator-param lasso call no source bitmap, because selection consumes one (the lasso entries in toolProcessors.ts)', () => {
-    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true`
-    // processor with `{ size }` only.
-    // Both lasso tools are flagged creators, yet `selection` reads `bitmap` from
-    // `ProcessorToolParams`, so the polygon copy is handed `undefined` on that path.
-    // The behaviour is pinned here so the registry/param-type mismatch stays visible.
-    const result = toolProcessors['polygonal-lasso'].imageProcessor({ size })({
-      ...defaultSettings['polygonal-lasso'],
-      points: lassoTriangle,
-    } as never);
-    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
-
-    expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
-    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(undefined, -2, -3);
   });
 
   it.each(['brush', 'pencil'] as const)('composites %s over the supplied input bitmap', (toolName) => {

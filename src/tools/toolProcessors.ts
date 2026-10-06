@@ -198,15 +198,13 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   'polygonal-lasso': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: selection,
   },
   'freehand-lasso': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: selection,
   },
@@ -224,8 +222,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   'rectangular-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
@@ -237,8 +234,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   // registered here.
   'elliptical-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: ellipticalSelection,
   },
@@ -249,22 +245,19 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
   'single-row-marquee': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   'single-column-marquee': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
   },
   'quick-selection': {
     commit: 'selection',
-    creator: true,
-    replay: replay('selection', false),
+    replay: replay('selection', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: quickSelection,
   },
