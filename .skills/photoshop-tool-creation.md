@@ -3753,9 +3753,9 @@ some project's `include`" step is a real constraint — a new file no project in
 type-checked by nothing, with no error anywhere. Scope it correctly, though: `tsc -b --listFiles`
 catches a file no project reaches but **not** one reachable only through its importers. And there
 are no coverage thresholds anywhere (`vitest.config.ts` — its `coverage` block, which declares no thresholds, `vitest.e2e.config.ts` — its `coverage` block);
-`--coverage` is for the report, not a percentage gate. The `dependency-review` job is gone, and the
-licence policy it read is written down in `DEPENDENCIES.md` and is not a gate — `npm audit` is the
-vulnerability half.
+`--coverage` is for the report, not a percentage gate. Dependency licence terms are not checked by
+CI; the README's dependency licensing note distinguishes that gap from `npm audit`, which checks
+vulnerability advisories.
 
 ### 8.6 The one rule
 

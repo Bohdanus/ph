@@ -61,7 +61,7 @@ const DEAD_WORD = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|la
  * rather than silently widening what the board will lock.
  */
 const ROOT_FILE_SHAPED =
-  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|DEPENDENCIES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
+  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
 
 /** The items a document still calls open: everything its dead set does not name. */
 function liveItems(parsed) {
