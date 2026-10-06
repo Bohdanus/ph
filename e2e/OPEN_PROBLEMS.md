@@ -503,12 +503,12 @@ mapping has to be inverted before such a literal is meaningful, and it is not. S
 asserts against whatever geometry the current layout happens to produce, and a layout change
 silently changes what is being tested rather than failing.
 
-**Three assertions still fail outright on a 1px change**, all in `e2e/responsive-shell.spec.ts`:
-`reclaims the layers column by default and offers a toggle for it` expects the expanded right panel
-at 250, `gives the canvas the space the collapsed panel freed` expects the panel's own width delta at
-250, and `has no tablet toggle and keeps the layers panel open` expects the collapsed panel at 250.
-Those are `toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same
-defect: a number written into a test is a pin on the layout, and the layout is not the subject.
+Three panel assertions in `e2e/responsive-shell.spec.ts` used to pin the right panel at 250px.
+The tests `reclaims the layers column by default and offers a toggle for it` and
+`has no tablet toggle and keeps the layers panel open` already prove visibility and state, so their
+numeric width reads have been removed. `gives the canvas the space the collapsed panel freed` now
+compares the canvas-width change to the panel's measured width. These changes remove the panel's
+three fixed-width pins; the broader document-space gesture migration remains open.
 
 **Two more were in this list and are gone.** The entry used to name five. The other two were the
 rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
@@ -520,7 +520,8 @@ the pattern the rest of this entry asks for: the tablet band's rail is now asser
 `e2e/responsive-shell.spec.ts`, and the two-column rail
 by a width RELATION the test measures against itself — one column against two, both measured in the
 same test, `keeps the layout toggle and can reach the two-column rail` in the same spec — so
-neither pins a pixel. The panel's 250 is the same defect and still needs the same treatment.
+neither pins a pixel. The panel-width pins have likewise been removed or made relational; the
+unconverted gesture inventory remains the open work.
 
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
