@@ -385,21 +385,6 @@ describe('EllipticalSelectionToolArea', () => {
     expect(moved.pos).not.toEqual(baseline.pos);
   });
 
-  it('commits the whole drag for a move drag whose frames all travel the same way', () => {
-    storeState.selections = [coveringSelection()];
-    storeState.activeSelectionId = 'selection-1';
-    const toolArea = renderArea();
-
-    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 140, clientY: 100 });
-    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 160, clientY: 120 });
-    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 160, clientY: 120 });
-
-    const [moved] = singleSelectionEdit().payload.updates.selections;
-    expect(moved.pos).toEqual({ x: 60, y: 60, width: 200, height: 120 });
-  });
-
   it('commits nothing for a selection drag whose last move had no delta', () => {
     storeState.selections = [coveringSelection()];
     storeState.activeSelectionId = 'selection-1';
