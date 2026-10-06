@@ -86,6 +86,13 @@ export function listWorktrees(cwd) {
   }));
 }
 
+export const PATCH_EQUIVALENCE = Object.freeze({
+  NOT_APPLICABLE: 'not-applicable',
+  ABSORBED: 'absorbed',
+  UNMERGED: 'unmerged',
+  UNKNOWN: 'unknown',
+});
+
 /**
  * Ahead/behind of a worktree's HEAD against `base`, as `{ ahead, behind }`.
  *
@@ -105,6 +112,53 @@ function aheadBehind(cwd, base) {
   return { ahead, behind };
 }
 
+/**
+ * Compare the branch's non-merge commits by patch identity, without changing
+ * the raw ancestry facts above. Merge commits are deliberately an unknown:
+ * `git cherry` does not emit them, so treating an all-minus result as proof
+ * would make a merge-only branch look safe to delete.
+ */
+function patchEquivalence(cwd, base, ahead) {
+  if (typeof ahead !== 'number' || ahead <= 0) return { status: PATCH_EQUIVALENCE.NOT_APPLICABLE, reason: null };
+
+  const mergeCount = git(cwd, ['rev-list', '--count', '--merges', `${base}..HEAD`]);
+  if (mergeCount === null) {
+    return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'could not count merge commits ahead of the base' };
+  }
+  const mergesAhead = Number.parseInt(mergeCount, 10);
+  if (!Number.isInteger(mergesAhead)) {
+    return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'git returned an invalid merge-commit count' };
+  }
+  if (mergesAhead > 0) {
+    return {
+      status: PATCH_EQUIVALENCE.UNKNOWN,
+      reason: `${mergesAhead} merge commit(s) ahead of the base cannot be compared safely by patch-id`,
+    };
+  }
+
+  const cherry = git(cwd, ['cherry', base, 'HEAD']);
+  if (cherry === null) {
+    return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'git cherry could not compare the branch to the base' };
+  }
+  const lines = cherry.split('\n').filter(Boolean);
+  if (lines.length !== ahead) {
+    return {
+      status: PATCH_EQUIVALENCE.UNKNOWN,
+      reason: `git cherry returned ${lines.length} commit(s), expected ${ahead}`,
+    };
+  }
+  if (lines.some((line) => line.startsWith('+ '))) {
+    return {
+      status: PATCH_EQUIVALENCE.UNMERGED,
+      reason: 'at least one branch commit has no equivalent patch on the base',
+    };
+  }
+  if (lines.every((line) => line.startsWith('- '))) {
+    return { status: PATCH_EQUIVALENCE.ABSORBED, reason: 'every branch commit has an equivalent patch on the base' };
+  }
+  return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'git cherry returned an unrecognised result' };
+}
+
 /** True when HEAD is reachable from `base`, i.e. the branch is already landed. */
 function isMergedInto(cwd, base) {
   try {
@@ -113,8 +167,10 @@ function isMergedInto(cwd, base) {
       stdio: 'ignore',
     });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // Exit 1 is git's ordinary "not an ancestor" answer. Other failures mean
+    // the comparison was not established and must not read as a negative fact.
+    return error?.status === 1 ? false : null;
   }
 }
 
@@ -201,15 +257,15 @@ function notOnBase(cwd, base, { modifiedPaths, untracked }) {
  */
 function workingTreeState(cwd, base) {
   const out = git(cwd, ['status', '--porcelain']);
-  // `read: false` SAYS THE COUNTS ARE NOT A FINDING. Returning zeros on failure
-  // is indistinguishable from a genuinely empty tree to every caller, and a
-  // corrupt index or a missing git state file produces exactly that. `prunable`
-  // already required `modified === 0 && untracked === 0` and so already read an
-  // unreadable tree as an empty one; that hole is older than the flag consuming
-  // it, and it is recorded rather than fixed here because changing what `prunable`
-  // means reaches every action. A caller that is about to AUTHORISE A REMOVAL
-  // needs the distinction this field carries.
-  if (out === null) return { modified: 0, untracked: 0, notOnBase: 0, paths: [], read: false };
+  if (out === null) {
+    return {
+      modified: 0,
+      untracked: 0,
+      notOnBase: 0,
+      paths: [],
+      statusError: 'git status --porcelain failed',
+    };
+  }
 
   const paths = [];
   const modifiedPaths = [];
@@ -228,7 +284,7 @@ function workingTreeState(cwd, base) {
 
   const offBase = base ? notOnBase(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
 
-  return { modified, untracked, notOnBase: offBase, paths, read: true };
+  return { modified, untracked, notOnBase: offBase, paths, statusError: null };
 }
 
 /** Subject line and dates of the branch's tip commit. */
@@ -338,7 +394,8 @@ export function collectWorktrees(cwd, { base = 'main' } = {}) {
   return worktrees.map((w) => {
     const { ahead, behind } = aheadBehind(w.path, base);
     const tree = workingTreeState(w.path, base);
-    const unmerged = typeof ahead === 'number' && ahead > 0;
+    const patches = patchEquivalence(w.path, base, ahead);
+    const unmerged = typeof ahead === 'number' && ahead > 0 && patches.status !== PATCH_EQUIVALENCE.ABSORBED;
 
     return {
       ...w,
@@ -347,12 +404,16 @@ export function collectWorktrees(cwd, { base = 'main' } = {}) {
       ahead,
       behind,
       mergedIntoBase: isMergedInto(w.path, base),
+      locked: Boolean(w.locked),
+      prunableReason: w.prunableReason ?? null,
       workingTree: tree,
       ...commitsAhead(w.path, base, ahead),
       // Only worth asking when there is something to merge. Asking about a
       // branch that is already on main, or a detached HEAD, produces a
       // meaningless answer that would be read as a real one.
       merge: unmerged ? mergeConflict(w.path, base) : { conflict: null },
+      patchEquivalence: patches.status,
+      patchEquivalenceReason: patches.reason,
       // Advisory, and deliberately not part of any verdict — see the note on
       // `historicalNameCollisions` for the inference it exists to block.
       nameCollisions: nameCollisions.get(w.branch) ?? [],
@@ -456,4 +517,11 @@ export function findMissingWorktrees(cwd) {
   return listWorktrees(cwd).filter((w) => !existsSync(w.path));
 }
 
-export const __testables = { aheadBehind, workingTreeState, tipCommit, isMergedInto, commitsAhead };
+export const __testables = {
+  aheadBehind,
+  patchEquivalence,
+  workingTreeState,
+  tipCommit,
+  isMergedInto,
+  commitsAhead,
+};
