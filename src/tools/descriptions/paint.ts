@@ -33,7 +33,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode the stroke composites with, offering the 27 layer blend modes — Dissolve among them — plus the two the painting tools add, Behind and Clear. Behind is the Brush's alone, and works only on a layer whose transparency is not locked. Default Normal.",
+          'The blend mode the stroke composites with. The app offers sixteen canvas compositing operations: Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color and Luminosity. Photoshop additionally offers Behind for the Brush and Clear for the painting tools, but those values are not present in this bar. Default Normal.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
@@ -174,7 +174,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode the stroke composites with, offering the 27 layer blend modes — Dissolve among them — plus Clear. Behind is the Brush's alone, so it is not offered here; Clear is offered to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command. Default Normal.",
+          'The blend mode the stroke composites with. The app offers sixteen canvas compositing operations: Normal, Darken, Multiply, Color Burn, Lighten, Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion, Hue, Saturation, Color and Luminosity. Photoshop additionally offers Clear for the Pencil, but that value is not present in this bar; Behind is Brush-only. Default Normal.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:131',
       },
