@@ -3,6 +3,7 @@ import React from 'react';
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
 import CloneStamp from '../components/ToolbarsRight/CloneStamp/CloneStamp.tsx';
+import RedEye from '../components/ToolbarsRight/RedEye/RedEye.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import ColorSampler from '../components/ToolbarsRight/ColorSampler/ColorSampler.tsx';
 import ColorReplacement from '../components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx';
@@ -111,6 +112,7 @@ export const toolsMap: ToolsMap = {
     toolboxComponent: QuickSelection,
   },
   'clone-stamp': { ...toolProcessors['clone-stamp'], icon: 'clone-stamp', toolboxComponent: CloneStamp },
+  'red-eye': { ...toolProcessors['red-eye'], icon: 'red-eye', toolboxComponent: RedEye },
   gradient: { ...toolProcessors.gradient, icon: 'gradient', toolboxComponent: Gradient },
   sharpen: { ...toolProcessors.sharpen, icon: 'sharpen', toolboxComponent: Sharpen },
   smudge: { ...toolProcessors.smudge, icon: 'smudge', toolboxComponent: Smudge },
