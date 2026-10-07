@@ -571,12 +571,15 @@ It refuses, and says which signal refused, unless all of these hold:
   the worktree while keeping the branch. `--keep-branch` explicitly allows an
   operator to remove a freshly inventoried `action: "at-risk"` worktree while
   retaining its branch;
+- it is not the base branch, even when the repository uses a bare primary
+  worktree and checks out the base branch in a linked worktree;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
 - its **working tree is clean** — re-read now, not taken from the inventory
   snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
   this exists for. With `--keep-branch`, tracked edits and untracked files are
-  instead archived under the common git directory before removal;
+  instead archived under the common git directory, cleared only after the
+  archive succeeds, and verified clean before removal;
 - it holds **no gitignored content that no command rebuilds**. `git status`
   honours `.gitignore`, so a tree holding only a `.env` reports itself clean and
   `git worktree remove` deletes it unconditionally. Build and dependency output
@@ -606,7 +609,8 @@ finding naming the chats that wrote inside the live window — which includes yo
 
 **There is no generic escape from inside the agent.** No `--force` exists — the CLI rejects the flag.
 `--keep-branch` is narrower: it only accepts a freshly inventoried `at-risk` action, archives
-tracked and untracked edits, and keeps the branch ref. It does not override `mustNotPrune`,
+tracked and untracked edits, clears them only after the archive succeeds, and keeps the branch
+ref. It does not override `mustNotPrune`,
 unreadable worktree state, ignored content, active ownership or in-progress operations.
 `undecided` is never eligible. `--max-age-minutes` is ceiling-clamped to the same 15 minutes the
 inventory-freshness check imposes. These options do not change ownership policy: board and session
