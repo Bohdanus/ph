@@ -53,7 +53,6 @@
  * not is the defect; an admitted gap is a fact.
  */
 
-import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 /** The directory this repository keeps its worktrees in. */
@@ -209,45 +208,13 @@ export function patchTargetPaths(patchText) {
 }
 
 /**
- * Open the session database, or return `null` when it is absent.
- *
- * The `node:sqlite` module does not support `CREATE TEMP INDEX`, so indexes
- * are created as regular indexes inside a transaction that is rolled back in
- * the caller's `finally` block. This speeds up the JSON-extraction scans
- * (~13.5s each over 428k rows) without mutating the external database file.
- * The connection is opened without `readOnly` to allow index creation.
+ * Open the session database read-only, or return `null` when it is absent.
  */
 function openDb(dbPath) {
-  if (!existsSync(dbPath)) return null;
-  let db;
   try {
-    db = new DatabaseSync(dbPath);
-    db.exec('BEGIN');
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_part_type ON part(json_extract(data, '$.type'));
-       CREATE INDEX IF NOT EXISTS idx_part_status ON part(json_extract(data, '$.state.status'));
-       CREATE INDEX IF NOT EXISTS idx_part_tool ON part(json_extract(data, '$.tool'));`
-    );
-    return db;
+    return new DatabaseSync(dbPath, { readOnly: true });
   } catch {
-    if (db) {
-      try {
-        db.exec('ROLLBACK');
-      } finally {
-        db.close();
-      }
-    }
-
-    // Indexes are an optimization; retain read access if DDL is unavailable.
-    let fallback;
-    try {
-      fallback = new DatabaseSync(dbPath, { readOnly: true });
-      fallback.exec('BEGIN');
-      return fallback;
-    } catch {
-      if (fallback) fallback.close();
-      return null;
-    }
+    return null;
   }
 }
 
@@ -701,7 +668,6 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindo
 
     return result;
   } finally {
-    db.exec('ROLLBACK');
     db.close();
   }
 }

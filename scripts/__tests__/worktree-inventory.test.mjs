@@ -1003,7 +1003,7 @@ describe('blocked-question detection', () => {
       'Pending question requests: questionID "que_0e49a9650001UM8oJl32u9X3ko"',
   });
 
-  it('extracts the question id from the escaped payload', async () => {
+  it('extracts the latest question id without changing the database schema', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-blk-'));
     const dbPath = join(dir, 'kilo.db');
     const db = new DatabaseSync(dbPath);
@@ -3263,7 +3263,7 @@ describe('the call history', () => {
       ...extra,
     });
 
-  it('rolls back temporary query indexes after the write audit', () => {
+  it('does not add query indexes to the session database', () => {
     const fx = makeSessionDb({});
     try {
       run(fx.dbPath);
