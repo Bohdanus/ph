@@ -4,7 +4,12 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
 import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
-import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import {
+  claimDocumentGesture,
+  isDocumentGestureOpen,
+  readDocumentGesture,
+  resetDocumentGestures,
+} from '../../../hooks/document-gesture.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -889,11 +894,16 @@ describe('PolygonClickToolArea', () => {
     it('claims the document for the length of a body drag and releases it on the release', () => {
       storeState.selections = [committedTriangle()];
       const toolArea = renderArea({ current: createMockContext() }).ctx;
+      const setPointerCapture = vi.fn();
+      const releasePointerCapture = vi.fn();
+      toolArea.setPointerCapture = setPointerCapture;
+      toolArea.releasePointerCapture = releasePointerCapture;
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 80, clientY: 40 });
 
       expect(isDocumentGestureOpen()).toBe(true);
       expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 7 });
+      expect(setPointerCapture).toHaveBeenCalledWith(7);
 
       fireEvent.pointerMove(toolArea, { pointerId: 7, clientX: 90, clientY: 55 });
       // Still held mid-drag, which is the entire window the gate exists for.
@@ -904,6 +914,27 @@ describe('PolygonClickToolArea', () => {
       // Released by the time `commitSelection` appends, so the keyboard is open
       // again for the entry this gesture just wrote.
       expect(isDocumentGestureOpen()).toBe(false);
+      expect(releasePointerCapture).toHaveBeenCalledWith(7);
+    });
+
+    it('does not capture or release a pointer when its document claim is refused', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+      const setPointerCapture = vi.fn();
+      const releasePointerCapture = vi.fn();
+      toolArea.setPointerCapture = setPointerCapture;
+      toolArea.releasePointerCapture = releasePointerCapture;
+
+      // A different owner already holds the document. The selection press must
+      // not record its pointer as if it owned the claim.
+      expect(claimDocumentGesture('brush-stroke', 11)).toBe(true);
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 80, clientY: 40 });
+      fireEvent.pointerUp(toolArea, { pointerId: 7, clientX: 80, clientY: 40 });
+
+      expect(setPointerCapture).not.toHaveBeenCalled();
+      expect(releasePointerCapture).not.toHaveBeenCalled();
+      expect(readDocumentGesture()).toEqual({ kind: 'brush-stroke', pointerId: 11 });
     });
 
     it('claims the document for an anchor drag, and releases it when the drag is cancelled', () => {
