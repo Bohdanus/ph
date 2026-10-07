@@ -410,6 +410,11 @@ node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, writ
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
+Inventory generation and `npm run inventory:verify` can take several minutes.
+Run either command asynchronously, continue only with independent work, and wait
+for that same run to finish before using its report. Do not start a duplicate
+while one is still running.
+
 ## What Git Is Doing Right Now
 
 A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
