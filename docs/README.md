@@ -37,6 +37,8 @@ The eight per-family research notes live outside this directory, one per tool fa
 `src/tools/descriptions/pen.notes.md`, `src/tools/descriptions/type-crop.notes.md`,
 `src/tools/descriptions/transform.notes.md` and `src/tools/descriptions/eyedropper-draw.notes.md`.
 They carry the per-family research notes and the claims `TOOLS.md` deliberately could not source.
+`src/tools/descriptions/view.notes.md` records the View tools' behavior, research sources, and
+deferred capabilities.
 
 And one requirements document outside this directory:
 `src/components/ToolbarsRight/Text/TEXT_TOOL_REQUIREMENTS.md`, the Type tool's requirements, in the

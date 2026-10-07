@@ -21,6 +21,7 @@ import {
   cloneLayerSnapshot,
   collectDurableAssetIds,
   freezeDurableDocument,
+  refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
@@ -1203,8 +1204,7 @@ export function createDurableDocument(
 
 export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
   const history = [...document.history.slice(0, document.cursor + 1), next];
-  return freezeDurableDocument({
-    ...cloneDurableDocument(document),
+  return refreezeDurableDocument(document, {
     history,
     cursor: history.length - 1,
     branchRevision: document.branchRevision + 1,
@@ -1218,8 +1218,7 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   const history = document.history.map((historyEntry, historyIndex) =>
     historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
   );
-  return freezeDurableDocument({
-    ...document,
+  return refreezeDurableDocument(document, {
     history,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
@@ -1230,5 +1229,5 @@ export function setDurableCursor(document: DurableDocument, cursor: number): Dur
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
   return cursor === document.cursor
     ? document
-    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
+    : refreezeDurableDocument(document, { cursor, durableRevision: document.durableRevision + 1 });
 }
