@@ -211,6 +211,12 @@ status` and `git diff` before staging.
   nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
   finds only the contested subset and reports the rest of a dropped commit as clean.
 
+  A modify/delete conflict explicitly resolved with `git rm` is not the same as a silent
+  `-s ours` discard, even though both leave HEAD and the result without a path. Git's
+  resolve-undo index records stages 1 and 3 for the resolved conflict, but no stage 2;
+  the guard accepts that explicit deletion. A `-s ours` merge leaves no resolve-undo
+  record, so its discarded incoming change is still refused.
+
   All three shapes are measured the same way — by asking whether a line the losing side
   committed is **absent** from the result, not by counting a diff. `--numstat` bills a
   moved line as one deletion plus one insertion, so a result that is a superset in content
