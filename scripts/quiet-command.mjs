@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 export function runQuiet(command, args, { cwd = process.cwd(), env = process.env } = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd, env, stdio: ['inherit', 'pipe', 'pipe'] });
-    let output = '';
+    const chunks = [];
     let finished = false;
 
     const capture = (chunk) => {
-      output += chunk;
+      chunks.push(chunk);
     };
     child.stdout.on('data', capture);
     child.stderr.on('data', capture);
@@ -19,8 +19,8 @@ export function runQuiet(command, args, { cwd = process.cwd(), env = process.env
       if (finished) return;
       finished = true;
       const status = code ?? (signal ? 1 : 0);
-      if (error) output += `${error.message}\n`;
-      if (status !== 0) process.stderr.write(output);
+      if (error) chunks.push(Buffer.from(`${error.message}\n`));
+      if (status !== 0) process.stderr.write(Buffer.concat(chunks));
       resolve(status);
     };
 

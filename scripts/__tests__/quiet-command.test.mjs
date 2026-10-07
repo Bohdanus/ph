@@ -47,9 +47,33 @@ describe('quiet-command', () => {
     expect(result.stderr).toEqual(Buffer.from([0xe2, 0x82, 0xac]));
   });
 
+  it('preserves split UTF-8 sequences across chunks', () => {
+    const result = run(
+      process.execPath,
+      '-e',
+      'process.stderr.write(Buffer.from([0xe2])); setImmediate(() => { process.stderr.write(Buffer.from([0x82,0xac])); process.exit(1); })'
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toEqual(Buffer.from([0xe2, 0x82, 0xac]));
+  });
+
   it('reports spawn errors with a nonzero status', () => {
     const result = run('this-command-does-not-exist-xyz');
 
     expect(result.status).toBe(1);
+  });
+
+  it('routes failure output to stderr and leaves stdout empty', () => {
+    const result = run(
+      process.execPath,
+      '-e',
+      "process.stdout.write('stdout-msg'); process.stderr.write('stderr-msg'); process.exit(2)"
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stdout.toString()).toBe('');
+    expect(result.stderr.toString()).toContain('stdout-msg');
+    expect(result.stderr.toString()).toContain('stderr-msg');
   });
 });
