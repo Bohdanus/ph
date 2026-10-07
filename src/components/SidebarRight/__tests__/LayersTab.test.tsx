@@ -15,7 +15,9 @@ vi.mock('../../Icons/TrashIcon.tsx', () => ({
 }));
 
 vi.mock('../../Icons/DragHandleIcon.tsx', () => ({
-  DragHandleIcon: () => <span data-testid="drag-handle" draggable="true" />,
+  DragHandleIcon: ({ disabled }: { disabled?: boolean }) => (
+    <span data-testid="drag-handle" data-disabled={disabled ?? false} />
+  ),
 }));
 
 const mockLayers: LayersRecord = {
@@ -683,6 +685,27 @@ describe('LayersTab drag and drop guards', () => {
     expect(dataTransfer.effectAllowed).toBe('move');
     expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-layer-id', 'layer-3');
     expect(dataTransfer.setDragImage).toHaveBeenCalled();
+  });
+
+  it('prevents the backing layer from being dragged or reordered', () => {
+    render(<LayersTab />);
+    const backingRow = getListItemFor('Background').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!;
+    const dataTransfer = createDataTransfer();
+    const event = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+
+    expect(backingRow).toHaveAttribute('draggable', 'false');
+    expect(backingRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+
+    act(() => {
+      fireEvent(backingRow, event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
+    expect(dataTransfer.setDragImage).not.toHaveBeenCalled();
+    expect(document.body).not.toHaveClass('cursor-grabbing');
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
   });
 
   it('resets the drag state and the grabbing cursor on drag end', () => {

@@ -516,9 +516,8 @@ the Delete key**." (Adobe, primary; corroborated by the Elements shortcut page a
   `LayersTab.tsx`) and it deletes
   immediately, with no confirmation path and no modifier. It is also available on a **bedrock**
   layer, which the `it('keeps remove control available for a bedrock layer')` case in
-  `LayersTab.test.tsx` pins as intended. **Fix the test with the change:** honouring
-  `isBedrock` in the panel ([§17](#17-priorities) row 1) removes this control from bedrock rows, so
-  that case will fail with an assertion that reads like a deliberate product decision.
+  `LayersTab.test.tsx` pins as intended. Honouring the backing layer's movement refusal does not
+  remove its delete control; it is not a Photoshop Background layer.
   The same hazard the `it('has no layer-opacity control, because the old one produced untitled
 unreplayable history entries')` case in `MobileLayersDrawer.test.tsx` carries for opacity is called
   out in [§14](#14-mobile).
@@ -540,7 +539,7 @@ Every panel requirement in this document reduces to a field. This is the table t
 
 | Photoshop concept | `Layer` field today                   | Status | Consequence of the gap                                                                                                     |
 | ----------------- | ------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Backing image     | `isBedrock`                           | `HAVE` | Enforced across the tool areas but **not in this panel** — [§12](#12-the-background-layer)                                 |
+| Backing image     | `isBedrock`                           | `HAVE` | Tool areas refuse edits and the desktop panel refuses drag-reordering — [§12](#12-the-background-layer)                    |
 | Background layer  | none                                  | `GAP`  | Not the same thing as `isBedrock`, which is the document's backing image                                                   |
 | Layer selection   | `selectedLayerIds` (proposed)         | `GAP`  | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                                        |
 | Visibility        | `visible: boolean`                    | `HAVE` | —                                                                                                                          |
@@ -688,17 +687,13 @@ From Background`, or clicking its padlock. (Adobe, primary.)
   `isEnabled` in `SmudgeToolArea.tsx`, `isEnabled` in `CloneStampToolArea.tsx`, `enabled` in
   `BurnToolArea.tsx`, `isEnabled` in `GradientToolArea.tsx`, `enabled` in `DodgeToolArea.tsx`, and
   `enabled` in `SpongeToolArea.tsx`, each disabling itself on a bedrock layer.
-- **`GAP` — and the panel is where the flag is not enforced, which is the actual finding.**
+- **`HAVE` — the desktop panel refuses to drag or reorder a bedrock row, matching the canvas's
+  refusal to move the backing layer.** The row remains selectable and removable; `isBedrock` is not
+  a Photoshop Background-layer model.
   `src/components/SidebarRight/LayersTab.tsx` uses `isBedrock` for the `canConvertBackground` gate
-  on the `Layer from Background` control; its only other occurrence is that button's comment. It
-  does not guard dragging, and
-  `moveLayerAfter()` (`src/contexts/useLayer.ts`) has no guard: `LayersTab.tsx` arms
-  **every** row `draggable` (`draggable={editingLayerId !== layer.id}`), and the trash control is on
-  every row including a bedrock one, with the `it('keeps remove control available for a bedrock
-layer')` case in `LayersTab.test.tsx` pinning that as _intended_. **The canvas refuses to move a
-  bedrock layer
-  and the panel will happily drag it**, which is the one place the panel is looser than the canvas —
-  and it is a contradiction inside the app, not a missing Photoshop feature.
+  on the `Layer from Background` control, and now guards drag start and reorder gestures for bedrock
+  rows. The delete control remains available by design; the panel does not treat the backing image
+  as a Photoshop Background layer.
 - `HAVE` — the desktop panel exposes `convertBedrockLayer()` for a lone bedrock record and records
   the conversion through the existing history boundary; the tonal tools still refuse the backing
   layer until that explicit action is taken.
@@ -782,19 +777,19 @@ Ordered by what each one unblocks, **not** by Photoshop's own order — which wo
 before the model that makes a thumbnail meaningful. Every row's prerequisite is either earlier in
 this table or explicitly marked as not blocking.
 
-| #   | Requirement                        | Unblocks                                                                                                                                                                                               |
-| --- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | **Honor `isBedrock` in the panel** | The canvas already refuses the gesture and the panel does not ([§12](#12-the-background-layer)). No new model needed                                                                                   |
-| 2   | **Layer kind discriminator**       | The `T` badge, the folder, the filter icons, the mask column, and every type-specific rule. One field, and half the visual requirements become reachable ([§9](#9-the-layer-model-the-panel-requires)) |
-| 3   | **Layer thumbnail**                | The most-read element in the panel, and the only one that makes a 60-stroke stack navigable ([§3](#3-layer-row-anatomy))                                                                               |
-| 4   | **Bottom action bar**              | New layer and delete-as-a-drag-target. **New layer and delete only** — the new-group button needs #8 ([§2.6](#26-the-bottom-action-bar))                                                               |
-| 5   | **Opacity + blend mode**           | The desktop opacity slider is implemented; blend mode remains a separate gap. Preset values remain unverified and are intentionally absent. ([§2.4](#24-blend-mode-and-opacity))                       |
-| 6   | **Lock controls**                  | Four flags, not one boolean. Unblocks the PSD lock round-trip ([§2.5](#25-the-lock-row-and-fill))                                                                                                      |
-| 7   | **Selection set**                  | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                                  |
-| 8   | **Group nesting**                  | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))                   |
-| 9   | **Panel menu + Panel Options**     | Routes Merge out of two tool bars and into the panel it belongs in ([§2.7](#27-the-panel-menu))                                                                                                        |
-| 10  | **Filter row**                     | Needs #2. Useless without it ([§2.2](#22-the-filter-row))                                                                                                                                              |
-| 11  | **The four arrange commands**      | Needs #7 for multi-layer move, and ships in #9's menu ([§6](#6-reorder))                                                                                                                               |
+| #   | Requirement                                 | Unblocks                                                                                                                                                                                               |
+| --- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Honor `isBedrock` in the panel** (`HAVE`) | The desktop panel now refuses to drag/reorder the backing layer, matching the canvas. No new model needed ([§12](#12-the-background-layer))                                                            |
+| 2   | **Layer kind discriminator**                | The `T` badge, the folder, the filter icons, the mask column, and every type-specific rule. One field, and half the visual requirements become reachable ([§9](#9-the-layer-model-the-panel-requires)) |
+| 3   | **Layer thumbnail**                         | The most-read element in the panel, and the only one that makes a 60-stroke stack navigable ([§3](#3-layer-row-anatomy))                                                                               |
+| 4   | **Bottom action bar**                       | New layer and delete-as-a-drag-target. **New layer and delete only** — the new-group button needs #8 ([§2.6](#26-the-bottom-action-bar))                                                               |
+| 5   | **Opacity + blend mode**                    | The desktop opacity slider is implemented; blend mode remains a separate gap. Preset values remain unverified and are intentionally absent. ([§2.4](#24-blend-mode-and-opacity))                       |
+| 6   | **Lock controls**                           | Four flags, not one boolean. Unblocks the PSD lock round-trip ([§2.5](#25-the-lock-row-and-fill))                                                                                                      |
+| 7   | **Selection set**                           | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                                  |
+| 8   | **Group nesting**                           | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))                   |
+| 9   | **Panel menu + Panel Options**              | Routes Merge out of two tool bars and into the panel it belongs in ([§2.7](#27-the-panel-menu))                                                                                                        |
+| 10  | **Filter row**                              | Needs #2. Useless without it ([§2.2](#22-the-filter-row))                                                                                                                                              |
+| 11  | **The four arrange commands**               | Needs #7 for multi-layer move, and ships in #9's menu ([§6](#6-reorder))                                                                                                                               |
 
 **This table is not a definition of done.** Not sequenced here: layer color labels, Fill,
 Background conversion and the `isBackground` concept, the panel-menu commands beyond Merge, layer
@@ -834,7 +829,7 @@ A requirement is not done until a test fails without the change. For this panel 
 | --------------------------- | -------------------------- | ------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Layer panel rows and scroll | yes                        | yes           | `HAVE`     |                                                                                                                                                                                                                                                           |
 | Live thumbnails             | yes                        | yes           | `GAP`      | `Layer.bitmap` is already a `BitmapSource`; the cost is a repaint per commit                                                                                                                                                                              |
-| Drag-to-reorder             | yes                        | yes           | `HAVE`     | See [§12](#12-the-background-layer) for the `isBedrock` hole                                                                                                                                                                                              |
+| Drag-to-reorder             | yes                        | yes           | `HAVE`     | Bedrock rows cannot be dragged or reordered; other rows remain reorderable                                                                                                                                                                                |
 | Mask thumbnails             | yes                        | yes           | `GAP`      | Needs a compositing change, not a platform one                                                                                                                                                                                                            |
 | Panel drag / re-dock        | Pointer Events             | yes           | `HAVE`     | `SidebarRight.tsx` — `SidebarRight`, whose `onPanelDragStart()` / `onPanelDrag()` / `onPanelDragEnd()` trio `renderPanel()` passes to `PanelGroup`                                                                                                        |
 | Color labels                | yes                        | yes           | `GAP`      |                                                                                                                                                                                                                                                           |
