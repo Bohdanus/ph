@@ -1340,6 +1340,31 @@ describe('classify: a curated legacy claim', () => {
     expect(v.action).toBe(ACTION.UNDECIDED);
   });
 
+  it.each([
+    ['an unknown branch identity', wt({ branch: null, ahead: 0, mergedIntoBase: true }), 'worktree branch identity'],
+    [
+      'an unreadable working-tree status',
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 0, paths: [], statusError: 'status failed' },
+      }),
+      'status failed',
+    ],
+    [
+      'an unresolved branch relationship',
+      wt({ ahead: null, behind: null, mergedIntoBase: null }),
+      'branch relationship to the base',
+    ],
+  ])('refuses a legacy verdict with %s', (_description, worktree, reason) => {
+    const v = of(worktree, LEGACY);
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain(reason);
+  });
+
   it('loses to a live agent, because somebody is working here right now', () => {
     const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
       chatSummary: noChats,
