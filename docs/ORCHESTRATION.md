@@ -416,6 +416,11 @@ asynchronously, continue only with independent work, and wait for that same run
 to finish before using its report. Do not start a duplicate while one is still
 running.
 
+Before using the inventory to decide ownership, inspect `dataSources`: a
+missing session database is reported as unavailable, not as proof that no chats
+exist. The inventory can still be generated with empty history; `dispose`
+refuses when it cannot read the session database or an existing board.
+
 ## What Git Is Doing Right Now
 
 A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
