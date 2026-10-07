@@ -4,7 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
-import type { LayerId } from '../../contexts/layer-types.ts';
+import type { Layer, LayerId } from '../../contexts/layer-types.ts';
 import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import { useApp } from '../../hooks/useApp.ts';
@@ -17,7 +17,58 @@ import {
   ICON_TOGGLE_BUTTON_HIDDEN,
   DELETE_BUTTON_ICON,
 } from '../ToolbarsRight/buttonStyles.ts';
-import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+
+type LayerOpacityControlProps = {
+  layer: Layer;
+  updateLayer: ReturnType<typeof useLayers>['updateLayer'];
+};
+
+function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
+  const [draftPercent, setDraftPercent] = useState<number | null>(null);
+  const opacityPercent = draftPercent ?? Math.round(layer.opacity * 100);
+
+  function finishGesture() {
+    const opacity = draftPercent;
+    setDraftPercent(null);
+    if (layer.locked || opacity === null) return;
+    const nextOpacity = opacity / 100;
+    if (layer.opacity !== nextOpacity) {
+      updateLayer(layer.id, { opacity: nextOpacity }, SET_LAYER_OPACITY_ACTION);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-2 px-1">
+      <span className="text-xs text-gray-600 dark:text-gray-300">Opacity:</span>
+      <details className="relative">
+        <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
+          {opacityPercent}%
+        </summary>
+        <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
+          <input
+            aria-label="Layer opacity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={opacityPercent}
+            disabled={layer.locked}
+            onChange={(event) => {
+              if (!layer.locked) setDraftPercent(Number(event.currentTarget.value));
+            }}
+            onPointerUp={finishGesture}
+            onPointerCancel={() => setDraftPercent(null)}
+            onKeyUp={finishGesture}
+            onBlur={finishGesture}
+            className="min-w-0 flex-1"
+          />
+          <output aria-live="polite">{opacityPercent}%</output>
+        </div>
+      </details>
+    </div>
+  );
+}
 
 export default function LayersTab() {
   const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
@@ -32,6 +83,11 @@ export default function LayersTab() {
   } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { goToTool } = useApp();
+
+  const isMovableLayer = (layerId: LayerId | null): layerId is LayerId => {
+    const layer = layerId ? layers[layerId] : null;
+    return Boolean(layer && !layer.isBedrock);
+  };
 
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
@@ -120,6 +176,8 @@ export default function LayersTab() {
   }
 
   function animateMove(layerToMoveId: LayerId, layerToPlaceAfterId?: LayerId) {
+    if (!isMovableLayer(layerToMoveId)) return;
+
     // Start shrinking layerToMove
     setAnimatingLayerId(layerToMoveId);
     setIsShrinking(true);
@@ -161,6 +219,7 @@ export default function LayersTab() {
 
   return (
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
+      {activeLayer && <LayerOpacityControl key={activeLayer.id} layer={activeLayer} updateLayer={updateLayer} />}
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
@@ -170,7 +229,10 @@ export default function LayersTab() {
             const isPickedLayer = draggedLayerId === layer.id;
             const prevLayerId = sortedLayers[index - 1]?.id;
             const isDropTarget =
-              dropTargetId === layer.id && dropTargetId !== draggedLayerId && prevLayerId !== draggedLayerId;
+              isMovableLayer(draggedLayerId) &&
+              dropTargetId === layer.id &&
+              dropTargetId !== draggedLayerId &&
+              prevLayerId !== draggedLayerId;
             const isEditable = editingLayerId === layer.id;
             const isAnimating = animatingLayerId === layer.id;
 
@@ -185,7 +247,7 @@ export default function LayersTab() {
                   ${isAnimating && isShrinking ? 'h-0 opacity-0' : 'h-10 opacity-100'} 
                   ${isAnimating && isExpanding ? 'animate-height-increase' : ''}`}
                 style={{
-                  cursor: 'grab',
+                  cursor: layer.isBedrock ? 'default' : 'grab',
                   top: isPickedLayer ? undefined : '-3px',
                   opacity: isPickedLayer ? 0.17 : undefined,
                   transform: isPickedLayer ? 'scale(1, 0.95)' : undefined,
@@ -195,9 +257,10 @@ export default function LayersTab() {
                 {isDropTarget && <div className="relative mb-1 h-2 bg-blue-500 rounded" />}
 
                 <div
-                  draggable={editingLayerId !== layer.id}
+                  data-testid="layer-row-content"
+                  draggable={!layer.isBedrock && editingLayerId !== layer.id}
                   onDragStart={(e) => {
-                    if (isEditable) {
+                    if (isEditable || !isMovableLayer(layer.id)) {
                       e.preventDefault();
                       return;
                     }
@@ -217,9 +280,11 @@ export default function LayersTab() {
                     setIsOverBottom(false);
                   }}
                   onDragOver={(e) => {
+                    e.stopPropagation();
+                    if (!isMovableLayer(draggedLayerId)) return;
+
                     setDropTargetId(layer.id);
                     setIsOverBottom(false);
-                    e.stopPropagation();
                     if (!draggedLayerId || !isDropTarget) return; // not allowed
 
                     e.preventDefault();
@@ -230,7 +295,7 @@ export default function LayersTab() {
                     setDropTargetId(null);
                     setIsOverBottom(false);
 
-                    if (!draggedLayerId || !isDropTarget) return;
+                    if (!isMovableLayer(draggedLayerId) || !isDropTarget) return;
 
                     e.preventDefault();
                     animateMove(draggedLayerId, layer.id);
@@ -261,7 +326,7 @@ export default function LayersTab() {
                     <EyeIcon open={layer.visible} />
                   </button>
 
-                  <DragHandleIcon disabled={isPickedLayer} />
+                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock} />
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
@@ -352,7 +417,7 @@ export default function LayersTab() {
         className="flex-1 min-h-[20px]"
         onDragOver={(e) => {
           e.stopPropagation();
-          if (!draggedLayerId) return;
+          if (!isMovableLayer(draggedLayerId)) return;
 
           e.preventDefault();
           setIsOverBottom(true);
@@ -364,7 +429,7 @@ export default function LayersTab() {
           setDropTargetId(null);
           setIsOverBottom(false);
 
-          if (!draggedLayerId) return;
+          if (!isMovableLayer(draggedLayerId)) return;
 
           e.preventDefault();
           animateMove(draggedLayerId);

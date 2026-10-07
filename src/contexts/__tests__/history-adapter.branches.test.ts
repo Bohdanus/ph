@@ -34,6 +34,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -1384,6 +1385,7 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'show', actionName: SHOW_LAYER_ACTION },
     { label: 'hide', actionName: HIDE_LAYER_ACTION },
     { label: 'rename', actionName: RENAME_LAYER_ACTION },
+    { label: 'set opacity', actionName: SET_LAYER_OPACITY_ACTION },
   ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('accepts $label', ({ actionName }) => {
     expect(isSetLayerPropertiesAction(actionName)).toBe(true);
   });
@@ -1411,6 +1413,12 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'hide', actionName: HIDE_LAYER_ACTION, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
     { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'an opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+      patch: { opacity: 0.42 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1451,6 +1459,20 @@ describe('deriveSetLayerPropertiesEntry', () => {
     expect(derive({ opacity: 1 })).toBeNull();
     expect(derive()).toBeNull();
   });
+
+  it.each([undefined, null, '0.5', Number.NaN, Number.POSITIVE_INFINITY, -0.01, 1.01])(
+    'derives nothing from an invalid opacity value (%s)',
+    (opacity) => {
+      expect(
+        deriveSetLayerPropertiesEntry({
+          id: 'opacity',
+          actionName: SET_LAYER_OPACITY_ACTION,
+          layerId: 'layer-1',
+          args: { opacity },
+        })
+      ).toBeNull();
+    }
+  );
 
   it('carries the disabled state of the legacy item onto the derived entry', () => {
     const derived = deriveSetLayerPropertiesEntry({

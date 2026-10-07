@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-212, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-212, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -429,79 +429,6 @@ is a **clone of this same repository** (identical `origin`, and this HEAD is a d
 
 **Files.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` (not
 tracked; gitignored under `.kilo/`), and the `Files` line of every entry named in the table above.
-
-## 56. Layer opacity has no writer, and the obvious one is discarded by replay without a word
-
-**Problem.** `Layer.opacity` is a required field (`src/contexts/layer-types.ts` — the `Layer`
-type moved out of `tool-types.ts`, which now only carries the tool-args types),
-PSD import populates and validates it (`src/contexts/psd-utils.ts` — `loadPsd()` populates it,
-`savePsd()` validates it), and the legacy renderer applies it
-(`layer-renderer.ts` — `drawLayer()`'s `ctx.globalAlpha`). **`materialization.ts` does not:** its
-`sourceBitmap()` blank arm sets `ctx.globalAlpha` from `source.opacity` — the BLANK SOURCE's own
-alpha, baked into that blank's pixels — and never reads the snapshot's opacity at all. That is why a
-materialization that applied the snapshot's opacity on top would double-apply an alpha the pixels
-already carry. `sourceToRuntimeLayer()` (`history-adapter.ts`) keeps the two models out of the
-argument by binding `opacity: 1`, so a converted layer's snapshot carries no layer-level alpha to
-double-apply; §92 states the remaining disagreements between the two rules. Nothing in the app ever
-writes it. There is no opacity control in the desktop shell, and the mobile layers
-drawer had one that was removed rather than shipped broken.
-
-**Why the obvious implementation is wrong.** A slider would reach for
-`updateLayer(id, { opacity }, TOOL_ACTION)`, because that is the signature every
-other layer property write uses (`src/contexts/useLayer.ts` — `updateLayer()`). It fails three
-times, all silently. `updateLayer` only plans a durable append when
-`isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
-whitelist, so the entry never gets a durable translation. `history-replay.ts` — `replayHistory()`
-reads `if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries
-no `toolName` in its args, so legacy replay skips it and the document after an undo
-diverges from the document before. And `getHistoryItemTitle`
-(`src/contexts/useHistory.ts` — `getHistoryItemTitle()`) returns `(args as ToolArgs).toolName` for
-a `TOOL_ACTION`, which is `undefined` here, so the history panel grows an untitled row
-per step. A slider drag writes one of each per step: dragging the handle to 50% would
-leave ~100 untitled, unreplayable entries in the timeline.
-
-**Fix — a real action, added to the existing layer-property path.** The rename /
-show / hide writer already reaches the append boundary, and it does so through a
-single canonical derivation that both conversion and the live writer share. Opacity
-belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
-
-- `src/util/constants.ts` — a `SET_LAYER_OPACITY_ACTION` next to
-  `SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION`/`RENAME_LAYER_ACTION`.
-- `src/contexts/history-model.ts` — add `opacity` to
-  `DurableLayerPropertyPatch`. The type is `Readonly<…>`, which is deliberate: it is
-  what stops a writer smuggling an arbitrary `Partial<Layer>` through the append
-  boundary as a patch the validator then has to re-derive.
-- `src/contexts/history-adapter.ts` — add the action to
-  `isSetLayerPropertiesAction()` and give `deriveSetLayerPropertiesEntry()` its branch.
-  Adding it to the first without the second makes `updateLayer` plan an append that
-  resolves to no durable entry, and it silently falls back to the raw patch.
-- `src/contexts/history-replay.ts` — the legacy arm in `replayHistory()` beside the
-  show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
-  `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
-  without it undo/redo leaves the document inconsistent.
-- `src/contexts/useHistory.ts` — `getHistoryItemTitle()` gets a real title. Not a
-  correctness fix: its
-  `return actionName` fallback already yields a non-empty string for a
-  purpose-built action, so the `undefined` above is specific to `TOOL_ACTION`. It
-  matters because `SHOW_LAYER_ACTION` and friends already render their raw constant
-  name in the History panel, and a fourth raw constant is a worse answer than a
-  fifth proper title.
-
-`updateLayer` itself needs no change: given a whitelisted action it already replaces
-the caller's patch with the canonical one from the planned durable entry.
-
-There is no longer an `UPDATE_LAYERS` shortcut to avoid: it was removed as an unguarded
-second writer surface, so `updateLayer` with a whitelisted action is the only way to set a
-layer property.
-
-**Files.** `src/contexts/layer-types.ts`, `src/contexts/useLayer.ts` — `updateLayer()`,
-`src/contexts/layer-renderer.ts` — `drawLayer()`,
-`src/contexts/history-model.ts` — `DurableLayerPropertyPatch`,
-`src/contexts/history-adapter.ts` — `isSetLayerPropertiesAction()` and
-`deriveSetLayerPropertiesEntry()`,
-`src/contexts/history-replay.ts` — `replayHistory()`, `src/contexts/useHistory.ts` —
-`getHistoryItemTitle()`,
-`src/contexts/psd-utils.ts`
 
 ## 60. The gesture gate still has one claim site that can strand the keyboard
 

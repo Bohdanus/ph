@@ -682,12 +682,11 @@ never creates a layer, unlike the Brush.
 **What Photoshop does.** Every layer carries an opacity the user sets, and a brush stroke paints
 into the layer that is already there.
 
-**What this app does.** Layer opacity has no writer: `Layer.opacity` is a required field
-(`layer-types.ts` — `Layer.opacity`), PSD import populates it (`psd-utils.ts` — the layer record
-`loadPsd()`'s `visit()` walk builds) and
-materialization applies it, and nothing in the app ever writes it. The defect and its
-blast radius are `HANDOFF.md` §56; it is recorded here only because closing it is
-not a small change.
+**What this app does.** `Layer.opacity` is a required field (`layer-types.ts` — `Layer.opacity`),
+populated by PSD import (`psd-utils.ts` — the layer record `loadPsd()`'s `visit()` walk builds).
+The desktop Layers panel now writes it through a dedicated, titled and replayable history action.
+The slider commits once per gesture; preset values remain unverified, and the mobile drawer
+intentionally has no opacity control.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the
 active one. `DrawToolArea` calls `createLayerFromTool` on commit
