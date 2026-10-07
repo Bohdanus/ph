@@ -80,6 +80,18 @@ describe('ErrorBoundary catches a throw', () => {
     expect(screen.getByTestId('sibling')).toBeInTheDocument();
   });
 
+  it('keeps fallback layout styles on the failed grid region', () => {
+    render(
+      <ErrorBoundary label="Canvas" fallbackClassName="relative overflow-y-auto" fallbackStyle={{ gridArea: 'main' }}>
+        <Thrower error={new Error('canvas context failed')} />
+      </ErrorBoundary>
+    );
+
+    const fallback = screen.getByTestId('error-boundary-fallback');
+    expect(fallback).toHaveClass('relative', 'overflow-y-auto');
+    expect(fallback).toHaveStyle({ gridArea: 'main' });
+  });
+
   it('reports the error and the React component stack under the boundary label', () => {
     const failure = new Error('canvas context failed');
     const consoleError = vi.mocked(console.error);
