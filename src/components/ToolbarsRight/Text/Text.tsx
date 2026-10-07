@@ -1,10 +1,10 @@
-import React, { type ChangeEvent, useRef } from 'react';
-import { calculateNewRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
+import React, { type ChangeEvent, type KeyboardEvent, useRef, useState } from 'react';
+import { calculateNewRect, reduceRect, sortRect, sortedRectToPos } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import { canvasToDocumentPos, documentFrameFromSize } from '../../../contexts/document-frame.ts';
+import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
 import {
   FONT_SIZE_MAX,
@@ -13,6 +13,7 @@ import {
   MIN_LINE_HEIGHT,
   TRACKING_MAX,
   TRACKING_MIN,
+  resolveTextKind,
   resolveTextStyle,
 } from '../../../tools/text.ts';
 import {
@@ -24,18 +25,30 @@ import {
 } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, textareaRef, totalSize, documentFrame: currentDocumentFrame, activeLayerId, layers }] =
-    useStore();
-  const { createLayerFromTool, replaceLayerSource } = useLayers();
+  const [{ canvasRef, totalSize, documentFrame: currentDocumentFrame, activeLayerId, layers }] = useStore();
+  const { createLayerFromTool, replaceLayerSource, cancelLayerPreview } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
+  /**
+   * The size the user is part-way through typing, or `null` when they are not editing.
+   *
+   * `null` is load-bearing rather than a convenience, and it is the same seam the polygon tool's
+   * `sides` field uses. It is how the input knows to show the PUBLISHED size instead of a draft, so
+   * every external change to `toolArgs.fontSize` — a tool switch, a settings reload, another control
+   * publishing the style — still repaints the field correctly, and how a blur with nothing typed is
+   * skipped instead of republishing the size the bar already had.
+   */
+  const [fontSizeDraft, setFontSizeDraft] = useState<string | null>(null);
 
   if (!isTextToolArgs(toolArgs)) {
     return null;
   }
 
   const style = resolveTextStyle(toolArgs);
+  const alignmentEnabled = resolveTextKind(toolArgs) === 'paragraph';
   const { text = '', rect = null, color } = toolArgs;
+  /** A placed box remains an edit session even after the user deletes every character. */
+  const editing = Boolean(rect);
 
   /**
    * Publishing a style change and the rectangle it implies as ONE call.
@@ -51,34 +64,62 @@ const Text: React.FC<{}> = () => {
     onChange({ ...newArgs, rect: calculateNewRect(newArgs, canvasRef, totalSize) ?? rect });
   };
 
-  const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    publishStyle({ text: event.target.value });
+  /**
+   * Publish the draft as a size — once the user is done with it, not on every keystroke.
+   *
+   * **A keystroke is not an edit.** Publishing from `onChange` meant the controlled field repainted
+   * itself mid-word, because every published value came straight back through `style.fontSize`:
+   * typing `64` over a `32` has to pass through `6`, `6` is in range, so `6` was published and the
+   * `4` landed in a field showing `6`. A leading `0` was worse — `0` clamps up to `FONT_SIZE_MIN`, so
+   * the field became `0.01` before the second digit arrived, and that digit landed after it. Nothing
+   * on screen said a keystroke had been rewritten, and the wrong size is what got published, drawn
+   * and committed.
+   *
+   * So the field holds the USER's string while they type and publishes the number only when they
+   * commit, which is how Photoshop's own Size field behaves: the size applies when you commit it,
+   * not as you cross a threshold on the way. `min`/`max` cannot do this job either — they are
+   * constraint-validation metadata, so the browser dispatches the change for an out-of-range value
+   * and marks the field `:invalid` rather than refusing the keystroke.
+   */
+  const handleFontSizeCommit = () => {
+    if (fontSizeDraft === null) return;
+    const draft = fontSizeDraft;
+    setFontSizeDraft(null);
+    // An EMPTY draft publishes NOTHING, and the reason is an operator, not a type: `Number('')` is
+    // `0`, which is finite, so a finiteness guard admits it and the clamp below turns a size the user
+    // was halfway through retyping into `FONT_SIZE_MIN`. `fill` cannot produce an empty value on its
+    // own, but BACKSPACE can, and a two-digit size cannot be typed without passing through one.
+    //
+    // The old size comes back because dropping the draft puts the published one back in the field —
+    // the controlled restore that used to be the whole of the mechanism, and that
+    // `e2e/text-tool.spec.ts` pins. It now happens on the way OUT of the edit rather than on every
+    // keystroke of it.
+    if (draft === '') return;
+    const requested = Number(draft);
+    if (!Number.isFinite(requested)) return;
+    // Clamped at COMMIT, so the store never holds a value `resolveTextStyle` would have to defend
+    // against a second time, and the field's next render shows what was actually published.
+    publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested)) });
   };
 
+  /**
+   * RAW, unclamped, and the empty string kept as-is — resolving it here is what repaints the field
+   * out from under the cursor mid-edit. See `handleFontSizeCommit`.
+   */
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const requested = Number(event.target.value);
-    // An EMPTY field is not `NaN`. `Number('')` is `0`, which is finite, so the old
-    // `Number.isFinite` guard let it straight through and the clamp below turned it into
-    // `FONT_SIZE_MIN` — publishing `fontSize: 0.01` the instant the user selected the value to
-    // retype it. The comment here used to claim the opposite ("refusing a non-finite value is what
-    // keeps an empty field from becoming a 0px font"), and `e2e/text-tool.spec.ts` repeated the
-    // false reasoning: `fill` cannot produce a value a number input will not accept, but BACKSPACE
-    // can, and a two-digit size can no longer be typed from scratch without passing through empty.
-    //
-    // So an empty field publishes NOTHING, and the field is CONTROLLED — `value={style.fontSize}` —
-    // which is the whole of how the old value comes back. React re-renders with the last published
-    // size as soon as the change event settles, so an emptied field snaps back to the value the user
-    // had, without any blur handler. There was one here, written to do that restore explicitly, and
-    // it was DEAD: `style` is `resolveTextStyle(toolArgs)`, which already folds `fontSize` into
-    // `[FONT_SIZE_MIN, FONT_SIZE_MAX]`, so its guard was true on every call and its body unreachable.
-    // `e2e/text-tool.spec.ts` asserted the restore "on blur" and passed for exactly the reason the
-    // handler was unnecessary.
-    //
-    // What this does NOT fix, and what a local draft state would: a size typed from scratch passes
-    // through the intermediate values, so typing `0` first publishes `FONT_SIZE_MIN` and the field
-    // rewrites itself before the second digit lands. `HANDOFF.md` carries that.
-    if (event.target.value === '' || !Number.isFinite(requested)) return;
-    publishStyle({ fontSize: Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, requested)) });
+    setFontSizeDraft(event.target.value);
+  };
+
+  const handleFontSizeKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleFontSizeCommit();
+    } else if (event.key === 'Escape') {
+      // Abandon the draft and leave the published size exactly as it was, which is only possible
+      // because nothing was published while the user was typing.
+      event.preventDefault();
+      setFontSizeDraft(null);
+    }
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -94,9 +135,11 @@ const Text: React.FC<{}> = () => {
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    // Through `publishStyle`, unlike colour and the two decorations: `calculateNewRect` has an
-    // alignment arm that re-centres or re-flushes a box the text outgrew, so a box re-placed by
-    // left and then switched to right is one the next measurement would move again.
+    // Through `publishStyle`, unlike colour and the two decorations. `calculateNewRect` has no
+    // alignment arm at all now — a POINT box hugs its ink and keeps its left edge for all three
+    // settings, because Adobe scopes alignment to paragraph type — but a PARAGRAPH box's width is
+    // the width the user dragged and alignment redistributes the ink inside it, so a box re-placed
+    // by left and then switched to right is one the next measurement would move again.
     publishStyle({ align: event.target.value as 'left' | 'center' | 'right' });
   };
 
@@ -136,19 +179,29 @@ const Text: React.FC<{}> = () => {
    * this function was the odd one out rather than the rule being wrong somewhere.
    */
   const applyText = () => {
-    if (!text || !rect) return;
+    if (!editing || !text || !rect) return;
     if (appliedArgsRef.current === toolArgs) return;
     const measuredRect = calculateNewRect(toolArgs, canvasRef, totalSize) ?? rect;
-    const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+    const editingLayerId = toolArgs.editingLayerId;
+    const activeLayer = editingLayerId ? layers[editingLayerId] : activeLayerId ? layers[activeLayerId] : undefined;
     const localPos = sortedRectToPos(sortRect(measuredRect));
     const pos = canvasToDocumentPos(localPos, currentDocumentFrame ?? documentFrameFromSize(totalSize));
+    const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
+    const committedArgs = { ...persistedArgs, placeholderUntouched: false, rect: measuredRect };
     const editsActiveLayer =
       activeLayer?.source?.kind === 'tool' &&
       activeLayer.source.args.toolName === 'text' &&
-      pos.x === activeLayer.pos.x &&
-      pos.y === activeLayer.pos.y;
+      (Boolean(editingLayerId) || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y));
     if (editsActiveLayer && activeLayer) {
-      replaceLayerSource(activeLayer.id, { kind: 'tool', args: { ...toolArgs, rect: measuredRect }, pos });
+      // Layer-LOCAL rect, as the create arm stores it and as the creator renders it: the raster is
+      // built at `pos` size and the type is drawn at the rect's own coordinates. An unreduced
+      // canvas-space rect therefore renders an EMPTY layer as soon as the document frame is not the
+      // origin. `commitDirtyTool`'s replace arm reduces for the same reason.
+      replaceLayerSource(activeLayer.id, {
+        kind: 'tool',
+        args: { ...persistedArgs, ...committedArgs, rect: reduceRect(sortRect(measuredRect), pos) },
+        pos,
+      });
     } else {
       // The re-entrancy guard is armed AFTER the create, not before it. Armed before, a throw from
       // `createLayerFromTool` left it armed against a `toolArgs` identity nothing has changed, so
@@ -156,34 +209,40 @@ const Text: React.FC<{}> = () => {
       // bricked, and no second attempt could recover it. Arming it after the create keeps the guard
       // doing its real job, which is a repeated invocation of THIS handler within one tick, without
       // letting a failure consume the user's next try.
-      createLayerFromTool({ args: { ...toolArgs, rect: measuredRect } });
+      createLayerFromTool({ args: committedArgs });
     }
     appliedArgsRef.current = toolArgs;
-    onChange({ ...toolArgs, text: '', rect: null });
+    onChange({ ...persistedArgs, text: '', rect: null });
   };
 
   const clear = () => {
-    onChange({ ...toolArgs, text: '', rect: null });
+    if (toolArgs.editingLayerId) cancelLayerPreview(toolArgs.editingLayerId);
+    const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
+    onChange({ ...persistedArgs, text: '', rect: null });
   };
 
   return (
-    <div className="flex flex-row items-center gap-4 h-full">
-      <div className="flex flex-col">
-        <div className="flex items-center gap-2">
-          <label htmlFor="text-input" className="text-[10px] mr-[-3px] font-medium text-gray-700 dark:text-gray-300">
-            Text
-          </label>
-          <textarea
-            ref={textareaRef}
-            id="text-input"
-            value={text}
-            onChange={handleTextChange}
-            placeholder={rect ? 'Enter text...' : 'Drag on the canvas to place text...'}
-            rows={2}
-            className="rounded border border-gray-400 bg-white px-1 py-0.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-300 dark:bg-white dark:text-gray-900 w-52"
-          />
+    <div className="flex flex-row items-center gap-4 h-full min-w-[1020px]">
+      {/*
+       * Adobe's ONE visible tell for edit mode, and the reason there is no text field here any more.
+       *
+       * "To determine whether a type tool is in edit mode, look in the options bar — if you see the
+       * Commit button and the Cancel button, the type tool is in edit mode"
+       * (https://helpx.adobe.com/photoshop/using/creating-type.html). The pair is the whole of it,
+       * and it is only rendered while a placed box is open: the rectangle remains the edit-session
+       * signal even when the user deletes all characters, so the bar and canvas keep the caret alive.
+       *
+       * The textarea this replaces was the app's answer to having no edit mode — "type into a field
+       * on the right, press Apply, get a raster layer" — and it was the largest fidelity gap in the
+       * tool: no caret, no placeholder, and a second place to look for the text. It is gone rather
+       * than hidden because a hidden field that still holds the draft's text is a second source of
+       * truth, and two inputs bound to one string fight over the focus.
+       */}
+      {editing && (
+        <div className="flex flex-col">
+          <span className="text-[10px] font-medium text-gray-700 dark:text-gray-300">Editing type layer</span>
         </div>
-      </div>
+      )}
 
       <div className="flex flex-col">
         <div className="flex items-center gap-2">
@@ -228,8 +287,13 @@ const Text: React.FC<{}> = () => {
           // be reached by the spinner or an arrow key at all. `any` is the honest answer for a
           // continuous quantity typed as a number, and it is what the value itself already was.
           step="any"
-          value={style.fontSize}
+          // The published size, unless a draft is in progress — see `handleFontSizeCommit`. Both
+          // halves are the control: `String(style.fontSize)` is what an external change to
+          // `toolArgs.fontSize` repaints through, and the draft is what a typist is looking at.
+          value={fontSizeDraft ?? String(style.fontSize)}
           onChange={handleFontSizeChange}
+          onBlur={handleFontSizeCommit}
+          onKeyDown={handleFontSizeKeyDown}
           className="w-24 h-9 rounded border border-gray-300 bg-white px-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>
@@ -309,6 +373,8 @@ const Text: React.FC<{}> = () => {
             id="align-select"
             value={style.align}
             onChange={handleAlignChange}
+            disabled={!alignmentEnabled}
+            aria-describedby={!alignmentEnabled ? 'align-help' : undefined}
             className="rounded border border-gray-300 bg-white px-1 h-9 text-sm focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
           >
             <option value="left">Left</option>
@@ -316,6 +382,11 @@ const Text: React.FC<{}> = () => {
             <option value="right">Right</option>
           </select>
         </div>
+        {!alignmentEnabled && (
+          <span id="align-help" className="sr-only">
+            Alignment is available for paragraph text only
+          </span>
+        )}
       </div>
 
       {/*
@@ -399,14 +470,25 @@ const Text: React.FC<{}> = () => {
         </button>
       </div>
 
-      <div className="flex gap-2 ml-2">
-        <button className={PRIMARY_BUTTON} disabled={!text || !rect} onClick={applyText}>
-          Apply
-        </button>
-        <button className={SECONDARY_BUTTON} disabled={!text || !rect} onClick={clear}>
-          Clear
-        </button>
-      </div>
+      {editing && (
+        <div className="flex gap-2 ml-2">
+          {/*
+           * `Commit` and `Cancel`, in that order and both only in edit mode.
+           *
+           * `Cancel` is a discard, which is what Adobe's is: "To cancel the changes, click the Cancel
+           * button in the options bar" (https://helpx.adobe.com/photoshop/using/editing-text.html).
+           * Neither is `disabled` while a draft is open, because `editing` already means a draft is
+           * open — the `disabled={!text || !rect}` this replaces was the old half-gate, and it was
+           * reachable only because the field could be emptied, which it no longer can.
+           */}
+          <button className={PRIMARY_BUTTON} disabled={!editing || !text} onClick={applyText}>
+            Commit
+          </button>
+          <button className={SECONDARY_BUTTON} disabled={!editing} onClick={clear}>
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 };

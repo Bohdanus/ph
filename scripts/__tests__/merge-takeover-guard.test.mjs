@@ -5,7 +5,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GuardError, findTakeovers, main, resolveIncomingRef } from '../merge-takeover-guard.mjs';
+import {
+  GuardError,
+  MAX_BLOB_BYTES,
+  batchBlobs,
+  findTakeovers,
+  main,
+  resolveIncomingRef,
+} from '../merge-takeover-guard.mjs';
 
 /**
  * Real repositories in a temp directory, not mocks. The defect being guarded is a property
@@ -49,6 +56,13 @@ function write(name, body) {
 function commit(message) {
   git(['add', '-A']);
   git(['commit', '-qm', message]);
+}
+
+/** Commit the index as it stands. A gitlink has no worktree path, so `git add -A` removes
+ * it again and leaves nothing to commit — which is how the submodule case below first failed
+ * with "nothing to commit" rather than for any reason to do with submodules. */
+function commitIndexOnly(message) {
+  git(['commit', '-q', '--allow-empty', '-m', message]);
 }
 
 const sha = () => git(['rev-parse', 'HEAD']);
@@ -779,6 +793,190 @@ describe('the shape the original scan set could not reach', () => {
   });
 });
 
+describe('the shapes an independent review measured as silent passes', () => {
+  // Every case here was reproduced against the guard as it stood BEFORE this block: real git,
+  // a throwaway repository, and `findTakeovers` driven directly with the real index. Each
+  // quoted verdict is what the old code returned while a committed change was destroyed.
+  // They are grouped because they share one property: the guard's DISCERNMENT was wrong,
+  // not its plumbing. Nothing here is a new shape of merge — five of the six are things
+  // `-X ours`, `-s ours` and `update-index` already produced.
+
+  it('reports an add/add conflict resolved by `-X theirs`, which leaves no marker', () => {
+    // The shape whose producer `docs/ORCHESTRATION.md` names as `checkout --theirs`. On an
+    // add/add there is no blob at the merge base, and the old guard asked for one before it
+    // would look — so the shape that exists to catch this never ran. Old verdict:
+    // `scanned=1 takeovers=0`, exit 0, main's committed file replaced.
+    write('base.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('same.ts', 'branch only\n');
+    commit('branch adds same.ts');
+    git(['checkout', '-q', 'main']);
+    write('same.ts', 'main only\n');
+    commit('main adds the same path');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'theirs'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['same.ts']);
+    expect(seen.takeovers[0].kind).toBe('whole-file-takeover');
+    // The branch's file is what landed, and `git status` is clean.
+    expect(git(['show', ':same.ts'])).toBe('branch only');
+  });
+
+  it('does not crash on an ordinary modify/delete resolution', () => {
+    // Not a miss but the worst failure mode in the file, and the most reachable: an agent or
+    // a developer keeping the file when the branch edited it and this side deleted it is
+    // simply how that conflict is resolved. Old verdict, reproduced verbatim:
+    //   TypeError: Cannot read properties of undefined (reading 'gitlink')
+    // which `main()` does not catch, so the hook exited 1 with a raw stack trace, no verdict,
+    // no path and no reason. A gate that dies instead of answering is what gets --no-verify'd.
+    write('f.txt', 'a\nb\nc\n');
+    write('other.txt', 'x\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'a\nb\nc\nBRANCH\n');
+    commit('branch edits f.txt');
+    git(['checkout', '-q', 'main']);
+    git(['rm', '-q', 'f.txt']);
+    commit('main deletes f.txt');
+
+    const seen = mergeAndInspect('feat', { resolve: () => git(['add', 'f.txt']) });
+
+    // Keeping the file is CORRECT and must pass: this side held no content at that path to
+    // lose. The point of the test is that it answers at all.
+    expect(seen.takeovers).toEqual([]);
+  });
+
+  it('reports a deletion this side had committed that the result undid', () => {
+    // The other half of the same case. Restoring the pre-divergence content over a committed
+    // deletion IS the loss, and `git status` calls it a modified path rather than a conflict.
+    write('f.txt', 'a\nb\nc\n');
+    write('other.txt', 'x\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'a\nb\nc\nBRANCH\n');
+    commit('branch edits f.txt');
+    git(['checkout', '-q', 'main']);
+    git(['rm', '-q', 'f.txt']);
+    commit('main deletes f.txt');
+
+    // `checkout HEAD -- f.txt` cannot restore a path HEAD deleted. The shape is the
+    // PRE-DIVERGENCE content coming back over a committed deletion, so it comes from the
+    // merge base — which is what `git add -A` in a worktree at another HEAD produces.
+    const seen = mergeAndInspect('feat', {
+      resolve: () => git(['checkout', 'feat~1', '--', 'f.txt']),
+    });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    // Counted as one, because there are no lines of an absence to count and `git status`
+    // will say one file.
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
+  it('reports a `-s ours` merge that discarded an added EMPTY file', () => {
+    // `nonBlankLines` of an empty blob is zero, so "no lines lost" answered for a file that
+    // had ceased to exist. A `.gitkeep` is the cheapest content there is and it still counts.
+    // Old verdict: `scanned=1 takeovers=0`.
+    write('a.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('.gitkeep', '');
+    commit('branch adds an empty .gitkeep');
+    git(['checkout', '-q', 'main']);
+    write('a.txt', 'main moved on\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['.gitkeep']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
+  it('reports a `-s ours` merge that discarded an added gitlink', () => {
+    // The gitlink arm read `losing.oid !== resultBlob.oid` behind a `resultBlob &&`, so an
+    // absent result entry answered zero. The adjacent file case handles the absence
+    // explicitly; this one did not, while the header claimed `-s ours` covers the whole
+    // payload. Old verdict: `scanned=1 takeovers=0`.
+    write('a.txt', 'base\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    git(['update-index', '--add', '--cacheinfo', '160000,1234567890123456789012345678901234567890,sub']);
+    commitIndexOnly('branch adds a submodule');
+    git(['checkout', '-q', 'main']);
+    write('a.txt', 'main moved on\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', { args: ['-s', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['sub']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+
+  it('reports a commit whose entire substance is indentation', () => {
+    // Trimming each line before comparing made this zero by construction, and
+    // `npm run format` produces exactly this commit — so the blindness sat on the most common
+    // commit shape in a repository whose own commit hook runs Prettier. Old verdict:
+    // `scanned=1 takeovers=0`.
+    write('f.py', 'alpha\nbeta\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.py', '    alpha\n    beta\n');
+    commit('reindent and nothing else');
+    git(['checkout', '-q', 'main']);
+    write('f.py', 'alpha\nbeta\nMAIN\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.py']);
+    expect(seen.takeovers[0].deleted).toBe(2);
+  });
+
+  it('does NOT report a commit that only changed line endings', () => {
+    // The counterweight, and the reason the measure normalises line endings rather than
+    // treating them as content. CRLF is an artefact of a checkout, not a committed change,
+    // and reporting it would be the crying wolf this file exists to avoid. It is the pin for
+    // the fix above: normalising everything, not just the line ending, is how this test fails.
+    write('f.txt', 'alpha\nbeta\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\r\nbeta\r\n');
+    commit('CRLF and nothing else');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nbeta\nMAIN\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', { args: ['-X', 'ours'] });
+
+    expect(seen.takeovers).toEqual([]);
+  });
+
+  it('reports a `-s ours` merge whose result then had a mode bit set', () => {
+    // `headWon()` was documented as exactly `!moved.has(path)` and the equivalence was
+    // measured across five shapes. The sixth is this: `-s ours` leaves the result identical
+    // to HEAD's tree, so `moved` is EMPTY; a later `git update-index --chmod=+x` makes the
+    // path "move" by mode alone, and shape 3 skipped on `moved` while shapes 1 and 2 looked
+    // for the base's entry and the incoming one and found neither. Old verdict:
+    // `scanned=1 takeovers=0`.
+    write('f.txt', 'alpha\nbeta\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'alpha\nbeta\nBRANCH\n');
+    commit('branch rewrites f.txt');
+    git(['checkout', '-q', 'main']);
+    write('f.txt', 'alpha\nbeta\nMAIN\n');
+    commit('main moves on');
+
+    const seen = mergeAndInspect('feat', {
+      args: ['-s', 'ours'],
+      resolve: () => git(['update-index', '--chmod=+x', 'f.txt']),
+    });
+
+    expect(seen.takeovers.map((t) => t.path)).toEqual(['f.txt']);
+    expect(seen.takeovers[0].deleted).toBe(1);
+  });
+});
+
 describe('what the operator is actually told', () => {
   // Found in review as a surviving mutation: deleting the whole `discarded-incoming-change`
   // hint block from report() left every test green, because nothing here asserted anything
@@ -960,6 +1158,57 @@ describe('refusing rather than passing blind', () => {
     expect(() => findTakeovers({ cwd: dir, head: sha(), incoming: orphan, resultTree: git(['write-tree']) })).toThrow(
       /share no merge-base/
     );
+  });
+});
+
+describe('refusing rather than passing when the content cannot be read', () => {
+  // The one hole whose failure mode is invisible: an unread blob measures as NO lines lost,
+  // so the guard answers `clean` and exits 0 having compared nothing. Reached on a merge
+  // whose suspect blobs exceed the batch buffer — the old cap was 256 MiB and six distinct
+  // ~61 MiB assets exceed it, `execFileSync` threw ENOBUFS, and the `catch` returned an empty
+  // map. A photo editor is plausibly the project most likely to merge large binaries, which
+  // makes this the shape most likely to fire exactly where it matters.
+
+  it('raises rather than returning an empty map, so the caller cannot mistake it for "no loss"', () => {
+    write('f.txt', 'alpha\n');
+    commit('base');
+    const written = git(['rev-parse', 'HEAD:f.txt']);
+
+    // A cap of one byte cannot hold any response, which is the smallest faithful stand-in for
+    // a buffer overflow: the same exception, without allocating a quarter of a gigabyte in a
+    // unit test.
+    expect(() => batchBlobs([written], dir, { maxBytes: 1 })).toThrow(GuardError);
+  });
+
+  it('still reads normally when the buffer is big enough', () => {
+    // The counterweight: the failure must not be the normal path. If this ever throws, every
+    // merge refuses and the gate is bypassed rather than obeyed.
+    write('f.txt', 'alpha\nbeta\n');
+    commit('base');
+    const oid = git(['rev-parse', 'HEAD:f.txt']);
+
+    const got = batchBlobs([oid], dir);
+
+    expect(got.get(oid)?.toString('utf8')).toBe('alpha\nbeta\n');
+  });
+
+  it('asks for more than the old 256 MiB, and names the ceiling it asks for', () => {
+    // A number nobody reads is a number nobody raises. The old value is quoted here so that
+    // lowering it again is a visible edit to a stated reason rather than a silent edit.
+    expect(MAX_BLOB_BYTES).toBe(1024 * 1024 * 1024);
+  });
+
+  it('refuses rather than comparing against a tree it could not list', () => {
+    // The same class one level up, and worse: an empty map from ONE of the four trees makes
+    // every path look absent from it, which silently empties all four scans at once. So a
+    // reflist that cannot be read has to stop the guard, not empty its map.
+    write('f.txt', 'alpha\n');
+    commit('base');
+
+    // The control: a resolvable pair still runs, so the refusal above is about the tree read
+    // and not about every input being rejected.
+    expect(() => findTakeovers({ cwd: dir, head: 'HEAD', incoming: 'HEAD' })).not.toThrow();
+    expect(() => findTakeovers({ cwd: dir, head: 'not-a-commit', incoming: 'HEAD' })).toThrow(GuardError);
   });
 });
 

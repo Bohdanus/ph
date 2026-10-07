@@ -70,12 +70,14 @@ one. The bar's controls match Photoshop's; the segmentation underneath does not.
 
 ### Selection combination modes
 
-**What Photoshop does.** Every selection tool's options bar carries New / Add To / Subtract From /
-Intersect With, so the next drag combines with the selection already on the canvas, and Shift,
-Alt/Option and Shift+Alt/Option held during the drag set the same four modes.
+**What Photoshop does.** Selection tools can combine a new selection with the existing one using
+New / Add To / Subtract From / Intersect With where those controls are provided. Shift, Alt/Option
+and Shift+Alt/Option can set the same modes during a drag on tools that support them.
 
-**What this app does.** No selection tool's bar renders any of the four. A second selection appends
-and activates. The union is not a missing control over a present model — it is a change to the model.
+**What this app does.** Quick Selection's Mode dropdown offers Add and Subtract. No bar implements
+the complete Photoshop set; the other selection tools do not render combination controls. On tools
+without a mode selector, a second selection appends and activates. The union is not a missing
+control over a present model — it is a change to the model.
 `Selection` is a single point path (`general-types.ts` — `Selection`):
 
 ```ts
@@ -222,20 +224,24 @@ Photoshop grouping and naming are the specification, and the stub bar is the deb
 
 ### Custom Shape
 
-**What Photoshop does.** Draws from a library of preset shapes stored in `.csh` files, and the user
-can add to it with Edit ▸ Define Custom Shape and manage it in the Preset Manager. Star is the
-seventh entry in the shape flyout alongside Rectangle, Ellipse, Triangle, Polygon and Line.
+**What Photoshop does.** Draws reusable vector graphics from a built-in library, imported shapes,
+or shapes the user creates and saves. Adobe documents this separately from the Star tool, which is
+its own entry in the shapes group with adjustable points and inner/outer radii:
+[Custom Shape](https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html),
+[Star](https://helpx.adobe.com/photoshop/using/create-star-shape.html).
 
 **What this app does.** `commit: 'unimplemented'` at `toolProcessors.ts` — its `'custom-shape'`
 entry — the same null-bitmap stub, and no gesture surface. The tool is in the rail under Adobe's name.
 
 **Why it is too hard.** It is three things, not one: a parser for the shape-preset format, the preset
 library itself, and the authoring and management surfaces. None of the format's structure is present,
-and shipping a hardcoded star would be exactly the fake this policy refuses.
+so drawing a built-in or imported Custom Shape is not implemented by adding a single preset.
 
 **What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the missing one, which `AGENTS.md`
-records as a requirement rather than an omission to be filled by a placeholder.
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), with Custom Shape present and Star absent.
+Star is a separate parametric shape tool, not a Custom Shape preset; its separate implementation
+does not require the `.csh` parser or library described above. Its behavior and options are already
+researched in `src/tools/descriptions/shape.notes.md` and the generated shape documentation.
 
 ### Live type
 
@@ -243,9 +249,9 @@ records as a requirement rather than an omission to be filled by a placeholder.
 the box is resized, can be re-typed in place, and carries an on-canvas caret. Scaling it up is not a
 resample; it re-renders.
 
-**What this app does.** Text is baked to pixels at commit. The renderer writes the string with
-`fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor returns
-that raster as the tool's whole result (the same file's `text` processor):
+**What this app does.** Each committed text presentation is rasterized. The renderer writes the
+string with `fillText` (`text.ts` — `fillLine()`) into a layer-sized raster, and the `text` processor
+returns that raster as the tool's whole result (the same file's `text` processor):
 
 ```ts
 export const text =
@@ -275,8 +281,13 @@ that makes this harder than it looks: `HistoryItem[]` is the production replay a
 replayed type entry has to reproduce the same pixels from its args on any host. A live text object is
 not a raster and does not survive that unchanged.
 
-**What the app does instead.** A raster that cannot be edited after the fact. Changing the text
-commits a new layer.
+**What the app does instead.** The production path retains the text source arguments and supports
+Photoshop-style panel re-entry: selecting an existing text row with the Type tool active (`LayersTab.tsx`
+— `selectLayer()`), or double-clicking its row, hydrates those arguments into the contenteditable
+overlay. `Text.tsx` — `applyText()` and the dirty-tool commit arm call `replaceLayerSource()`, so the
+edit is recorded and replayable. Canvas-click re-entry remains open. The runtime renderer still uses
+the committed raster for text, so runtime scaling resamples it. The remaining gaps are canvas entry and
+live vector rendering rather than retention of the text arguments.
 
 ### Free Transform as an interactive bounding box
 
@@ -314,8 +325,8 @@ image behind a stationary crop box.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/straighten-tilted-photos.html>
 
 A **Fill** dropdown on the same bar decides what fills the canvas a crop adds outside the image edge —
-"Go to the Fill dropdown in the Options bar and select Content-Aware Fill" — with Generative Expand the
-cloud value described below.
+"Go to the Fill dropdown in the Options bar and select Content-Aware Fill". Generative Expand is a
+separate action in the Contextual Task Bar, not a value in that dropdown.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/apply-content-aware-fill-while-cropping-images.html>
 
 **The bar carries no Curve, and Adobe does not claim that it does.** Adobe's own enumeration of the
@@ -326,11 +337,11 @@ and the Curve Photoshop documents is the separate Curves adjustment, recorded un
 [Curves — a spline over the tonal range](#curves--a-spline-over-the-tonal-range) below.
 <https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html>
 
-**Generative Expand** is the value that flow is built around: "From the Tools panel, select Crop tool
-and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and select
-Generate to let Photoshop extend the image" and "Choose a variation from the Properties panel". The
-model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in the added band
-are computed by a cloud service and arrive on a layer of their own.
+**Generative Expand** is the separate action that flow is built around: "From the Tools panel, select
+Crop tool and drag the crop handles outward to expand the canvas", then "Leave the prompt blank and
+select Generate to let Photoshop extend the image" and "Choose a variation from the Properties
+panel". The model is picked from Adobe's Firefly list in the Contextual Task Bar, so the pixels in
+the added band are computed by a cloud service and arrive on a layer of their own.
 <https://helpx.adobe.com/photoshop/desktop/create-open-import-images/create-images/explore-beyond-the-canvas-with-generative-expand.html>
 
 **What this app does.** The frame grows and nothing is filled. `applyDocumentCrop` takes the gesture
@@ -369,12 +380,12 @@ take.
 image edge: the canvas grows and the added band is transparent. The commit path is honest about what
 it takes — a rect, the current frame, and one document edit — and it says so by writing no fill.
 
-**The frame growth is not this entry's capability, so the growth deletes nothing here.** What this
-entry records is Straighten, Content-Aware and Generative Expand. Growing the canvas is a fourth thing,
-and the cheapest of Adobe's Fill values, decided by the operator rather than synthesised. Patch-based
-synthesis and a cloud generative call are not landing, so this entry stays open under the lifecycle
-rule in the preamble, and what survives the growth is Adobe's behaviour, which a transparent band does
-not change.
+**The frame growth is not this entry's missing capability.** The app can grow the document frame and
+leaves the added band transparent; that current behaviour is recorded by OVR-1 in
+`docs/OVERRIDES.md`. Frame growth is not a Photoshop Fill choice. What this entry records is the
+missing Straighten gesture, Content-Aware Fill, and Generative Expand. Patch-based synthesis and a
+cloud generative call are not landing, so this entry stays open under the lifecycle rule in the
+preamble.
 
 ### Black and White as a hue-sextant weighted mix
 
@@ -816,12 +827,13 @@ that name, at its Selection row.
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
 
-**Star is the notable one**, because it is not a missing tool so much as a missing entry: the
-shape flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout) and Star is the shape Adobe's list has that the
-flyout does not. It is listed there rather than filed here separately because the same custom-shape
-work is
-recorded as too hard above, and a hardcoded star would be the fake this policy refuses.
+**Star is the strongest documented absent rail entry**, and it is a separate candidate from Custom
+Shape. The flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), while Adobe documents Star as a separate tool
+with its own points and inner/outer radii. The sourced behavior and app-side gap are in
+`src/tools/descriptions/shape.notes.md` and `docs/TOOLS-INVENTORY.md`. The `.csh` parser and preset
+library that block Custom Shape do not block Star; the Star geometry, controls and integration still
+need implementation and verification.
 
 **The rest follow from this file.** The Pen family and Path Type are the work-path object that
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following

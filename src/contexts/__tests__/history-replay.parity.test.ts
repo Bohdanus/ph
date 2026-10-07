@@ -5,6 +5,7 @@ import { durableSourceKindForTool, legacyHistoryToDurable } from '../history-ada
 import type { DurableOperation } from '../history-model.ts';
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
+import { createLayerSource } from '../layer-utils.ts';
 import type { Layer, LayerOperation, LayerSource, LayersRecord } from '../layer-types.ts';
 import type { DurableReplayResult } from '../durable-replay.ts';
 import type { Selection, Size } from '../general-types.ts';
@@ -247,24 +248,25 @@ const cases: ReadonlyArray<{
   },
 ];
 
+/**
+ * The legacy side of the parity oracle, wired to the production rule rather than
+ * to a copy of it.
+ *
+ * `replayHistory` builds a created layer through its `createLayer` dependency, and
+ * `useHistory.ts` wires that to `createLayerSource`. This stub used to re-derive the
+ * layer instead — the bare kind as `name`, `Object.values(layers).length` as `order`
+ * — which is the same second rule the durable converter used to carry, so the oracle
+ * agreed with a divergence instead of catching it: three cases here read a name no
+ * production path produces. Delegating is what makes the comparison a parity test.
+ *
+ * `createLayerSource` does rasterise the layer, which is why this was ever stubbed;
+ * `beforeAll` enables canvas filter support and the jsdom setup provides
+ * `OffscreenCanvas`, so the real factory runs here. `createLayer` is synchronous and
+ * `createLayerSource` is too, so the dependency contract is unchanged.
+ */
 function replayDependencies(): HistoryReplayDependencies {
   return {
-    createLayer: ({ layerId, layers, source }) => ({
-      id: layerId,
-      name:
-        source.kind === 'tool' ? source.args.toolName : source.kind === 'image' ? (source.name ?? layerId) : 'Blank',
-      isBedrock: Boolean(source.isBedrock),
-      tmpCanvas: null,
-      bitmap: source.kind === 'image' ? source.bitmap : null,
-      visible: true,
-      opacity: 1,
-      locked: false,
-      blendMode: 'source-over',
-      order: Object.values(layers).length,
-      pos: 'pos' in source ? { ...source.pos } : { x: 0, y: 0, width: source.size.width, height: source.size.height },
-      source,
-      operations: [],
-    }),
+    createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
     applyRasterTool: (layer) => layer,
   };
 }

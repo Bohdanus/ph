@@ -73,7 +73,14 @@ const renderWithLayout = (children: ReactNode, stored: Record<string, unknown> =
       splitRatio: 0.2,
       panelOrder: ['history', 'layers'],
       rolledUp: { history: false, layers: false },
-      dockOnLeft: false,
+      // The opening arrangement, as the TWO independent facts it now is. `dockOnLeft` used to
+      // name which of the two columns was on the left, so it could only ever seed a pair; here
+      // each is seeded separately and a test that moves one of them has to say where the other
+      // was, because a rail sharing the dock's edge is a ROW split rather than a column and a
+      // test that left the sibling on its default would assert against a different placement
+      // than the one it meant to set up.
+      toolsSide: 'left',
+      dockSide: 'right',
       ...stored,
     })
   );
@@ -165,7 +172,9 @@ describe('SidebarRight', () => {
     const { container } = render(<SidebarRight />);
 
     const aside = container.querySelector('aside')!;
-    expect(aside).toHaveClass('[grid-area:right]');
+    expect(aside).toHaveClass('[grid-column-start:3]');
+    expect(aside).not.toHaveClass('[grid-column-start:1]');
+    expect(aside).toHaveClass('[grid-row:3/5]');
 
     const headings = screen.getAllByText(/^(History|Layers)$/).map((node) => node.textContent);
     expect(headings).toEqual(['History', 'Layers']);
@@ -294,7 +303,8 @@ describe('SidebarRight', () => {
       fireEvent.pointerUp(document, { pointerId: 1 });
 
       const aside = container.querySelector('aside')!;
-      expect(aside).toHaveClass('[grid-area:left]');
+      expect(aside).toHaveClass('[grid-column-start:1]');
+      expect(aside).not.toHaveClass('[grid-column-start:3]');
       expect(aside).toHaveClass('border-r');
     } finally {
       restoreLayout();
@@ -328,7 +338,11 @@ describe('SidebarRight', () => {
 
   it("moves the divider to the dock's other side once the dock is on the left edge", () => {
     seed();
-    const { container } = renderWithLayout(<SidebarRight />, { dockOnLeft: true });
+    // Both sides are seeded, because these gestures read `dockSide` alone and the rail is not
+    // part of the subject: parking it on the opposite edge keeps the dock in a column of its
+    // own, which is what this test is about. `{ dockOnLeft: true }` used to mean exactly this
+    // pair and had no way to say anything else.
+    const { container } = renderWithLayout(<SidebarRight />, { dockSide: 'left', toolsSide: 'right' });
 
     // The one rule, twice: the handle is always on the canvas side, so it mirrors when the
     // dock does. Pinning only the default leaves the mirrored case to be discovered in a
@@ -431,14 +445,17 @@ describe('SidebarRight', () => {
     expect(tab).not.toHaveAttribute('id');
 
     fireEvent.doubleClick(tab);
-    // Rolled up, the reference DANGLE rather than pointing at nothing that exists: the honest
-    // pair is `aria-expanded="false"` and no `aria-controls`, not a name with no target.
+    // Rolled up, the honest pair is `aria-expanded="false"` and no `aria-controls`; the body is
+    // absent rather than named by a dangling reference.
+    expect(tab).not.toHaveAttribute('aria-controls');
     expect(container.querySelector(`#${bodyId}`)).toBeNull();
   });
 
   it('reverses the drag direction once the dock is on the left edge', () => {
     seed();
-    const { container } = renderWithLayout(<SidebarRight />, { dockOnLeft: true });
+    // The same pair of sides as the divider-move test: a left-edge dock with the rail left on
+    // the right, so the dock is alone in its column and the only thing under test is the sign.
+    const { container } = renderWithLayout(<SidebarRight />, { dockSide: 'left', toolsSide: 'right' });
 
     const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
     // The divider is on the dock's other side now, so the same gesture widens in the other

@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, type CSSProperties, type ErrorInfo, type ReactNode } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { MigrationDiagnostic } from '../../contexts/history-adapter.ts';
 
@@ -10,6 +10,8 @@ type ErrorBoundaryProps = {
    */
   label: string;
   children: ReactNode;
+  fallbackClassName?: string;
+  fallbackStyle?: CSSProperties;
 };
 
 type ErrorBoundaryState = {
@@ -38,7 +40,17 @@ function diagnosticText(diagnostic: MigrationDiagnostic): string {
  * still on the record — truncating the list would hide exactly the entry that
  * explains the crash.
  */
-function ErrorBoundaryFallback({ label, error }: { label: string; error: Error }) {
+function ErrorBoundaryFallback({
+  label,
+  error,
+  className,
+  style,
+}: {
+  label: string;
+  error: Error;
+  className?: string;
+  style?: CSSProperties;
+}) {
   // A throw inside the fallback is unrecoverable: there is no boundary above this one, so React
   // tears the whole tree down and the menu and footer go with the region that failed. `StoreData`
   // types `durableDiagnostics` as required, so the real provider always supplies it — but a store
@@ -52,7 +64,8 @@ function ErrorBoundaryFallback({ label, error }: { label: string; error: Error }
     <div
       role="alert"
       data-testid="error-boundary-fallback"
-      className="flex flex-col gap-2 p-4 text-sm text-red-700 dark:text-red-300"
+      className={`flex flex-col gap-2 p-4 text-sm text-red-700 dark:text-red-300 ${className ?? ''}`}
+      style={style}
     >
       <h2 className="text-base font-semibold">{label} stopped working</h2>
       <p data-testid="error-boundary-message">{error.message}</p>
@@ -92,7 +105,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   render() {
     if (this.state.error) {
-      return <ErrorBoundaryFallback label={this.props.label} error={this.state.error} />;
+      return (
+        <ErrorBoundaryFallback
+          label={this.props.label}
+          error={this.state.error}
+          className={this.props.fallbackClassName}
+          style={this.props.fallbackStyle}
+        />
+      );
     }
     // No wrapper element: the guard must be invisible to the surrounding layout.
     return this.props.children;

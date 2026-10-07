@@ -1,6 +1,7 @@
-import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
+import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
 import { getCanvasSize, posToSortedRect, sortRect, sortRoundRect, trimRect } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
@@ -31,6 +32,27 @@ export type UseRectProps = {
   fromCentre?: boolean;
 
   /**
+   * When the `#007bff` dashed border is stroked. `'always'` is the default and is correct for
+   * every consumer but one: the Move tool, Crop and Text draw a rect that is not a selection, so
+   * the marching-ants canvas has nothing to say about it and this border is the only thing on
+   * screen that says where the rect is.
+   *
+   * `'while-dragging'` is the rectangular marquee's, because Adobe documents the ants as the
+   * display of a selection rather than a per-tool option
+   * (`helpx.adobe.com/photoshop/desktop/make-selections/get-started-selections/selection-tools-overview.html`
+   * lists all nine marquee and lasso tools as making selections, none of them as producing a
+   * different kind of border) and this hook's stroke would be a second outline of the same
+   * rectangle, one canvas above. It cannot simply be switched off, because a marquee in flight is
+   * not committed yet and so has nothing for the ants to draw — hence a mode rather than an off
+   * switch.
+   *
+   * Opt-in per consumer for the same reason `constrainToSquare` is: the hook is shared, and this
+   * behaviour must be reached by asking for it rather than by a default that would change three
+   * tools.
+   */
+  borderMode?: 'always' | 'while-dragging';
+
+  /**
    * Paint the TRUE rect where the pointer left it, including the part that has left the canvas
    * frame.
    *
@@ -45,6 +67,18 @@ export type UseRectProps = {
    * whatever falls outside the frame, which is why the overhang is still legible rather than drawn.
    */
   allowOutsideCanvas?: boolean;
+
+  /**
+   * Paint and hit-test each corner handle WHOLE outside the rect, instead of straddling its corner.
+   *
+   * Opt-in per consumer because this hook is shared, and only the Type tool has a reason. Its
+   * contenteditable overlay occupies the whole box, so a handle centred on a corner puts its inner
+   * half under the editor, where a press places a caret instead of resizing. Crop, the marquee and
+   * the Move tool have no overlay over their box, so their grip continues to straddle its corner.
+   * The Type tool's hit area matches the entire outside grip; other consumers retain the centred
+   * hit area.
+   */
+  handlesOutside?: boolean;
 
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
@@ -61,6 +95,8 @@ type FreshDragModifiers = {
 };
 
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
+const RECT_BORDER_DASH_LENGTH = 5;
+const RECT_BORDER_DASH_SPEED = 0.4;
 
 /**
  * CANVAS px throughout: every point, size and rect read or computed below — and every rect handed
@@ -80,7 +116,9 @@ export function useRect({
   isMoveTool,
   constrainToSquare = false,
   fromCentre = false,
+  borderMode = 'always',
   allowOutsideCanvas = false,
+  handlesOutside = false,
 
   containerRef,
   overlayRef,
@@ -99,6 +137,56 @@ export function useRect({
 
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
+  const borderAnimationFrameRef = useRef<number | null>(null);
+  const borderDashOffsetRef = useRef(0);
+
+  /** Whether a pointer gesture this hook owns is in flight. See `beginGesture`. */
+  const isGestureActiveRef = useRef(false);
+
+  /**
+   * A pointer gesture this hook owns, and the two things that follow from it: what the tool overlay
+   * paints, and what the marching-ants loop is told. One ref, written by `beginGesture` and
+   * `endGesture` and read by `drawMask`, so there is no second copy of "is a drag happening" that
+   * can drift out of step with it. That drift is the failure this mode could otherwise produce —
+   * two canvases disagreeing about one rectangle — and it is produced by exactly the two other
+   * answers this hook could be reading.
+   *
+   * Each of those is a DIFFERENT question, and conflating them is what this hook must not do:
+   *   - `drawMask`'s `hasRectChanged` means "the geometry moved since the last paint", which is
+   *     what `onChange` fires from. It is true on the drag path AND on `handlePointerUp`'s final
+   *     paint, so overloading it would make `onChange`'s firing and the border's visibility a
+   *     single decision and the border would outlive the pointer by one paint.
+   *   - `pointerState.isMouseDown` answers this ref's question on every route this hook can see,
+   *     and on one more it cannot: `usePointerPosition` flips it from its own `pointercancel`
+   *     listener (`usePointerPosition.ts:238`-`:242`), which runs no code of this hook's and cannot
+   *     be reached from it. So the border is stroked while BOTH hold — a gesture of ours is open
+   *     AND the pointer channel still tracks the primary press that opened it. The second term is
+   *     what stops a cancel this hook never hears about from leaving the marquee's border painted on
+   *     the committed selection while the tool area's own `onPointerCancel` has already handed the
+   *     ants back: the two canvases would then disagree about one rectangle, which is the whole
+   *     thing this mode exists to prevent.
+   *
+   * Gated on `borderMode` because the channel is ONE shared slot: published from the Move tool it
+   * would stand the ants down for a selection the user is not touching, and crop and Text have no
+   * selection to stand them down for at all.
+   */
+  function beginGesture() {
+    isGestureActiveRef.current = true;
+    if (borderMode === 'while-dragging') publishSelectionDragPreview({ kind: 'marquee' });
+  }
+
+  const endGesture = useCallback(() => {
+    isGestureActiveRef.current = false;
+    if (borderAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(borderAnimationFrameRef.current);
+      borderAnimationFrameRef.current = null;
+    }
+    if (borderMode === 'while-dragging') clearSelectionDragPreview();
+    // `borderMode` is the only dependency because it is the only thing here that is not a ref or a
+    // module function, and no consumer of this hook ever changes it — three pass nothing and the
+    // fourth passes a literal. That is what lets the unmount effect below list this without
+    // re-registering its cleanup on every render, which would cancel the pending frame each time.
+  }, [borderMode]);
 
   const drawMaskRef = useRef<((hasRectChanged?: boolean) => void) | null>(null);
 
@@ -127,9 +215,10 @@ export function useRect({
    * going away — `goToTool` (`src/hooks/useApp.ts:167-196`) appends the selection clear and
    * dispatches `SET_TOOL_NAME` from one function body, React batches them, and the marquee's
    * component unmounts in the same commit that nulls the selection. An unmounted component's
-   * effects do not run, so `initialRect` is never observed going null and the `#007bff` outline,
-   * the four `#007bff` handles and the `rgba(0, 0, 0, 0.7)` blend all survive the tool switch
-   * that deselected them, sitting on the overlay the next tool previews into.
+   * effects do not run, so `initialRect` is never observed going null and the four `#007bff`
+   * handles, the `rgba(0, 0, 0, 0.7)` blend and — for the three consumers that pass no
+   * `borderMode` — the `#007bff` outline all survive the tool switch that deselected them,
+   * sitting on the overlay the next tool previews into.
    *
    * The shape is `MagicWandToolArea.tsx:105-113`'s, and each of the three constraints below is one
    * a naive version of it gets wrong:
@@ -156,11 +245,23 @@ export function useRect({
     return () => {
       cancelAnimationFrame(frameRequested.current!);
 
+      // An unmount mid-gesture is an abort like any other, and it is the route easiest to miss
+      // because nothing about an unmount looks like a gesture: the preview slot is a module-level
+      // variable that outlives this mount, so an entry left behind would stand the ants down for
+      // every later tool
+      // (`selection-drag-preview.ts:58`-`:63`). It runs before the canvas clear so the pixels that
+      // are about to be wiped and the entry that is about to be dropped are one teardown.
+      //
+      // `borderMode` here is this effect's first-render value, which is the only one any consumer
+      // has: three of the four pass no `borderMode` at all and the fourth passes a literal, so
+      // there is nothing for it to go stale to.
+      endGesture();
+
       if (ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
       }
     };
-  }, [overlayRef]);
+  }, [endGesture, overlayRef]);
 
   const pointerPositionData = usePointerPosition({
     ref: containerRef,
@@ -172,6 +273,35 @@ export function useRect({
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, dimensionsRef } =
     pointerPositionData;
+
+  function animateBorder() {
+    borderAnimationFrameRef.current = null;
+    if (borderMode !== 'while-dragging' || !isGestureActiveRef.current) return;
+
+    if (!isMouseDown.current || !rectUnsortedRef.current) {
+      if (rectUnsortedRef.current) drawMaskRef.current?.();
+      return;
+    }
+
+    const scale = dimensionsRef.current.scale;
+    const dashLength = RECT_BORDER_DASH_LENGTH / scale;
+    borderDashOffsetRef.current = (borderDashOffsetRef.current - RECT_BORDER_DASH_SPEED / scale) % (dashLength * 2);
+    drawMaskRef.current?.();
+    borderAnimationFrameRef.current = requestAnimationFrame(animateBorder);
+  }
+
+  function scheduleBorderAnimation() {
+    if (
+      borderMode === 'while-dragging' &&
+      isGestureActiveRef.current &&
+      isMouseDown.current &&
+      rectUnsortedRef.current &&
+      overlayRef.current?.getContext('2d') &&
+      borderAnimationFrameRef.current === null
+    ) {
+      borderAnimationFrameRef.current = requestAnimationFrame(animateBorder);
+    }
+  }
 
   /**
    * Where in the existing box a point lands, and NOTHING else — no decision, no recorded state.
@@ -185,20 +315,28 @@ export function useRect({
     if (_initialRect) {
       const { x1, y1, x2, y2 } = _initialRect;
       const { scale } = dimensionsRef.current;
+      const h1 = HANDLE_SIZE / scale;
       const h2 = HANDLE_SIZE / scale / 2;
 
-      // check for tops
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
-        return 'top-left';
-      }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
-        return 'top-right';
-      }
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
-        return 'bottom-left';
-      }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
-        return 'bottom-right';
+      if (handlesOutside) {
+        if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y1 - h1 && point.y <= y1) return 'top-left';
+        if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y1 - h1 && point.y <= y1) return 'top-right';
+        if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y2 && point.y <= y2 + h1) return 'bottom-left';
+        if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y2 && point.y <= y2 + h1) return 'bottom-right';
+      } else {
+        // check for tops
+        if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+          return 'top-left';
+        }
+        if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+          return 'top-right';
+        }
+        if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+          return 'bottom-left';
+        }
+        if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+          return 'bottom-right';
+        }
       }
 
       // check for line
@@ -304,20 +442,45 @@ export function useRect({
       ctx.clearRect(x, y, width, height);
     }
 
-    ctx.strokeStyle = '#007bff';
-    ctx.lineWidth = 2 / scale;
-    ctx.setLineDash([5 / scale, 5 / scale]);
-    ctx.strokeRect(x, y, width, height);
+    // The one thing on this overlay that another canvas can also draw, and so the reason
+    // `borderMode` exists: for a selection, the ants canvas strokes the same rectangle one layer
+    // up in black and white, and two outlines of one selection is worse than either alone.
+    // `'while-dragging'` keeps the stroke only while a gesture is in flight, which is the whole of
+    // the time there is no committed selection for the ants to draw instead
+    // (`selection-drag-preview.ts:16`-`:17` for Adobe's own answer to the same two-outlines
+    // problem, `Select > Transform Selection`). Both terms of that condition are explained on
+    // `beginGesture` — they are read rather than passed in because all seven of this function's
+    // call sites would otherwise have to be told which of the two questions they were answering,
+    // and the drag path and the final paint answer different ones.
+    if (borderMode === 'always' || (isGestureActiveRef.current && isMouseDown.current)) {
+      ctx.strokeStyle = '#007bff';
+      ctx.lineWidth = 2 / scale;
+      ctx.setLineDash([RECT_BORDER_DASH_LENGTH / scale, RECT_BORDER_DASH_LENGTH / scale]);
+      ctx.lineDashOffset =
+        borderMode === 'while-dragging' && isGestureActiveRef.current && isMouseDown.current
+          ? borderDashOffsetRef.current
+          : 0;
+      ctx.strokeRect(x, y, width, height);
+    }
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
 
-    // Draw handles
+    // The handles stay in both modes, deliberately: they are the resize hit area and this hook's
+    // only interactive affordance, and `'while-dragging'` stands the ants DOWN for the duration
+    // of the very gesture that needs them. Gating them with the border would leave a resize with
+    // nothing to grab.
+    //
+    // Draw handles. `hIn` is the offset from the rect's LEFT and TOP edge and `hOut` the one added to
+    // its RIGHT and BOTTOM edge. Outside grips end at their corners; the matching hit areas in
+    // `edgeAtPoint` cover those same squares. Other consumers keep a straddling grip and hit area.
     const h1 = HANDLE_SIZE / scale;
-    const h2 = h1 / 2;
+    const hIn = handlesOutside ? -h1 : -h1 / 2;
+    const hOut = handlesOutside ? 0 : -h1 / 2;
     ctx.fillStyle = '#007bff';
-    ctx.fillRect(x - h2, y - h2, h1, h1);
-    ctx.fillRect(x + width - h2, y - h2, h1, h1);
-    ctx.fillRect(x - h2, y + height - h2, h1, h1);
-    ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
+    ctx.fillRect(x + hIn, y + hIn, h1, h1);
+    ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
+    ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
+    ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
 
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
@@ -476,7 +639,21 @@ export function useRect({
   }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>, layerUnderPointer?: Layer): boolean => {
-    if (!isPointerDownValid(event)) return false;
+    if (!isPointerDownValid(event)) {
+      // A press this hook refused — a non-primary button, or a second pointer — starts nothing,
+      // so this is where an entry left over from an earlier gesture gets swept. Guarded on
+      // nothing of ours being in flight, because a second pointer arriving mid-drag lands on this
+      // same line: clearing there would put the committed border back on screen beside the
+      // rectangle being dragged, which is the one thing this channel exists to prevent.
+      if (!isGestureActiveRef.current) endGesture();
+
+      return false;
+    }
+
+    // The gesture starts here, at the one point that knows a primary pointer was accepted, and
+    // before the `drawMask()` further down in this function so the Move tool's own press-time
+    // paint already belongs to a gesture rather than to an idle rect.
+    beginGesture();
 
     let isHandleClicked = false;
 
@@ -558,17 +735,29 @@ export function useRect({
 
       calculateMaskRect(pendingPoint.current!);
       drawMask(true);
+      scheduleBorderAnimation();
     });
 
     return false;
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    // Deliberately NOT `endGesture()` on this refusal. A release this hook does not own is not
+    // the end of this gesture: a non-primary-button release shares the tracked pointer's id and is
+    // refused by the button check (`usePointerPosition.ts:228`), and the genuine primary release
+    // still arrives after it. Clearing here would bring the ants back for the rest of a drag that
+    // is still running.
     if (!isPointerUpValid(event)) return;
 
     (event.target as HTMLDivElement).style.cursor = '';
 
-    if (isMoveTool && !startRectRef.current) return;
+    if (isMoveTool && !startRectRef.current) {
+      // A release this hook DID accept, so nothing of ours is in flight afterwards whatever this
+      // branch skips — the same reason the run below ends the gesture.
+      endGesture();
+
+      return;
+    }
 
     // Sampled before the geometry is computed, so a modifier released between the last move and
     // the release governs the rect that is actually committed.
@@ -586,6 +775,10 @@ export function useRect({
 
     cancelAnimationFrame(frameRequested.current!);
     frameRequested.current = null;
+
+    // With the rest of the gesture's own state, and before the final paint: the paint below is
+    // of a finished gesture, not of a live one.
+    endGesture();
 
     drawMask();
   };

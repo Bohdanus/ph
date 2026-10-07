@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   pointsBoundingPos,
+  pointsBoundingPosOutward,
   bezierSmoothedLine,
   drawSmoothLine,
   catmullRomToBezier,
@@ -47,6 +48,18 @@ describe('pointsBoundingPos', () => {
   it('pads a single point by the stroke diameter rather than reporting no extent', () => {
     const result = pointsBoundingPos({ points: [{ x: 50, y: 50 }], lineWidth: 2 });
     expect(result).toEqual({ x: 48, y: 48, width: 4, height: 4 });
+  });
+
+  it('rounds fractional stroke bounds outward to integer raster dimensions', () => {
+    const result = pointsBoundingPosOutward({
+      points: [
+        { x: 10.25, y: 20.75 },
+        { x: 50.5, y: 40.125 },
+      ],
+      lineWidth: 1.5,
+    });
+
+    expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
   });
 });
 

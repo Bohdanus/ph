@@ -112,7 +112,7 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 - **The app has no `Select` menu.** There is no `Select All`, `Deselect`, `Inverse`,
   `Color Range`, `Modify > Feather/Expand/Contract/Border/Smooth`, `Grow`, `Similar`,
   `Refine Edge`, `Select and Mask` or `Transform Selection` anywhere in the application. The
-  only deselect is the `Clear` button the rectangular, elliptical, freehand, magnetic, wand and
+  only deselect is the `Deselect` button the rectangular, elliptical, freehand, magnetic, wand and
   quick-selection bars render, bound to `clearSelections`. This removes Photoshop's two most
   important follow-ups for the wand and the quick selection outright.
 - **`Select and Mask` is on every bar, not just the wand's.** Adobe's 2022 Select-and-Mask tutorial
@@ -317,7 +317,7 @@ segments between user-placed anchors _is_ what that tool draws, so `Selection.po
 representation and its geometry diverges from Photoshop's in no respect whatsoever. It is `partial`
 for four other reasons — no modifier is read (`PolygonClickToolArea` reads none), no feather exists
 on any path, the bar's one control is an app-invented Outline/Fill toggle, and there are no
-Copy/Paste/Clear buttons — which is what its own entry says when it calls the tool "the most
+Copy/Paste/Deselect buttons — which is what its own entry says when it calls the tool "the most
 _gesturally_ faithful tool in the family" and scores it `partial` anyway. The reviewer leaned on
 that same fact and it does not survive either: the one thing that earns the polygonal lasso its
 `partial` is a _gesture_ that does something else, a category the elliptical marquee does not have.
@@ -429,7 +429,7 @@ three ways in" and enumerated three; it now says four and carries the modifier-c
 click-to-add-anchor, double-click close, right-click close, `Enter` close, `Delete` anchor
 removal and `Escape` abort are all registered in `PolygonClickToolArea` — against the
 least complete bar. The bar is forty lines: one Outline/Fill toggle and a hint. It is also the
-only bar in the family with no Copy, Paste or Clear buttons, which the freehand and magnetic
+only bar in the family with no Copy, Paste or Deselect buttons, which the freehand and magnetic
 lasso bars beside it both render.
 
 **Modifier gap, and it is larger than the combination modes.** `PolygonClickToolArea` reads no

@@ -323,6 +323,7 @@ describe('SidebarLeft primary tool selection', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'oval' });
     expect(goToTool).toHaveBeenCalledWith('shape');
+    expect(goToTool.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgsMock.mock.invocationCallOrder[0]);
     expect(screen.queryByRole('menu')).toBeNull();
 
     const rootButton = toolbarButtonByName('shape');

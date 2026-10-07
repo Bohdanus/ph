@@ -12,7 +12,7 @@ import type { Point } from '../contexts/general-types.ts';
  * different options bar. Sharing the union is what let its processor force a `'spray'`
  * `penType` onto `PaintToolArgs` and ignore every other control, which is how Tolerance and
  * Limits ended up with nowhere to live. A tool whose settings do not fit the paint bar must
- * not be in the paint bar's union — see `src/tools/draw.ts:48-62`.
+ * not be in the paint bar's union — see `src/tools/draw.ts:47-61`.
  */
 export type PaintToolName = 'brush' | 'pencil';
 
@@ -20,13 +20,30 @@ export type PaintToolName = 'brush' | 'pencil';
  * The blend modes a canvas can actually composite a layer with, in the order
  * Photoshop's `Mode` dropdown lists them.
  *
- * Photoshop offers more (Dissolve, Linear Burn, Vivid Light, Pin Light, Subtract,
- * Divide, Behind, Clear). Each name above that is missing here is one this
- * renderer cannot express: the canvas `GlobalCompositeOperation` set has no
- * equivalent, and `ctx.globalCompositeOperation = 'dissolve'` is silently ignored
- * by the browser rather than erroring, so offering it would ship a dead option.
- * `src/contexts/layer-utils.ts` also has to read a value back off stored history,
- * which is why the list is a closed literal union rather than a free string.
+ * Photoshop offers twenty-nine for the painting tools — the twenty-seven layer blend
+ * modes, Dissolve among them, plus the two the painting tools add, Behind and Clear —
+ * and this list is the sixteen of them this renderer OFFERS. The thirteen it leaves out
+ * are Dissolve, Linear Burn, Darker Color, Linear Dodge (Add), Lighter Color, Vivid Light,
+ * Linear Light, Pin Light, Hard Mix, Subtract and Divide, plus Behind and Clear, and the
+ * reason differs across them, so the enumeration is here rather than derived:
+ *
+ * - Most have no canvas counterpart at all. `dissolve` is not a `GlobalCompositeOperation`
+ *   value, and assigning it is silently ignored by the browser rather than erroring, so it
+ *   would ship a dead option rather than a wrong one.
+ * - Two have a canvas value that matches only sometimes, which is worse than none: a blend
+ *   control that is right for opaque pixels and wrong for translucent ones cannot be chosen
+ *   from. `plus-lighter` sums source and destination, which is what Linear Dodge (Add)
+ *   does, and `destination-over` draws beneath the destination, which is what Behind does.
+ * - Clear is a canvas value and is simply not offered here, which is a choice about this
+ *   list rather than a limit on the canvas.
+ *
+ * `src/contexts/layer-utils.ts` also has to read a value back off stored history, which is
+ * why the list is a closed literal union rather than a free string.
+ *
+ * The enumeration is here so a reader can check the count rather than trust it, and
+ * nothing enforces it staying in step with `PAINT_BLEND_MODES` — a mode added to that
+ * array does not have to be one Photoshop lists, and this comment would then be quietly
+ * wrong. `src/tools/__tests__/brush.test.ts` pins the sixteen values themselves.
  */
 export const PAINT_BLEND_MODES = [
   { label: 'Normal', value: 'source-over' },

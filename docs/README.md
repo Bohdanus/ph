@@ -52,24 +52,25 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## Working practice
 
-| Document                                               | Its one job                                                             |
-| ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                           |
-| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery             |
-| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent              |
-| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under               |
-| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails              |
-| [`../DEPENDENCIES.md`](../DEPENDENCIES.md)             | The dependency licence policy, and the fact that nothing enforces it    |
-| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                   |
-| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec       |
-| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words    |
+| Document                                               | Its one job                                                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                                               |
+| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
+| [`CHAT-ID.md`](CHAT-ID.md)                             | Resolving the host-native chat ID used in commit trailers                                   |
+| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds                     |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent                                  |
+| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under                                   |
+| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails                                  |
+| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                                       |
+| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec                           |
+| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words                        |
+| [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
 The agent procedures live outside this directory, under `.skills/`:
 `.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
-`.skills/worktree-merge-harvest.md` and `.skills/broad-test-improvement.md`. `AGENTS.md` states the
-rules; a skill states the procedure for one of them. `e2e/fixtures/README.md` is the Playwright
-fixture conventions note.
+`.skills/worktree-merge-harvest.md`, `.skills/broad-test-improvement.md` and
+`.skills/overnight-sweep.md`. `AGENTS.md` states the rules; a skill states the procedure for one of
+them. `e2e/fixtures/README.md` is the Playwright fixture conventions note.
 
 ## Open problems
 
@@ -91,16 +92,17 @@ Two more recovered from that same stash sit in this directory. They are **not
 current**, nothing in the live set depends on them, and they are not part of this
 hierarchy.
 
-| File                                     | What it is                                                                                                 |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete |
-| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                  |
-| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them             |
-| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                   |
-| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                |
-| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                           |
-| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                |
-| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it          |
+| File                                     | What it is                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `../AUDIT-STASHED-DOCS.md`               | Disposition record for three recovered stashed documents. Its two `docs/*.md` subjects are itself obsolete   |
+| `../FOCUSED-REVIEW-2026-09-28.md`        | A dated four-subsystem review, recorded rather than fixed                                                    |
+| `../HISTORY-MIGRATION-CONFLICT-AUDIT.md` | The four artifacts the history migration left in conflict, and the checklist for auditing them               |
+| `../MERGE-INTEGRITY-AUDIT.md`            | What concurrent-branch work left unresolved: open merges, colliding handoff numbers, gates that miss a class |
+| `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
+| `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                  |
+| `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
+| `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                  |
+| `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it            |
 
 They are still where they are because `scripts/lib/worktree-inventory/curated.mjs`
 keys on four of the root paths as `ref:` values, and the two `docs/*.md` rows

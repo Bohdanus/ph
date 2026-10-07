@@ -38,7 +38,7 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
       canvasRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
       // An empty timeline at cursor -1 is what a store with nothing appended yet actually looks
-      // like, and it is what puts the Clear writer on the append boundary's SUCCESS branch:
+      // like, and it is what puts the Deselect writer on the append boundary's SUCCESS branch:
       // without `history`/`historyIndex` the planner throws, the writer's `catch` produces a
       // dispatch with no `durableEntry`, and every pin below would be passing on that fallback.
       history: [] as unknown[],
@@ -75,7 +75,7 @@ const BAND: Selection = {
 };
 
 /**
- * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document edit that appends
+ * Deselect is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document edit that appends
  * to history, so a deselect can be undone. The contract is one `COMMIT_DOCUMENT_EDIT` carrying
  * both the history item and the resulting selection state.
  *
@@ -133,12 +133,11 @@ describe('SingleRowColumnMarquee toolbar', () => {
       expect(screen.queryByLabelText(/Feather/i)).toBeNull();
     });
 
-    it('carries no New / Add / Subtract / Intersect, because no selection tool in this app has them', () => {
+    it('does not render selection-combination buttons in this bar', () => {
       render(<SingleRowColumnMarquee />);
 
-      // The selection combination modes are absent for EVERY selection tool here, so shipping
-      // them for the two newest ones and not for the other five would be a worse inconsistency
-      // than the one that exists.
+      // Quick Selection has Add and Subtract in its Mode dropdown; this marquee bar has no
+      // combination-mode buttons of its own.
       expect(screen.queryByRole('button', { name: /New/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /Add/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /Subtract/i })).toBeNull();
@@ -312,7 +311,7 @@ describe('SingleRowColumnMarquee toolbar', () => {
       render(<SingleRowColumnMarquee />);
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
     });
   });
 
@@ -346,11 +345,11 @@ describe('SingleRowColumnMarquee toolbar', () => {
     });
   });
 
-  describe('Clear', () => {
+  describe('Deselect', () => {
     it('clears committed selections as one undoable document edit', () => {
       render(<SingleRowColumnMarquee />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Deselect' }));
 
       expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
     });
@@ -360,7 +359,7 @@ describe('SingleRowColumnMarquee toolbar', () => {
       storeState.activeSelectionId = null;
       render(<SingleRowColumnMarquee />);
 
-      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
     });
 
     it('treats a zero-area rectangle as clearable, because the gate is the rect object not its area', () => {
@@ -371,14 +370,14 @@ describe('SingleRowColumnMarquee toolbar', () => {
       storeState.selections = [{ ...BAND, pos: { x: 5, y: 5, width: 0, height: 0 } }];
       render(<SingleRowColumnMarquee />);
 
-      expect(screen.getByRole('button', { name: 'Clear' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Deselect' })).toBeEnabled();
     });
 
-    it('clears the same way for the column tool, because Clear is not per-tool', () => {
+    it('clears the same way for the column tool, because Deselect is not per-tool', () => {
       storeState.toolName = 'single-column-marquee';
       render(<SingleRowColumnMarquee />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Deselect' }));
 
       expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
     });
@@ -391,7 +390,7 @@ describe('SingleRowColumnMarquee toolbar', () => {
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      const clearButton = screen.getByRole('button', { name: 'Deselect' });
 
       copyButton.focus();
       expect(copyButton).toHaveFocus();
@@ -420,7 +419,7 @@ describe('SingleRowColumnMarquee toolbar', () => {
       render(<SingleRowColumnMarquee />);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
-      const clearButton = screen.getByRole('button', { name: 'Clear' });
+      const clearButton = screen.getByRole('button', { name: 'Deselect' });
 
       copyButton.focus();
       await user.keyboard('{Enter}');
@@ -455,7 +454,7 @@ describe('SingleRowColumnMarquee toolbar', () => {
 
       expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
 
       // Nothing focusable at all: the bar is a sentence and three dead buttons.
       await user.tab();

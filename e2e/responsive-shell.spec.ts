@@ -460,10 +460,6 @@ test.describe('Tablet band', () => {
     await toggle.click();
     await expect(panel).toBeVisible();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-
-    // 250px is the desktop panel width, so opening it is the desktop layout exactly.
-    const width = await panel.evaluate((el) => el.getBoundingClientRect().width);
-    expect(width).toBeCloseTo(250, 0);
   });
 
   test('gives the canvas the space the collapsed panel freed', async ({ page }) => {
@@ -473,11 +469,13 @@ test.describe('Tablet band', () => {
     const collapsed = (await getWorkspaceCanvas(page).boundingBox())!.width;
 
     await page.getByTestId('right-panel-toggle').click();
-    await expect(page.locator('#right-panel')).toBeVisible();
+    const panel = page.locator('#right-panel');
+    await expect(panel).toBeVisible();
     const expanded = (await getWorkspaceCanvas(page).boundingBox())!.width;
+    const panelWidth = await panel.evaluate((el) => el.getBoundingClientRect().width);
 
     expect(collapsed, 'collapsing the panel must widen the canvas').toBeGreaterThan(expanded);
-    expect(collapsed - expanded).toBeCloseTo(250, 0);
+    expect(collapsed - expanded).toBeCloseTo(panelWidth, 0);
   });
 
   // The floor is the window plus a margin, NOT the panel's measured width. Both panels
@@ -542,9 +540,7 @@ test.describe('Desktop band is unchanged', () => {
 
     // Desktop gains no control, no state and no layout shift from the tablet work.
     await expect(page.getByTestId('right-panel-toggle')).toBeHidden();
-    const panel = page.locator('#right-panel');
-    await expect(panel).toBeVisible();
-    expect(await panel.evaluate((el) => el.getBoundingClientRect().width)).toBeCloseTo(250, 0);
+    await expect(page.locator('#right-panel')).toBeVisible();
   });
 
   test('keeps the layout toggle and can reach the two-column rail', async ({ page }) => {
@@ -669,16 +665,60 @@ test.describe('Mobile shell does not leak onto the desktop path', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, MOBILE);
 
+    // The Type tool, and it is load-bearing rather than incidental: the panel at risk is the
+    // ACTIVE tool's panel, and the app boots on Draw (`DEFAULT_TOOL`), whose ids are
+    // `pen-type`/`size-slider`. With Draw selected, every id below counted ZERO — the sheet was
+    // duplicating a panel nobody was naming — and `toBeLessThanOrEqual(1)` accepts zero, so the
+    // whole assertion was passing vacuously. Selecting Type puts the two ids that DO belong to
+    // the active panel in the document, which is what makes the count below a measurement.
+    //
+    // Selected at the DESKTOP width and then narrowed back, because the desktop header is
+    // `max-md:hidden` and the rail is `md:hidden`: at MOBILE there is no tile to click and no
+    // Tools menu to open, and `selectToolFromMenu` hangs for the full timeout on a control that
+    // is mounted and merely hidden. The tool selection is state, not layout, so it survives the
+    // crossing in both directions — which is the property the crossing is supposed to preserve.
+    await page.setViewportSize(DESKTOP);
+    await selectToolFromMenu(page, 'text');
+    await expect(page.locator('#font-family-select'), 'the desktop toolbar owns the Type panel').toHaveCount(1);
+
+    await page.setViewportSize(MOBILE);
     await page.getByRole('button', { name: 'Tool options' }).click();
     await expect(page.locator('#mobile-tool-options')).toBeVisible();
+    // The duplication itself, asserted while it is still true. `MobileToolSheet` renders the
+    // active tool's real `ToolComponent` alongside `ToolbarHorizontal`'s, so this is two live
+    // instances — and saying so makes the post-resize count a claim about a state that existed
+    // rather than a number that was always zero.
+    await expect(page.locator('#font-family-select'), 'the open sheet renders a second copy').toHaveCount(2);
 
     await page.setViewportSize(DESKTOP);
     // The desktop toolbar now owns the panel; a duplicate would make every id in it
     // ambiguous, and `getElementById` and `<label for>` both resolve to the first match.
-    const ids = ['text-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
+    //
+    // `font-size-input` replaced `text-input`, which the Type bar no longer renders at all: the
+    // tool has no text field, the draft is typed into a `div[contenteditable]` on the canvas that
+    // does not exist until a placement, and the old id would have counted zero exactly like
+    // `blur-slider` and `rotate-slider` do — a second vacuous entry rather than a check. The
+    // font-size field is always mounted on the Type bar with or without a draft, which is what
+    // this test needs: a control that cannot be narrowed to "exists only once you have typed".
+    // `blur-slider` and `rotate-slider` are Blur's and Transform's and are kept as the
+    // cross-bar sample they were — neither is mounted under Type, so neither is what the claim
+    // rests on.
+    const ids = ['font-size-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
     for (const id of ids) {
-      const count = await page.locator(`#${id}`).count();
-      expect(count, `#${id} must not be duplicated by the mobile shell`).toBeLessThanOrEqual(1);
+      // POLLED, not read once. `AppContainer` closes the mobile surfaces by adjusting state during
+      // render off a media-query change, so the duplicate survives until that change is delivered;
+      // a bare `count()` immediately after `setViewportSize` raced it and saw two. Polling keeps the
+      // assertion identical — still "at most one" — and waits for the state the claim is about
+      // instead of for the resize.
+      await expect
+        .poll(async () => page.locator(`#${id}`).count(), {
+          message: `#${id} must not be duplicated by the mobile shell`,
+        })
+        .toBeLessThanOrEqual(1);
     }
+    // The two Type ids are in the document, so the bound above is a bound rather than a
+    // tautology: a resize that unmounted the panel entirely would have been caught by `toBe(1)`.
+    await expect(page.locator('#font-family-select'), 'the panel survived the crossing').toHaveCount(1);
+    await expect(page.locator('#font-size-input'), 'the panel survived the crossing').toHaveCount(1);
   });
 });

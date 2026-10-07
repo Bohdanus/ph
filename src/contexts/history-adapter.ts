@@ -43,7 +43,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
-import { toolLayerBlendMode } from './layer-utils.ts';
+import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
@@ -862,10 +862,14 @@ export function legacyHistoryToDurable(
               .sort((left, right) => left.order - right.order)
               .map((layer, index) => [layer.id, index])
           );
-          const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
-          const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
-          remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
-          const orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
+          let orderByLayerId = order;
+          // Reordering a layer after itself preserves the runtime sequence.
+          if (afterWhichLayerId !== layerToMoveId) {
+            const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
+            const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
+            remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
+            orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
+          }
           operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
           if (enabled) {
             for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
@@ -1128,6 +1132,36 @@ export function convertLegacyHistorySafely(
 /** Named alias used at the compatibility boundary by importers and callers. */
 export const convertLegacyHistory = legacyHistoryToDurable;
 
+/**
+ * The durable converter's source-to-runtime rule, and nothing but a delegation for
+ * the two fields the runtime rule owns.
+ *
+ * It used to re-derive the layer from the source here, binding the bare kind as
+ * `name` and folding `Math.max(-1, ...orders) + 1` for `order`. That was a second
+ * rule, and it disagreed with `createLayerSource` — the rule `replayHistory` builds
+ * a layer through, wired at `useHistory.ts` — on the first layer of any document:
+ * `'Blank'` at order `0` here, `'Blank 1'` at order `1` there, and no `ellipsify` on
+ * a long image name on this side. Two live tests pinned the two answers, so neither
+ * was accidental; the runtime rule is what the document means and this is the copy,
+ * so the copy derives through {@link deriveLayerNameAndOrder} — the derivation
+ * `createLayerSource` itself makes — rather than keeping a second one.
+ *
+ * `name` and `order` are read together because they are one derivation: the number
+ * in the name suffix IS the order, so taking one from the runtime rule and folding
+ * the other here would leave a third rule rather than one of the two.
+ *
+ * The layer set is read for its orders alone (`LayerOrderRecord`), so a durable
+ * snapshot is as good a witness as a runtime `Layer` — which is what makes the rule
+ * reachable at all, since every caller here holds the former. That is also why the
+ * empty map in {@link deriveReplaceLayerSourceEntry} stays meaningful: the derived
+ * order is discarded there, exactly as the old fold's was.
+ *
+ * The rest of the layer stays derived here, and deliberately: `createLayerSource`
+ * would also allocate a canvas per blank source and run a creator tool's
+ * `imageProcessor`, and this is a conversion that wants two fields. `pos` in
+ * particular is the authored box rather than the patched one, which is a separate
+ * question from the one this function was re-deriving.
+ */
 export function sourceToRuntimeLayer(
   id: LayerId,
   source: LayerSource,
@@ -1135,15 +1169,18 @@ export function sourceToRuntimeLayer(
 ): Layer {
   const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
   const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
+  const orders: LayerOrderRecord = Object.create(null);
+  for (const [layerId, layer] of layers) orders[layerId] = layer;
+  const { name, order } = deriveLayerNameAndOrder(orders, source);
   return {
     id,
-    name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
+    name,
     isBedrock: !!source.isBedrock,
     visible: true,
     opacity: 1,
     locked: false,
     blendMode: source.kind === 'tool' ? toolLayerBlendMode(source.args) : 'source-over',
-    order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
+    order,
     pos,
     source,
     operations: [],

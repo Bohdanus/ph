@@ -43,7 +43,7 @@ const RectangularSelection: React.FC<{}> = () => {
           Paste
         </button>
         <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={handleClear}>
-          Clear
+          Deselect
         </button>
       </div>
     </div>

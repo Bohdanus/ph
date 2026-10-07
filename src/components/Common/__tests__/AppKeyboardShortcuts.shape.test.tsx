@@ -152,7 +152,10 @@ const renderShortcuts = (toolName: ToolName, figure?: string) => {
   goToToolMock.mockClear();
   patchToolArgsMock.mockClear();
   storeState.toolName = toolName;
-  toolState.toolArgs = (figure ? { toolName: 'shape', figure } : { toolName: 'brush' }) as unknown as ToolArgs;
+  // The no-figure case carries the REQUESTED tool name, not a hard-coded brush: the Custom Shape
+  // tool has no `figure` of its own, and reading it as a brush made `renderShortcuts('custom-shape')`
+  // a test of the plain-U fallback instead of the cycle.
+  toolState.toolArgs = (figure ? { toolName: 'shape', figure } : { toolName }) as unknown as ToolArgs;
   const view = render(<AppKeyboardShortcuts />);
   return {
     ...view,
@@ -194,6 +197,7 @@ describe('AppKeyboardShortcuts shape selection', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'rectangle' });
     expect(goToToolMock).toHaveBeenCalledWith('shape');
+    expect(goToToolMock.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgsMock.mock.invocationCallOrder[0]);
     view.dispose();
   });
 
@@ -207,9 +211,12 @@ describe('AppKeyboardShortcuts shape selection', () => {
     view.dispose();
   });
 
-  it('Shift+U advances every flyout entry to the next one in the rail order', () => {
+  it('Shift+U advances every flyout entry to the next one and closes on the first', () => {
     // The chain is the flyout itself, read off `toolbar-mapping.ts`, so the assertion is the
-    // mapping's six entries and not a hand-copied order that could drift from it again.
+    // mapping's six entries and not a hand-copied order that could drift from it again. The loop
+    // runs `index <= length` rather than `< length - 1`: the LAST step is the one that closes the
+    // group, Custom Shape back onto Rectangle, and a bound that stopped short of it would leave
+    // the wrap unasserted while this title claimed every entry.
     expect(flyoutStates.map(describeState)).toEqual([
       'shape:rectangle',
       'shape:oval',
@@ -219,9 +226,11 @@ describe('AppKeyboardShortcuts shape selection', () => {
       'custom-shape',
     ]);
 
-    for (let index = 0; index < flyoutStates.length - 1; index += 1) {
-      const from = flyoutStates[index];
-      const to = flyoutStates[index + 1];
+    const steps = [...flyoutStates, flyoutStates[0]];
+
+    for (let index = 0; index < steps.length - 1; index += 1) {
+      const from = steps[index];
+      const to = steps[index + 1];
       const label = `${describeState(from)} -> ${describeState(to)}`;
       const view = renderShortcuts(from.toolName, from.figure ?? undefined);
 
@@ -231,8 +240,23 @@ describe('AppKeyboardShortcuts shape selection', () => {
       expect((patchToolArgsMock.mock.calls[0]?.[1] as { figure?: string } | undefined)?.figure, label).toBe(
         to.figure ?? undefined
       );
+      if (to.figure) {
+        expect(goToToolMock.mock.invocationCallOrder[0], label).toBeLessThan(
+          patchToolArgsMock.mock.invocationCallOrder[0]
+        );
+      }
       view.dispose();
     }
+  });
+
+  it('Shift+U wraps from Custom Shape onto the Rectangle, which closes the group', () => {
+    const view = renderShortcuts('custom-shape');
+
+    pressU(true);
+
+    expect(goToToolMock.mock.calls).toEqual([['shape']]);
+    expect(patchToolArgsMock.mock.calls).toEqual([['shape', { figure: 'rectangle' }]]);
+    view.dispose();
   });
 
   it('Shift+U reaches the custom-shape tool after Polygon', () => {
@@ -246,9 +270,10 @@ describe('AppKeyboardShortcuts shape selection', () => {
   });
 
   it('Shift+U falls back to Rectangle from a figure outside the group', () => {
-    // No flyout entry is a sixth figure any more, so the `indexOf() === -1` branch is now only
-    // reachable from a stored value the group does not list — a legacy `circle` or `square` is
-    // the shape that reaches it — and `-1 + 1 === 0` puts it on the head of the group.
+    // The `indexOf() === -1` branch is reachable only from a stored value the group does not
+    // list — a legacy `circle` or `square` is the shape that reaches it — and `-1 + 1 === 0` puts
+    // it on the head of the group. That is the FALLBACK, and it is not how the Custom Shape tool
+    // is positioned: the tool is a member of the group, so it must not take this branch.
     const view = renderShortcuts('shape', 'circle');
 
     pressU(true);
@@ -339,19 +364,21 @@ describe('AppKeyboardShortcuts shape selection', () => {
       view.unmount();
     });
 
-    it('re-enters the cycle at Oval when the custom-shape tool is active', () => {
-      // `custom-shape` is not a FigureType, so `indexOf()` is -1 and (-1 + 1) % 6 === 0, which
-      // is the rectangle's index; the step after that is the oval.
+    it('wraps onto Rectangle from the custom-shape tool, which closes the six-entry group', () => {
+      // The Custom Shape tool is the group's LAST entry, so its position has to come from what
+      // it is. Deriving it from `indexOf()` instead — it is not a FigureType, so that is -1 — gave
+      // it the rectangle's index, and the cycle then closed over five entries with the Rectangle
+      // unreachable by Shift+U from any press.
       const view = renderAt({ toolName: 'custom-shape', figure: null });
 
       pressU(true);
 
-      expect(patchToolArgsMock.mock.calls).toEqual([['shape', { figure: 'oval' }]]);
+      expect(patchToolArgsMock.mock.calls).toEqual([['shape', { figure: 'rectangle' }]]);
       expect(goToToolMock.mock.calls).toEqual([['shape']]);
       view.unmount();
     });
 
-    it.each(['brush', 'crop', 'custom-shape', 'text'] as const)(
+    it.each(['brush', 'crop', 'text'] as const)(
       'starts the cycle from Rectangle and advances to Oval when the %s tool is active',
       (toolName) => {
         const view = renderAt({ toolName, figure: null });
@@ -377,19 +404,19 @@ describe('AppKeyboardShortcuts shape selection', () => {
     it.each([
       {
         figure: 'oval' as const,
-        expected: ['shape:line', 'shape:triangle', 'shape:polygon', 'custom-shape', 'shape:oval'],
+        expected: ['shape:line', 'shape:triangle', 'shape:polygon', 'custom-shape', 'shape:rectangle', 'shape:oval'],
       },
       {
         figure: 'line' as const,
-        expected: ['shape:triangle', 'shape:polygon', 'custom-shape', 'shape:oval', 'shape:line'],
+        expected: ['shape:triangle', 'shape:polygon', 'custom-shape', 'shape:rectangle', 'shape:oval', 'shape:line'],
       },
-    ])('returns to $figure after a full five-press walk of the group', ({ figure, expected }) => {
+    ])('returns to $figure after a full six-press walk of the closed group', ({ figure, expected }) => {
       const view = renderAt({ toolName: 'shape', figure });
       const start = { toolName: 'shape' as ToolName, figure };
       const visited: string[] = [];
       let state: CycleState = start;
 
-      for (let press = 0; press < 5; press += 1) {
+      for (let press = 0; press < 6; press += 1) {
         rerenderAt(view, state);
         state = stepWithShiftU(state);
         visited.push(describeState(state));
@@ -400,7 +427,7 @@ describe('AppKeyboardShortcuts shape selection', () => {
       view.unmount();
     });
 
-    it('returns to the custom-shape tool after a full six-press walk of the group', () => {
+    it('returns to the custom-shape tool after a full six-press walk of the closed group', () => {
       const view = renderAt({ toolName: 'custom-shape', figure: null });
       const visited: string[] = [];
       let state: CycleState = { toolName: 'custom-shape', figure: null };
@@ -412,19 +439,20 @@ describe('AppKeyboardShortcuts shape selection', () => {
       }
 
       expect(visited).toEqual([
+        'shape:rectangle',
         'shape:oval',
         'shape:line',
         'shape:triangle',
         'shape:polygon',
         'custom-shape',
-        'shape:oval',
       ]);
+      expect(describeState(state)).toBe('custom-shape');
       view.unmount();
     });
 
-    it('never re-enters Rectangle once the cycle has advanced past it', () => {
-      // The cycle is not closed: the custom-shape step is a different toolName,
-      // so the next press re-enters the group at Oval rather than at Rectangle.
+    it('re-enters Rectangle from Custom Shape, so ten presses cover the group twice', () => {
+      // The title is the defect this pins: while the Custom Shape tool resolved to -1 the cycle
+      // closed over five entries and the rectangle never came back, so `visited` never held it.
       const view = renderAt({ toolName: 'shape', figure: 'rectangle' });
       const visited: string[] = [];
       let state: CycleState = { toolName: 'shape', figure: 'rectangle' };
@@ -441,13 +469,12 @@ describe('AppKeyboardShortcuts shape selection', () => {
         'shape:triangle',
         'shape:polygon',
         'custom-shape',
+        'shape:rectangle',
         'shape:oval',
         'shape:line',
         'shape:triangle',
         'shape:polygon',
-        'custom-shape',
       ]);
-      expect(visited).not.toContain('shape:rectangle');
       view.unmount();
     });
 
@@ -487,10 +514,12 @@ describe('AppKeyboardShortcuts shape selection', () => {
         view.unmount();
       }
 
-      // Every figure the group holds except the two ends: nothing advances ONTO the rectangle,
-      // because an unlisted figure and a non-shape tool both start the group at it, and the
-      // polygon is the last figure, so its step hands off to the custom-shape tool instead.
-      expect(new Set(seenFigures)).toEqual(new Set(flyoutStates.slice(1, -1).map((entry) => entry.figure)));
+      // Every figure the group holds, and that is only true because the group CLOSES: the
+      // Custom Shape tool's press wraps onto the rectangle, which is how the head of the group
+      // is ever a result rather than only a starting point.
+      expect(new Set(seenFigures)).toEqual(
+        new Set(flyoutStates.filter((entry) => entry.figure).map((entry) => entry.figure))
+      );
     });
   });
 });

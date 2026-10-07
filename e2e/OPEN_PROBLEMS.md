@@ -266,33 +266,12 @@ exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps
 covered too. Add a dark-theme case that pins the direction this depends on, so the
 latent wrong-pass has a tripwire of its own rather than resting on a config default.
 
-## Every document load requests a favicon that does not exist
-
-Chrome requests `/favicon.ico` unprompted on every page load, and it always 404s:
-there is no `public/` directory in the repository, and `index.html`'s
-`<link rel="icon" type="image/svg+xml" href="/todo.svg" />` line is commented out, so
-there is no icon for the request to resolve to. The 404 is real, it is per-load, and
-`ACCEPTED_CONSOLE_ERRORS` in `e2e/helpers/console-police.ts` carries an entry whose
-reason is this fact, narrowed by `urlPattern: /^\/favicon\.ico$/` so that no other
-404 inherits it.
-
-Nothing trips on it: the entry accepts the message, the spec passes, and the run
-reports green. The cost is that every e2e page load carries a failed request that a
-test would otherwise see, and the allowlist entry outlives the moment it was written
-for.
-
-Fix: add `public/favicon.svg`, uncomment the icon link in `index.html`, and delete the favicon entry
-from `ACCEPTED_CONSOLE_ERRORS` in the same change — with the icon in place there is
-no 404 to account for, and per the lifecycle rule in `docs/DOCUMENTATION.md` the
-entry goes with it. Verify with `npm run test:e2e` and by confirming no 404 remains
-in the `console-police.json` report attachment.
-
 ## P3 — 10 orphaned committed baselines (2.1 MB)
 
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
 
-The directory holds 17 files. Seven are read — the formats with
-`comparePixels: true` in `e2e/export/helpers.ts`, each read through
+The directory holds 17 files. Seven are read — the formats whose `verification` is
+`browser-pixels` in `e2e/export/helpers.ts`, each read through
 `baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
 
 - the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
@@ -305,50 +284,6 @@ The directory holds 17 files. Seven are read — the formats with
 
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
-
-## P3 — the artifact name is interpolated into a path unsanitised
-
-`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`
-
-Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
-name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
-directory that was never created, and a name that traverses (`../escaped`) resolves
-outside `outputDir` — the file is written there, attached from there, and is not
-removed by anything that cleans the output dir. Severity is low only because
-`outputDir` is a throwaway per-test directory under `test-results/`.
-
-Fix: **reject, do not sanitise.** Validate that `name` is a single path component
-(no separator, not `.` or `..`) and throw an error naming the helper, for the same
-reason the `outputDir` guard throws: the caller passed something impossible, and
-silently rewriting it would attach the report under a name the test never asked
-for. Sanitising would also let two distinct names collide into one artifact.
-
-Pinned by `treats a name containing a path separator as a path, not a filename`
-and `writes outside the output directory when the name traverses out of it` in
-`e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
-pins in the same change; the first one's own comment names sanitisation as the
-shape a fix must not take.
-
-## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
-
-`e2e/helpers/cdp-helpers.ts` — the `outputDir` guard in `captureCanvasScreenshot()`
-
-The guard exists and is the same shape as the one at the top of
-`takeLineScreenshot()` in `canvas-helpers.ts`, but it is
-the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — the second
-statement of `captureCanvasScreenshot()` — uncovered, against 100% of its
-functions. The sibling guard is pinned by
-`it('names the helper and the missing field when testInfo has no output directory')`
-in `e2e/helpers/__tests__/canvas-interaction.unit.test.ts`, so nothing fails
-if this one is deleted, and the raw V8 failure it exists to replace
-(`The "path" argument must be of type string. Received undefined`) returns with it.
-
-Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
-`TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
-own message and that no CDP session was opened. `createTestInfoMock()`
-in `e2e/helpers/__tests__/canvas-helpers.fixtures.ts` already makes `outputDir`
-optional, so the double needs no change.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
@@ -394,32 +329,6 @@ expect(selectable).toEqual(['pencil', 'block']);
 the same fact stated as what a user can actually choose. No fix is proposed here: the
 retarget is upstream behaviour, and the only way to remove it from the assertions is
 to stop wrapping the control in its label, which is the repo's markup convention.
-
-## P2 — a cached canvas box addresses a different pixel after a tool switch
-
-`e2e/canvas-helpers.ts` consumers; measured on `Desktop Chrome` (1280x720), 2026-09-28
-
-The workspace canvas element is `width: 100%; height: 100%` of a CSS grid row, and the
-row's height is the active tool's options bar. Switching from the Eraser bar to the
-Magic Eraser bar changes the bar's height, the main area resizes, and the canvas box
-moves. A spec that measures the box once and reuses it afterwards is then clicking and
-sampling a different pixel — with no error anywhere, because every coordinate is
-still a valid number.
-
-Measured on this suite: a `boundingBox()` of `{x: 56, y: 100, width: 974, height: 890}`
-taken under the Eraser bar addressed a point 20 CSS px higher under the Magic Eraser
-bar, which is enough to move a 24-CSS-px stroke out of the sampled window entirely.
-The symptom is not a failure but a _wrong_ one: the magic eraser appeared to erase the
-whole line and a bucket appeared to fill nothing, and both readings were artefacts of
-the stale box. `usePointerPosition` centres the 800x600 document inside the canvas, so
-the vertical offset is the product of two scales (`974/800` and `890/600`) rather than
-one, and a cached box cannot be corrected after the fact.
-
-Fix: measure the box immediately before every gesture and every capture, or measure it
-once per tool after the options bar for that tool has rendered. `e2e/erase-fill-eyedropper.spec.ts`
-threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
-`measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
-alongside the capture it took would make the mistake harder to make.
 
 ## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
 
@@ -535,30 +444,6 @@ Three specs are `test.skip` by declaration:
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
 
-## P2 — the export line is specified in document space; the ICO line still is not
-
-`e2e/export/helpers.ts`, `setupIcoTest`
-
-`setupExportTest` used to draw at canvas-relative offsets (`150,150` to `350,150`), which
-made the export a function of the window rather than of the document. The canvas is
-`w-full h-full` of a grid area the shell sizes, and `usePointerPosition` fits the document
-into it and centres it, so the same offsets marked different document points at different
-canvas sizes. The baselines encoded one particular canvas height: fixing a real desktop
-overflow moved the canvas from 974x890 to 974x583 and shifted the export by 459 pixels with
-no change anywhere in the export path.
-
-`setupExportTest` now specifies the line in document space and maps it in with
-`documentToCanvasOffset`, which mirrors the app's own contain-fit, and pins the committed
-pixels by using the document points the old offsets mapped to. `the export is independent of
-the canvas height` in the same spec asserts the property directly, and
-`e2e/helpers/__tests__/document-mapping.unit.test.ts` pins the mapping.
-
-`setupIcoTest` is untouched and still strokes at `ICON_STROKE` canvas-relative offsets
-against a 256x256 document. It escapes harm today because it compares in-browser against the
-source canvas rather than against a committed baseline, so a moved line still matches itself.
-It is one layout change away from the same class of failure, and the fix is the same: map
-`ICON_STROKE` through `documentToCanvasOffset` with a 256x256 document.
-
 ## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
 
 `e2e/helpers/canvas-helpers.ts`, `buildClip`
@@ -578,7 +463,7 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
-## P1 — the document-space oracle reached a handful of call sites, so most of the suite still moves when the frame does
+## P1 — the document-space oracle reached four production files, so most of the suite still moves when the frame does
 
 `e2e/helpers/canvas-helpers.ts` — `LINE_START_X`, `LINE_START_Y`, `LINE_END_X`, `LINE_END_Y`
 
@@ -586,30 +471,34 @@ differ by the box origin and nothing in the types distinguishes them.
 the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
 longer depends on where the app put the letterbox. That is the right idea and it works.
 
-**What does not.** The idea reached exactly one caller. `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/
-`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box", and nine
-specs import them: `adjustments`, `color`, `document-dialogs`, `erase-fill-eyedropper`, `example`,
-`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, the suite writes its
-gestures as `box.x + <something>` throughout, and **none of them invert the mapping back to document
-space**. Counted, with the counting command, because a number here without one is worse than none
-and an earlier draft of this entry got it wrong twice — once by 7x:
+**What remains.** The mapping now appears in five suite files, at eighteen call sites:
+`e2e/canvas-growth.spec.ts` (4), `e2e/filter-tools.spec.ts` (3), `e2e/shape-tools.spec.ts` (6) and
+`e2e/export/helpers.ts` (4), plus `e2e/example.spec.ts` (1), counting the calls and not the imports.
+`LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still
+"relative to the canvas box",
+and twelve specs import them: `adjustments`, `color`, `document-dialogs`,
+`erase-fill-eyedropper`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
+`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, many
+gestures still use box-relative offsets that change the document point when the window changes.
+Counted, with the counting command, because a number here without one is worse than none:
+
+`e2e/example.spec.ts` is the first simple gesture migrated: it maps seeded document points with
+`documentToCanvasOffset` and uses the resulting page clip for both redraw polling and capture.
+`drawLine` remains box-relative; the broader migration remains open.
 
 ```
-grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 25  canvas-relative LITERALS
-grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 63  any box-relative offset
+grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
+grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 209  any box-relative offset
 grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
 ```
 
-So: 25 gestures add a bare number to the box origin, and 63 add something box-relative. The 63 is
-the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
+So: 36 gestures add a bare number to the box origin, and 209 add something box-relative. The 209
+is the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
 through a named constant rather than a literal — those are the ones the first pattern misses
-entirely, and a count that only looked for literals is how the first draft of this entry said
-"twelve" and the second said "eighty-three". Both were wrong; the zero on the third line is the
-part that matters, because `e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25`
-and that is the one form that survives a layout change by construction.
-
-The ICO export path is still canvas-relative as well: `ICON_STROKE` in `e2e/export/helpers.ts`
-is a set of box offsets, read by the two `documentToCanvasOffset()` calls in `setupIcoTest()`.
+entirely, and a count that only looked for literals sees under a fifth of the sites. The zero on
+the third line is the part that matters, because
+`e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25` and that is the one form
+that survives a layout change by construction.
 
 **Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
 are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
@@ -618,12 +507,12 @@ mapping has to be inverted before such a literal is meaningful, and it is not. S
 asserts against whatever geometry the current layout happens to produce, and a layout change
 silently changes what is being tested rather than failing.
 
-**Three assertions still fail outright on a 1px change**, all in `e2e/responsive-shell.spec.ts`:
-`reclaims the layers column by default and offers a toggle for it` expects the expanded right panel
-at 250, `gives the canvas the space the collapsed panel freed` expects the panel's own width delta at
-250, and `has no tablet toggle and keeps the layers panel open` expects the collapsed panel at 250.
-Those are `toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same
-defect: a number written into a test is a pin on the layout, and the layout is not the subject.
+Three panel assertions in `e2e/responsive-shell.spec.ts` used to pin the right panel at 250px.
+The tests `reclaims the layers column by default and offers a toggle for it` and
+`has no tablet toggle and keeps the layers panel open` already prove visibility and state, so their
+numeric width reads have been removed. `gives the canvas the space the collapsed panel freed` now
+compares the canvas-width change to the panel's measured width. These changes remove the panel's
+three fixed-width pins; the broader document-space gesture migration remains open.
 
 **Two more were in this list and are gone.** The entry used to name five. The other two were the
 rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
@@ -635,51 +524,18 @@ the pattern the rest of this entry asks for: the tablet band's rail is now asser
 `e2e/responsive-shell.spec.ts`, and the two-column rail
 by a width RELATION the test measures against itself — one column against two, both measured in the
 same test, `keeps the layout toggle and can reach the two-column rail` in the same spec — so
-neither pins a pixel. The panel's 250 is the same defect and still needs the same treatment.
+neither pins a pixel. The panel-width pins have likewise been removed or made relational; the
+unconverted gesture inventory remains the open work.
 
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
 `box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
-box instead of the window. That is the shape every one of the eighty-three should take, via
+box instead of the window. That is the shape every one of them should take, via
 `documentToCanvasOffset`.
 
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
 a moving letterbox before `e8f17ba` specified the line in document space.
-
-## P2 — the dialog spec's `documentSize` pins a read that no longer proves the resize happens
-
-`e2e/document-dialogs.spec.ts`
-
-The spec's claim is that the dialog's dimensions are the thing under test, and it pins the
-document size to prove the app resized its canvas to it. The read is real: the size comes
-off the canvas backing store rather than being assumed, and asserting it is what makes that
-read observable. But the resize it is taken to prove is not, and it is not close.
-
-Neighbouring `src/hooks/useApp.ts` resizes the same element at **two** sites —
-`handleImageCreate()` and `setImageFromUpload()` — and `createSnapshotSurface()` in
-`src/contexts/layer-renderer.ts` resizes it again. Neutering the call the
-spec's comment names, and leaving the other two live, turns all four dialog tests green.
-So a build in which `useApp`'s resize is dead still passes every one of them.
-
-The draft-outline wait in the same file has the same shape, one level up: it proves the
-DRAG happened, not that the commit did. The pixel containment assertion is what proves the
-commit, and it is the one that would fail if a resize were wrong.
-
-**Fix.** Pin the resize where it happens rather than at a distance: assert that the
-document canvas's backing store equals the size the dialog committed, after the resize path
-that owns it has run, and name which of the three sites the test is covering. Until then,
-`documentSize` proves the READ and the word "resized" in its comment is doing work the test
-does not do.
-
-> **Re-verification baseline, restated.** Every line-numbered citation in this file —
-> above and below this line — was re-derived against this tree as it stands after the
-> e2e campaign branch merged into main, by content match and not by offset arithmetic,
-> and the ones the merge moved were corrected. That is the whole authority behind the
-> numbers here: they describe one tree, and the next merge moves them again, so
-> re-derive a `file:NNN` from the claim before acting on it.
-
----
 
 ## P2 — a collapsed tool's selection assertion is GROUP-level, so it passes for any member of the collapsed set
 
@@ -787,12 +643,15 @@ record of what it was. The commit that carried them in is `4d47904`; the one tha
 them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
 
-**Three `## P…` entries appear below this line, and only two of them are those two.** The
-third, `P3 — re-verification: the tablet band's option-row floor…`, was filed by a later
-pass against this tree and is not one of the 33. It is here rather than above the section
-because it was raised while auditing the fixes, and moving it would break the audit trail
-for no gain — but a reader counting the entries to work out which findings survived will
-count three, and the two-line arithmetic above is the one to trust.
+**Four `## P…` entries appear below this line, and only two of them are those two** —
+`P2 — the visual baselines record no Chrome version, and a pin cannot be invented` and
+`P3 — no mobile or HiDPI project, and no touch anywhere`. The other two,
+`P3 — re-verification: the tablet band's option-row floor…` and
+`P2 — the mobile bottom bar scrolls 615px with no affordance…`, were filed by later passes
+against this tree and are not among the 33. They are here rather than above the section
+because they were raised while auditing the fixes, and moving them would break the audit
+trail for no gain — but a reader counting the entries to work out which findings survived will
+count four, and the two-line arithmetic above is the one to trust.
 
 The source repository is frozen at `78be956` and its own ledger is not maintained, so that
 review has no other home. The list of what it claimed and what turned out to be already
@@ -989,7 +848,7 @@ and **is not a defect here**:
   state is client-side, and there is no `storageState`, no `beforeAll` and no
   `newContext` anywhere under `e2e/`. The config caps workers at 1 locally for
   readability, and `webServer` is a stateless Vite dev server shared by every worker.
-- **52 timeout literals / 10 unused imports / 8 red CDP assertions / 9 orphaned
+- **52 timeout literals / 10 unused imports / 8 red CDP assertions / 10 orphaned
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.

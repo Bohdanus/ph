@@ -5,6 +5,9 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
+import { documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
+import { useApp } from '../../hooks/useApp.ts';
 import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
@@ -17,10 +20,18 @@ import {
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId }] = useStore();
-  const { toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer, convertBedrockLayer } =
-    useLayers();
+  const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
+  const {
+    toggleVisibility,
+    removeLayer,
+    moveLayerAfter,
+    setActiveLayer,
+    updateLayer,
+    convertBedrockLayer,
+    beginTextLayerEdit,
+  } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
+  const { goToTool } = useApp();
 
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
@@ -36,8 +47,27 @@ export default function LayersTab() {
     setActiveLayer(id);
     const source = layers[id]?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
-      setToolArgs(source.args);
+      if (source.args.toolName === 'text') {
+        const target = textLayerEditTarget(layers[id], documentFrame ?? documentFrameFromSize(totalSize));
+        if (target) {
+          beginTextLayerEdit(target.layerId);
+          setToolArgs(target.args);
+        }
+      } else {
+        setToolArgs(source.args);
+      }
     }
+  };
+
+  const enterTextLayer = (id: LayerId) => {
+    const layer = layers[id];
+    if (!layer) return;
+    const target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
+    if (!target) return;
+    if (toolArgs.toolName !== 'text') goToTool('text');
+    setActiveLayer(id);
+    beginTextLayerEdit(target.layerId);
+    setToolArgs(target.args);
   };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
@@ -206,6 +236,7 @@ export default function LayersTab() {
                     animateMove(draggedLayerId, layer.id);
                   }}
                   onClick={() => selectLayer(layer.id)}
+                  onDoubleClick={() => enterTextLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',

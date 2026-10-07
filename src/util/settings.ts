@@ -28,7 +28,9 @@ export function saveLastSettings(args: ToolArgs) {
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {
-    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect', 'kind'));
+    lastSavedSettings.text = cloneDeep(
+      omit(args as TextToolArgs, 'text', 'rect', 'kind', 'placeholderUntouched', 'editingLayerId')
+    );
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
@@ -55,10 +57,11 @@ export function saveLastSettings(args: ToolArgs) {
     // tick the tool is switched away from. The point list goes the way `draw`'s does.
     lastSavedSettings.eraser = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
-    // Same reasoning, and `pos`/`size` are the per-gesture geometry the `draw` and `crop` arms
-    // also drop: persisting them would restore the last click's position into the next fill.
+    // Same reasoning, and `pos` is the per-gesture geometry the `draw` and `crop` arms also drop:
+    // persisting it would restore the last click's position into the next fill. It is the only
+    // omission key left because `FillToolArgs` no longer declares a `size` for the arm to drop.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
-      omit(args as unknown as FillToolArgs, 'pos', 'size')
+      omit(args as unknown as FillToolArgs, 'pos')
     ) as ToolArgs;
   } else if (toolName === 'color-replacement') {
     // A typed arm, NOT the bare-`{ toolName }` group below. That group discarded every setting
@@ -67,7 +70,7 @@ export function saveLastSettings(args: ToolArgs) {
     // the tool's state.
     //
     // `points` and `sampleColor` are dropped for the reason `draw` drops `points` and the fill arm
-    // drops `pos`/`size`: they describe one gesture, not a setting. Restoring the last drag's path
+    // drops `pos`: they describe one gesture, not a setting. Restoring the last drag's path
     // would paint where the user last let go, and restoring the last click's colour would arm the
     // tool with a sample the user never chose for this session — Photoshop returns the tool to
     // asking when you switch away and back, and so does this.
@@ -83,10 +86,22 @@ export function saveLastSettings(args: ToolArgs) {
     // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
     // choice, and the bare group exists for tools whose only setting is that they exist.
     lastSavedSettings.eyedropper = cloneDeep({ ...args });
+  } else if (toolName === 'color-sampler') {
+    // Typed rather than bare for the Eyedropper's reason: Sample Size is a real user choice here
+    // too, and this tool shares that one control rather than owning a second copy of it.
+    //
+    // The SAMPLERS are deliberately not persisted, for the reason the `ruler` arm below gives for the
+    // measuring line: they are view state rather than document state (see `PIXEL_FREE_TOOLS`), and
+    // persisting points would re-arm the tool with samplers the user placed in a previous session on
+    // a document that may no longer exist. Photoshop's DO survive closing and reopening the image —
+    // "These samplers are saved in the image" — and that gap is recorded in the tool's description
+    // rather than papered over with a field the app has no document to hang it on.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args });
   } else if (
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||
-    toolName === 'single-column-marquee'
+    toolName === 'single-column-marquee' ||
+    toolName === 'ruler'
   ) {
     // Typed rather than falling through to the bare group below, because a tool with NO
     // settings still has to persist its identity: an unmatched `toolName` never reaches
@@ -94,6 +109,12 @@ export function saveLastSettings(args: ToolArgs) {
     // `defaultSettings` on every switch. Harmless for these three today, and the reason
     // this arm exists rather than a note is that it stops being harmless the day one of
     // them grows a control.
+    //
+    // The Ruler joins them for the same reason and for a second one: its args are `{ toolName }` and
+    // nothing else, so this arm persists an object that is byte-identical to the default. That is
+    // still the point — the trap at the end of this chain is what makes adding a tool without
+    // adding an arm a typecheck error, and a measurement line is deliberately NOT persisted (see
+    // `PIXEL_FREE_TOOLS`), so there is nothing here that could hold one.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ toolName });
   } else if (toolName === 'triangle' || toolName === 'polygon') {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(

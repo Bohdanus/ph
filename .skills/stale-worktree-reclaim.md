@@ -130,14 +130,15 @@ node scripts/worktree-inventory.mjs          # regenerate, then read it
 there is no commit step: regenerate it whenever you add or remove a worktree, and never
 `git add -f` it. **Read `action` first**, and treat it as a point-in-time answer:
 
-| `action`    | meaning                                                                 |
-| ----------- | ----------------------------------------------------------------------- |
-| `land`      | clean tree, commits ahead of `main`, merges clean — land it             |
-| `at-risk`   | work on no ref, the merge needs a human, or a curated finding disagrees |
-| `dispose`   | on `main`, clean, nothing protects it — delete it                       |
-| `in-use`    | an agent or session is active there — leave it alone                    |
-| `keep`      | the main checkout — never a candidate                                   |
-| `undecided` | cannot be told from what is known — do not remove it                    |
+| `action`    | meaning                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------ |
+| `land`      | clean tree, commits ahead of `main`, merges clean — land it                                            |
+| `at-risk`   | work on no ref, the merge needs a human, or a curated finding disagrees                                |
+| `dispose`   | on `main`, clean, nothing protects it — delete it                                                      |
+| `legacy`    | a curated `legacy: true`: clean, and nobody will work on it again — drop the worktree, keep the branch |
+| `in-use`    | an agent or session is active there — leave it alone                                                   |
+| `keep`      | the main checkout — never a candidate                                                                  |
+| `undecided` | cannot be told from what is known — do not remove it                                                   |
 
 ## 2 — Rank by staleness
 
@@ -463,6 +464,8 @@ salvage branch is landable, read the hunks that touch `src/`, not only the test 
 ## 7 — Classify and act
 
 Run these cases **in order**, and classify the worktree before touching it.
+`(b-quarter)` sits between `(b)` and `(c)`: it is a judgement about the future, so
+it is a decision rather than something git reports.
 
 ### (a) Clean tree — safe to delete
 
@@ -535,6 +538,13 @@ header of `scripts/dispose-worktree.mjs`). The
 cleanliness probe it ran first — `git status --porcelain` — reads the same for an
 abandoned worktree and a busy one, so it could not have caught that.
 
+**A refusal you expected is a finding, not an obstacle — and it may not name you.** Only the
+write arm of `derived-live-writer` names a chat; every other arm prints "a chat". Report it and move
+on. `docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is
+the one home for the mechanism, and the Never list's entry against reaching for the removal command
+by hand is what you do instead. **Do not fold it into "skipped"**: a pending removal is a claim
+about a directory that outlives the session.
+
 **0 commits ahead of `main` is not evidence a worktree is disposable.** It is the single most
 expensive mistake available here: such a branch can hold uncommitted work that exists on no ref
 at all. `git status --porcelain` being non-empty is the only check that sees it, and the
@@ -590,6 +600,42 @@ with no tag and no remote-tracking ref. **Never delete both halves of a duplicat
 pair**, and note that `dispose` anchors whatever it removes at
 `refs/keep/disposed/<name>`, so a half you deleted by mistake is one `git branch`
 away.
+
+### (b-quarter) Legacy — keep the branch, drop the worktree
+
+**A stale branch nobody will work on again, kept for the small chance it matters.**
+Set it by hand; nothing derives it, because "nobody will need this" is a judgement
+about the future and no git fact can produce one. Add `legacy: true` and a `note`
+saying which branch, why it is kept, and what would make it worth revisiting, to
+its entry in `scripts/lib/worktree-inventory/curated.mjs`. Then:
+
+```bash
+npm run dispose -- <name> --dry-run     # says the branch will be KEPT
+npm run dispose -- <name>
+node scripts/worktree-inventory.mjs
+```
+
+The worktree goes; the branch stays, reachable with `git branch <name>`. Git holds
+a branch with no worktree, so this costs one ref and saves a checkout, its
+`node_modules` and its `dist/`.
+
+**Do not use it for a branch holding uncommitted work.** `legacy` authorises
+deleting a directory, and uncommitted changes exist in no commit and no ref, so
+`classify` ignores the flag on a dirty worktree and reports `at-risk`. That is the
+right answer and it is not a bug to work around — save the work first, or leave the
+entry off. A `legacy` claim is also refused when `mustNotPrune` is set: one says
+the work is not accounted for, the other says it is and will never be used, and the
+first wins.
+
+**It is not `at-risk`, and that is why it exists.** `at-risk` reads as "a human
+must act before anything can be lost", so a branch nobody intends to act on filed
+there sits on the list a sweep reads first, forever. `legacy` also suppresses a
+clean merge verdict — it says do not merge it either.
+
+**Two things it will not do for you.** It does not keep the worktree, and it does
+not make the branch worth landing later. A branch kept this way has to be _chosen_
+again by a human reading the note, which is the point: the 1% chance is only worth
+paying for if someone can recognise it when it comes up.
 
 ### (c) Hard merge — mark it, move on, come back last
 
@@ -654,6 +700,11 @@ than silently dropping it.
 - Count a branch's value by its commit count. A branch can be several commits of real fixes and
   a branch one commit of scratch.
 - Release another agent's claim or file lock before `doctor` says it is expired.
+- Route around a `dispose` refusal. Every refusal names the signal that produced
+  it, and the one you are most likely to hit is **you** — see case (a). The gate
+  is the only thing standing between a sweep and the 2026-10-01 incident, and a
+  refusal you argued with is a refusal that taught its reader to discount the
+  next one.
 
 ## Report
 

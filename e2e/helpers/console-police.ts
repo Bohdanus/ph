@@ -93,21 +93,15 @@ export interface AcceptedConsoleError {
  */
 export const ACCEPTED_CONSOLE_ERRORS: readonly AcceptedConsoleError[] = [
   {
-    match: 'Failed to load resource: the server responded with a status of 404 (Not Found)',
+    match: 'color-sampler-cap-reached',
     reason:
-      'Chrome requests /favicon.ico unprompted because index.html:5 has the ' +
-      '<link rel="icon"> line commented out. It is a browser default probe, not an ' +
-      'application request. Delete this entry and add a favicon when one is added.',
-    // The reason above is about ONE request, and the match string names none of them:
-    // every 404 in the app logs this exact text. Confirmed against Chrome during an e2e
-    // run, which reports `url="http://localhost:65420/favicon.ico"` for it — the
-    // failing resource's own URL, not the document's. That is what makes the path a
-    // usable second condition, and it is why a 404 on anything else now fails its test
-    // instead of being waved through by a favicon's reason. That second claim is not this
-    // line's work alone: it holds only because `record` keys the map on the location as
-    // well as the text, so the entry this rule judges carries the URL of the message it
-    // was recorded from. See `entryKey`.
-    urlPattern: /^\/favicon\.ico$/,
+      "The Color Sampler's own refusal at its four-sampler cap, and the refusal IS the behaviour " +
+      "under test: Adobe says 'up to four Color Samplers', no source describes Photoshop silently " +
+      'replacing or deleting the oldest marker, and the one observation of the cap being reached is ' +
+      'a message. So the tool refuses loudly and changes nothing, and e2e/color-sampler.spec.ts ' +
+      "cannot assert that without this log. The entry is scoped to the dispatcher's own prefix so a " +
+      'different component logging the same word is not waved through.',
+    urlPattern: /\/src\/components\/Main\/ColorSamplerToolArea\.tsx$/,
   },
   {
     match: 'Error boundary caught a throw from',

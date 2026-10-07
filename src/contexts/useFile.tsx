@@ -1,4 +1,13 @@
-import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
 import { renderExportCanvas } from './export-canvas.ts';
 import type { PsdDocument } from './psd-utils.ts';
@@ -91,28 +100,33 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
   };
 
-  const openNewImageDialog = () => {
+  const openNewImageDialog = useCallback(() => {
     setShowNewDialog(true);
     return new Promise<NewDocumentBlankParams | null>((resolve) => {
       newResolverRef.current = resolve;
     });
-  };
+  }, []);
 
-  const openLoadImageDialog = () => {
+  const openLoadImageDialog = useCallback(() => {
     return new Promise<ImageUploadResponse | null>((resolve) => {
       uploadResolverRef.current = resolve;
       // trigger file picker
       fileInputRef.current?.click();
     });
-  };
+  }, []);
 
-  const openSaveImageDialog = (input: ImageSaveInput) => {
+  const openSaveImageDialog = useCallback((input: ImageSaveInput) => {
     setFileInput(input);
     setShowSaveDialog(true);
     return new Promise<ImageSaveResponse | null>((resolve) => {
       saveResolverRef.current = resolve;
     });
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }),
+    [openNewImageDialog, openLoadImageDialog, openSaveImageDialog]
+  );
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
     try {
@@ -139,16 +153,13 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
-    } catch (e) {
-      console.error('Failed to save image:', e);
-      // `null` is the in-band failure signal every caller already guards with
-      // `if (data)`, so it still resolves, and it still resolves the promise exactly once
-      // because it is the first and only caller of a resolver that is nulled immediately
-      // after. The dialog, the staged input and the dialog's own controls all stay put, so
-      // the retry re-enters this `try` with `fileInput` intact and the now-nulled
-      // `saveResolverRef` makes the second resolution a no-op rather than a stale resolve.
+    } catch (error) {
+      // Preserve the null result for openSaveImageDialog callers, but reject this callback so
+      // SaveDialog can show the failure. Clearing the resolver first keeps retries from
+      // settling an already-completed promise.
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
+      throw error;
     }
   }
 
@@ -173,7 +184,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   };
 
   return (
-    <FileContext.Provider value={{ openNewImageDialog, openLoadImageDialog, openSaveImageDialog }}>
+    <FileContext.Provider value={value}>
       {children}
       <input
         type="file"

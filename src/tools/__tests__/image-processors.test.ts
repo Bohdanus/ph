@@ -120,7 +120,10 @@ describe('tool image processors', () => {
       const [result] = blur(params)({ radius: 0, toolName: 'blur' });
 
       expect(lastCanvas().ctx.filter).toBe('blur(0px)');
-      expect(result).toBeTruthy();
+      // The no-op filter still has to re-rasterize the source: handing the bitmap back
+      // untouched would satisfy the filter assertion for the wrong reason.
+      expect(lastCanvas().ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('passes negative and non-finite radii straight into the CSS filter string', () => {
@@ -128,11 +131,11 @@ describe('tool image processors', () => {
       // `blur(-4px)` / `blur(NaNpx)`, which is invalid CSS and silently renders unblurred.
       const [negative] = blur(params)({ radius: -4, toolName: 'blur' });
       expect(lastCanvas().ctx.filter).toBe('blur(-4px)');
-      expect(negative).toBeTruthy();
+      expect(negative).toBe(lastCanvas() as unknown as OffscreenCanvas);
 
       const [notANumber] = blur(params)({ radius: Number.NaN, toolName: 'blur' });
       expect(lastCanvas().ctx.filter).toBe('blur(NaNpx)');
-      expect(notANumber).toBeTruthy();
+      expect(notANumber).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('records the filter through a real writable data property, so the assertions above are not vacuous', () => {
@@ -177,18 +180,19 @@ describe('tool image processors', () => {
       const [result] = colors(params)({ grayscale: 0, sepia: 0, saturation: 0, toolName: 'color' });
 
       expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(100%)');
-      expect(result).toBeTruthy();
+      expect(lastCanvas().ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('maps saturation through the exp curve at both extremes', () => {
       const [low] = colors(params)({ grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' });
       // (exp(2.1) - exp(-2.1)) / (1 - exp(-2.1)) = 9.166170.
       expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(916.62, 2);
-      expect(low).toBeTruthy();
+      expect(low).toBe(lastCanvas() as unknown as OffscreenCanvas);
 
       const [high] = colors(params)({ grayscale: 0, sepia: 0, saturation: 200, toolName: 'color' });
       expect(parseFilter(lastCanvas().ctx.filter as string, ['saturate'])[0]).toBeCloseTo(7585.25, 2);
-      expect(high).toBeTruthy();
+      expect(high).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('desaturates: the -100 end of the Saturation slider emits saturate(0%)', () => {
@@ -214,7 +218,7 @@ describe('tool image processors', () => {
       const [result] = colors(params)({ grayscale: 0, sepia: 0, saturation: Number.NaN, toolName: 'color' });
 
       expect(lastCanvas().ctx.filter).toBe('grayscale(0%) sepia(0%) saturate(NaN%)');
-      expect(result).toBeTruthy();
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it.fails('sanitizes a non-finite saturation before it reaches the CSS filter (src/tools/colors.ts:12)', () => {
@@ -250,7 +254,8 @@ describe('tool image processors', () => {
       const [result] = levels(params)({ brightness: 0, contrast: 0, toolName: 'levels' });
 
       expect(lastCanvas().ctx.filter).toBe('brightness(100%) contrast(100%)');
-      expect(result).toBeTruthy();
+      expect(lastCanvas().ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('darkens and flattens at the negative end of both travels without collapsing either', () => {
@@ -265,7 +270,7 @@ describe('tool image processors', () => {
       // `contrast(0%)` — every pixel the same mid-grey, an image with no information left.
       expect(brightness).toBe(0);
       expect(contrast).toBe(50);
-      expect(result).toBeTruthy();
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('reaches black: the -150 end of the Brightness slider emits brightness(0%)', () => {
@@ -314,7 +319,7 @@ describe('tool image processors', () => {
       const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
 
       expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
-      expect(result).toBeTruthy();
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it.fails(
@@ -348,7 +353,7 @@ describe('tool image processors', () => {
 
       expect(pos).toEqual({ width: 16, height: 12 });
       expect(lastCanvas().ctx.drawImage).toHaveBeenCalledWith(bitmap, 4, 6, 16, 12, 0, 0, 16, 12);
-      expect(canvas).toBeTruthy();
+      expect(canvas).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('produces a 0x0 canvas for a zero-area rect instead of clamping to 1x1 (src/tools/crop.ts:19-20)', () => {
@@ -361,7 +366,6 @@ describe('tool image processors', () => {
       expect(lastCanvas().width).toBe(0);
       expect(lastCanvas().height).toBe(0);
       expect(canvas).toBe(lastCanvas() as unknown as OffscreenCanvas);
-      expect(canvas).toBeTruthy();
     });
 
     it('honours a one-pixel rect, so the 1x1 minimum only breaks for a zero-area rect', () => {
@@ -371,7 +375,7 @@ describe('tool image processors', () => {
       expect(lastCanvas().width).toBe(1);
       expect(lastCanvas().height).toBe(1);
       expect(lastCanvas().ctx.drawImage).toHaveBeenCalledWith(bitmap, 4, 6, 1, 1, 0, 0, 1, 1);
-      expect(canvas).toBeTruthy();
+      expect(canvas).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('documents the clamp asymmetry against a sibling processor that does clamp (src/tools/crop.ts:19-20)', () => {
@@ -386,8 +390,8 @@ describe('tool image processors', () => {
       expect(cropCanvas.width).toBe(0);
       expect(selectionCanvas.width).toBe(1);
       expect(selectionCanvas.height).toBe(1);
-      expect(cropped).toBeTruthy();
-      expect(selected).toBeTruthy();
+      expect(cropped).toBe(cropCanvas as unknown as OffscreenCanvas);
+      expect(selected).toBe(selectionCanvas as unknown as OffscreenCanvas);
     });
 
     it('throws a TypeError for the tool default null rect (src/tools/crop.ts:17)', () => {
@@ -438,7 +442,11 @@ describe('tool image processors', () => {
       expect(canvas.width).toBe(1);
       expect(canvas.height).toBe(1);
       expect(canvas.ctx.beginPath).not.toHaveBeenCalled();
-      expect(result).toBeTruthy();
+      // A polygon that encloses nothing is a blank stand-in, not a copy of the source: nothing
+      // is clipped and nothing is drawn, which a 1x1 dimension alone cannot show.
+      expect(canvas.ctx.clip).not.toHaveBeenCalled();
+      expect(canvas.ctx.drawImage).not.toHaveBeenCalled();
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
 
     it('collapses to a 1x1 canvas for an empty point list', () => {
@@ -446,7 +454,9 @@ describe('tool image processors', () => {
 
       expect(lastCanvas().width).toBe(1);
       expect(lastCanvas().height).toBe(1);
-      expect(result).toBeTruthy();
+      expect(lastCanvas().ctx.clip).not.toHaveBeenCalled();
+      expect(lastCanvas().ctx.drawImage).not.toHaveBeenCalled();
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('ignores the declared mode, so outline and fill produce identical output', () => {
@@ -456,8 +466,11 @@ describe('tool image processors', () => {
 
       expect(lastCanvas().ctx.drawImage.mock.calls.length).toBe(fillCalls);
       expect(lastCanvas().width).toBe(10);
-      expect(outline).toBeTruthy();
-      expect(fill).toBeTruthy();
+      expect(outline).toBe(lastCanvas() as unknown as OffscreenCanvas);
+      expect(fill).toBe(RecordingOffscreenCanvas.instances[0] as unknown as OffscreenCanvas);
+      // The polygon is copied in bounds-relative coordinates, so the source is drawn shifted
+      // by the negated origin of the polygon's own box — (2, 3) for this triangle.
+      expect(RecordingOffscreenCanvas.instances[0].ctx.drawImage).toHaveBeenCalledWith(bitmap, -2, -3);
     });
   });
 
@@ -674,13 +687,23 @@ describe('tool image processors', () => {
     });
 
     it.fails('returns a ToolResult for a resize-only arg set (src/tools/reposition.ts:12-24)', () => {
-      const result = reposition(params)({ resize: { x: 1, y: 2, width: 30, height: 30 }, toolName: 'reposition' });
+      const result: unknown = reposition(params)({
+        resize: { x: 1, y: 2, width: 30, height: 30 },
+        toolName: 'reposition',
+      });
+      const [resized] = Array.isArray(result) ? (result as OffscreenCanvas[]) : [];
 
-      expect(result).toBeDefined();
+      // A raster branch, if one is ever written, has to honour the extent it is asked for:
+      // handing back the 40x24 source would be the silent no-op this tripwire exists to catch.
+      expect(Array.isArray(result)).toBe(true);
+      expect(resized?.width).toBe(30);
+      expect(resized?.height).toBe(30);
     });
 
     it.fails('returns a ToolResult for an empty arg set (src/tools/reposition.ts:12-24)', () => {
-      expect(reposition(params)({ toolName: 'reposition' })).toBeDefined();
+      // `defaultSettings.reposition` seeds `move: { x: 0, y: 0 }`, so the identity ToolResult the
+      // move branch already produces is what an arg set carrying no move owes the registry.
+      expect(reposition(params)({ toolName: 'reposition' })).toEqual([bitmap, { x: 0, y: 0 }]);
     });
   });
 
@@ -712,7 +735,11 @@ describe('tool image processors', () => {
 
       // The context is shared between strokes, so the reset has to happen unconditionally.
       expect(lastCanvas().ctx.setLineDash).toHaveBeenCalledWith([]);
-      expect(result).toBeTruthy();
+      // Exactly one dash write, and the stroke still happens: the reset is a replacement, not a
+      // second append followed by a clear, and it is not a reason to skip the path.
+      expect(lastCanvas().ctx.setLineDash).toHaveBeenCalledTimes(1);
+      expect(lastCanvas().ctx.stroke).toHaveBeenCalledTimes(1);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('ignores a dash pair a solid pen still carries and resets the pattern instead', () => {
@@ -726,14 +753,19 @@ describe('tool image processors', () => {
       const canvas = lastCanvas();
       expect(canvas.ctx.setLineDash).not.toHaveBeenCalledWith([5, 30]);
       expect(canvas.ctx.setLineDash).toHaveBeenCalledWith([]);
-      expect(result).toBeTruthy();
+      // A round cap is the solid pen's own: a pen that took the dashed branch would be square.
+      expect(canvas.ctx.lineCap).toBe('round');
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
 
     it('passes a negative line width straight to the context', () => {
       const [result] = draw({ size })({ ...defaultSettings.draw, lineWidth: -3, points: stroke });
 
       expect(lastCanvas().ctx.lineWidth).toBe(-3);
-      expect(result).toBeTruthy();
+      // The sampled points still reach the path verbatim: a negative width is not a reason to
+      // reorder them, drop one, or skip the stroke. (2,2) (9,4) (6,11) are the three controls.
+      expect(lastCanvas().ctx.bezierCurveTo).toHaveBeenCalledWith(2, 2, 9, 4, 6, 11);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('strokes a single-point pen path into a dot', () => {
@@ -743,7 +775,7 @@ describe('tool image processors', () => {
       expect(canvas.ctx.moveTo).toHaveBeenCalledWith(4, 4);
       expect(canvas.ctx.lineTo).toHaveBeenCalledWith(4, 4);
       expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
-      expect(result).toBeTruthy();
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
 
     it('ramp-paints a spray stroke with one radial gradient per point', () => {
@@ -753,7 +785,10 @@ describe('tool image processors', () => {
       expect(canvas.ctx.stroke).not.toHaveBeenCalled();
       expect(canvas.ctx.createRadialGradient).toHaveBeenCalledTimes(stroke.length);
       expect(canvas.ctx.fill).toHaveBeenCalledTimes(stroke.length);
-      expect(result).toBeTruthy();
+      // One dab per point, centred on the point with an inner radius of 0 and a radius of half
+      // the Size slider: Size 10 is a 5px dab, not a 10px blot.
+      expect(canvas.ctx.createRadialGradient).toHaveBeenCalledWith(2, 2, 0, 2, 2, 5);
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
   });
 
@@ -773,7 +808,10 @@ describe('tool image processors', () => {
       expect(canvas.ctx.fillStyle).toBe('#00ff00');
       expect(canvas.ctx.fill).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
-      expect(result).toBeTruthy();
+      // The drag bounds (4,4)-(20,16) become the ellipse: centre (12,10), radii 8 and 6, a full
+      // turn from angle 0.
+      expect(canvas.ctx.ellipse).toHaveBeenCalledWith(12, 10, 8, 6, 0, 0, Math.PI * 2);
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
 
     it('never fills an oval without a background color', () => {
@@ -781,7 +819,10 @@ describe('tool image processors', () => {
 
       expect(lastCanvas().ctx.fill).not.toHaveBeenCalled();
       expect(lastCanvas().ctx.stroke).toHaveBeenCalledTimes(1);
-      expect(result).toBeTruthy();
+      // `setShapeCtx` only assigns `fillStyle` when there is a background colour, so the
+      // context keeps the value it was born with: a fill here could not pick up a colour.
+      expect(lastCanvas().ctx.fillStyle).toBe('');
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('suppresses the fill in path tool mode even with a background color', () => {
@@ -795,7 +836,10 @@ describe('tool image processors', () => {
       });
 
       expect(lastCanvas().ctx.fill).not.toHaveBeenCalled();
-      expect(result).toBeTruthy();
+      // A path still records its outline, so the geometry survives as a path: only the raster
+      // fill is suppressed.
+      expect(lastCanvas().ctx.stroke).toHaveBeenCalledTimes(1);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('normalizes a legacy circle figure onto the oval renderer', () => {
@@ -806,7 +850,9 @@ describe('tool image processors', () => {
       } as unknown as ToolArgs);
 
       expect(lastCanvas().ctx.ellipse).toHaveBeenCalledTimes(1);
-      expect(result).toBeTruthy();
+      // The legacy figure reaches the oval renderer with the same bounds an 'oval' would.
+      expect(lastCanvas().ctx.ellipse).toHaveBeenCalledWith(12, 10, 8, 6, 0, 0, Math.PI * 2);
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
     });
 
     it('throws a named error when the args carry no figure', () => {
@@ -816,13 +862,20 @@ describe('tool image processors', () => {
     });
 
     it('draws nothing without start and end handles', () => {
-      const [result] = shape({ size })({
-        ...defaultSettings.shape,
-        figure: 'rectangle',
-      } as unknown as ToolArgs);
+      // Every figure, not only the one the shape tool opens with: `drawShape` returns before it
+      // reads `figure`, and each figure's branch reaches a different paint call, so a guard that
+      // stopped returning early would show up on at least one of them.
+      for (const figure of ['line', 'rectangle', 'oval', 'triangle'] as const) {
+        const [result] = shape({ size })({ ...defaultSettings.shape, figure } as unknown as ToolArgs);
+        const ctx = lastCanvas().ctx;
 
-      expect(lastCanvas().ctx.strokeRect).not.toHaveBeenCalled();
-      expect(result).toBeTruthy();
+        expect(ctx.beginPath).not.toHaveBeenCalled();
+        expect(ctx.moveTo).not.toHaveBeenCalled();
+        expect(ctx.stroke).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+        expect(ctx.strokeRect).not.toHaveBeenCalled();
+        expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
+      }
     });
 
     it('fills a triangle when a background color is set', () => {
@@ -838,7 +891,10 @@ describe('tool image processors', () => {
       expect(canvas.ctx.closePath).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.fill).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.fillStyle).toBe('#0000ff');
-      expect(result).toBeTruthy();
+      // A triangle inscribed in the drag bounds: the first vertex sits on top, at
+      // centre (12,10) plus one radius up, so (12, 4).
+      expect(canvas.ctx.moveTo).toHaveBeenCalledWith(12, 4);
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
 
     it('fills a rounded rectangle through the curved path', () => {
@@ -852,10 +908,17 @@ describe('tool image processors', () => {
       });
 
       const canvas = lastCanvas();
-      expect(canvas.ctx.quadraticCurveTo).toHaveBeenCalled();
+      expect(canvas.ctx.quadraticCurveTo.mock.calls).toEqual([
+        // Corner order and the exact control points of the 16x12 box at (4,4) with r=4:
+        // top-right, bottom-right, bottom-left, top-left.
+        [20, 4, 20, 8],
+        [20, 16, 16, 16],
+        [4, 16, 4, 12],
+        [4, 4, 8, 4],
+      ]);
       expect(canvas.ctx.fill).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.strokeRect).not.toHaveBeenCalled();
-      expect(result).toBeTruthy();
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
     });
   });
 

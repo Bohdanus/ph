@@ -204,7 +204,50 @@ describe('AVIF decoding', () => {
     decode.mockResolvedValue({ data: new Uint8ClampedArray(0), width: 0, height: 4, colorSpace: 'srgb' });
     const file = new Blob([new Uint8Array([0])], { type: 'image/avif' });
 
-    await expect(loadAvifFile(file)).rejects.toThrow('Image has invalid dimensions');
+    // The budget owns the shape of the geometry as well as its size, so this is refused there
+    // and the message names AVIF rather than the generic rasteriser that used to catch it.
+    await expect(loadAvifFile(file)).rejects.toThrow('AVIF image has invalid dimensions to open (0×4)');
+  });
+
+  it.each([
+    { label: 'a negative width', width: -5, height: -3 },
+    { label: 'a negative height', width: 4, height: -3 },
+    { label: 'a fractional width', width: 4.5, height: 4 },
+    { label: 'a fractional height', width: 4, height: 0.5 },
+    { label: 'a NaN width', width: Number.NaN, height: 4 },
+    { label: 'a NaN height', width: 4, height: Number.NaN },
+  ])('rejects $label rather than letting it reach createImageData', async ({ width, height }) => {
+    // `width * height > 80000000` is false for every one of these, so before the shape guard the
+    // budget waved them all through — and the DOM answered with an `IndexSizeError` naming
+    // neither AVIF nor the file the user opened.
+    installImageHarness();
+    decode.mockResolvedValue({ data: new Uint8ClampedArray(0), width, height, colorSpace: 'srgb' });
+    const file = new Blob([new Uint8Array([0])], { type: 'image/avif' });
+
+    await expect(loadAvifFile(file)).rejects.toThrow('AVIF image has invalid dimensions to open');
+    expect(putImageData).not.toHaveBeenCalled();
+  });
+
+  it('rejects a negative canvas geometry on the save path before the pixels are read', async () => {
+    const canvas = document.createElement('canvas');
+    // A real canvas clamps a negative assignment, so the negative geometry is injected through
+    // the property the budget reads — the same shape a decoded negative takes on the open path.
+    Object.defineProperty(canvas, 'width', { value: -5, configurable: true });
+    Object.defineProperty(canvas, 'height', { value: -3, configurable: true });
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: -5, height: -3 }));
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeAvif(canvas)).rejects.toThrow('AVIF image has invalid dimensions to save (-5×-3)');
+    expect(getImageData).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  it('still refuses an over-budget canvas, so the shape guard did not replace the budget', async () => {
+    const canvas = canvasOf(10000, 8001, new Uint8ClampedArray(0));
+
+    await expect(encodeAvif(canvas)).rejects.toThrow(
+      'AVIF image is too large to save (10000×8001). Maximum is 80000000 pixels.'
+    );
   });
 
   it('rejects a decoded image beyond the pixel budget rather than downscaling it', async () => {

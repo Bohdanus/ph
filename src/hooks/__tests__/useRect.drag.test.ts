@@ -144,6 +144,32 @@ describe('useRect mask drawing', () => {
     expect(ctx.fillRect).toHaveBeenCalledWith(300 - half, 250 - half, handle, handle);
   });
 
+  /** The Type tool's outside grip and its hit target use the same full square. */
+  it('paints the handles whole outside the rect for a consumer that opts in', () => {
+    const { ctx } = setup({ initialRect: RECT, handlesOutside: true });
+
+    const handle = HANDLE_SIZE;
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 100 - handle, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(100 - handle, 250, handle, handle);
+    expect(ctx.fillRect).toHaveBeenCalledWith(300, 250, handle, handle);
+  });
+
+  it.each([
+    ['top-left', 100 - HANDLE_SIZE / 2, 100 - HANDLE_SIZE / 2],
+    ['top-right', 300 + HANDLE_SIZE / 2, 100 - HANDLE_SIZE / 2],
+    ['bottom-left', 100 - HANDLE_SIZE / 2, 250 + HANDLE_SIZE / 2],
+    ['bottom-right', 300 + HANDLE_SIZE / 2, 250 + HANDLE_SIZE / 2],
+  ])('hit-tests the whole outside %s handle', (edge, x, y) => {
+    const { result, event } = setup({ initialRect: RECT, handlesOutside: true });
+
+    act(() => {
+      result.current.pointerHandlers.onPointerDown(event(x, y));
+    });
+
+    expect(result.current.pointerState.currentEdgeRef.current).toBe(edge);
+  });
+
   it('reports the sorted rect to onRepaint but not to onChange while idle', () => {
     const onRepaint = vi.fn();
     const onChange = vi.fn();
@@ -437,6 +463,58 @@ describe('useRect handle detection', () => {
     expect(target.style.cursor).toBe('');
     // The guard rejects before the coordinates are even read.
     expect(pointer.data.getLocalCoords).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRect marquee border animation', () => {
+  beforeEach(resetPointerMock);
+
+  it('advances the in-flight border at screen speed and stops on release', () => {
+    pointer.data.dimensionsRef.current.scale = 2;
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging' });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets).toContain(-0.2);
+    const paintedFrames = dashOffsets.length;
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(150, 120));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(paintedFrames);
+  });
+
+  it('keeps the always-mode border static while dragging', () => {
+    const { ctx, result, event } = setup({ borderMode: 'always', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    startDrag({ result, event }, { x: 200, y: 175 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(210, 185));
+    });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(dashOffsets).toHaveLength(1);
+    expect(dashOffsets).toEqual([0]);
   });
 });
 

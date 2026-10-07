@@ -46,11 +46,14 @@ the time it is acted on.
 a commit made from the main worktree. It does not stop the write — it runs after
 the edit — so it converts "rogue commits nobody can attribute" into "a dirty
 tree the next `git status` names". A landing never reaches it, because a
-fast-forward runs no hook and a merge runs `pre-merge-commit`; the one override
-is `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Everything else that
-changes a tracked file belongs in the branch's own worktree, including a comment
-— and before you edit, `git rev-parse --show-toplevel` is the only thing that
-distinguishes the worktree you are in from the one you believe you are in.
+fast-forward fires no **blocking** hook and a merge fires `pre-merge-commit`
+before it commits; the one override is `ALLOW_MAIN_COMMIT=1`, and only the exact
+value `1`. A fast-forward does fire `post-merge`, which releases the board claims
+this merge carried — that is the one hook a landing reaches, and it cannot block.
+Everything else that changes a tracked file belongs in the branch's own worktree,
+including a comment — and before you edit, `git rev-parse --show-toplevel` is the
+only thing that distinguishes the worktree you are in from the one you believe you
+are in.
 
 ---
 
@@ -82,7 +85,7 @@ Read the top-level answers before the table:
 Per worktree, the fields that decide:
 
 - **`action`** — `land` is the target. The values are `land`, `at-risk`,
-  `dispose`, `in-use`, `keep`, `undecided`
+  `dispose`, `legacy`, `in-use`, `keep`, `undecided`
   (`ACTION` in `scripts/lib/worktree-inventory/classify.mjs`).
 - **`writeHistory.chatCount`** — who wrote a file here, **ever**. This is the
   freedom check that `chats` cannot do. `chats` is keyed on
@@ -475,6 +478,19 @@ chat is in there: **only the operator may stop a writing chat**, so report it an
 move on. A dirty tree means commit it or carry it as a patch. `git branch -d`
 refusing is likewise a finding, not an obstacle — and `dispose` already uses `-d`,
 so a branch it kept is anchored and recoverable.
+
+**Expect `derived-live-writer`, and do not expect it to name you.** Step 5 ran the gates in that
+worktree, so the refusal is about you or about nobody in particular — only the write arm names a
+chat, and only for thirty minutes. `--no-live-writers` does not clear it.
+`docs/ORCHESTRATION.md` — §"`derived-live-writer` can refuse the session that is asking" — is the
+one home for the mechanism, and `HANDOFF.md` §224 is the one home for the flag that _would_ clear it,
+which a sweep must not reach for.
+
+This is the gate working: the same signal caught a worktree with agents editing it an hour earlier
+reading `action: "dispose"` with every git fact correct. Do not reach for the removal command by
+hand. **Land the work, leave the directory, and say in the report that the removal is pending** — a
+harvest that reports its landing and silently leaves the worktree behind is indistinguishable from
+one that forgot.
 
 **Record the outcome.** `.skills/stale-worktree-reclaim.md` and this file both
 exist because a harvest that lands silently teaches the next agent nothing. Put

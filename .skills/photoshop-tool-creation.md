@@ -246,8 +246,9 @@ repository.
   in `.husky/pre-commit`, ahead of `gate:commit`, and tells you the worktree recipe instead of a bare
   "no". It stops the **commit, not the write** — it runs after the edit — so it converts rogue commits
   into a dirty tree the next `git status` names. A landing never reaches it, because a fast-forward
-  runs no hook and `git merge` runs `pre-merge-commit`; the one override is `ALLOW_MAIN_COMMIT=1`,
-  and only the exact value `1`. Everything that changes a tracked file belongs in the branch's own
+  fires no **blocking** hook and `git merge` runs `pre-merge-commit`; the one override is
+  `ALLOW_MAIN_COMMIT=1`, and only the exact value `1`. Everything that changes a tracked file
+  belongs in the branch's own
   worktree, **including a comment**, and `git rev-parse --show-toplevel` before the first edit is the
   only thing that distinguishes where you are from where you believe you are.
 - **Never resolve _or repair_ a merge conflict in the main worktree.** `reset --hard` and
@@ -268,9 +269,10 @@ repository.
   This is enforced, not merely documented: `scripts/merge-takeover-guard.mjs` runs from
   `pre-commit` (a conflicted merge being committed) and `pre-merge-commit` (a clean merge
   that commits itself), and **refuses** the merge. `docs/ORCHESTRATION.md` is the one home for
-  the mechanism, both loss shapes, and the limits — a fast-forward fires no hook at all, and
-  `--no-verify` bypasses this. The old `comm -13` recipe is retired: it fired hundreds of
-  false positives when run before the merge and missed the very incident it was written for.
+  the mechanism, both loss shapes, and the limits — a fast-forward fires no **blocking** hook
+  (`post-merge` runs, and cannot block), and `--no-verify` bypasses this. The old `comm -13`
+  recipe is retired: it fired hundreds of false positives when run before the merge and missed the
+  very incident it was written for.
 
 **And a red `tsc` in the main worktree may be somebody else's work in progress**, not a broken `main`
 — the main worktree is shared, so it routinely holds an agent's half-written change, and that state
@@ -633,7 +635,7 @@ Investigate and report on, with `file:line` evidence for EVERY claim:
 4. `src/components/Main/DrawToolArea.tsx` — read fully. This is the canvas event surface. Report: which pointer events are bound (pointerdown/move/up?), how `pressure`, `tiltX`, `tiltY`, `pointerType`, `buttons` are read from the PointerEvent (or not), how the stroke is batched/throttled, how it calls into the tool, and how the stroke is committed to history.
 5. Where do brush settings live in the store? Search `src/contexts/StoreContext.tsx` and the settings context. Report the exact shape: which fields, their types, their defaults, the action/reducer names that update them, with `file:line`.
 6. `src/util/settings.ts` — read fully. Report the settings persistence shape (localStorage? per-tool?).
-7. The pointer pipeline: read `src/hooks/usePointerPosition.ts` and `src/hooks/useDrag.ts`. Report what pointer data is threaded through and whether `pressure` survives.
+7. The pointer pipeline: read `src/hooks/usePointerPosition.ts` and `src/hooks/useRect.ts`. Report what pointer data is threaded through and whether `pressure` survives.
 8. Search the whole `src/` tree for the literal strings: `hardness`, `flow`, `spacing`, `jitter`, `scatter`, `wetEdges`, `pressure`, `opacity`, `airbrush`, `autoErase`, `smoothing`. For each hit report `file:line` + the line. This tells me exactly which of the Photoshop controls already have any support at all. Be complete — use grep, not a sample.
 9. `src/components/ToolbarsRight/Draw/Draw.tsx` — read fully. It is the EXISTING options bar for the `draw` tool. Report every control it renders, its `data-testid`s, how it reads/writes the store, and its full props. This is my closest template.
 10. `src/tools/__tests__/paint-tools.test.ts` — report what it already covers for brush/pencil.
@@ -3275,9 +3277,11 @@ page — so two readings through two rects are not a comparison at all
 
 **Clip and coordinate helpers.** `takeLineScreenshot(page, box, name, testInfo, clip?)`
 (`canvas-helpers.ts` — `takeLineScreenshot()`) is the `page.screenshot` path; `captureCanvasScreenshot(page, box,
-testInfo, name, clip?)` (`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`) is the CDP path. Pass a **bare filename**
-as `name`: only `outputDir` is created, so a name with a separator fails `ENOENT` and a traversing
-name resolves outside it (`e2e/OPEN_PROBLEMS.md` §"P3 — the artifact name is interpolated into a path unsanitised"). **Never divide by `devicePixelRatio`** —
+testInfo, name, clip?)` (`e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`) is the CDP path. Pass `name` as a
+**single path component** — a bare filename, with no separator and neither `.` nor `..`. The CDP path rejects anything
+else before it creates the directory or opens a CDP session, so a bad name is an error naming the helper rather than a
+file written somewhere else; the guard's own docblock is the home for why it rejects rather than sanitises
+(`cdp-helpers.ts` — the "So `name` has to be a single path component" comment). **Never divide by `devicePixelRatio`** —
 and note that rule lives in a comment, not a guard (`cdp-helpers.ts` — the "do not divide by devicePixelRatio" comment), so a future change can
 delete the reasoning without deleting anything that fails. Downstream code derives the scale from
 the decoded image dimensions instead, via `screenshotBoundsToCss` (`canvas-helpers.ts` — `screenshotBoundsToCss()`) and
@@ -3347,10 +3351,9 @@ failure is a new defect, never a known one. Characterised, not listed:
    different checkout's application", a **not-yet-merged reference**. **Set `PLAYWRIGHT_PORT` in
    every worktree**, and put it in the brief so a subagent cannot forget.
 
-Two more latent entries: a nearly transparent pixel counts at full weight in `dominantRed`
+One more latent entry: a nearly transparent pixel counts at full weight in `dominantRed`
 (`canvas-helpers.ts` — `dominantRed()`) and `getColorAtPoint` (`canvas-helpers.ts` — `getColorAtPoint()`), so a light or translucent stroke makes a
-colour assertion worthless (`e2e/OPEN_PROBLEMS.md` §"P3 — transparent pixels weighted as fully opaque (low confidence)"); and a bare `name` passed to
-`captureCanvasScreenshot` is interpolated into a path unsanitised (`e2e/OPEN_PROBLEMS.md` §"P3 — the artifact name is interpolated into a path unsanitised"). **Do not weaken a
+colour assertion worthless (`e2e/OPEN_PROBLEMS.md` §"P3 — transparent pixels weighted as fully opaque (low confidence)"). **Do not weaken a
 gate to get green:** no skips, no raised thresholds, no deleted assertions, no re-recorded visual
 baselines (`AGENTS.md`, "Gates" and "E2E failures").
 
@@ -3359,7 +3362,7 @@ baselines (`AGENTS.md`, "Gates" and "E2E failures").
 Baselines live in `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`, resolved
 through `testInfo.snapshotDir` rather than `snapshotPath()` so a baseline committed on one machine
 does not read as missing on another (`e2e/README.md` — the `testInfo.snapshotDir` paragraph under "Baseline layout"). The directory holds 17 committed
-files; 7 are read, one per format with `comparePixels: true` (`drawing.png.png`, `.jpeg`, `.webp`,
+files; 7 are read, one per format in `browserVerifiedFormats` (`drawing.png.png`, `.jpeg`, `.webp`,
 `.svg`, `.bmp`, `.gif`, `.avif`); the other 10 are orphans nothing references
 (`e2e/OPEN_PROBLEMS.md` §"P3 — 10 orphaned committed baselines (2.1 MB)"). `.gitattributes:14` marks the snapshot tree `binary` so
 line-ending normalisation can never rewrite the committed pixels.
@@ -3750,9 +3753,9 @@ some project's `include`" step is a real constraint — a new file no project in
 type-checked by nothing, with no error anywhere. Scope it correctly, though: `tsc -b --listFiles`
 catches a file no project reaches but **not** one reachable only through its importers. And there
 are no coverage thresholds anywhere (`vitest.config.ts` — its `coverage` block, which declares no thresholds, `vitest.e2e.config.ts` — its `coverage` block);
-`--coverage` is for the report, not a percentage gate. The `dependency-review` job is gone, and the
-licence policy it read is written down in `DEPENDENCIES.md` and is not a gate — `npm audit` is the
-vulnerability half.
+`--coverage` is for the report, not a percentage gate. Dependency licence terms are not checked by
+CI; the README's dependency licensing note distinguishes that gap from `npm audit`, which checks
+vulnerability advisories.
 
 ### 8.6 The one rule
 
@@ -4216,7 +4219,7 @@ always verified.
 | Tool                                                            | Photoshop behaviour (FROM-MEMORY)                                                                 | Status here                                                                                                                                                                                                                                                                                                                                                                                             | COST                                                                                                                                                                           | Deciding `file:line`                                                                                                                                                                                                                                                                                                                                     | Effort                                                  |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | **The six pen-family tools + Custom Shape: hide or throw**      | Real vector paths; a path model                                                                   | **SELECTABLE AND INERT** — `commit: 'unimplemented'`, `unimplemented()` returns `[null as never]`                                                                                                                                                                                                                                                                                                       | **CHEAP** (a removal, not a build)                                                                                                                                             | `toolProcessors.ts` — the `commit: 'unimplemented'` rows, and `Main.tsx` with **no** `interactionMode` arm, so `EventHandler` is `DummyToolArea` (the default and its terminal `else`) and the overlay is `display: none` (the tool-overlay canvas's `display` allowlist)                                                                                | XS                                                      |
-| **Elliptical Marquee** (+ Single Row / Single Column)           | A marquee shape; Shift for a circle, Alt from centre                                              | **BUILT** — `'elliptical-selection'` is registered (`src/tools/toolProcessors.ts` — the `'elliptical-selection'` entry, `toolsMap.ts` — the `'elliptical-selection'` row), has real args (`src/contexts/tool-types.ts` — `ToolArgsByName`'s `'elliptical-selection'` member) and its own options bar (`src/components/ToolbarsRight/EllipticalSelection/`). Single Row / Single Column are still absent | **CHEAP for history** (`selection` → `history-adapter.ts` — `operationForTool()`'s `return null` returns `null`); the loop representation caps it at no-AA, no-holes, no-modes | the `'rectangular-selection'` entry is the sibling template; `general-types.ts`'s `Selection` is the ceiling; `HANDOFF.md` §79 tracks a live drag-tracking defect in `EllipticalSelectionToolArea.tsx`                                                                                                                                                   | S (Single Row / Column)                                 |
+| **Elliptical Marquee** (+ Single Row / Single Column)           | A marquee shape; Shift for a circle, Alt from centre                                              | **BUILT** — `'elliptical-selection'` is registered (`src/tools/toolProcessors.ts` — the `'elliptical-selection'` entry, `toolsMap.ts` — the `'elliptical-selection'` row), has real args (`src/contexts/tool-types.ts` — `ToolArgsByName`'s `'elliptical-selection'` member) and its own options bar (`src/components/ToolbarsRight/EllipticalSelection/`). Single Row / Single Column are still absent | **CHEAP for history** (`selection` → `history-adapter.ts` — `operationForTool()`'s `return null` returns `null`); the loop representation caps it at no-AA, no-holes, no-modes | the `'rectangular-selection'` entry is the sibling template; `general-types.ts`'s `Selection` is the ceiling                                                                                                                                                                                                                                             | S (Single Row / Column)                                 |
 | **Magic Wand** — contiguous, Sample All Layers, tolerance range | 0–255 tolerance, default 32; contiguous by default; Sample All Layers                             | **PARTIAL, and a no-op**: `magicWand` is `({ bitmap }) => () => [bitmap]` while registered `commit: 'selection'`                                                                                                                                                                                                                                                                                        | **CHEAP** for history                                                                                                                                                          | `src/tools/magicWand.ts` — `magicWand()` against `src/tools/toolProcessors.ts` — the `'magic-wand'` entry; default tolerance 28 at `src/tools/settings.ts` — the `'magic-wand'` default (the 0–255 range is a FROM-MEMORY claim)                                                                                                                         | M                                                       |
 | **Shape-tool fidelity**                                         | Triangle is a drag-defined isosceles, Shift = equilateral; Line snaps 45°; shapes fill by default | **PARTIAL**: Triangle inscribes a _regular_ 3-gon; Line is excluded from every Shift constraint (`if (shiftKey && figure !== 'line')`); `backgroundColor: null` so nothing fills; `oval` carries a dead `cornerRadius`; `polygon` has no `sides`                                                                                                                                                        | **CHEAP**                                                                                                                                                                      | `shape.ts` — `snapLineGeometry()` and the `figure === 'line'` branch of `computeShapeGeometry`; `settings.ts` — the `shape` entry's `backgroundColor: null`                                                                                                                                                                                              | S — **but `wip/ps-shape-geometry` is already doing it** |
 | **Text**                                                        | Paragraph layout, wrapping to a text box, justify, tracking, live font gating                     | **PARTIAL / raster-at-birth**: `text.split('\n')` then one `fillText` per line, and `getTextWidth` returns only the **widest** line, so `rect` is decoration, not a wrap box. `lineHeight` is an em multiplier, not a baseline distance                                                                                                                                                                 | **CHEAP** — `commit: 'source'`, routed to `create-layer`                                                                                                                       | `src/tools/toolProcessors.ts` — the `text` entry; `src/tools/text.ts` — the per-line `fillText` renderer; `src/tools/settings.ts` — the `text` default                                                                                                                                                                                                   | M                                                       |
@@ -4281,7 +4284,8 @@ is a diff nobody can review and a collision two agents cannot resolve. **Never h
 list, and treat any you find as a claim about a moment.
 
 **Read `action` first.** It is the whole answer: `land` merge it · `at-risk` save it, it needs a
-human · `dispose` delete it · `in-use` leave it alone · `keep` never a candidate · `undecided` do
+human · `dispose` delete it · `legacy` drop the worktree, keep the branch · `in-use` leave it
+alone · `keep` never a candidate · `undecided` do
 not remove it. Two things that catch people: a **`land` is a point-in-time answer**, only as fresh as
 `generatedAt`, so re-read `dirty` and `mergeConflict` before acting on one you did not generate; and
 **`mustNotPrune` vetoes `land` as well as `dispose`**, so a branch reading `land` with that flag set

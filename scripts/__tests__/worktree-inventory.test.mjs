@@ -33,7 +33,13 @@ import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/work
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
-import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
+import {
+  __testables,
+  findMissingWorktrees,
+  listWorktrees,
+  mergeConflict,
+  PATCH_EQUIVALENCE,
+} from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 import {
   auditWrites,
@@ -399,6 +405,44 @@ describe('git.mjs against a real repository', () => {
       const { ahead, behind } = __testables.aheadBehind(dir, 'main');
       expect(behind).toBe(1);
       expect(ahead).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recognises a branch whose non-merge patches were cherry-picked onto the base', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('checkout', '--quiet', 'side');
+      const commits = execFileSync('git', ['rev-list', '--reverse', 'main..HEAD'], { cwd: dir, encoding: 'utf8' })
+        .trim()
+        .split('\n');
+      g('checkout', '--quiet', 'main');
+      g('cherry-pick', '--quiet', ...commits);
+      g('branch', 'absorbed', 'side');
+      g('checkout', '--quiet', 'absorbed');
+      const result = __testables.patchEquivalence(dir, 'main', 2);
+      expect(result).toEqual({ status: PATCH_EQUIVALENCE.ABSORBED, reason: expect.any(String) });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats merge commits as unknown rather than letting git cherry hide them', () => {
+    const dir = makeRepo();
+    try {
+      const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+      g('branch', 'base', 'main');
+      g('checkout', '--quiet', '-b', 'merge-side', 'base');
+      writeFileSync(join(dir, 'merge.txt'), 'merge');
+      g('add', '.');
+      g('commit', '--quiet', '-m', 'merge-side');
+      g('checkout', '--quiet', '-b', 'merge-result', 'base');
+      g('merge', '--quiet', '--no-ff', '-m', 'merge merge-side', 'merge-side');
+      const result = __testables.patchEquivalence(dir, 'base', 2);
+      expect(result.status).toBe(PATCH_EQUIVALENCE.UNKNOWN);
+      expect(result.reason).toMatch(/merge commit/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -981,6 +1025,23 @@ describe('the pinned clock', () => {
     expect(inv.worktrees[0].recommendation).toBe(RECOMMENDATION.SALVAGE);
   });
 
+  it('keeps the wall-clock generation stamp separate from the pinned evaluation time', () => {
+    const pinnedNow = NOW + 5 * 60 * 60_000;
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'x', ahead: 2, mergedIntoBase: false })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board: { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] },
+      chatAudit: { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+      nowMs: pinnedNow,
+      generatedAtMs: NOW,
+    });
+
+    expect(inv.generatedAt).toBe(new Date(NOW).toISOString());
+    expect(inv.ownership.asOf).toBe(new Date(pinnedNow).toISOString());
+  });
+
   it('still marks a genuinely live session in-use', () => {
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     // The map key MUST be the worktree's own path: `buildInventory` looks
@@ -1115,6 +1176,58 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
     expect(v.prunable).toBe(true);
   });
 
+  it('calls a clean branch whose patches are already on main a disposal candidate', () => {
+    const v = classify(wt({ ahead: 2, mergedIntoBase: false, patchEquivalence: PATCH_EQUIVALENCE.ABSORBED }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.LANDED);
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('keeps an unreadable working-tree status out of every destructive verdict', () => {
+    const v = classify(
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 0, paths: [], statusError: 'status failed' },
+      }),
+      { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
+    );
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('keeps git-protected worktrees out of destructive verdicts', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true, locked: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not call unknown branch facts landed', () => {
+    const v = classify(wt({ ahead: null, behind: null, mergedIntoBase: null }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+  });
+
   it('derives the action from the recommendation, and covers every value', () => {
     // Each case builds inputs that actually PRODUCE that recommendation.
     // An earlier version fed one default worktree and asserted seven
@@ -1137,6 +1250,21 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE, wt({ ahead: 0, mergedIntoBase: true }), { curated: { mustNotPrune: true } }],
       [RECOMMENDATION.IN_USE, wt({ ahead: 0, mergedIntoBase: true }), { boardAgents: [{ live: true, agentId: 'a' }] }],
       [RECOMMENDATION.KEEP, wt({ isPrimary: true }), {}],
+      // A curated `legacy` on a branch git already calls disposable. The shape is
+      // the ordinary one so the ONLY thing producing the verdict is the flag.
+      [
+        RECOMMENDATION.LEGACY,
+        wt({ ahead: 0, mergedIntoBase: true }),
+        { curated: { legacy: true, note: 'kept for the off chance' } },
+      ],
+      // And the same flag on a branch that would otherwise be offered for merge:
+      // `legacy` says do not merge it either, which is why it cannot sit below
+      // `ready-to-land` in the ladder.
+      [
+        RECOMMENDATION.LEGACY,
+        wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: false } }),
+        { curated: { legacy: true, note: 'kept for the off chance' } },
+      ],
       // Detached and not in use: there is no branch identity to report, so
       // nothing can be decided about it. With a live agent it would be
       // `in-use` first, which is correct but not what this case is about.
@@ -1149,6 +1277,7 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE]: ACTION.AT_RISK,
       [RECOMMENDATION.IN_USE]: ACTION.IN_USE,
       [RECOMMENDATION.KEEP]: ACTION.KEEP,
+      [RECOMMENDATION.LEGACY]: ACTION.LEGACY,
       [RECOMMENDATION.UNKNOWN]: ACTION.UNDECIDED,
     };
     const seen = new Set();
@@ -1170,6 +1299,99 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
     expect(riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })).toBeLessThan(
       riskScore({ recommendation: RECOMMENDATION.SALVAGE })
     );
+  });
+});
+
+describe('classify: a curated legacy claim', () => {
+  const LEGACY = { legacy: true, note: 'kept for the off chance' };
+  const of = (worktree, curated) =>
+    classify(worktree, { chatSummary: noChats, chatSessions: noSessions, curated, nowMs: NOW });
+
+  it('marks a clean branch git would otherwise dispose legacy', () => {
+    const v = of(wt({ ahead: 0, mergedIntoBase: true }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    // The two halves must not be read from one field. `legacy` says the
+    // DIRECTORY may go and the BRANCH may not, and `prunable` asserts both at
+    // once, so a record where `action === DISPOSE` is the only truth is the one
+    // where `npm run dispose` would have deleted the ref.
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain('legacy');
+  });
+
+  it('suppresses a clean merge verdict, because legacy means do not merge it either', () => {
+    const v = of(wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: false } }), LEGACY);
+    expect(v.action).toBe(ACTION.LEGACY);
+    expect(v.reasons.join(' ')).toContain('kept on the branch and not proposed for merge');
+  });
+
+  it('is ignored for a DIRTY tree, because that directory is the only copy of the files', () => {
+    // The load-bearing case. `legacy` authorises removing a worktree, and
+    // uncommitted changes exist in no commit and no ref — so a claim about the
+    // BRANCH says nothing about them, and honouring it here would let a prose
+    // field authorise the loss this whole program exists to prevent. It has to
+    // stay `at-risk`, which is where a human is required.
+    const v = of(wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [] } }), LEGACY);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('is ignored for a detached worktree, because there is no branch to keep', () => {
+    const v = of(wt({ detached: true, ahead: 0, mergedIntoBase: true }), LEGACY);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+  });
+
+  it.each([
+    ['an unknown branch identity', wt({ branch: null, ahead: 0, mergedIntoBase: true }), 'worktree branch identity'],
+    [
+      'an unreadable working-tree status',
+      wt({
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 0, paths: [], statusError: 'status failed' },
+      }),
+      'status failed',
+    ],
+    [
+      'an unresolved branch relationship',
+      wt({ ahead: null, behind: null, mergedIntoBase: null }),
+      'branch relationship to the base',
+    ],
+  ])('refuses a legacy verdict with %s', (_description, worktree, reason) => {
+    const v = of(worktree, LEGACY);
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.recommendation).toBe(RECOMMENDATION.UNKNOWN);
+    expect(v.action).toBe(ACTION.UNDECIDED);
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain(reason);
+  });
+
+  it('loses to a live agent, because somebody is working here right now', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: LEGACY,
+      boardAgents: [{ live: true, agentId: 'a' }],
+      nowMs: NOW,
+    });
+    expect(v.action).toBe(ACTION.IN_USE);
+  });
+
+  it('ranks below every other verdict, because nothing about it is work', () => {
+    // The sort order IS the triage order: `legacy` is the least work in the
+    // repository, and a status with a 1% chance of mattering belongs last.
+    expect(riskScore({ recommendation: RECOMMENDATION.LEGACY })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.PRUNE })
+    );
+    expect(riskScore({ recommendation: RECOMMENDATION.LEGACY })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })
+    );
+  });
+
+  it('changes nothing when the branch is already disposable and no flag is set', () => {
+    // Guards the negative direction: adding a field to `classify` must not make
+    // every clean merged branch legacy by accident.
+    const v = of(wt({ ahead: 0, mergedIntoBase: true }), null);
+    expect(v.action).toBe(ACTION.DISPOSE);
   });
 });
 
@@ -1314,6 +1536,8 @@ describe('classify: the 0-ahead trap', () => {
       }),
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
+    expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(v.recommendation).toBe(RECOMMENDATION.KEEP);
     expect(v.prunable).toBe(false);
     expect(v.uncommitted).toBe(true);
   });
@@ -1670,14 +1894,47 @@ describe('the headline lists and totals', () => {
 
   it('puts every record in exactly the list its action names', () => {
     const inv = build();
-    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK]) {
+    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK, ACTION.LEGACY]) {
       const expected = worktrees
         .map((w) => w.name)
         .filter((n) => inv.worktrees.find((r) => r.name === n).action === action);
       const actual =
-        inv[action === ACTION.LAND ? 'readyToLand' : action === ACTION.DISPOSE ? 'disposalCandidates' : 'atRisk'];
+        inv[
+          action === ACTION.LAND
+            ? 'readyToLand'
+            : action === ACTION.DISPOSE
+              ? 'disposalCandidates'
+              : action === ACTION.AT_RISK
+                ? 'atRisk'
+                : 'legacy'
+        ];
       expect(actual, `list for ${action}`).toEqual(expected);
     }
+  });
+
+  it('lists a legacy worktree under legacy and under nothing else', () => {
+    // A legacy record is disposable AND worth keeping, and one `action` field can
+    // only say one of those. `disposalCandidates` must therefore NOT hold it —
+    // `npm run dispose` reads that list, and an operator reading it would delete
+    // the ref that is the entire reason the status exists.
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'old-branch', ahead: 0, mergedIntoBase: true })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: emptyChats,
+      nowMs: NOW,
+      curatedOf: (name) =>
+        name === 'old-branch'
+          ? { legacy: true, summary: 'kept for the off chance', note: 'why it is kept' }
+          : undefined,
+    });
+    expect(inv.legacy).toEqual(['old-branch']);
+    expect(inv.disposalCandidates).toEqual([]);
+    expect(inv.atRisk).toEqual([]);
+    expect(inv.readyToLand).toEqual([]);
+    expect(inv.totals.legacy).toBe(1);
   });
 
   it('recomputes every total from the records it contains', () => {
@@ -2117,7 +2374,7 @@ describe('the curated table', () => {
   // is derived: `describe('work git cannot see: derived from the worktrees,
   // never curated')` below pins it over the real repository with the curated
   // entry REMOVED — the state most of those worktrees are actually in — and pins
-  // that no curated field except `mustNotPrune` can move a verdict at all.
+  // that only the explicit safety fields (`mustNotPrune` and `legacy`) can move a verdict.
   //
   // What is left for a human is a judgement git cannot make about a tree it
   // already calls disposable, and that is `mustNotPrune` on a clean merged
@@ -2189,6 +2446,41 @@ describe('the curated table', () => {
         if (w) expect(w.branch, `${name} claims landed but is detached`).not.toBe('(detached)');
       }
     }
+  });
+
+  it('gives every `legacy` entry a note, because the reason IS the entry', () => {
+    // `legacy` is the only field here that authorises deleting a directory while
+    // promising the branch survives, and what it promises is a claim about the
+    // future: this branch, kept for this reason, worth revisiting if that happens.
+    // An entry carrying only `legacy: true` asserts an indefinite hold on a ref
+    // and gives a later reader no way to tell a decision from a leftover — which
+    // is the failure mode the `landed` assertion exists to prevent.
+    const silent = Object.entries(CURATED)
+      .filter(([, e]) => e.legacy === true && !(typeof e.note === 'string' && e.note.trim().length > 20))
+      .map(([n]) => n);
+    expect(
+      silent,
+      `these entries mark a branch legacy with no note saying why it is kept: ${silent.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('marks no dirty worktree legacy, because the directory is the only copy', () => {
+    // The same condition `classify` enforces, asserted over the REAL table rather
+    // than over the shape `classify` is handed. A unit test proves the branch in
+    // `classify`; this proves no entry in `curated.mjs` relies on the branch not
+    // existing — a dirty legacy worktree would be at-risk, so an entry could hold
+    // the flag and get the wrong answer without anything here noticing.
+    const live = listWorktrees(process.cwd());
+    const dirty = Object.entries(CURATED)
+      .filter(([name]) => CURATED[name].legacy === true)
+      .map(([name]) => name)
+      .filter((name) => {
+        const w = live.find((x) => x.name === name);
+        return w ? w.workingTree.modified + w.workingTree.untracked > 0 : false;
+      });
+    expect(dirty, `these entries are legacy but their worktree holds uncommitted work: ${dirty.join(', ')}`).toEqual(
+      []
+    );
   });
 
   it('keeps the main worktree and this one out of the curated table on purpose', () => {
@@ -2568,12 +2860,12 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     ).toEqual([]);
   }, 60_000);
 
-  it('lets the curated table move a verdict only by vetoing a disposal', () => {
+  it('lets the curated table move a verdict only by vetoing a disposal or marking a branch legacy', () => {
     // The reason the coverage rule could not simply be dropped: a curated entry
     // that changed a verdict would be a hand-written claim overriding git, and
     // `curated.mjs` is prose maintained by agents under time pressure. `classify`
-    // reads exactly one field, `mustNotPrune`, and it can only ever make a
-    // worktree LESS safe to delete. Everything else — `summary`, `note`,
+    // reads the explicit safety fields, `mustNotPrune` and `legacy`; they can only
+    // make a worktree less destructive or deliberately keep its branch. Everything else — `summary`, `note`,
     // `liveNote`, `issues`, `landed` — is documentation, and documentation that
     // moves a verdict is a lie the generator cannot detect.
     //
@@ -2620,6 +2912,17 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         verdictOf(shape, { mustNotPrune: true, note: PROSE.note }),
         `curated.mustNotPrune no longer changes the verdict for ${shape.name} (${bare}), so the assertions above ` +
           'prove nothing: the table has stopped being able to veto anything'
+      ).not.toBe(bare);
+      // The SECOND field that may, and it moves the verdict the other way:
+      // `mustNotPrune` says this work is unaccounted for and must be saved, while
+      // `legacy` says it is accounted for and will never be worked on again.
+      // Both are claims about intent that git cannot make, so both are allowed to
+      // move a verdict — and both are pinned in `describe('classify: a curated
+      // legacy claim')` for what they do.
+      expect(
+        verdictOf(shape, { legacy: true, note: PROSE.note }),
+        `curated.legacy no longer changes the verdict for ${shape.name} (${bare}), so the prose assertions ` +
+          'above no longer describe the whole table'
       ).not.toBe(bare);
     }
   });
@@ -2676,14 +2979,27 @@ describe('the CLI staleness check', () => {
   const { equivalent } = await_import_cli();
 
   const doc = (over = {}) =>
-    JSON.stringify({ generatedAt: '2026-01-01T00:00:00.000Z', totals: { worktrees: 2 }, worktrees: [], ...over });
+    JSON.stringify({
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      ownership: { asOf: '2026-01-01T00:00:00.000Z' },
+      totals: { worktrees: 2 },
+      worktrees: [],
+      ...over,
+    });
 
-  it('ignores only the generation timestamp', () => {
+  it('ignores generation and evaluation timestamps', () => {
     // This file is a live snapshot of a repository where agents message
-    // continuously, so a byte comparison fails on `generatedAt` alone and
-    // `--check` could never pass. A gate that always fails is noise that
-    // trains people to ignore it.
-    expect(equivalent(doc(), doc({ generatedAt: '2026-09-28T21:00:00.000Z' }))).toBe(true);
+    // continuously, so these clocks move while the verdict being checked can
+    // remain unchanged. Every verdict and per-worktree field is still compared.
+    expect(
+      equivalent(
+        doc(),
+        doc({
+          generatedAt: '2026-09-28T21:00:00.000Z',
+          ownership: { asOf: '2026-09-28T21:00:00.000Z' },
+        })
+      )
+    ).toBe(true);
   });
 
   it('still fails on a real change', () => {
@@ -3276,6 +3592,7 @@ describe('the call history', () => {
     const fresh = kind(recent);
     const released = summariseReads(stale, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 });
     expect(released.chatCount).toBe(0);
+    expect(released.lastAtMs).toBeNull();
     expect(released.releasedBefore).toBe(new Date(NOW - 3_600_000).toISOString());
     // A reader newer than the mark is not released.
     expect(summariseReads(fresh, { nowMs: NOW, liveWindowMs: 1, releasedBeforeMs: NOW - 3_600_000 }).chatCount).toBe(1);
@@ -3348,20 +3665,18 @@ describe('the call history', () => {
     expect(verdict.reasons.join(' ')).toContain('a command ran inside this worktree');
   });
 
-  it('counts a reader as occupying the worktree, and honours the read release', () => {
-    // A read is weaker evidence than a write and is admitted on the same window,
-    // because the skill treats a read as grounds for LIVE unless the hit can be
-    // shown to be an inventory row. Without this, a worktree whose agent only
-    // read its spec — and then went quiet for the rest of its task — read as
-    // empty while its owner was still live.
+  it('tracks readers without treating inspection as ownership, and honours the read release', () => {
+    // Read history is retained separately for audit and can be released, but a
+    // reviewer opening a stale worktree must not block its disposal for four
+    // hours merely by inspecting it.
     const reading = classify(wt({ ahead: 0, mergedIntoBase: true }), {
       chatSummary: { count: 0, lastActivity: null },
       chatSessions: [],
       nowMs: NOW,
       readHistory: { lastAtMs: NOW - 90 * 60_000 },
     });
-    expect(reading.live).toBe(true);
-    expect(reading.liveSignals.io).toBe(true);
+    expect(reading.live).toBe(false);
+    expect(reading.liveSignals.io).toBe(false);
 
     // A released reader must read as no signal rather than as a standing claim,
     // or every worktree any agent ever inspected becomes permanently in-use.
@@ -3372,6 +3687,18 @@ describe('the call history', () => {
       readHistory: { lastAtMs: null, releasedBefore: NOW - 60_000 },
     });
     expect(released.derivedLive).toBe(false);
+  });
+
+  it('does not let the wide shell-I/O window extend the write liveness window', () => {
+    const verdict = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 0, lastActivity: null },
+      chatSessions: [],
+      nowMs: NOW,
+      writeHistory: { lastAtMs: NOW - 2 * 60 * 60_000, derivedChatIds: [] },
+    });
+    expect(verdict.live).toBe(false);
+    expect(verdict.liveSignals.write).toBe(false);
+    expect(verdict.liveSignals.io).toBe(false);
   });
 
   it('stops calling a worktree live once its I/O falls outside the window', () => {

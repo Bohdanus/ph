@@ -8,11 +8,13 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 ## Authority
 
 The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
-now stages a durable-composed presentation cache into those legacy layers;
-render, export, and logical undo/redo remain legacy-authoritative. `durableDocument`
-is still a shadow projection for logical state. The migration is not complete
-until one replay/materialization authority feeds undo, redo, navigation, render,
-and export without a second logical state writer.
+now stages a durable-composed presentation cache into those legacy layers, and
+render and export consume that cache through `getLayerBitmap()`; logical
+undo/redo remains legacy-authoritative. `durableDocument` is a mounted
+navigation presentation cache as well as the durable state model. The migration
+is not complete until one replay/materialization authority feeds undo, redo,
+navigation, render, export and history-panel state without a second logical
+state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
 sources, asset registry, immutable operation cloning, and append boundary are
@@ -56,10 +58,9 @@ rewrite, so a live filter or transform is not dropped when the text is retyped.
 **What the requirement still owes.** The production options bar reads
 `toolArgs` from legacy replay, so source rehydration is a cutover-time
 requirement governed by RQ-4's differential and ownership gates, not a gap in the
-operation itself. Re-derive the half that is not yet proved rather than assuming
-the landed slice closed it: the legacy/durable parity the operator's ruling names
-— creation, edit, undo, redo, navigation — and the options-bar rehydration that
-becomes visible when the durable document becomes the authority.
+operation itself. The pixel and export differential exists and has found one
+real divergence; the obligations it has not closed are listed under Sequencing.
+The pinned `args.enabled` divergence also remains open.
 
 ### RQ-3: bounded replay with explicit permission
 
@@ -92,12 +93,16 @@ undo, redo, navigation, and history-panel state must agree. During migration,
 legacy-versus-durable differential checks are allowed; shipping two authorities
 is not.
 
-The retired coordination gate forbids production imports of
-`replay-coordinator.ts` and `replay-checkpoints.ts`. A separate plain assertion
-allows exactly one production importer for `materialization.ts`,
-`durable-compositor.ts`. The compositor is mounted for navigation presentation
-only; the remaining surfaces stay fail-closed until their differential and
-ownership gates pass.
+The retired coordination gate forbids production imports of `replay-budget.ts`,
+`replay-coordinator.ts` and `replay-checkpoints.ts` by name.
+`replay-coordinator.ts` and `replay-checkpoints.ts` were deleted as dead code —
+nothing imported them outside `__tests__` — and the gate keeps both names rather
+than dropping them with the files, so reintroducing either is reported rather
+than silently absorbed. A separate plain assertion allows exactly one
+production importer for `materialization.ts`, `durable-compositor.ts`. The
+compositor is mounted for navigation presentation and its `tmpCanvas` is already
+consumed by render and export. The remaining cutover surfaces stay
+legacy-authoritative until their differential and ownership gates pass.
 
 ### RQ-5: Photoshop fidelity follows the precedence ladder
 
@@ -146,24 +151,29 @@ variant or an equivalent atomic history action.
 
 1. Record the operator rulings below and make the requirements document part of
    the tracked architecture map.
-2. Close the current migration boundary defects and keep every currently
-   appendable durable operation replayable without changing production
-   authority. The runtime retained-operation boundary, supported raster append
-   path, and navigation presentation mount are closed; remaining work is the
-   render/export surfaces and final authority transfer.
+2. Keep every currently appendable durable operation replayable without changing
+   production authority. The runtime retained-operation boundary, the supported
+   raster append path and the navigation presentation mount are closed, and the
+   §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
-   planned, replayed and cloned. What is still owed is the proof half — legacy
-   and durable parity for creation, edit, undo, redo and navigation, plus source
-   rehydration into the relevant options bar. Do not read the landed operation
-   as a closed requirement; the operator's ruling was that the operation and its
-   visible consumer land as one slice, and the consumer is still legacy-sourced.
+   planned, replayed and cloned. Logical replay parity and a pixel/export
+   differential both exist; what is still owed is the divergence the differential
+   found (§205), the two scenarios jsdom cannot render in either direction (§206),
+   history-panel parity (§207), options-bar rehydration, the browser authority
+   seam (§203), and the pinned `args.enabled` divergence.
+   Do not read the landed operation as a closed requirement; the
+   operator's ruling was that the operation and its visible consumer land as one
+   slice, and the consumer is still legacy-sourced.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Extend the durable materialization/compositor boundary to render and export.
-   Stage successfully before publication and delete the old authority only
-   after the differential and failure-contract gates pass.
+6. Transfer RENDER AUTHORITY, which render already reads, and keep EXPORT
+   legacy-authoritative until its own differential is green for every layer kind
+   (§206). Stage successfully before publication and delete the old authority only
+   after the differential and failure-contract gates pass. This is no longer a
+   mounting question: durable pixels already reach both surfaces through
+   `getLayerBitmap()`, and what is unmounted is durable STATE authority.
 
 ## Operator rulings
 

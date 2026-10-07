@@ -91,6 +91,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
   { toolName: 'eraser', label: 'Eraser Tool' },
   { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
+  { toolName: 'ruler', label: 'Ruler Tool' },
   { toolName: 'sharpen', label: 'Sharpen Tool' },
   { toolName: 'smudge', label: 'Smudge Tool' },
   { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
@@ -100,6 +101,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'burn', label: 'Burn Tool' },
   { toolName: 'sponge', label: 'Sponge Tool' },
   { toolName: 'eyedropper', label: 'Eyedropper Tool' },
+  { toolName: 'color-sampler', label: 'Color Sampler Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
   { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
@@ -115,12 +117,11 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
  * The five figure entries above are the *second* selection surface for the figures
  * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
  * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
- * with, say, `toolName: 'rectangle'`, where its `toolName !== 'shape'` guard
- * (`Shape.tsx:32`) suppressed the store-colour publish: the colour well said red
- * and the shape committed `defaultSettings.rectangle.color`, black.
+ * with a figure-specific tool name, bypassing the shared shape-family route and
+ * leaving the panel's colour synchronization dependent on the wrong args shape.
  *
- * So route them through the same path the sidebar uses, which is what makes that
- * guard correct for every surface rather than special-casing this menu.
+ * So route them through the same path the sidebar uses, which keeps every surface
+ * on the shared shape-family state path rather than special-casing this menu.
  *
  * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
  * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.

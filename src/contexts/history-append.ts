@@ -8,7 +8,7 @@ import {
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
-import type { DocumentFrame } from './document-frame.ts';
+import { isValidDocumentFrame, type DocumentFrame } from './document-frame.ts';
 import { getAssetRegistry, type AssetRegistry } from './asset-registry.ts';
 import {
   deriveRemoveLayerEntry,
@@ -28,7 +28,7 @@ import {
 } from './history-adapter.ts';
 import {
   DURABLE_SCHEMA_VERSION,
-  freezeDurableDocument,
+  refreezeDurableDocument,
   type AssetId,
   type DurableDocument,
   type DurableHistoryEntry,
@@ -435,37 +435,10 @@ function translate(
  * stack — which is the same sequence `reorderLayers` and `replayHistory` operate
  * on, and the same one the converter normalizes its own layer snapshots into.
  *
- * A `null` result is the one answer this function refuses: the mover is not in
- * the document, a named anchor is not, or the anchor is the mover itself. All
- * three of the first two are already agreed no-ops rather than placements
- * (`replayHistory` skips, `reorderLayers` refuses, the converter records
- * nothing), so a refusal must not become a fabricated map. Returning `null`
- * routes the append to conversion, which is where that no-op belongs.
- *
- * A self-anchored move is refused for a different reason, and the reason is a
- * known disagreement rather than a settled rule. `reorderLayers` anchors on the
- * layer's own order, shifts everything above it, and then re-assigns the layer —
- * so the resulting *sequence* is unchanged and only the sparse order values
- * move. The converter drops the mover from the list first, so its `indexOf` is
- * -1 and it records a move to the bottom. Executed, not assumed: on a stack
- * ordered bottom-first as `a, b, c`, a self-anchored move of `c` leaves the
- * document reading `a, b, c` and the converter recording `c, a, b`. (The two
- * agree when the mover is already the bottom layer, so the disagreement is a
- * function of the stack, not a blanket one.)
- *
- * This boundary is written to agree with the converter rather than to become a
- * third opinion, and the two implementations of the durable rule are pinned
- * against each other, so returning the sequence-preserving map here would break
- * that pin. It is recorded in `HANDOFF.md` as a conversion defect; fixing it
- * means changing the converter and this function together.
- *
- * Note what the refusal does and does not buy. It stops THIS append from
- * publishing, and the reconversion it falls back to leaves the shadow ordered
- * the converter's way while the document keeps the sequence it had — so the two
- * models now disagree. That disagreement is caught by the `durableLayerOrder`
- * precondition on the NEXT append, not by this refusal. The refusal is the
- * first line; the order comparison is what actually keeps a publication and a
- * reconversion interchangeable.
+ * A `null` result means the mover or a named anchor is absent from the live
+ * order, so the intent cannot produce a valid reorder. Anchoring a layer after
+ * itself is a valid no-op in sequence terms: it returns the normalized current
+ * order, matching `reorderLayers` and the converter.
  */
 export function reorderOrderAfterIntent(
   preOrder: readonly LayerId[],
@@ -474,9 +447,9 @@ export function reorderOrderAfterIntent(
   if (!intent.layerToMoveId) return null;
   if (!preOrder.includes(intent.layerToMoveId)) return null;
   if (intent.afterWhichLayerId && !preOrder.includes(intent.afterWhichLayerId)) return null;
-  // The anchor is the mover. See the doc block: the document keeps the sequence
-  // and the converter does not, and this function does not get to pick.
-  if (intent.afterWhichLayerId === intent.layerToMoveId) return null;
+  if (intent.afterWhichLayerId === intent.layerToMoveId) {
+    return Object.freeze(Object.fromEntries(preOrder.map((id, index) => [id, index])));
+  }
 
   const remaining = preOrder.filter((id) => id !== intent.layerToMoveId);
   // A falsy anchor means the bottom, which is index 0 here. A named anchor is
@@ -1178,6 +1151,24 @@ export function validatePlannedDurableEntry(
     }
     const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
     if (!args?.nextFrame) return 'a document frame change has no next frame';
+    // Whether the planned `next` is a DOCUMENT FRAME is a separate question from
+    // whether it equals the legacy arg, and `sameFrame` cannot answer it: it
+    // compares structure, so a 0x0 next frame matches a 0x0 legacy arg perfectly
+    // well. Every derivation that BUILDS such an entry refuses one
+    // (`history-adapter.ts` — `deriveSetDocumentFrameEntry()`, reached from
+    // `translate()`), so only a SUPPLIED entry reaches this — and durable replay
+    // applies `next` with no validation of its own while `documentFrameSize()`
+    // clamps to a 1x1 minimum, so a published 0x0 crop is visible as a
+    // one-pixel-square document rather than as a degenerate size.
+    //
+    // Checked BEFORE the comparison, so the reason names the invalid frame itself
+    // rather than a disagreement that is only a symptom of it. It is a `mismatch`
+    // rather than a `preconditions` refusal because the store can answer this
+    // question and the answer is a defect in the plan: the two routes over one
+    // legacy item then say the same thing, which is the divergence.
+    if (!isValidDocumentFrame(planned.operation.next)) {
+      return 'the durable next frame is not a document frame';
+    }
     if (!sameFrame(planned.operation.next, args.nextFrame))
       return 'the durable next frame does not match the legacy entry';
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
@@ -1397,6 +1388,29 @@ export function decideDurableAppend({
   if (prior.cursor !== prior.entries.length - 1) {
     return { outcome: 'preconditions', reason: 'the append is not at the tip of the legacy timeline' };
   }
+  // The durable twin of the check above, and the one the legacy cursor cannot
+  // cover: nothing in the other preconditions asks about `base.cursor` at all.
+  //
+  // A base below its own tip describes an undone edit — the entries between its
+  // cursor and its end are redo-only — and the published cursor is
+  // `base.history.length`, NOT `base.cursor + 1`. Appending onto such a base
+  // therefore moves the cursor PAST those entries and turns them applied, so the
+  // shadow replays an edit the user undid and the redo-only state the base
+  // described is gone. It is a silent loss: the base satisfies every other
+  // precondition, so nothing reports it.
+  //
+  // The one cursor guard further down (`cursor > next.cursor`) runs the other way
+  // — it catches a base with too MANY entries — so a base with too few is exactly
+  // the shape it cannot see.
+  //
+  // Unreachable from the store today, and only by accident: a mid-timeline base
+  // is produced by a rebuild that derives the shadow cursor from the LEGACY cursor
+  // (`StoreContext.tsx` — `buildDurableDocument()`), and the same rebuild hands
+  // the boundary a `prior` that is not at its tip, which the check above refuses
+  // first. Nothing in this boundary enforces the invariant; that coupling does.
+  if (base.cursor !== base.history.length - 1) {
+    return { outcome: 'preconditions', reason: 'the durable document is not at the tip of its own history' };
+  }
   if (next.entries.length !== prior.entries.length + 1) {
     return { outcome: 'preconditions', reason: 'the append truncated the legacy timeline' };
   }
@@ -1468,13 +1482,16 @@ export function decideDurableAppend({
 
   return {
     outcome: 'published',
-    document: freezeDurableDocument({
-      ...base,
+    // Only `planned` is new here, so the retained timeline is carried across by
+    // reference when `base` is one of `history-model.ts`'s own frozen copies, and
+    // deep-copied when it is not. `planned` is copied either way: it arrives from
+    // the caller and no reuse claim covers it.
+    document: refreezeDurableDocument(base, {
+      history: [...base.history, planned],
+      cursor,
       documentRevision,
       branchRevision: next.branchRevision,
       durableRevision: base.durableRevision + 1,
-      history: [...base.history, planned],
-      cursor,
     }),
   };
 }

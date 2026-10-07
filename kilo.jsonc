@@ -167,10 +167,24 @@
       "*rm -fr*.kilo*": "deny",
       "*rm -r -f*.kilo*": "deny",
 
-      // `-d` refuses an unmerged branch, and that refusal is the guard on the
-      // irreversible step. `-D` overrides it, so it reaches a human rather than a
-      // silent block: a branch the inventory called `dispose` needs `-d`, and one
-      // it did not needs `scripts/dispose-worktree.mjs` to say so.
+      // This permission layer matches command strings and is a speed bump, not a
+      // repository-aware guard. Retire worktrees through `npm run dispose`.
+      //
+      // HANDOFF #215 records these equivalent force-delete spellings. Keep each
+      // behind a human prompt just like `git branch -D`.
+      "*branch --delete --force*": "ask",
+      "*branch -d -f*": "ask",
+
+      // HANDOFF #215 records `update-ref -d refs/heads/<branch>` as an unguarded
+      // way to delete a local branch ref, so require a human prompt for it too.
+      "*update-ref -d refs/heads/*": "ask",
+
+      // This project-scoped deny also catches the bare command: pruning has no
+      // target path to match, yet can discard this repository's kilo worktrees.
+      "*worktree prune*": "deny",
+
+      // `-d` refuses an unmerged branch, while `-D` overrides that protection.
+      // Keep force-deleting a local branch behind a human prompt.
       "*branch -D*": "ask",
     },
   },

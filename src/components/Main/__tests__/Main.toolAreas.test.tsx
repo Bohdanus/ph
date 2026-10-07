@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import Main from '../Main.tsx';
+import Main, { SELECTION_INTERACTION_MODES } from '../Main.tsx';
 import { DummyToolArea } from '../DummyToolArea.tsx';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 import { UnsavedChangesProvider } from '../../../contexts/UnsavedChangesContext.tsx';
@@ -76,6 +76,23 @@ const marker = vi.hoisted(() => {
   };
 });
 
+/**
+ * The in-place type editor, mocked in the same style as its siblings and with one deliberate
+ * difference: its test id is OUTSIDE the `tool-area-` namespace.
+ *
+ * `TextEditOverlay` is not one of the routing table's `else if` branches — `Main` renders it
+ * beside the area, gated on the text mode — so putting it in `TOOL_AREA_IDS` would make the
+ * "exactly one tool area" count two for the text tool. A `text-edit-overlay-marker` id is
+ * readable by neither the count nor `toolAreaTestId()`, so the count for `'text'` stays 1 and
+ * the overlay's own presence is still observable. The real component is what throws here: it
+ * calls `useCurrentTool()`, and this file mounts no `CurrentToolProvider`.
+ */
+const overlayMarker = vi.hoisted(() => {
+  const Component = () => createElement('div', { 'data-testid': 'text-edit-overlay-marker' });
+  Component.displayName = 'TextEditOverlay';
+  return Component;
+});
+
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({ useTheme: () => themeState }));
 vi.mock('../../../contexts/image-load-save-utils.ts', () => ({ loadDocumentFile }));
 
@@ -109,6 +126,7 @@ vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
 vi.mock('../SpongeToolArea.tsx', () => ({ SpongeToolArea: marker('sponge') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
 vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
+vi.mock('../TextEditOverlay.tsx', () => ({ TextEditOverlay: overlayMarker }));
 
 /**
  * Every mocked tool area, in the order the routing table names them. `toolAreaTestId` walks this
@@ -143,6 +161,29 @@ const TOOL_AREA_IDS = [
 const toolAreaTestId = () => {
   return TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
+
+/**
+ * The index the routing table expects, so a routing row can assert WHICH area mounted.
+ *
+ * `toolAreaTestId()` returns the FIRST index in `TOOL_AREA_IDS` whose marker is mounted, so
+ * comparing it with this one pins WHICH marker came first: a router that sent a tool to some other
+ * area yields that area's index, and a tool that fell through to the hidden dummy yields `-1`,
+ * which is no row's index. The presence of the expected marker rides on the same comparison — an
+ * absent marker can only produce another index or `-1`, neither of which is this row's — so a row
+ * needs no second query to ask it.
+ *
+ * What it does NOT pin is the COUNT. `findIndex` reports the first hit, so a second, DIFFERENT
+ * area mounted BESIDE the expected one leaves that first hit where it is and this comparison still
+ * passes — which is the half of the old claim that was false. A duplicate of the SAME marker is
+ * the one doubled case that surfaces, and it surfaces as `queryByTestId` refusing to choose
+ * between two elements rather than as a comparison failing; the `.toBeTruthy()` on a
+ * `screen.getByTestId` result this replaced could not report even that, because the query throws
+ * before its matcher runs. The count is the neighbouring
+ * `it('mounts exactly one tool area for every tool that has one')` test's claim, and leaving it
+ * there is what keeps this assertion about identity; `magic-eraser` is the one routed tool absent
+ * from that test's list, so its count is pinned nowhere.
+ */
+const expectedToolAreaIndex = (name: string) => TOOL_AREA_IDS.findIndex((id) => id === name);
 
 const canvases = (container: HTMLElement) => Array.from(container.querySelectorAll('canvas'));
 
@@ -213,7 +254,11 @@ describe('Main tool-area routing', () => {
 
     render(<GuardedMain />);
 
-    expect(screen.getByTestId(`tool-area-${expected}`)).toBeTruthy();
+    // The one claim: the FIRST marker `Main` mounted is the one this row names, so a router that
+    // pointed this tool at a neighbour fails. Presence is carried by the same comparison rather
+    // than by a query of its own — an absent marker can only produce another index or `-1`, and
+    // this row's index is neither — and the COUNT is the neighbouring test's claim.
+    expect(toolAreaTestId(), toolName).toBe(expectedToolAreaIndex(expected));
   });
 
   it('mounts exactly one tool area for every tool that has one', () => {
@@ -263,6 +308,35 @@ describe('Main tool-area routing', () => {
       expect(mounted, toolName).toHaveLength(1);
       unmount();
     }
+  });
+
+  it('mounts the in-place type editor for the text tool and for no other tool', () => {
+    storeState.toolName = 'text';
+    const { rerender } = render(<GuardedMain />);
+
+    // BESIDE the area rather than instead of it: the editor is the text tool's second mounted
+    // surface, so the count in the test above is still 1 for `'text'` and this is not a claim that
+    // it replaced the area. Asserting both is what keeps that reading available — a change that
+    // swapped the area for the editor would fail here rather than silently satisfying either test.
+    expect(screen.getByTestId('tool-area-text')).toBeTruthy();
+    expect(screen.getAllByTestId('text-edit-overlay-marker')).toHaveLength(1);
+
+    // The absence half is the load-bearing one. `Main` gates the editor on the text mode because
+    // it reads `useCurrentTool`, and nothing else about it is tool-specific: it derives its box
+    // from the current args, so mounting it for another tool would put an editable box over that
+    // tool's gesture surface, reading args that are not text.
+    for (const toolName of ['reposition', 'brush', 'crop', 'shape', 'zoom'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
+      expect(screen.queryByTestId('text-edit-overlay-marker'), toolName).toBeNull();
+    }
+
+    // And back: the gate is on the tool, not on a one-way trip through it.
+    storeState.toolName = 'text';
+    rerender(<GuardedMain />);
+
+    expect(screen.getAllByTestId('text-edit-overlay-marker')).toHaveLength(1);
   });
 
   it.each([
@@ -358,7 +432,13 @@ describe('Main tool-area routing', () => {
     render(<GuardedMain />);
 
     expect(toolAreaTestId()).toBe(-1);
-    expect(screen.getByRole('button', { name: 'Open File' })).toBeTruthy();
+    // The empty state is not just non-empty of tool areas: its one affordance is a LIVE control.
+    // The three click paths on this button are already driven further down by
+    // `opens a file through the dialog and uploads it`, `does not upload when the file dialog is
+    // dismissed` and `reports the failure through console.error when the file dialog rejects`, so
+    // the claim kept here is the one none of them makes — the control is not disabled, which is
+    // what a `disabled` empty state would satisfy `.toBeTruthy()` on just as well.
+    expect(screen.getByRole('button', { name: 'Open File' })).toBeEnabled();
   });
 
   it('hides the canvas stack while no image is open', () => {
@@ -450,36 +530,81 @@ describe('Main tool-area routing', () => {
     expect([ants.width, ants.height]).toEqual([800, 600]);
   });
 
-  it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
+  it('shows the selection ants overlay for every selection tool and hides it otherwise', () => {
     storeState.toolName = 'polygonal-lasso';
     const { container, rerender } = render(<GuardedMain />);
     const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
 
     expect(ants().style.display).toBe('block');
 
-    for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
-      storeState.toolName = toolName;
-      rerender(<GuardedMain />);
-
-      expect(ants().style.display).toBe('block');
-    }
-
-    // `rectangular-selection` is the one selection tool excluded: `useRect` already
-    // strokes that border, with handles, on the tool overlay. The elliptical and quick
-    // selection tools are excluded for the same reason in reverse — they are not in
-    // `POLYGON_SELECTION_MODES`, so they keep the static `drawSelectionOutline` border.
+    // Every selection tool in the rail, by its tool name. The list is exhaustive over
+    // `ToolIconName` rather than over the interaction modes, so a new selection tool that nobody
+    // added here shows up as a failure here instead of as a tool with no border.
+    //
+    // It used to name three of the eight and exclude the rest: `rectangular-selection` because
+    // `useRect` stroked that border with handles, and the elliptical and quick selection tools
+    // because they are not in `POLYGON_SELECTION_MODES` and so kept the static
+    // `drawSelectionOutline`. Both exclusions are defects rather than facts — a border is a
+    // border, whichever canvas draws it — and `useRect`'s `borderMode` is what retires the first:
+    // the marquee gets the border from the ants, one canvas up, and `useRect` stops drawing a
+    // second outline of the same rectangle.
     for (const toolName of [
-      'rectangular-selection',
-      'elliptical-selection',
+      'freehand-lasso',
+      'feather-magnetic-lasso',
+      'magic-wand',
       'quick-selection',
-      'reposition',
-      'brush',
-      'zoom',
+      'elliptical-selection',
+      'single-row-marquee',
+      'single-column-marquee',
+      'rectangular-selection',
     ] as const) {
       storeState.toolName = toolName;
       rerender(<GuardedMain />);
 
+      expect(ants().style.display, `${toolName} is a selection tool and must own the ants canvas`).toBe('block');
+    }
+
+    // A non-selection tool must not run a 60fps loop into a canvas nobody can see. The canvas and
+    // the loop are gated on one boolean (`selectionToolActive`), so they cannot disagree; this
+    // loop is the half of that claim which is not about the list above.
+    //
+    // `GuardedMain`, not a bare `Main`: this branch's base predates the unsaved-changes provider,
+    // and main added `useUnsavedChanges` under `Main`, so rendering the raw component here throws
+    // "must be used within an UnsavedChangesProvider" before the assertion runs at all. Every other
+    // rerender in this file already goes through the guard for the same reason.
+    for (const toolName of ['reposition', 'brush', 'crop', 'text', 'zoom', 'paint-bucket', 'eyedropper'] as const) {
+      storeState.toolName = toolName;
+      rerender(<GuardedMain />);
+
       expect(ants().style.display).toBe('none');
+    }
+  });
+
+  it('names every selection interaction mode in the exported gate, and nothing else', () => {
+    // The list in `Main.tsx` and the assertion above are the same rule stated twice, so the test
+    // asserts the export rather than a copy of it. A tool name that routes to a mode the gate
+    // does not list is a selection tool with no border, and this is where it is caught.
+    const modesOfSelectionTools: Record<string, string> = {
+      'polygonal-lasso': 'lasso',
+      'freehand-lasso': 'lasso',
+      'feather-magnetic-lasso': 'feather-magnetic-lasso',
+      'magic-wand': 'magic-wand',
+      'quick-selection': 'quick-selection',
+      'elliptical-selection': 'elliptical-selection',
+      'single-row-marquee': 'single-row-column-marquee',
+      'single-column-marquee': 'single-row-column-marquee',
+      'rectangular-selection': 'rectangular-selection',
+    };
+
+    for (const mode of Object.values(modesOfSelectionTools)) {
+      expect(SELECTION_INTERACTION_MODES.has(mode), `${mode} must own the ants canvas`).toBe(true);
+    }
+
+    // Two interaction modes, both `useRect`, and neither a selection: the Move tool repositions
+    // a LAYER and Crop frames the document. Marching either would animate a layer outline and a
+    // crop frame as if they were selections.
+    for (const mode of ['reposition', 'crop']) {
+      expect(SELECTION_INTERACTION_MODES.has(mode), `${mode} is not a selection`).toBe(false);
     }
   });
 
@@ -491,7 +616,11 @@ describe('Main tool-area routing', () => {
     storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
     rerender(<GuardedMain />);
 
-    expect(drawAllLayers).toHaveBeenCalled();
+    // `Main` calls `drawAllLayers()` from a `[documentFrame, drawAllLayers, layers]` effect, so
+    // the repaint is triggered BY THE FRAME and carries no argument of its own. The bare
+    // `toHaveBeenCalled()` accepted any argument list and any number of repaints; this names the
+    // zero-argument call and the single repaint a frame change owes the document.
+    expect(drawAllLayers).toHaveBeenCalledExactlyOnceWith();
     storeState.documentFrame = previousFrame;
   });
 
@@ -524,7 +653,10 @@ describe('Main empty-document actions', () => {
     render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open File' }));
-    await vi.waitFor(() => expect(openLoadImageDialog).toHaveBeenCalled());
+    // `Main` reads the dialog with `const data = await openLoadImageDialog();` — the click opens
+    // it and nothing else, so the handler makes exactly that one argument-less call. The bare
+    // form could not tell that from a handler that passed a path, a filter or the click event on.
+    await vi.waitFor(() => expect(openLoadImageDialog).toHaveBeenCalledExactlyOnceWith());
 
     expect(setImageFromUpload).not.toHaveBeenCalled();
   });
@@ -577,7 +709,9 @@ describe('Main empty-document actions', () => {
     render(<GuardedMain />);
 
     fireEvent.click(screen.getByRole('button', { name: 'blank image' }));
-    await vi.waitFor(() => expect(openNewImageDialog).toHaveBeenCalled());
+    // The mirror of the load dialog above: `const data = await openNewImageDialog();`, one
+    // argument-less call for one click.
+    await vi.waitFor(() => expect(openNewImageDialog).toHaveBeenCalledExactlyOnceWith());
 
     expect(setBlankImage).not.toHaveBeenCalled();
   });
@@ -725,7 +859,10 @@ describe('Main file drop', () => {
     // is nothing to spy on, so the claim becomes the observable one: the load went all the way
     // through, and no prompt is mounted at the end of it. Checking only after the load is enough
     // because nothing else dismisses that dialog — one that had appeared would still be up.
-    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    // The payload is what the drop actually publishes: `setImageFromUpload(await loadDocumentFile(file))`,
+    // and the decoder resolves the document `beforeEach` installed, so a handler that published
+    // the `File`, a name string or the frame instead would fail here.
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalledExactlyOnceWith({ fileName: 'photo.png' }));
     expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument();
   });
 
@@ -742,7 +879,9 @@ describe('Main file drop', () => {
     expect(screen.getAllByTestId('confirm-dialog')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
 
-    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalled());
+    // The published payload is the decoded document, not the dropped `File`: accepting the prompt
+    // unblocks one `setImageFromUpload(await loadDocumentFile(file))`, so one drop publishes once.
+    await waitFor(() => expect(setImageFromUpload).toHaveBeenCalledExactlyOnceWith({ fileName: 'photo.png' }));
     await waitFor(() => expect(screen.queryByTestId('confirm-dialog')).not.toBeInTheDocument());
   });
 

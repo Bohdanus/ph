@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useApp } from '../../hooks/useApp.ts';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
 import type { Pos, RectXYSorted } from '../../contexts/general-types.ts';
 import { useMarchingAnts } from '../../hooks/useAnts.ts';
@@ -17,6 +19,7 @@ import {
   documentToCanvasPos,
 } from '../../contexts/document-frame.ts';
 import { getLayerPresentationBounds } from '../../contexts/affine-transform.ts';
+import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 
 type moveToolAreaProps = {
   className?: string;
@@ -27,7 +30,9 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     { containerRef, toolOverlayRef, rectOverlayRef, activeLayerId, layers, totalSize, documentFrame: currentFrame },
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { tempUpdateLayer, setActiveLayer, updateLayerByTool } = useLayers();
+  const { tempUpdateLayer, setActiveLayer, updateLayerByTool, beginTextLayerEdit } = useLayers();
+  const { setToolArgs } = useCurrentTool();
+  const { goToTool } = useApp();
   const containScale = useContainScale(containerRef, totalSize);
   const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef, scaleRef: containScale });
 
@@ -333,6 +338,21 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     containerRef.current?.classList.remove('cursor-grabbing');
   }
 
+  function handleDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    const point = canvasToDocumentPoint(
+      getLocalCoords(event as unknown as React.PointerEvent<HTMLDivElement>),
+      documentFrame
+    );
+    const layerId = getLayerIdByPoint(layers, point);
+    const layer = layerId ? layers[layerId] : undefined;
+    const target = layer ? textLayerEditTarget(layer, documentFrame) : null;
+    if (!target) return;
+    goToTool('text');
+    setActiveLayer(target.layerId);
+    beginTextLayerEdit(target.layerId);
+    setToolArgs(target.args);
+  }
+
   useEffect(() => {
     // An unmount between claim and commit is an abort like any other. Paired
     // with the provider-level `resetDocumentGestures`, this is what bounds a
@@ -350,6 +370,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onPointerCancel={handlePointerCancel}
+      onDoubleClick={handleDoubleClick}
     />
   );
 };
