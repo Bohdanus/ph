@@ -35,6 +35,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
   type ActionType,
@@ -318,6 +319,12 @@ describe('planHistoryAppend: layer-property translation', () => {
     { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
     { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'an opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+      patch: { opacity: 0.42 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1034,6 +1041,12 @@ describe('decideDurableAppend: layer-property entries', () => {
     { label: 'a show', actionName: SHOW_LAYER_ACTION, args: undefined, patch: { visible: true } },
     { label: 'a hide', actionName: HIDE_LAYER_ACTION, args: undefined, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+    {
+      label: 'an opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+      patch: { opacity: 0.42 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1059,6 +1072,23 @@ describe('decideDurableAppend: layer-property entries', () => {
     });
     expect(decision.document.cursor).toBe(1);
     expect(decision.document.durableRevision).toBe(8);
+  });
+
+  it('reports a mismatch when the planned opacity differs from the legacy entry', () => {
+    const opacityPlan = planHistoryAppend({
+      item: propertyItem(SET_LAYER_OPACITY_ACTION, { opacity: 0.42 }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(opacityPlan, {
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { opacity: 0.25 } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable layer opacity does not match the legacy entry');
+    }
   });
 
   it('publishes a disabled planned entry for a disabled legacy rename', () => {
