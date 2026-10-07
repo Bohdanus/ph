@@ -22,7 +22,13 @@ import type {
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
-import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import {
+  cloneDocumentFrame,
+  documentFrameEquals,
+  documentFrameFromSize,
+  documentFrameSize,
+  type DocumentFrame,
+} from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import {
@@ -35,6 +41,7 @@ import {
 import {
   convertLegacyHistorySafely,
   deriveReplaceLayerSourceEntry,
+  durableSourceKindForTool,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
@@ -560,16 +567,9 @@ function sourceBackedEntryContext(
   }
   const candidate = historyItem.layerSource ?? historyItem.args;
   const candidateRecord = candidate as { kind?: unknown; args?: unknown } | undefined;
-  if (
-    candidateRecord &&
-    candidateRecord.kind === 'tool' &&
-    !['text', 'shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(
-      (candidateRecord.args as ToolArgs).toolName
-    )
-  ) {
-    // Raster creator tools have no durable source representation yet. They are
-    // intentionally conversion-only; do not enter the planner only to throw.
-    return null;
+  if (candidateRecord?.kind === 'tool') {
+    const toolName = (candidateRecord.args as { toolName?: unknown } | undefined)?.toolName;
+    if (typeof toolName !== 'string' || !durableSourceKindForTool(toolName)) return null;
   }
   return {
     documentId: state.documentId,
@@ -1045,7 +1045,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (
         latest.documentId !== state.documentId ||
         latest.historyIndex !== state.historyIndex ||
-        latest.branchRevision !== state.branchRevision
+        latest.documentRevision !== document.documentRevision ||
+        latest.branchRevision !== document.branchRevision ||
+        latest.durableStatus !== 'current' ||
+        latest.durableDocument?.durableRevision !== document.durableRevision ||
+        !documentFrameEquals(latest.documentFrame, replay.frame)
       ) {
         throw new Error('Durable navigation presentation became stale before publication');
       }

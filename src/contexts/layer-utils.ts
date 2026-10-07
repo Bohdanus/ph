@@ -120,12 +120,6 @@ export function createAffineLayerOperation(transform: AffineTransform, id = uuid
   });
 }
 
-type LayerSourceParams = {
-  layerId?: LayerId;
-  layers: LayerOrderRecord;
-  source: LayerSource;
-};
-
 /**
  * The only part of a layer set that naming and placement read.
  *
@@ -137,6 +131,12 @@ type LayerSourceParams = {
  * could not call is a rule it re-derives.
  */
 export type LayerOrderRecord = Record<LayerId, { order: number }>;
+
+type LayerSourceParams = {
+  layerId?: LayerId;
+  layers: LayerOrderRecord;
+  source: LayerSource;
+};
 
 /**
  * The blend mode a stroke's layer composites with, read off the tool args.
@@ -182,9 +182,9 @@ function getNameFromSource(source: LayerSource) {
  * derived separately without becoming a third rule: a caller that takes `name` from
  * here and folds `order` itself re-introduces the disagreement this exists to end.
  * An empty layer set yields `1`, which is what makes the first layer of a document
- * `"<name> 1"` rather than `"<name>"` at order `0`.
+ * `'<name> 1'` rather than `'<name>'` at order `0`.
  *
- * It is exported, and separate from `createLayerSource`, because the durable
+ * It is exported, and separate from {@link createLayerSource}, because the durable
  * converter must derive the same pair from a set of durable snapshots and has no
  * runtime layer to build. Reaching the rule through the factory would drag its
  * rasterisation with it — an `OffscreenCanvas` per blank source, a creator tool's

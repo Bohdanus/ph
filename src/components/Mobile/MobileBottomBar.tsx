@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -17,10 +17,12 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
   isToolSheetOpen,
   onOpenLayers,
 }) => {
-  const [{ toolName, hasImage }] = useStore();
+  const [{ toolName, hasImage, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { patchToolArgs } = useCurrentTool();
   const selectTool = makeSelectTool(goToTool, patchToolArgs);
+  const foregroundColorInputRef = useRef<HTMLInputElement>(null);
+  const backgroundColorInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <nav
@@ -30,6 +32,72 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
       data-testid="mobile-bottom-bar"
       className="[grid-area:bottom] md:hidden safe-area-bottom fixed bottom-0 left-0 right-0 z-30 flex h-16 items-stretch gap-1 overflow-x-auto overscroll-x-contain scrollbar-none touch-pan-x border-t border-gray-200 bg-white/95 px-1 backdrop-blur-md select-none dark:border-gray-800 dark:bg-gray-900/95"
     >
+      <div className="relative flex shrink-0 items-center gap-1 px-1" data-testid="mobile-color-pickers">
+        <button
+          type="button"
+          onClick={() => foregroundColorInputRef.current?.click()}
+          aria-label="Foreground Color"
+          title="Foreground Color"
+          data-testid="mobile-foreground-color-swatch"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+        >
+          <span
+            aria-hidden="true"
+            className="h-8 w-8 rounded border border-gray-400 shadow-sm dark:border-gray-500"
+            style={{ backgroundColor: color }}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => backgroundColorInputRef.current?.click()}
+          aria-label="Background Color"
+          title="Background Color"
+          data-testid="mobile-background-color-swatch"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+        >
+          <span
+            aria-hidden="true"
+            className="h-8 w-8 rounded border border-gray-400 shadow-sm dark:border-gray-500"
+            style={{ backgroundColor }}
+          />
+        </button>
+        <input
+          ref={foregroundColorInputRef}
+          type="color"
+          value={color}
+          onChange={(event) => dispatch({ type: 'SET_COLOR', payload: event.target.value })}
+          aria-hidden="true"
+          tabIndex={-1}
+          className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+          data-testid="mobile-foreground-color-input"
+        />
+        <input
+          ref={backgroundColorInputRef}
+          type="color"
+          value={backgroundColor}
+          onChange={(event) => dispatch({ type: 'SET_BACKGROUND_COLOR', payload: event.target.value })}
+          aria-hidden="true"
+          tabIndex={-1}
+          className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0"
+          data-testid="mobile-background-color-input"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            dispatch({ type: 'SET_COLOR', payload: backgroundColor });
+            dispatch({ type: 'SET_BACKGROUND_COLOR', payload: color });
+          }}
+          aria-label="Swap foreground and background colors"
+          title="Swap Colors"
+          data-testid="mobile-swap-colors-button"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+        >
+          ⇅
+        </button>
+      </div>
+
+      <span aria-hidden="true" className="my-2 w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-800" />
+
       {mobileToolGroups.map((group, index) => {
         const isActive = group.matchingTools.includes(toolName as ToolName);
         const isSectionStart = index > 0 && group.sectionIndex !== mobileToolGroups[index - 1].sectionIndex;

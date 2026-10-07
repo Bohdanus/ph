@@ -435,37 +435,10 @@ function translate(
  * stack — which is the same sequence `reorderLayers` and `replayHistory` operate
  * on, and the same one the converter normalizes its own layer snapshots into.
  *
- * A `null` result is the one answer this function refuses: the mover is not in
- * the document, a named anchor is not, or the anchor is the mover itself. All
- * three of the first two are already agreed no-ops rather than placements
- * (`replayHistory` skips, `reorderLayers` refuses, the converter records
- * nothing), so a refusal must not become a fabricated map. Returning `null`
- * routes the append to conversion, which is where that no-op belongs.
- *
- * A self-anchored move is refused for a different reason, and the reason is a
- * known disagreement rather than a settled rule. `reorderLayers` anchors on the
- * layer's own order, shifts everything above it, and then re-assigns the layer —
- * so the resulting *sequence* is unchanged and only the sparse order values
- * move. The converter drops the mover from the list first, so its `indexOf` is
- * -1 and it records a move to the bottom. Executed, not assumed: on a stack
- * ordered bottom-first as `a, b, c`, a self-anchored move of `c` leaves the
- * document reading `a, b, c` and the converter recording `c, a, b`. (The two
- * agree when the mover is already the bottom layer, so the disagreement is a
- * function of the stack, not a blanket one.)
- *
- * This boundary is written to agree with the converter rather than to become a
- * third opinion, and the two implementations of the durable rule are pinned
- * against each other, so returning the sequence-preserving map here would break
- * that pin. It is recorded in `HANDOFF.md` as a conversion defect; fixing it
- * means changing the converter and this function together.
- *
- * Note what the refusal does and does not buy. It stops THIS append from
- * publishing, and the reconversion it falls back to leaves the shadow ordered
- * the converter's way while the document keeps the sequence it had — so the two
- * models now disagree. That disagreement is caught by the `durableLayerOrder`
- * precondition on the NEXT append, not by this refusal. The refusal is the
- * first line; the order comparison is what actually keeps a publication and a
- * reconversion interchangeable.
+ * A `null` result means the mover or a named anchor is absent from the live
+ * order, so the intent cannot produce a valid reorder. Anchoring a layer after
+ * itself is a valid no-op in sequence terms: it returns the normalized current
+ * order, matching `reorderLayers` and the converter.
  */
 export function reorderOrderAfterIntent(
   preOrder: readonly LayerId[],
@@ -474,9 +447,9 @@ export function reorderOrderAfterIntent(
   if (!intent.layerToMoveId) return null;
   if (!preOrder.includes(intent.layerToMoveId)) return null;
   if (intent.afterWhichLayerId && !preOrder.includes(intent.afterWhichLayerId)) return null;
-  // The anchor is the mover. See the doc block: the document keeps the sequence
-  // and the converter does not, and this function does not get to pick.
-  if (intent.afterWhichLayerId === intent.layerToMoveId) return null;
+  if (intent.afterWhichLayerId === intent.layerToMoveId) {
+    return Object.freeze(Object.fromEntries(preOrder.map((id, index) => [id, index])));
+  }
 
   const remaining = preOrder.filter((id) => id !== intent.layerToMoveId);
   // A falsy anchor means the bottom, which is index 0 here. A named anchor is

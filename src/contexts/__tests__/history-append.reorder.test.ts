@@ -141,7 +141,7 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
   // Every case below is checked two ways: against `reorderOrderAfterIntent`, which
   // is the independent second implementation, and against the two properties
   // that define the operation at all — a dense 0..n-1 permutation of the stack,
-  // and the mover sitting directly above the anchor (or at the bottom).
+  // and the requested placement or sequence-preserving self-anchor.
   it.each([
     { label: 'no anchor: a middle layer goes to the bottom', layerToMoveId: 'layer-c', afterWhichLayerId: null },
     { label: 'no anchor: the bottom layer stays at the bottom', layerToMoveId: 'layer-1', afterWhichLayerId: null },
@@ -154,6 +154,11 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
     { label: 'anchor at the first position: the top layer', layerToMoveId: 'layer-d', afterWhichLayerId: 'layer-1' },
     { label: 'anchor at a middle position: the bottom layer', layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-c' },
     { label: 'anchor at a middle position: the top layer', layerToMoveId: 'layer-d', afterWhichLayerId: 'layer-b' },
+    {
+      label: 'self-anchor: a middle layer preserves the sequence',
+      layerToMoveId: 'layer-c',
+      afterWhichLayerId: 'layer-c',
+    },
     { label: 'anchor at the last position: the middle layer', layerToMoveId: 'layer-b', afterWhichLayerId: 'layer-d' },
     { label: 'anchor at the last position: the bottom layer', layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-d' },
   ] satisfies ReadonlyArray<{ label: string; layerToMoveId: LayerId; afterWhichLayerId: LayerId | null }>)(
@@ -178,9 +183,11 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
       // exactly once, ranked 0..n-1, so no layer is dropped or duplicated.
       expect(Object.keys(recorded).sort()).toEqual([...preOrder].sort());
       expect(Object.values(recorded).sort((left, right) => left - right)).toEqual(preOrder.map((_, i) => i));
-      // The mover lands directly above the anchor, or at the bottom when none is
-      // named — the placement the entry's args describe.
-      if (afterWhichLayerId) {
+      // Self-anchoring is a valid no-op; other named anchors place the mover
+      // above the anchor, and an absent anchor places it at the bottom.
+      if (afterWhichLayerId === layerToMoveId) {
+        expect(recorded).toEqual(Object.fromEntries(preOrder.map((id, index) => [id, index])));
+      } else if (afterWhichLayerId) {
         expect(recorded[layerToMoveId]).toBe(recorded[afterWhichLayerId] + 1);
       } else {
         expect(recorded[layerToMoveId]).toBe(0);
@@ -227,6 +234,12 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
     {
       label: 'a move of the top layer onto the one below it preserves the order',
       layerToMoveId: 'layer-d',
+      afterWhichLayerId: 'layer-c',
+      expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 },
+    },
+    {
+      label: 'a self-anchor preserves the current order',
+      layerToMoveId: 'layer-c',
       afterWhichLayerId: 'layer-c',
       expectedOrder: { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 },
     },
@@ -287,27 +300,21 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
     registry.shutdown();
   });
 
-  it('refuses a self-anchored move, where the document and the converter disagree', () => {
+  it('converts a self-anchored move to the sequence-preserving order', () => {
     const registry = new AssetRegistry();
     const preOrder = bottomFirst(runtimeStack());
+    const expectedOrder = { 'layer-1': 0, 'layer-b': 1, 'layer-c': 2, 'layer-d': 3 };
 
-    // `reorderLayers` anchors on the mover's own order and re-assigns the mover
-    // after shifting what was above it, so the visible sequence is unchanged.
-    // The converter removes the mover from the list first, so its `indexOf` is
-    // -1 and it records a move to the bottom. Measured, not assumed: the
-    // runtime call below leaves the sequence alone and the converter's map does
-    // not. Recording the disagreement is the point — the fix has to change both
-    // implementations together, and until it does the boundary must not become a
-    // third opinion that publishes a shadow a reconversion would contradict.
     const moved = { ...runtimeStack() } as Record<string, Layer>;
-    reorderLayers({ layers: moved, layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-1' });
+    reorderLayers({ layers: moved, layerToMoveId: 'layer-c', afterWhichLayerId: 'layer-c' });
     const runtimeSequence = bottomFirst(moved);
-    const converted = convert([...newLayerEntries(), reorderItem('layer-1', 'layer-1')], registry);
-    const operation = converted.document.history.at(-1)?.operation;
+    const converted = convert([...newLayerEntries(), reorderItem('layer-c', 'layer-c')], registry);
 
     expect(runtimeSequence).toEqual(preOrder);
-    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId['layer-1']).toBe(0);
-    expect(reorderOrderAfterIntent(preOrder, { layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-1' })).toBeNull();
+    expect(recordedOrderMap(converted)).toEqual(expectedOrder);
+    expect(reorderOrderAfterIntent(preOrder, { layerToMoveId: 'layer-c', afterWhichLayerId: 'layer-c' })).toEqual(
+      expectedOrder
+    );
     registry.shutdown();
   });
 });

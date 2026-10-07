@@ -343,10 +343,12 @@ const CHANNELS: ReadonlyArray<keyof Rgb> = ['red', 'green', 'blue'];
  * the kind that makes a test look covered when it is not: `resizeCanvas` also runs on
  * every composite in `src/contexts/layer-renderer.ts:136`, so neutering the `useApp` call
  * leaves all four New Image dialog tests green — the renderer resizes the same element
- * from the same `size`. That is why the tests below pair this with pixels and why the
- * pixel assertions, not this read, are what carry the file: the DPI test's
- * `documentSize` checks agree with the rendered content only because the aspect assertion
- * that follows them would fail on a stale size.
+ * from the same `size`. The tests below pair this read with rendered pixels, while the
+ * actual `handleImageCreate()` resize call is pinned independently by
+ * `it('resizes the workspace canvas in handleImageCreate when creating a blank image')`
+ * in `useApp.document-reset.test.tsx`, where layer rendering is stubbed so it cannot resize
+ * the same canvas and mask a missing call. This E2E read confirms the resulting document
+ * state alongside the rendered-pixel checks.
  */
 async function documentSize(page: Page): Promise<DocumentSize> {
   return await getWorkspaceCanvas(page).evaluate((node) => {

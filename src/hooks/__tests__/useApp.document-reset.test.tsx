@@ -253,19 +253,16 @@ async function seedOutgoingDocument(result: Result) {
   // The selection fields are re-established AFTER the replay, because
   // `APPLY_HISTORY_REPLAY` replaces them with the timeline's own derivation — and a
   // document whose only selection evidence is a `documentSource` baseline has none.
-  // Without this the seed would arrive with `selections: []`, which is the very state
-  // the kill assertions demand, and clearing the field in production would go unnoticed.
+  // Use selection-specific actions: `BATCH_UPDATES` is metadata-only in production
+  // and conservatively marks the durable projection stale.
   act(() => {
+    result.current.dispatch({ type: 'SET_SELECTIONS', payload: [OUTGOING_SELECTION] });
+    result.current.dispatch({ type: 'SET_ACTIVE_SELECTION', payload: OUTGOING_SELECTION_ID });
     result.current.dispatch({
-      type: 'BATCH_UPDATES',
-      payload: {
-        selections: [OUTGOING_SELECTION],
-        activeSelectionId: OUTGOING_SELECTION_ID,
-        selectionDraft: OUTGOING_DRAFT,
-        selectionCleared: OUTGOING_CLEARED,
-        selectionClipboard: OUTGOING_CLIPBOARD,
-      },
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: OUTGOING_DRAFT.sourceTool },
     });
+    result.current.dispatch({ type: 'SET_SELECTION_CLIPBOARD', payload: OUTGOING_CLIPBOARD });
   });
 
   const { store, history: nav } = result.current;
@@ -486,6 +483,19 @@ describe('the outgoing document fixture is one production could really have prod
 });
 
 describe('creating a new image kills the outgoing document history and layers', () => {
+  it('resizes the workspace canvas in handleImageCreate when creating a blank image', async () => {
+    const result = setup();
+    const canvas = result.current.store.canvasRef.current;
+    expect(canvas).not.toBeNull();
+
+    await act(async () => {
+      result.current.app.setBlankImage(BLANK);
+    });
+
+    expect(canvas?.width).toBe(BLANK.size.width);
+    expect(canvas?.height).toBe(BLANK.size.height);
+  });
+
   it('leaves nothing undoable or redoable and no outgoing state after setBlankImage', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
@@ -500,6 +510,7 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
 
     expectOutgoingDocumentKilled(result);
+    expect(result.current.store.fileName).toBe('');
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.totalSize).toEqual({ width: 320, height: 240 });
     expect(result.current.store.hasImage).toBe(true);
@@ -532,6 +543,7 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
 
     expectOutgoingDocumentKilled(result);
+    expect(result.current.store.fileName).toBe('');
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
   });
 
@@ -711,16 +723,13 @@ describe('opening an image kills the outgoing document history and layers', () =
     expectOutgoingDocumentIntact(result, intact);
   });
 
-  /**
-   * The other negative control: a failure inside the import must also leave the
-   * document alone. The raster arm resizes the canvas BEFORE it builds the layer
-   * (`useApp.ts:162`), so this pins the store half of that sequence — the canvas half
-   * is a separate defect, recorded in `HANDOFF.md` §102.
-   */
-  it('kills nothing when the import fails before the document is replaced', async () => {
+  it('keeps the document and canvas intact when raster decoding fails', async () => {
     const result = setup();
     await seedOutgoingDocument(result);
     const intact = { history: [...result.current.store.history], layers: { ...result.current.store.layers } };
+    const canvas = result.current.store.canvasRef.current!;
+    canvas.width = PREVIOUS_SIZE.width;
+    canvas.height = PREVIOUS_SIZE.height;
     vi.stubGlobal(
       'createImageBitmap',
       vi.fn(async () => {
@@ -735,6 +744,7 @@ describe('opening an image kills the outgoing document history and layers', () =
     });
 
     expectOutgoingDocumentIntact(result, intact);
+    expect(canvas).toMatchObject(PREVIOUS_SIZE);
   });
 });
 

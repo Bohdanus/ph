@@ -159,12 +159,12 @@ function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size): SnapshotS
 }
 
 /**
- * Puts the previous presentation back after a publish that had already written to the target.
+ * Puts the previous presentation back after a publish may have partially changed the target.
  *
  * The resize alone is not the restore: assigning `width` or `height` RESETS a canvas to fully
  * transparent, and the `clearRect` the publish issues empties one whatever its dimensions were.
- * So this runs whenever the target was written at all, and blits the snapshot back even when
- * the dimensions already matched — the wipe it reverses then is the clear, not a resize.
+ * So this runs as soon as a target write is attempted, and blits the snapshot back even when the
+ * dimensions already matched — the wipe it reverses then is the clear, not a resize.
  */
 function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: SnapshotSurface | null): void {
   try {
@@ -234,19 +234,19 @@ export function drawLayersToCanvas(
   // is atomic and allocates nothing) is pinned to a different observable sequence by
   // `useHistory.test.tsx:455` and belongs to whoever owns that file.
   let snapshot: SnapshotSurface | null = null;
-  let wrote = false;
+  let needsRestore = false;
   try {
     const context = canvas.getContext('2d');
     if (!context) return false;
     snapshot = snapshotVisibleCanvas(canvas, previousSize);
     if (!snapshot) return false;
+    needsRestore = true;
     resizeCanvas(canvas, size.width, size.height);
-    wrote = true;
     context.clearRect(0, 0, size.width, size.height);
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
-    if (wrote) restoreVisibleCanvas(canvas, previousSize, snapshot);
+    if (needsRestore) restoreVisibleCanvas(canvas, previousSize, snapshot);
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }

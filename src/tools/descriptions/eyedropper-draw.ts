@@ -181,7 +181,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'color-sampler' |
         control: 'Mode',
         detail: 'The blend mode the stroke’s paint composites with. Default: Normal.',
         status: 'inert',
-        appRef: 'src/tools/draw.ts:43',
+        appRef: 'src/tools/draw.ts:42',
       },
       {
         control: 'Opacity',
@@ -207,7 +207,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'color-sampler' |
         detail:
           'How much intelligent smoothing is applied to the stroke, 0 to 100: "Set a value between 0 and 100 to control how much smoothing is applied. Lower values apply minimal correction. Higher values result in stronger smoothing but may slightly delay the stroke preview." Adobe names the Brush, Pencil, Mixer Brush and Eraser as the tools it applies to. The app declares the field on the draw args and no Draw-bar control writes it, so the value is always absent.',
         status: 'inert',
-        appRef: 'src/tools/draw.ts:38',
+        appRef: 'src/tools/draw.ts:37',
       },
     ],
     modifiers: [],

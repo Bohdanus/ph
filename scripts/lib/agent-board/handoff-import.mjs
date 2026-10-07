@@ -45,6 +45,7 @@
  *   rather than guessing a label the board would then filter on
  * @property {ImportItem[]} items
  * @property {number[]} dead    the item numbers the document records as finished
+ * @property {number[]} duplicateNumbers numbered headings that share an origin
  */
 
 /**
@@ -223,7 +224,7 @@ const WHITESPACE = /\s/;
  * that would let `draw.ts` in a sentence become a path.
  */
 const ROOT_FILE =
-  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|DEPENDENCIES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
+  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
 
 /**
  * A severity tag inside a heading, removed before its numbers are harvested as
@@ -434,10 +435,10 @@ function slugOf(title, run) {
 /**
  * Builds the item and its `origin`.
  *
- * A repeated number in one document is a document defect, and the first
- * occurrence wins: two entries cannot share an `origin` without one of them
- * being unfileable on every later run. Two entries that slug identically get a
- * run suffix instead, because a slug is derived from prose and two entries can
+ * A repeated number in one document is a document defect. The first occurrence
+ * remains parseable, but the duplicate is reported and the planner refuses to
+ * file either ambiguous entry. Two entries that slug identically get a run
+ * suffix instead, because a slug is derived from prose and two entries can
  * legitimately open the same way.
  */
 function makeItem(base, number, rawTitle, body, seen, runs) {
@@ -467,6 +468,7 @@ function makeItem(base, number, rawTitle, body, seen, runs) {
  */
 function assemble(base, { lines, records }) {
   const items = [];
+  const duplicateNumbers = new Set();
   const seen = new Set();
   const runs = new Map();
   let ambient = 1;
@@ -475,6 +477,7 @@ function assemble(base, { lines, records }) {
 
   const close = (endLine, endColumn) => {
     if (!open) return;
+    if (open.number !== null && seen.has(`${base}#${open.number}`)) duplicateNumbers.add(open.number);
     const item = makeItem(base, open.number, open.title, bodyOf(lines, open, endLine, endColumn), seen, runs);
     if (item) items.push(item);
     open = null;
@@ -540,7 +543,7 @@ function assemble(base, { lines, records }) {
   }
 
   close(lines.length, 0);
-  return items;
+  return { items, duplicateNumbers: [...duplicateNumbers].sort((a, b) => a - b) };
 }
 
 function scopeOf(file) {
@@ -582,8 +585,9 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
   const path = String(file);
   const parsed = scan(text);
   const base = path.split('/').filter(Boolean).pop() || 'unknown.md';
+  const { items, duplicateNumbers } = assemble(base, parsed);
 
-  return { scope: scopeOf(path), items: assemble(base, parsed), dead: deadNumbersIn(parsed.records) };
+  return { scope: scopeOf(path), items, dead: deadNumbersIn(parsed.records), duplicateNumbers };
 }
 
 /**
@@ -630,9 +634,11 @@ export function planImport(results, known) {
 
   for (const document of documents) {
     const dead = new Set((document?.dead ?? []).map(Number).filter(Number.isInteger));
+    const duplicates = new Set((document?.duplicateNumbers ?? []).map(Number).filter(Number.isInteger));
 
     for (const item of document?.items ?? []) {
       const number = /#(\d+)$/.exec(String(item.origin));
+      if (number && duplicates.has(Number(number[1]))) continue;
       if (number && dead.has(Number(number[1]))) continue;
       if (planned.has(item.origin)) {
         skip.push(item.origin);

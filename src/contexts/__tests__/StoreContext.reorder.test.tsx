@@ -460,47 +460,31 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 2 });
   });
 
-  it('refuses a reorder once a refused one has left the shadow and the document ordered differently', () => {
+  it('publishes a self-anchored reorder without desynchronizing the next append', () => {
     const result = setupWithDocument();
     const before = result.current.store.durableDocument!;
     const documentSequenceBefore = sequence(result.current.store.layers);
     conversions.mockClear();
 
-    // A self-anchored move is the one intent where the converter and the document
-    // genuinely disagree: `reorderLayers` leaves the visible sequence alone and
-    // the converter records a move to the bottom. The append is refused, the
-    // fallback converts, and the shadow is now ordered the converter's way while
-    // the document is not.
     reorder(result.current.dispatch, 'top', 'top');
     const afterSelfAnchor = result.current.store;
-    expect(afterSelfAnchor.durableDocument).toEqual(conversionOracle(afterSelfAnchor, before.durableRevision + 1));
-    // The document's sequence did not move; the shadow's did. That gap is the
-    // thing the next append has to notice, and it is invisible to a membership
-    // check — the two models still name exactly the same layers.
+    expect(conversions).not.toHaveBeenCalled();
     expect(sequence(afterSelfAnchor.layers)).toEqual(documentSequenceBefore);
-    // The shadow now says something different about the same layers, which no
-    // membership check can see: both models still name exactly the same ids.
-    expect(durableSequence(afterSelfAnchor)).not.toEqual(documentSequenceBefore);
+    expect(durableSequence(afterSelfAnchor)).toEqual(documentSequenceBefore);
+    expect(afterSelfAnchor.durableDiagnostics).toEqual([]);
+    expect(afterSelfAnchor.durableDocument).toEqual(conversionOracle(afterSelfAnchor, before.durableRevision + 1));
+    expect(conversions).toHaveBeenCalledTimes(1);
     conversions.mockClear();
 
-    // The next reorder's layer SETS still match, so nothing but the order
-    // comparison can refuse it. This is the case that matters: publishing here
-    // would normalise the runtime order into the shadow and leave a durable
-    // document that no reconversion of this history would produce — the shadow
-    // would be laundered into a third answer and the conversion defect would
-    // stop being visible.
     reorder(result.current.dispatch, 'bottom', 'middle');
 
-    // The refusal is a precondition: it converts, reports nothing, and still
-    // reorders the document.
-    expect(conversions).toHaveBeenCalledTimes(1);
+    expect(conversions).not.toHaveBeenCalled();
     const store = result.current.store;
     expect(store.durableStatus).toBe('current');
     expect(store.durableDiagnostics).toEqual([]);
-    // Two appends, two refused publications, so two whole-timeline conversions:
-    // the shadow is still exactly what a conversion produces, which is the
-    // property a publication would have destroyed.
+    expect(durableSequence(store)).toEqual(sequence(store.layers));
     expect(store.durableDocument).toEqual(conversionOracle(store, before.durableRevision + 2));
+    expect(conversions).toHaveBeenCalledTimes(1);
   });
 
   it('carries an earlier durable-append-mismatch into a published reorder', () => {
