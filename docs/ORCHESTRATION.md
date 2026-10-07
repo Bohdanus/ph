@@ -998,6 +998,10 @@ on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
 that variable. Two sessions on one branch are one agent to the board and cannot
 deny each other a file.
 
+Path identity is repository-relative. On case-insensitive volumes, existing
+case-only aliases resolve to the directory entry's actual spelling; on
+case-sensitive volumes, distinct spellings remain distinct.
+
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.
 
