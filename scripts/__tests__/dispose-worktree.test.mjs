@@ -148,6 +148,65 @@ describe('dispose preflight', () => {
     expect(verdict.ok).toBe(true);
   });
 
+  it('permits an explicitly selected at-risk worktree while preserving its branch and dirty edits for salvage', () => {
+    const verdict = green({
+      preserveBranch: true,
+      gitState: greenState({ modified: 1, untracked: 1, dirtyPaths: ['src/edit.ts', 'notes.txt'] }),
+      inventory: greenInventory({
+        record: {
+          action: ACTION.AT_RISK,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(verdict.failures).toEqual([]);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.keepBranch).toBe(true);
+  });
+
+  it('does not let branch-preserving removal decide an undecided worktree', () => {
+    const verdict = green({
+      preserveBranch: true,
+      inventory: greenInventory({
+        record: {
+          action: ACTION.UNDECIDED,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(codes(verdict)).toContain('action-not-dispose');
+    expect(verdict.ok).toBe(false);
+  });
+
+  it.each([
+    [
+      'a curated mustNotPrune claim',
+      {
+        inventory: greenInventory({
+          record: { ...greenInventory().record, action: ACTION.AT_RISK, mustNotPrune: true },
+        }),
+      },
+      'must-not-prune',
+    ],
+    ['ignored content', { gitState: greenState({ ignoredWork: ['.env.local'] }) }, 'ignored-content'],
+    ['a live board claim', { board: { ...greenBoard, claims: [{ agentId: 'writer' }] } }, 'board-claim'],
+    [
+      'an operation in progress',
+      { operationState: greenOperationState({ operations: [{ operation: 'merge', marker: 'MERGE_HEAD' }] }) },
+      'operation-in-progress',
+    ],
+  ])('still refuses branch-preserving removal for %s', (_label, overrides, expected) => {
+    const verdict = green({ preserveBranch: true, ...overrides });
+    expect(codes(verdict)).toContain(expected);
+    expect(verdict.ok).toBe(false);
+  });
+
   describe('each signal refuses on its own, with every other signal green', () => {
     const cases = [
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
@@ -709,7 +768,7 @@ describe('dispose execution', () => {
     it('names the status in the step report, so a reader knows the branch was deliberate', () => {
       const { run, fs } = harness();
       const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
-      expect(result.steps.join('\n')).toContain('legacy');
+      expect(result.steps.join('\n')).toContain('branch-preserving disposal mode');
     });
 
     it('still salvages before removing the directory', () => {
@@ -738,7 +797,7 @@ describe('dispose execution', () => {
       const { run, fs, calls } = harness();
       const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
       expect(calls.some((c) => c[0] === 'branch')).toBe(false);
-      expect(result.steps.join('\n')).toContain('the inventory calls this action "legacy"');
+      expect(result.steps.join('\n')).toContain('branch-preserving disposal mode');
     });
   });
 

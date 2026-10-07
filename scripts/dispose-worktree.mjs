@@ -442,6 +442,7 @@ export function preflight({
   board,
   sessions,
   maxAgeMs = MAX_INVENTORY_AGE_MS,
+  preserveBranch = false,
 } = {}) {
   const failures = [];
   const refuse = (code, ...args) => failures.push({ code, message: REFUSALS[code] ? REFUSALS[code](...args) : code });
@@ -450,7 +451,7 @@ export function preflight({
   // it twice from two reads of the same field is how the two halves stop
   // agreeing — the inventory is a regenerable file, so a second read after a
   // regeneration would be a second answer.
-  const keepBranch = inventory?.record?.action === ACTION.LEGACY;
+  const keepBranch = preserveBranch || inventory?.record?.action === ACTION.LEGACY;
   let deleteAbsorbedBranch = false;
 
   if (!gitState?.found) {
@@ -496,7 +497,12 @@ export function preflight({
       // a live, dirty or in-flight worktree applies to it unchanged; the only
       // thing that differs is whether the BRANCH goes with the directory, and
       // `dispose()` answers that.
-      if (inventory.record.action !== ACTION.DISPOSE && inventory.record.action !== ACTION.LEGACY) {
+      const staleBranchRemoval = preserveBranch && inventory.record.action === ACTION.AT_RISK;
+      if (
+        inventory.record.action !== ACTION.DISPOSE &&
+        inventory.record.action !== ACTION.LEGACY &&
+        !staleBranchRemoval
+      ) {
         refuse('action-not-dispose', inventory.record.action);
       }
       if (inventory.record.action === ACTION.DISPOSE && inventory.record.prunable !== true) {
@@ -534,7 +540,7 @@ export function preflight({
     refuse('dirty-tree-unreadable', gitState.statusError, `git ${command}`);
   }
 
-  if ((gitState.modified ?? 0) + (gitState.untracked ?? 0) > 0) {
+  if (!preserveBranch && (gitState.modified ?? 0) + (gitState.untracked ?? 0) > 0) {
     refuse('dirty-tree', gitState.modified, gitState.untracked, gitState.dirtyPaths ?? []);
   }
 
@@ -1338,9 +1344,7 @@ export function dispose(
     // worktree's directory goes and its branch stays: git holds a branch with no
     // worktree, so this costs a ref and saves the checkout, its `node_modules`
     // and its `dist/`.
-    steps.push(
-      `KEPT branch ${gitState.branch}: the inventory calls this action "legacy", so the ref is the thing being preserved`
-    );
+    steps.push(`KEPT branch ${gitState.branch}: the branch-preserving disposal mode leaves its ref in place`);
   } else {
     try {
       const deleteFlag = deleteAbsorbedBranch ? '-D' : '-d';
@@ -1384,22 +1388,32 @@ function defaultRun(cwd, args, { input } = {}) {
 /** The real filesystem, as an object so a caller can substitute one. */
 const defaultFs = { mkdirSync, writeFileSync };
 
-const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [--max-age-minutes <n>]
+const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [--keep-branch] [--max-age-minutes <n>]
 
   <worktree>   a path or a name as \`git worktree list\` prints it.
 
 Refuses unless the generated inventory calls this worktree \`action: "dispose"\`
-or \`action: "legacy"\`, no board claim, lock or live agent names it, no session
-has it as its directory inside the live window, and its working tree is clean.
-Anchors the branch at
-${KEEP_REF_PREFIX}<name> and salvages uncommitted work before removing anything.
+or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects an \`at-risk\`
+worktree. No board claim, lock or live agent may name it, no session may have it
+as its directory inside the live window, and ignored content or Git operations
+in progress always refuse removal.
+Ordinary disposal anchors the branch at
+${KEEP_REF_PREFIX}<name>. Branch-preserving disposal archives uncommitted work
+before removing the directory and leaves the branch ref untouched.
 
-There is no --force. A dirty tree is a finding to report, not an obstacle.
+There is no --force. Without \`--keep-branch\`, a dirty tree is a finding to report,
+not an obstacle.
 
 \`action: "legacy"\` removes the WORKTREE and keeps the BRANCH: git holds a branch
 with no worktree, so the directory, its node_modules and its dist/ go while the
 ref survives. No anchor ref is written, because the branch is the copy being
 kept. See docs/ORCHESTRATION.md.
+
+\`--keep-branch\` explicitly permits a freshly inventoried \`action: "at-risk"\`
+worktree to be removed while retaining its branch. Tracked edits and untracked
+files are archived under the common git directory first. It still refuses live
+ownership, unreadable state, ignored content, operations in progress,
+\`mustNotPrune\`, and \`undecided\` worktrees. Review with \`--dry-run\` first.
 `;
 
 function main(argv) {
@@ -1438,6 +1452,7 @@ function main(argv) {
     maxAgeMs = parsed * 60000;
   }
   const dryRun = args.includes('--dry-run');
+  const preserveBranch = args.includes('--keep-branch');
   const target = args.find((a) => !a.startsWith('--') && args[args.indexOf(a) - 1] !== '--max-age-minutes');
   if (!target) {
     process.stderr.write(USAGE);
@@ -1479,6 +1494,7 @@ function main(argv) {
     board: ownership.board,
     sessions: ownership.sessions,
     maxAgeMs,
+    preserveBranch,
   });
 
   // Availability is a refusal in its own right now, so the failures list already
@@ -1495,7 +1511,7 @@ function main(argv) {
     const ref = anchorRefFor(gitState);
     process.stdout.write(
       verdict.keepBranch
-        ? `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose, and the branch will be KEPT because the inventory calls it legacy.\n  would write no anchor ref — the branch itself is the copy being kept\n  would remove ${gitState.absolutePath}\n  would NOT run git branch -d ${gitState.branch}\n`
+        ? `dispose: ${gitState.name} (${gitState.branch}) is clear to remove, and the branch will be KEPT.\n  would archive tracked edits and untracked files under the common git directory\n  would remove ${gitState.absolutePath}\n  would NOT run git branch -d ${gitState.branch}\n`
         : `dispose: ${gitState.name} (${gitState.branch}) is clear to dispose.\n  would anchor ${gitState.tip} at ${ref ?? 'nothing — the ref name is invalid'}\n  would remove ${gitState.absolutePath}\n  would git branch ${verdict.deleteAbsorbedBranch ? '-D' : '-d'} ${gitState.branch}${verdict.deleteAbsorbedBranch ? ' (all non-merge patches are already on the base)' : ''}\n`
     );
     return 0;
