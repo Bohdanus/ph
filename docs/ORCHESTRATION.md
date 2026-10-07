@@ -42,12 +42,20 @@ read-only investigation that changes nothing, a single-line doc fix **the
 operator explicitly asked for on `main`**, and a hotfix the operator asked for on
 `main` by name.
 
-- **Before editing tracked files, run `git rev-parse --show-toplevel`.** It is
-  the only thing that distinguishes "I am in my worktree" from "I believe I am in
-  my worktree". `main`'s checkout path is not proof — an Agent Manager worktree
-  session, a `cd` in a previous tool call, or a session started in the root
-  checkout and driven into a task worktree all leave you somewhere other than
-  where you think.
+- **A chat can start in the bare repository, where worktree-only commands fail.**
+  Begin with `git -C "$PWD" worktree list --porcelain`, which works from that
+  location.
+  Find the entry with branch `refs/heads/main` rather than assuming the first
+  entry is a checkout; the first can be bare. Then run
+  `git -C "$MAIN" rev-parse --show-toplevel` and use `git -C "$MAIN"` for Git
+  commands until you have explicitly changed into a worktree. Do not run
+  `git status` or `git rev-parse --show-toplevel` in the bare startup directory.
+- **Before editing tracked files, verify the selected working directory with
+  `git rev-parse --show-toplevel`.** It distinguishes "I am in my worktree" from
+  "I believe I am in my worktree". `main`'s checkout path is not proof — an
+  Agent Manager worktree session, a `cd` in a previous tool call, or a session
+  started in the root checkout and driven into a task worktree all leave you
+  somewhere other than where you think.
 - **A `task` subagent inherits the caller's working directory, so the worktree has
   to exist before the fan-out and not after it.** `task` creates no session and no
   worktree, and `agent_manager`'s `mode: 'local'` deliberately runs in the caller's

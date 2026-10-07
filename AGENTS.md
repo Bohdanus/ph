@@ -7,9 +7,19 @@ Photoshop clone
 The main checkout is **READ-ONLY**.
 Running `git status`, `git rev-parse`, `npm test` - will break.
 
-**Before editing tracked files or running project commands, verify you are in your worktree:**
+**Copilot can start in the bare repository at the workspace root.** Git commands
+that require a working tree, including `git status` and
+`git rev-parse --show-toplevel`, fail there with the
+`this operation must be run in a work tree` error. Do not use them until you have
+selected a real worktree. Start with
+`git -C "$PWD" worktree list --porcelain`, find the entry whose branch is
+`refs/heads/main` as shown below, and run subsequent Git commands with
+`git -C "$MAIN"` (or after changing into a worktree).
+
+**Once in a worktree, verify it before editing tracked files or running project commands:**
 
 ```bash
+# Run this from a worktree, never from the bare startup directory.
 git rev-parse --show-toplevel
 # MUST print a path under .kilo/worktrees/
 ```
@@ -20,22 +30,26 @@ If a task starts outside a worktree, the setup commands below are the only git
 commands to run before creating one.
 
 ```bash
-# Find the checkout actually on main; the first listed worktree can be a bare repo.
-MAIN="$(git worktree list --porcelain | awk '
+# Find the checkout actually on main; the first listed worktree can be bare.
+MAIN="$(git -C "$PWD" worktree list --porcelain | awk '
   /^worktree / { path = substr($0, 10) }
   /^branch refs\/heads\/main$/ { print path; found = 1; exit }
   END { if (!found) exit 1 }
 ')" || { printf 'Could not find a worktree on refs/heads/main\n' >&2; exit 1; }
 
+# Verify and create the task worktree from the real main checkout.
+git -C "$MAIN" rev-parse --show-toplevel
+
 # Pick a task-specific slug that is not already a branch or directory.
 SLUG=task-specific-name
 BRANCH="fix/$SLUG"
 TARGET="$MAIN/.kilo/worktrees/$SLUG"
-if git show-ref --verify --quiet "refs/heads/$BRANCH" || [ -e "$TARGET" ]; then
+if git -C "$MAIN" show-ref --verify --quiet "refs/heads/$BRANCH" || [ -e "$TARGET" ]; then
   printf 'Branch or worktree path already exists; choose another SLUG\n' >&2
   exit 1
 fi
-git worktree add -b "$BRANCH" "$TARGET"
+git -C "$MAIN" worktree add -b "$BRANCH" "$TARGET"
+# Run subsequent commands from "$TARGET" (or prefix them with git -C "$TARGET").
 ```
 
 Every commit must carry a `Chat: <native-session-id>` trailer; resolve it as described in
