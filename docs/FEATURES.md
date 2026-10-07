@@ -221,12 +221,10 @@ rename and delete
 **Status:** `partial`
 
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
-or smart-object layers. **No panel control for opacity, blend mode or locking** —
-those fields exist in the model and round-trip through PSD, but nothing in the UI
-sets them, so the Layers panel cannot express what the layer model can.
-
-That opacity field is a live defect, not a scope note: `HANDOFF.md` §56 records
-that the obvious writer is discarded by replay.
+or smart-object layers. **No panel control for blend mode or locking** — those
+fields exist in the model and round-trip through PSD, but nothing in the UI sets
+them. Desktop opacity has a basic slider; its Adobe-documented preset drop-down
+is still absent because the preset values are unverified.
 
 ## History
 

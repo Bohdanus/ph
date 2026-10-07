@@ -4,7 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
-import type { LayerId } from '../../contexts/layer-types.ts';
+import type { Layer, LayerId } from '../../contexts/layer-types.ts';
 import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import { useApp } from '../../hooks/useApp.ts';
@@ -17,7 +17,58 @@ import {
   ICON_TOGGLE_BUTTON_HIDDEN,
   DELETE_BUTTON_ICON,
 } from '../ToolbarsRight/buttonStyles.ts';
-import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+
+type LayerOpacityControlProps = {
+  layer: Layer;
+  updateLayer: ReturnType<typeof useLayers>['updateLayer'];
+};
+
+function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
+  const [draftPercent, setDraftPercent] = useState<number | null>(null);
+  const opacityPercent = draftPercent ?? Math.round(layer.opacity * 100);
+
+  function finishGesture() {
+    const opacity = draftPercent;
+    setDraftPercent(null);
+    if (layer.locked || opacity === null) return;
+    const nextOpacity = opacity / 100;
+    if (layer.opacity !== nextOpacity) {
+      updateLayer(layer.id, { opacity: nextOpacity }, SET_LAYER_OPACITY_ACTION);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-2 px-1">
+      <span className="text-xs text-gray-600 dark:text-gray-300">Opacity:</span>
+      <details className="relative">
+        <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
+          {opacityPercent}%
+        </summary>
+        <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
+          <input
+            aria-label="Layer opacity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={opacityPercent}
+            disabled={layer.locked}
+            onChange={(event) => {
+              if (!layer.locked) setDraftPercent(Number(event.currentTarget.value));
+            }}
+            onPointerUp={finishGesture}
+            onPointerCancel={() => setDraftPercent(null)}
+            onKeyUp={finishGesture}
+            onBlur={finishGesture}
+            className="min-w-0 flex-1"
+          />
+          <output aria-live="polite">{opacityPercent}%</output>
+        </div>
+      </details>
+    </div>
+  );
+}
 
 export default function LayersTab() {
   const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
@@ -161,6 +212,7 @@ export default function LayersTab() {
 
   return (
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
+      {activeLayer && <LayerOpacityControl key={activeLayer.id} layer={activeLayer} updateLayer={updateLayer} />}
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
