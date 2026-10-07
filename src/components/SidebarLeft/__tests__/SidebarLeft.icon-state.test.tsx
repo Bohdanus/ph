@@ -42,6 +42,10 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 vi.mock('../toolIcons.tsx', () => {
   const iconNames = [
     'reposition',
+    'red-eye',
+    'hand',
+    'zoom',
+    'rotate-view',
     'rectangular-selection',
     'elliptical-selection',
     'freehand-lasso',
@@ -67,6 +71,7 @@ vi.mock('../toolIcons.tsx', () => {
     'shape-line',
     'shape-triangle',
     'shape-polygon',
+    'shape-star',
     'text',
     'color',
     'blur',

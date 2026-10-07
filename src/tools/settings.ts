@@ -275,6 +275,9 @@ export const defaultSettings = {
   // else. The measuring line itself is deliberately not here — it is view state, not document state
   // (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
   ruler: { toolName: 'ruler' } satisfies RulerToolArgs,
+  hand: { toolName: 'hand' },
+  zoom: { toolName: 'zoom' },
+  'rotate-view': { toolName: 'rotate-view' },
   'elliptical-selection': {
     style: 'normal',
     fixedRatio: 1,

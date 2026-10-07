@@ -24,6 +24,9 @@ const iconModules = import.meta.glob('../icons/*.tsx', { eager: true });
  */
 const toolIconNames = [
   'reposition',
+  'hand',
+  'zoom',
+  'rotate-view',
   'rectangular-selection',
   'elliptical-selection',
   'single-row-marquee',

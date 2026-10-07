@@ -9,6 +9,9 @@ import { selectionDescriptions } from './selection.ts';
 import { shapeDescriptions } from './shape.ts';
 import { transformDescriptions } from './transform.ts';
 import { typeCropDescriptions } from './type-crop.ts';
+import { viewDescriptions } from './view.ts';
+
+const { star: _starDescription, ...registeredShapeDescriptions } = shapeDescriptions;
 
 export type {
   ToolControl,
@@ -38,11 +41,12 @@ export const toolDescriptions: Record<ToolName, ToolDescription> = {
   ...selectionDescriptions,
   ...paintDescriptions,
   ...focusDescriptions,
-  ...shapeDescriptions,
+  ...registeredShapeDescriptions,
   ...penDescriptions,
   ...typeCropDescriptions,
   ...transformDescriptions,
   ...eyedropperDrawDescriptions,
+  ...viewDescriptions,
 };
 
 export const getToolDescription = (name: ToolName): ToolDescription => toolDescriptions[name];

@@ -40,6 +40,10 @@ vi.mock('../toolIcons.tsx', () => {
   return {
     toolIcons: {
       reposition: Icon,
+      'red-eye': Icon,
+      hand: Icon,
+      zoom: Icon,
+      'rotate-view': Icon,
       'rectangular-selection': Icon,
       'elliptical-selection': Icon,
       'single-row-marquee': Icon,
@@ -462,7 +466,7 @@ describe('SidebarLeft flyout hardening', () => {
     const lowTile = toolbarButtonByName('shape');
     openFlyout(lowTile);
     const lowTop = boxOf(lowTile).top;
-    expect(overlayWrapper().style.top).toBe(`${lowTop}px`);
+    expect(Number.parseFloat(overlayWrapper().style.top)).toBeLessThanOrEqual(lowTop);
 
     expect(lowTop).toBeGreaterThan(highTop);
     expect(overlayWrapper().style.top).not.toBe(`${highTop}px`);

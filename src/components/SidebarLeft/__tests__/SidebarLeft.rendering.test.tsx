@@ -39,6 +39,10 @@ vi.mock('../toolIcons.tsx', () => {
   return {
     toolIcons: {
       reposition: Icon,
+      'red-eye': Icon,
+      hand: Icon,
+      zoom: Icon,
+      'rotate-view': Icon,
       'rectangular-selection': Icon,
       'elliptical-selection': Icon,
       'freehand-lasso': Icon,
@@ -130,6 +134,8 @@ describe('SidebarLeft rendering', () => {
     // appear in.
     expect(buttonNames).toEqual([
       'reposition',
+      'hand',
+      'zoom',
       'rectangular-selection',
       'freehand-lasso',
       'magic-wand',
@@ -137,6 +143,7 @@ describe('SidebarLeft rendering', () => {
       'crop',
       'brush',
       'clone-stamp',
+      'red-eye',
       'blur',
       'gradient',
       'dodge',
@@ -167,6 +174,8 @@ describe('SidebarLeft rendering', () => {
     render(<SidebarLeft />);
 
     expect(toolbarButtonByName('reposition')).toHaveAccessibleName('Move Tool');
+    expect(toolbarButtonByName('hand')).toHaveAccessibleName('Hand Tool');
+    expect(toolbarButtonByName('zoom')).toHaveAccessibleName('Zoom Tool');
     expect(toolbarButtonByName('rectangular-selection')).toHaveAccessibleName('Rectangular Marquee Tool');
     expect(toolbarButtonByName('freehand-lasso')).toHaveAccessibleName('Lasso Tool');
     expect(toolbarButtonByName('magic-wand')).toHaveAccessibleName('Magic Wand Tool');
@@ -201,6 +210,8 @@ describe('SidebarLeft rendering', () => {
     expect(hasFlyoutIndicator('dodge')).toBe(true);
 
     expect(hasFlyoutIndicator('reposition')).toBe(false);
+    expect(hasFlyoutIndicator('hand')).toBe(true);
+    expect(hasFlyoutIndicator('zoom')).toBe(false);
     expect(hasFlyoutIndicator('crop')).toBe(false);
     // The `I` tile is a flyout since the Ruler joined it, so it carries the indicator. Its NAME is
     // still `eyedropper`, because a tile's identity is its first entry.

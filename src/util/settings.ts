@@ -104,7 +104,10 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||
     toolName === 'single-column-marquee' ||
-    toolName === 'ruler'
+    toolName === 'ruler' ||
+    toolName === 'hand' ||
+    toolName === 'zoom' ||
+    toolName === 'rotate-view'
   ) {
     // Typed rather than falling through to the bare group below, because a tool with NO
     // settings still has to persist its identity: an unmatched `toolName` never reaches
