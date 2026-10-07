@@ -118,6 +118,7 @@ export function buildInventory({
       chatSessions,
       curated,
       nowMs: effectiveNow,
+      base,
       boardAgents,
       writeHistory,
       shellHistory,
