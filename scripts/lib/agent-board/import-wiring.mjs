@@ -91,6 +91,9 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   const skipped = [...plan.skip];
   const drifted = [...(plan.drift ?? [])];
   const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`));
+  const duplicates = read.flatMap((entry) =>
+    (entry.parsed.duplicateNumbers ?? []).map((number) => `${entry.file}#${number}`)
+  );
   const notItems = [];
   const isNotItem = (item) =>
     NOT_ITEMS.some((entry) => entry.origin === item.origin && foldTitle(item.title).includes(foldTitle(entry.title)));
@@ -154,6 +157,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     skipped,
     drifted,
     dead,
+    duplicates,
     notItems,
   };
 }

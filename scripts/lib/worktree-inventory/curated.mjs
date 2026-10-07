@@ -58,24 +58,6 @@
  * `at-risk` and the claim is ignored. `classify` enforces it and the suite pins
  * both directions.
  *
- * IT IS REFUSED WHEN THE EVIDENCE IS MISSING, NOT ONLY WHEN IT IS BAD. A
- * `legacy` verdict rests on a tree that was read as clean and a base that was
- * resolved. `git status` failing reports an empty tree, an unresolvable base
- * reports no commits ahead, and a branchless worktree reports a placeholder — so
- * each unknown arrives looking exactly like the answer, and `legacy` is the first
- * status that turns a cleanliness reading into authority to delete a directory.
- * `classify` reports `undecided` and NAMES the unknown rather than publishing
- * "the working tree is clean" beside a removal instruction.
- *
- * IT LOSES TO `mustNotPrune`, AND THAT IS ENFORCED IN `classify`, NOT ONLY AT
- * DISPOSAL. An entry can carry both flags, and they are opposite claims about one
- * tree: this one says the directory may go, `mustNotPrune` says the directory is
- * the only copy. Checked only at `preflight`, the pair filed the worktree as
- * `legacy` — "worktree disposable, BRANCH KEPT", listed under no protection —
- * and the refusal downstream was the only thing between that and a lost tree.
- * The condition in `classify` makes the pair resolve to `at-risk`, so the claim
- * about losing content wins wherever the verdict is read.
- *
  * IT IS A CLAIM ABOUT THE FUTURE, SO IT MUST CARRY A NOTE. The reason is the
  * whole content of the entry: which branch, kept for what, and what would make
  * it worth revisiting. An entry saying only `legacy: true` asserts an indefinite

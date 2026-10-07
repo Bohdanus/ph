@@ -127,10 +127,11 @@ The project uses GitHub Actions for continuous integration:
   went on reporting a state the suite no longer had. Chrome is installed through the
   OS package manager, so there is nothing here to cache. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
-- **Dependency licences**: the allow/deny list and the high-severity advisory
-  threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
-  enforces them. `npm audit --audit-level=high` is a real step on every push, and
-  it is the vulnerability half of that policy.
+- **Dependency licensing**: CI does not check dependency licence terms. The former
+  allow/deny list was never checked against the actual dependency tree and is
+  retired; do not treat it as an approved policy. `npm audit --audit-level=high`
+  checks vulnerability advisories, not licences. Review the terms for dependencies
+  before adding or upgrading them.
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
 

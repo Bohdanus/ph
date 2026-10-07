@@ -5,7 +5,7 @@ import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/docume
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { drawLine, pointsBoundingPos } from '../../util/draw.ts';
+import { drawLine, pointsBoundingPosOutward } from '../../util/draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
@@ -38,7 +38,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
   // One stroke, one bracket, one repaint. `drawLine` re-strokes the whole accumulated path on
   // every call, so the repaint is coalesced into a single animation frame exactly as
-  // `ShapeToolArea`/`useDrag`/`useRect` already do: a pointer that carries several moves per display
+  // `ShapeToolArea`/`useRect` already do: a pointer that carries several moves per display
   // frame otherwise repaints several times for one visible frame, and each repaint costs more than
   // the last.
   //
@@ -115,7 +115,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     // in the commit path below.
     releaseDocumentClaim();
 
-    // Cancel AND null, as `useDrag`/`useRect` do. Nulling alone would leave `frameRequested`
+    // Cancel AND null, as `useRect` does. Nulling alone would leave `frameRequested`
     // permanently non-null and every later drag's preview silently dropped; cancelling alone would
     // drop the last preview, because the frame that would have painted the final point is the one
     // being cancelled.
@@ -131,7 +131,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     }
 
     const oldPoints = pointsRef.current.map((point) => canvasToDocumentPoint(point, documentFrame));
-    const pos = pointsBoundingPos({ points: oldPoints, lineWidth: args.lineWidth });
+    const pos = pointsBoundingPosOutward({ points: oldPoints, lineWidth: args.lineWidth });
     const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
 
     const finalArgs = { ...args, points: newPoints };

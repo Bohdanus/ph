@@ -16,8 +16,9 @@ import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.t
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
 import { useApp } from './hooks/useApp.ts';
 import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
-import { RightPanelVisibilityProvider } from './contexts/RightPanelVisibility.tsx';
-import { PanelLayoutProvider } from './contexts/PanelLayout.tsx';
+import { RightPanelVisibilityProvider, useRightPanelVisibility } from './contexts/RightPanelVisibility.tsx';
+import { PanelLayoutProvider, usePanelLayout } from './contexts/PanelLayout.tsx';
+import { edgePlacement } from './util/edge-placement.ts';
 
 const DEFAULT_BLANK_IMAGE = {
   color: '#ffffff',
@@ -44,6 +45,13 @@ function BlankImageStarter() {
 function AppContainer() {
   const [isLayersDrawerOpen, setIsLayersDrawerOpen] = useState(false);
   const [isToolSheetOpen, setIsToolSheetOpen] = useState(false);
+  const [{ hasImage, toolName }] = useStore();
+  const layout = usePanelLayout();
+  const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
+  const rightPanelPlacement = edgePlacement(
+    layout.dockSide,
+    !toolName || !hasImage || layout.dockSide !== layout.toolsSide ? 'full' : 'bottom'
+  );
 
   // Close both mobile surfaces on leaving the mobile band.
   //
@@ -90,11 +98,21 @@ function AppContainer() {
       {/* The canvas and the tool sidebar are the two regions that own user work.
           Each is contained on its own so a throw in one still leaves the other,
           the menu and the footer usable. */}
-      <ErrorBoundary label="Canvas">
+      <ErrorBoundary
+        label="Canvas"
+        fallbackClassName="relative overflow-y-auto mobile-safe-bottom"
+        fallbackStyle={{ gridArea: 'main' }}
+      >
         <Main />
       </ErrorBoundary>
 
-      <ErrorBoundary label="Right sidebar">
+      <ErrorBoundary
+        label="Right sidebar"
+        fallbackClassName={`relative flex min-h-0 flex-col overflow-y-auto bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
+          layout.dockSide === 'left' ? 'border-r border-gray-300' : 'border-l border-gray-300'
+        } ${isRightPanelOpen ? rightPanelPlacement : 'hidden'}`}
+        fallbackStyle={{ width: layout.effectiveDockWidth }}
+      >
         <SidebarRight />
       </ErrorBoundary>
       <Footer />

@@ -212,9 +212,6 @@ const Shape: React.FC = () => {
   // be controlled". `e2e/shape-tools.spec.ts` saw that on every run and could not
   // report it, because nothing in `e2e/` attached a console listener until
   // `ConsolePolice` (e2e/helpers/console-police.ts).
-  //
-  // Photoshop's Rectangle/Shape tools default to unfilled, so false is also the
-  // correct value rather than merely a defined one.
   const {
     alpha,
     hasFill = false,

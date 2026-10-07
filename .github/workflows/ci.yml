@@ -117,10 +117,8 @@ jobs:
       - name: Build
         run: npm run build
 
-  # The licence policy for the dependency tree is in `DEPENDENCIES.md`, and it
-  # is not a gate: nothing reads it, by decision. The vulnerability half of the
-  # same policy is `npm audit --audit-level=high` in the `ci` job above, which
-  # runs on every push to main and covers the whole tree rather than a diff.
+  # Dependency licence terms are not checked by CI. The `npm audit` step above
+  # checks vulnerability advisories only; see the README's dependency licensing note.
 
   # The blocking gate for everything under e2e/.
   #

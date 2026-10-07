@@ -273,7 +273,7 @@ describe('Draw toolbar', () => {
 
       // `handlePenTypeChange` (Draw.tsx:66-80) keys the dash off the pen type rather than
       // letting the leading `...args` spread carry it, so a `pen` or `spray` record can never
-      // inherit a dash. `setupDrawCtx` early-returns for spray anyway (`src/tools/draw.ts:51`), before it
+      // inherit a dash. `setupDrawCtx` early-returns for spray anyway (`src/tools/draw.ts:50`), before it
       // writes any stroke or alpha state.
       expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
       expect(lastToolArgs()).toEqual({

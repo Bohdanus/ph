@@ -765,7 +765,7 @@ describe('renderText', () => {
   describe('the shared overlay alpha', () => {
     it('fills at full opacity when the shared overlay was left at another tool alpha', () => {
       // The overlay canvas is shared by every overlay tool, and the pen deliberately leaves its own
-      // Opacity written on it rather than bracketing it back (`src/tools/draw.ts:91`), so
+      // Opacity written on it rather than bracketing it back (`src/tools/draw.ts:90`), so
       // `globalAlpha` arrives here as whatever that tool's slider says. Captured INSIDE `fillText`,
       // because reading `ctx.globalAlpha` afterwards would pass even if the reset happened after the
       // draw — which is the order that matters for what the user sees.
