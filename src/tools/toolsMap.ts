@@ -34,6 +34,7 @@ import Tonal from '../components/ToolbarsRight/Tonal/Tonal.tsx';
 import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
 import { placeholderToolGroups } from '../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
+import { Hand, RotateView, Zoom } from '../components/ToolbarsRight/View/View.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import type { ToolName } from '../contexts/tool-types.ts';
 import { toolProcessors, type ToolProcessorDefinition } from './toolProcessors.ts';
@@ -58,6 +59,9 @@ type ToolsMap = Record<
 
 export const toolsMap: ToolsMap = {
   reposition: { ...toolProcessors.reposition, icon: 'reposition', toolboxComponent: Reposition },
+  hand: { icon: 'hand', toolboxComponent: Hand },
+  zoom: { icon: 'zoom', toolboxComponent: Zoom },
+  'rotate-view': { icon: 'rotate-view', toolboxComponent: RotateView },
   blur: { ...toolProcessors.blur, icon: 'blur', toolboxComponent: Blur },
   color: { ...toolProcessors.color, icon: 'color', toolboxComponent: Color },
   levels: { ...toolProcessors.levels, icon: 'levels', toolboxComponent: Levels },

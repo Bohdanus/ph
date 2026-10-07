@@ -1119,6 +1119,9 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['eyedropper', 'no-processor', 0, 0],
     ['color-sampler', 'no-processor', 0, 0],
     ['ruler', 'no-processor', 0, 0],
+    ['hand', 'no-processor', 0, 0],
+    ['zoom', 'no-processor', 0, 0],
+    ['rotate-view', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1397,6 +1400,9 @@ describe('toolProcessors classification invariants', () => {
 describe('toolsMap exhaustiveness', () => {
   const icons: readonly [ToolName, string][] = [
     ['reposition', 'reposition'],
+    ['hand', 'hand'],
+    ['zoom', 'zoom'],
+    ['rotate-view', 'rotate-view'],
     ['blur', 'blur'],
     ['color', 'color'],
     ['levels', 'levels'],

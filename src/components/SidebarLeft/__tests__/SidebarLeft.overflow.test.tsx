@@ -216,11 +216,12 @@ describe('SidebarLeft overflow', () => {
       expect(items, `${label} must be reachable from the three-dots tile`).toContain(label);
     }
     // And nothing that still has a tile is offered again — a tool with two ways in is a tool
-    // whose identity is ambiguous. The Eyedropper is the LAST group that survived at 300px,
-    // so it is the one that would be offered twice if the boundary were a row too far down.
-    expect(items).not.toContain('Move Tool');
-    expect(items).not.toContain('Magic Wand Tool');
-    expect(items).not.toContain('Eyedropper Tool');
+    // whose identity is ambiguous. The exact surviving prefix changes when a new Photoshop
+    // group is added, so derive the negative half from the rendered tile labels rather than
+    // freezing a stale boundary name in this test.
+    for (const toolName of visibleTools().filter((name) => name !== 'more-tools')) {
+      expect(items).not.toContain(screen.getByTestId(`tool-button-${toolName}`).getAttribute('aria-label'));
+    }
 
     // Every tool in the map is reachable from EITHER a tile or the flyout, and from exactly
     // one of them. That is the whole contract the feature exists to keep, so it is stated as

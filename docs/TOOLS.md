@@ -2851,3 +2851,119 @@ Sources:
 - <https://offshoreclipping.com/blog/photoshop-cc-toolbar-tools/>
 
 ---
+
+## View and navigation
+
+Long-form research, provenance and unverified claims: [`src/tools/descriptions/view.notes.md`](../src/tools/descriptions/view.notes.md).
+
+### Hand Tool
+
+`hand` · **H**
+
+Pans the canvas view without moving or changing the document pixels.
+
+The Hand tool moves the viewport over an image that is larger than the window. It changes only the presentation of the canvas, so panning never creates a History entry or changes exported pixels. Hold Space while another non-Type tool is active for Photoshop’s temporary Hand behavior.
+
+**Options bar**
+
+| Control       | Photoshop                                                                 | In this app                                                |
+| ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Fit On Screen | Restores the default centered view so the whole image fits the workspace. | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| 100%          | Returns the view to a centered 100% scale without rotating the document.  | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+
+**Modifiers**
+
+- **Space** — Temporarily pans with the Hand tool while another non-Type tool is active.
+
+**Shortcuts**
+
+- `H` — Selects the Hand tool.
+
+**In this app:** `implemented` — Panning is transient and is not sent through the processor or history paths. Flick momentum, Pan All Windows, and the Overscroll preference are not implemented.
+
+Implementation:
+
+- `src/components/Main/ViewToolArea.tsx:1`
+- `src/contexts/view-state.ts:1`
+- `src/components/Main/Main.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/hand-tool.html>
+- <https://helpx.adobe.com/photoshop/using/touch-gestures.html>
+
+---
+
+### Rotate View Tool
+
+`rotate-view`
+
+Rotates the canvas presentation around the viewport without transforming the image.
+
+The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag horizontally to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.
+
+**Options bar**
+
+| Control        | Photoshop                                                       | In this app                                                |
+| -------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
+| Rotation Angle | Sets the displayed angle from -180 to 180 degrees.              | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Reset View     | Returns the displayed rotation to zero without changing pixels. | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+
+**Shortcuts**
+
+- `R` — Selects the Rotate View tool.
+- `Esc` — Resets the view angle to zero while Rotate View is active.
+
+**In this app:** `implemented` — Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, compass overlay, Shift snapping, and Rotate All Windows are not implemented.
+
+Implementation:
+
+- `src/components/Main/ViewToolArea.tsx:1`
+- `src/components/ToolbarsRight/View/View.tsx:1`
+- `src/components/Common/AppKeyboardShortcuts.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html>
+- <https://helpx.adobe.com/photoshop/using/viewing-images.html>
+
+---
+
+### Zoom Tool
+
+`zoom` · **Z**
+
+Magnifies or reduces the canvas around the pointer without changing document pixels.
+
+The Zoom tool changes the displayed scale of the canvas and keeps the clicked point under the pointer. Click to zoom in, hold Alt or Option to zoom out, and drag horizontally for a scrubby zoom. View scale is transient and never becomes a document edit or History entry.
+
+**Options bar**
+
+| Control       | Photoshop                                                               | In this app                                                |
+| ------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Zoom          | Sets the displayed scale from 10% through 1600% in this implementation. | `partial` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Fit On Screen | Resets the view to the centered contain-fit scale.                      | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| 100%          | Centers the image at 100% display scale.                                | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+
+**Modifiers**
+
+- **Alt/Option** — Reverses a click or scrubby drag from zoom-in to zoom-out.
+
+**Shortcuts**
+
+- `Z` — Selects the Zoom tool.
+
+**In this app:** `implemented` — The pointer anchor, document coordinate inversion, and existing tool gestures follow the transient view transform. Animated zoom, marquee zoom, wheel preferences, and the 25600% desktop maximum are not implemented.
+
+Implementation:
+
+- `src/components/Main/ViewToolArea.tsx:1`
+- `src/components/ToolbarsRight/View/View.tsx:1`
+- `src/hooks/usePointerPosition.ts:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/zoom-tool.html>
+- <https://helpx.adobe.com/photoshop/using/viewing-images.html>
+
+---

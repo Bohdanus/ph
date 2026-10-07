@@ -118,7 +118,7 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ fileName, totalSize, documentFrame, hasImage, toolName }] = useStore();
+  const [{ fileName, totalSize, documentFrame, hasImage, toolName, setViewState }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
@@ -421,6 +421,36 @@ export const AppKeyboardShortcuts = () => {
     onKeyDown: () => {
       pasteSelectionClipboard();
     },
+  });
+
+  useKeyDownShortcut({
+    key: 'h',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('hand'),
+  });
+
+  useKeyDownShortcut({
+    key: 'z',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('zoom'),
+  });
+
+  useKeyDownShortcut({
+    key: 'r',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('rotate-view'),
+  });
+
+  useKeyDownShortcut({
+    key: 'Escape',
+    mod: false,
+    enabled: hasImage && toolName === 'rotate-view',
+    preventDefault: true,
+    mutatesDocument: false,
+    onKeyDown: () => setViewState({ rotation: 0 }),
   });
 
   useKeyDownShortcut({

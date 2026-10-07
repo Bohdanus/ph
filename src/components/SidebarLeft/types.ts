@@ -2,6 +2,9 @@ import type { ReactElement } from 'react';
 
 export type ToolIconName =
   | 'reposition'
+  | 'hand'
+  | 'zoom'
+  | 'rotate-view'
   | 'rectangular-selection'
   | 'elliptical-selection'
   | 'single-row-marquee'

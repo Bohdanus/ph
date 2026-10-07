@@ -237,6 +237,18 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Measures a distance on the canvas: drag a nonprinting line and the options bar reports X, Y, W, H, the angle and the length, with Shift snapping to 45 degrees.',
     implementation: 'partial',
   },
+  hand: {
+    summary: 'Pans the canvas view without moving or changing the document pixels.',
+    implementation: 'implemented',
+  },
+  zoom: {
+    summary: 'Magnifies or reduces the canvas around the pointer without changing document pixels.',
+    implementation: 'implemented',
+  },
+  'rotate-view': {
+    summary: 'Rotates the canvas presentation around the viewport without transforming the image.',
+    implementation: 'implemented',
+  },
 };
 
 /**

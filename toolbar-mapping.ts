@@ -38,6 +38,11 @@ export const toolbarMap = [
   [
     [{ label: 'Move Tool', name: 'reposition', shortcut: 'V' }],
     [
+      { label: 'Hand Tool', name: 'hand', shortcut: 'H' },
+      { label: 'Rotate View Tool', name: 'rotate-view' },
+    ],
+    [{ label: 'Zoom Tool', name: 'zoom', shortcut: 'Z' }],
+    [
       { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
       { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
       // The two 1-pixel marquees share this flyout and therefore carry no shortcut of
@@ -158,6 +163,9 @@ export const toolbarMap = [
 ] as const satisfies readonly (readonly ToolbarToolGroup[])[];
 
 export const availableTools: readonly ToolName[] = [
+  'hand',
+  'zoom',
+  'rotate-view',
   'brush',
   'pencil',
   'color-replacement',

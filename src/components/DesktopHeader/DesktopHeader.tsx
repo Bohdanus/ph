@@ -72,6 +72,9 @@ export const MENUS_EXCLUDE: readonly ToolName[] = [
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
+  { toolName: 'hand', label: 'Hand Tool' },
+  { toolName: 'zoom', label: 'Zoom Tool' },
+  { toolName: 'rotate-view', label: 'Rotate View Tool' },
   { toolName: 'blur', label: 'Blur' },
   { toolName: 'crop', label: 'Crop' },
   { toolName: 'draw', label: 'Draw' },

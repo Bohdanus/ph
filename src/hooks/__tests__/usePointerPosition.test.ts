@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RefObject } from 'react';
 import { usePointerPosition, type ContainDimensions } from '../usePointerPosition.ts';
 import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
+import { DEFAULT_VIEW_STATE, viewStateRef } from '../../contexts/view-state.ts';
 
 const IMAGE = { width: 100, height: 100 };
 
@@ -109,6 +110,7 @@ function pointerEvent(el: HTMLDivElement, overrides: Parameters<typeof createPoi
 }
 
 afterEach(() => {
+  viewStateRef.current = DEFAULT_VIEW_STATE;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -230,6 +232,17 @@ describe('usePointerPosition', () => {
 
       // scale 2, offsetX 100, offsetY 0, rect origin (50, 25)
       const event = pointerEvent(el, { clientX: 50 + 100 + 2 * 10, clientY: 25 + 2 * 20 });
+      expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
+    });
+
+    it('inverts a transient pan and zoom before returning document coordinates', () => {
+      const { el } = createContainer({ left: 50, top: 25, width: 400, height: 200 });
+      viewStateRef.current = { panX: 20, panY: -10, zoom: 2, rotation: 0 };
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      // The document point (10, 20) is at (120, 40) in the untransformed contain-fit viewport.
+      // The view then scales around the viewport centre (200, 100) and pans by (20, -10).
+      const event = pointerEvent(el, { clientX: 50 + 60, clientY: 25 - 30 });
       expect(result.current.getLocalCoords(event)).toEqual({ x: 10, y: 20 });
     });
 

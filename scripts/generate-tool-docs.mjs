@@ -13,6 +13,7 @@ import { selectionDescriptions } from '../src/tools/descriptions/selection.ts';
 import { shapeDescriptions } from '../src/tools/descriptions/shape.ts';
 import { transformDescriptions } from '../src/tools/descriptions/transform.ts';
 import { typeCropDescriptions } from '../src/tools/descriptions/type-crop.ts';
+import { viewDescriptions } from '../src/tools/descriptions/view.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(REPO_ROOT, 'docs/TOOLS.md');
@@ -42,6 +43,7 @@ const FAMILIES = [
   { title: 'Type and crop', record: typeCropDescriptions, notes: 'type-crop.notes.md' },
   { title: 'Move, transform and adjustments', record: transformDescriptions, notes: 'transform.notes.md' },
   { title: 'Eyedropper and draw', record: eyedropperDrawDescriptions, notes: 'eyedropper-draw.notes.md' },
+  { title: 'View and navigation', record: viewDescriptions, notes: 'view.notes.md' },
 ];
 
 const toolDescriptions = Object.assign({}, ...FAMILIES.map(({ record }) => record));

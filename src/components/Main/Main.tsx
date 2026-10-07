@@ -27,6 +27,7 @@ import { BurnToolArea } from './BurnToolArea.tsx';
 import { SpongeToolArea } from './SpongeToolArea.tsx';
 import { GradientToolArea } from './GradientToolArea.tsx';
 import { FillToolArea } from './FillToolArea.tsx';
+import { ViewToolArea, type ViewToolMode } from './ViewToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -38,6 +39,7 @@ import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useUnsavedChanges } from '../../contexts/UnsavedChangesContext.tsx';
 import { resizeCanvas } from '../../util/canvas.ts';
+import { DEFAULT_VIEW_STATE } from '../../contexts/view-state.ts';
 
 /**
  * The interaction modes whose tool owns a selection, which is every mode that can have a
@@ -68,7 +70,18 @@ export const SELECTION_INTERACTION_MODES: ReadonlySet<string> = new Set([
 
 const Main = () => {
   const [
-    { canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize, documentFrame },
+    {
+      canvasRef,
+      containerRef,
+      toolOverlayRef,
+      rectOverlayRef,
+      hasImage,
+      layers,
+      toolName,
+      totalSize,
+      documentFrame,
+      viewState,
+    },
   ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
@@ -77,13 +90,40 @@ const Main = () => {
   const { drawAllLayers } = useLayers();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [spacePressed, setSpacePressed] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || !hasImage || toolName === 'text') return;
+      event.preventDefault();
+      setSpacePressed(true);
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') setSpacePressed(false);
+    };
+    const handleBlur = () => setSpacePressed(false);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [hasImage, toolName]);
 
   const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const selectionAntsOverlayRef = useRef<HTMLCanvasElement | null>(null);
 
-  let interactionMode = 'zoom';
+  let interactionMode = 'idle';
   if (toolName === 'reposition') {
     interactionMode = 'reposition';
+  } else if (toolName === 'hand') {
+    interactionMode = 'hand';
+  } else if (toolName === 'zoom') {
+    interactionMode = 'zoom';
+  } else if (toolName === 'rotate-view') {
+    interactionMode = 'rotate-view';
   } else if (toolName === 'crop') {
     interactionMode = 'crop';
   } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil') {
@@ -170,6 +210,8 @@ const Main = () => {
     interactionMode = 'gradient';
   }
 
+  if (spacePressed && toolName !== 'text' && hasImage) interactionMode = 'hand';
+
   // One read, because the canvas's `display` and the loop's `enabled` gate the same question and
   // have to answer it identically: the canvas is the ants' only output, so a `display: none`
   // beside a running loop would run 60 frames a second into a canvas nobody can see.
@@ -252,6 +294,8 @@ const Main = () => {
   };
 
   const renderContent = () => {
+    const view = viewState ?? DEFAULT_VIEW_STATE;
+    const viewTransform = `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom}) rotate(${view.rotation}deg)`;
     type ToolAreaComponent =
       | typeof DummyToolArea
       | typeof MoveToolArea
@@ -315,14 +359,7 @@ const Main = () => {
         className={`absolute left-0 top-0 flex h-full w-full items-center justify-center ${theme === 'dark' ? 'chessboard-dark' : 'chessboard-light'}`}
         style={{ display: hasImage ? undefined : 'none' }}
       >
-        <div
-          className="zoom-container h-full w-full"
-          style={
-            {
-              // transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
-            }
-          }
-        >
+        <div className="zoom-container relative h-full w-full" style={{ transform: viewTransform }}>
           <canvas
             ref={canvasRef}
             data-testid="workspace-canvas"
@@ -334,6 +371,7 @@ const Main = () => {
           data-testid="tool-overlay-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
+            transform: viewTransform,
             // One entry per mode whose mounted area paints into `overlayCtxRef` — the
             // list is a LOOKUP KEY, not a summary of "tools with an area", so a mode that
             // paints and is missing here renders a blank preview with no error, and a
@@ -383,6 +421,7 @@ const Main = () => {
           data-testid="rect-overlay-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
+            transform: viewTransform,
             display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
@@ -396,11 +435,16 @@ const Main = () => {
           data-testid="selection-ants-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
+            transform: viewTransform,
             display: selectionToolActive ? 'block' : 'none',
           }}
         />
         <SelectionMarchingAnts overlayRef={selectionAntsOverlayRef} enabled={selectionToolActive} />
-        <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+        {(['hand', 'zoom', 'rotate-view'] as string[]).includes(interactionMode) ? (
+          <ViewToolArea className="absolute inset-0 h-full w-full" mode={interactionMode as ViewToolMode} />
+        ) : (
+          <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
+        )}
         {/*
          * LAST, by DOM order rather than by z-index: this app stacks nothing by z-index at all, so
          * the last child paints on top. The in-place editor has to receive the pointer, because
@@ -427,6 +471,10 @@ const Main = () => {
       // lets the e2e suite name that element instead of selecting a bare `main` tag and
       // trusting that it is the one the fit was computed from.
       data-testid="workspace-container"
+      data-view-pan-x={String((viewState ?? DEFAULT_VIEW_STATE).panX)}
+      data-view-pan-y={String((viewState ?? DEFAULT_VIEW_STATE).panY)}
+      data-view-zoom={String((viewState ?? DEFAULT_VIEW_STATE).zoom)}
+      data-view-rotation={String((viewState ?? DEFAULT_VIEW_STATE).rotation)}
       className={`relative overflow-y-auto [grid-area:main] mobile-safe-bottom ${
         isDragging
           ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'

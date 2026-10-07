@@ -24,6 +24,9 @@ import { LineShapeIcon } from './icons/LineShapeIcon';
 import { MagicEraserIcon } from './icons/MagicEraserIcon';
 import { MagicWandIcon } from './icons/MagicWandIcon';
 import { MoveIcon } from './icons/MoveIcon';
+import { HandIcon } from './icons/HandIcon';
+import { ZoomIcon } from './icons/ZoomIcon';
+import { RotateViewIcon } from './icons/RotateViewIcon';
 import { PaintBucketIcon } from './icons/PaintBucketIcon';
 import { PenToolIcon } from './icons/PenToolIcon';
 import { PolygonalLassoIcon } from './icons/PolygonalLassoIcon';
@@ -42,6 +45,9 @@ import { TransformIcon } from './icons/TransformIcon';
 
 export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-star', SvgIconFactory> = {
   reposition: MoveIcon,
+  hand: HandIcon,
+  zoom: ZoomIcon,
+  'rotate-view': RotateViewIcon,
   color: ColorIcon,
   blur: BlurIcon,
   levels: LevelsIcon,

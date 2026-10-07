@@ -107,7 +107,14 @@ export type ToolProcessorDefinition = {
  * neither difference gives it a `commit` kind.
  * <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler', 'color-sampler'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = [
+  'eyedropper',
+  'ruler',
+  'color-sampler',
+  'hand',
+  'zoom',
+  'rotate-view',
+] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;

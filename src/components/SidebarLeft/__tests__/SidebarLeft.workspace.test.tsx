@@ -47,6 +47,9 @@ vi.mock('../toolIcons.tsx', () => {
   const Icon = () => <svg aria-hidden="true" />;
   const names = [
     'reposition',
+    'hand',
+    'zoom',
+    'rotate-view',
     'rectangular-selection',
     'elliptical-selection',
     'freehand-lasso',

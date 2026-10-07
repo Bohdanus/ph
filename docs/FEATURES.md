@@ -311,21 +311,21 @@ from the menu, not from the app.
 Hand-tool panning, rotate view, rulers, guides, snap, a grid overlay, and
 screen-mode switching.
 
-**This app:** the canvas is contain-fit and nothing else — `scale = min(scaleX,
-scaleY)` with centring offsets (`contain-fit.ts` — `containFit()`, which
-`usePointerPosition`'s `calculateDimensions()` calls). The
-zoom transform is commented out (`Main.tsx` — the `.zoom-container` `style` prop)
-and so is the store's zoom state (`StoreContext.tsx` — the commented-out
-`zoomDataRef` and `setZoomData`, in `StoreData` and again in `StoreProvider`).
-There is no zoom or hand entry in the tool registry (`toolbar-mapping.ts` —
-`toolbarMap`).
+**This app:** contain-fit remains the base scale — `scale = min(scaleX, scaleY)`
+with centring offsets (`contain-fit.ts` — `containFit()`, which
+`usePointerPosition`'s `calculateDimensions()` calls). The Hand, Zoom and Rotate
+View tools now keep transient `ViewState` (`src/contexts/view-state.ts`) and
+apply the same presentation transform to the canvas and overlays (`Main.tsx` —
+`renderContent()`). `usePointerPosition` inverts that transform before returning
+document-space coordinates, so pixel tools continue to target the document rather
+than the screen. View changes do not enter history or durable replay.
 
-**Status:** `absent`
+**Status:** `partial`
 
-**Gap:** The image cannot be magnified or panned at all. This is the most
-consequential absence in this document, because it makes three other areas worse
-than their own status suggests: a fixed view means no detail work, and it is also
-why mobile has no pinch-zoom — that gap is inherited, not native.
+**Gap:** Flick panning, wheel and animated zoom preferences, pinch/two-finger
+gestures, the Rotate View compass, angle snapping and multi-window sync remain
+absent. The implementation deliberately caps the options-bar zoom control at
+1600% pending a product-specific desktop maximum.
 
 `absent`, not `platform`. Every one of these is a browser's ordinary business.
 

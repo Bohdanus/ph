@@ -227,6 +227,14 @@ and Direct Selection are therefore **not Adobe-table-confirmed** and are listed
 from the shortcut PDF and individual tool pages. That list lives here; nothing
 else in the repository carries it.
 
+The view-tool implementation follows the individual Adobe pages rather than
+pretending the overview table is complete. `ViewToolArea` owns Hand, Zoom and
+Rotate View gestures; `ViewState` is presentation-only; and the inverse in
+`usePointerPosition` keeps existing document gestures in image coordinates. The
+implementation deliberately does not claim Photoshop's momentum, wheel,
+compass, snapping or multi-window preferences; those gaps are recorded in the
+view-tool description notes and generated `docs/TOOLS.md`.
+
 Two 2026 candidates are **not** Adobe-confirmed and must not ship as tools: Clone
 Source (a gap in one diagram's icon numbering, name never printed) and Generate
 Image (a real feature, unconfirmed panel placement).

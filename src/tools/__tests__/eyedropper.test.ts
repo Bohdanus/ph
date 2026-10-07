@@ -49,7 +49,14 @@ describe('eyedropper registry absence', () => {
     // nonprinting line and commits no pixels either, and the Color Sampler, which "displays color
     // values for up to four areas" and therefore edits nothing — so this pins the whole set rather
     // than the eyedropper's place in it, and a fourth entry has to be earned the same way.
-    expect([...PIXEL_FREE_TOOLS].sort()).toEqual(['color-sampler', 'eyedropper', 'ruler']);
+    expect([...PIXEL_FREE_TOOLS].sort()).toEqual([
+      'color-sampler',
+      'eyedropper',
+      'hand',
+      'rotate-view',
+      'ruler',
+      'zoom',
+    ]);
     for (const name of PIXEL_FREE_TOOLS) {
       expect(Object.hasOwn(toolProcessors, name)).toBe(false);
       expect(findToolProcessor(name)).toBeUndefined();

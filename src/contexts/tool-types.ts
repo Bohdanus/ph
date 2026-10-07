@@ -81,6 +81,9 @@ export type ToolArgsByName = {
    * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
    */
   ruler: { toolName: 'ruler' };
+  hand: { toolName: 'hand' };
+  zoom: { toolName: 'zoom' };
+  'rotate-view': { toolName: 'rotate-view' };
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };
