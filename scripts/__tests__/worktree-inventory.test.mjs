@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -1717,7 +1717,7 @@ describe('summariseChats', () => {
 });
 
 describe('auditChats against a real session database', () => {
-  it('reads the LAST step-finish per session, not the first', () => {
+  it('reads the LAST step-finish per session from a read-only database', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-'));
     const dbPath = join(dir, 'kilo.db');
     const db = new DatabaseSync(dbPath);
@@ -1756,6 +1756,7 @@ describe('auditChats against a real session database', () => {
       ins.run('p2', 'm2', 'ses_one', NOW - 800, NOW - 800, JSON.stringify({ type: 'step-finish', reason: 'stop' }));
 
       db.close();
+      chmodSync(dbPath, 0o444);
 
       const { auditChats } = await_import();
       const audit = auditChats({
@@ -3263,10 +3264,11 @@ describe('the call history', () => {
       ...extra,
     });
 
-  it('does not add query indexes to the session database', () => {
+  it('reads the session database without write access or query indexes', () => {
     const fx = makeSessionDb({});
     try {
-      run(fx.dbPath);
+      chmodSync(fx.dbPath, 0o444);
+      expect(run(fx.dbPath).available).toBe(true);
       const verify = new DatabaseSync(fx.dbPath, { readOnly: true });
       try {
         const indexes = verify
