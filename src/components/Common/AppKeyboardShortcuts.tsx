@@ -8,6 +8,7 @@ import { useSelectionClipboard } from '../../contexts/useSelectionClipboard.ts';
 import { useFile } from '../../contexts/useFile.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { BRUSH_SIZE_DEFAULT, BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from '../../util/brush-engine.ts';
+import type { TonalRange } from '../../tools/dodgeBurn.ts';
 import type { SpongeMode } from '../../tools/sponge.ts';
 import type { FigureType } from '../../tools/shape.ts';
 import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
@@ -768,13 +769,13 @@ export const AppKeyboardShortcuts = () => {
    * them on Adobe's behalf. They are **tool-conditional**, which is load-bearing rather
    * than a workaround: the SAME `Alt+Shift+S` is Shadows on the Dodge and the Burn, on the
    * same page of the same table, so Photoshop resolves the collision by which tool is
-   * active. `enabled: toolName === 'sponge'` is that resolution, and it is also what keeps
-   * this registration from claiming the Dodge's Shadows key.
+   * active. The `enabled` gates on these handlers and the Dodge/Burn handlers below are
+   * that resolution.
    *
    * `preventDefault` is on because `Alt+S` is a browser and OS chord on several platforms
    * and an unbound one would otherwise act on the user's document.
    *
-   * **THEY ARE REGISTERED LAST ON PURPOSE, and that position is load-bearing.**
+   * **They are registered after the tool selectors on purpose, and that position is load-bearing.**
    * `matchesShortcut` only compares a modifier the registration actually DECLARES
    * (`src/hooks/useKeyboardEvents.tsx:70-77`), and the Clone Stamp's bare `s` at
    * `key: 's', mod: false` declares neither `shift` nor `alt` — so it matches `Alt+Shift+S`
@@ -792,12 +793,14 @@ export const AppKeyboardShortcuts = () => {
    * creates is on ORDER rather than on the flag, so the reason is recorded here and in the
    * tests that pin it.
    *
-   * **The Dodge's and the Burn's own `Alt+Shift+S/M/H` range keys are NOT bound here.** They
-   * are listed in their descriptions and do nothing. That asymmetry is the point of the
-   * `enabled` gate rather than an oversight in it, and the missing pair is recorded in
-   * `HANDOFF.md` §145 rather than fixed in this change.
+   * The Dodge and Burn use `Alt+Shift+S/M/H` for Shadows, Midtones and Highlights,
+   * respectively. Those handlers are gated to the active Dodge or Burn tool, matching
+   * Photoshop's tool-dependent resolution of the shared chords.
    */
   const setSpongeMode = (mode: SpongeMode) => patchToolArgs('sponge', { mode });
+  const setDodgeBurnRange = (range: TonalRange) => {
+    if (toolName === 'dodge' || toolName === 'burn') patchToolArgs(toolName, { range });
+  };
 
   useKeyDownShortcut({
     key: 'd',
@@ -817,6 +820,38 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage && toolName === 'sponge',
     onKeyDown: () => setSpongeMode('saturate'),
+  });
+
+  const dodgeBurnActive = hasImage && (toolName === 'dodge' || toolName === 'burn');
+
+  useKeyDownShortcut({
+    key: 's',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: dodgeBurnActive,
+    onKeyDown: () => setDodgeBurnRange('shadows'),
+  });
+
+  useKeyDownShortcut({
+    key: 'm',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: dodgeBurnActive,
+    onKeyDown: () => setDodgeBurnRange('midtones'),
+  });
+
+  useKeyDownShortcut({
+    key: 'h',
+    mod: false,
+    shift: true,
+    alt: true,
+    preventDefault: true,
+    enabled: dodgeBurnActive,
+    onKeyDown: () => setDodgeBurnRange('highlights'),
   });
 
   return null;
