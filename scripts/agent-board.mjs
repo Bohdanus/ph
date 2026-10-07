@@ -1332,6 +1332,9 @@ export async function run(
             result.drifted.length
               ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (${RUN} show <id>)`
               : null,
+            result.duplicates.length
+              ? `${result.duplicates.length} duplicate heading number(s) blocked from import: ${result.duplicates.join(', ')}`
+              : null,
             result.dead.length ? `${result.dead.length} skipped as already closed in their document` : null,
           ]
             .filter(Boolean)

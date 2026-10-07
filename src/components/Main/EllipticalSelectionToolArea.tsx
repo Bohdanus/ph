@@ -204,7 +204,7 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
 
     const documentPoint = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
     const delta = { x: documentPoint.x - drag.origin.x, y: documentPoint.y - drag.origin.y };
-    const preview = moveSelectionByDelta(drag.baseline, delta);
+    const preview = moveSelectionByDelta(drag.preview, delta);
     drag.origin = documentPoint;
     drag.preview = preview;
     // The ants canvas is what follows the selection, not this overlay. It owns the committed

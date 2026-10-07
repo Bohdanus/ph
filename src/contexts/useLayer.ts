@@ -209,7 +209,11 @@ export const useLayers = () => {
   const _addLayer = (
     layer: Layer,
     historyItem: NewHistoryItem,
-    newDocument?: { size: { width: number; height: number }; hasUnsavedChanges: boolean },
+    newDocument?: {
+      size: { width: number; height: number };
+      hasUnsavedChanges: boolean;
+      fileName: string;
+    },
     currentLayers: LayersRecord = layers
   ) => {
     const entry = createHistoryItem(historyItem);
@@ -226,6 +230,7 @@ export const useLayers = () => {
             deletedLayers: {},
             totalSize: { ...newDocument.size },
             documentFrame: documentFrameFromSize(newDocument.size),
+            fileName: newDocument.fileName,
             hasImage: true,
             hasUnsavedChanges: newDocument.hasUnsavedChanges,
             selections: [],
@@ -267,6 +272,7 @@ export const useLayers = () => {
         ? {
             size: 'size' in params ? params.size : { width: params.pos.width, height: params.pos.height },
             hasUnsavedChanges: true,
+            fileName: '',
           }
         : undefined,
       currentLayers
@@ -294,6 +300,7 @@ export const useLayers = () => {
         ? {
             size: params.isBedrock ? params.size : { width: params.pos.width, height: params.pos.height },
             hasUnsavedChanges: false,
+            fileName: params.name ?? '',
           }
         : undefined,
       currentLayers

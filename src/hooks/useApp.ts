@@ -157,8 +157,8 @@ export const useApp = (): UseAppType => {
     }
     const { image } = data;
     const size = { width: image.width, height: image.height };
-    handleImageCreate(size);
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    handleImageCreate(size);
     _setFileName(fileName);
   }
 

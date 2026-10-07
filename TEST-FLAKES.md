@@ -529,7 +529,7 @@ the CODE THAT RAN. That is the same discipline as section 10, one level down, an
 compose: pinning the port stops the run testing the wrong tree, and verifying the served
 module stops it testing the wrong code in the right tree.
 
-## 12. `viewport-drawing.spec.ts` fails roughly one run in four, and not because of anything it asserts
+## 12. `viewport-drawing.spec.ts` has intermittent capture drift, not because of anything it asserts
 
 **Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced more than once, and the failing window moves between `wide` and `narrow` between runs. Not fixed. Not a known-failing test; it is intermittent.**
 

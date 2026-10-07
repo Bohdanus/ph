@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { type StoreData, type StoreDispatch, StoreProvider, useStore } from '../StoreContext.tsx';
+import * as historyAdapter from '../history-adapter.ts';
 import {
   deriveRemoveLayerEntry,
   deriveSetDocumentFrameEntry,
@@ -14,7 +15,7 @@ import { getAssetRegistry } from '../asset-registry.ts';
 import { decideDurableAppend, planHistoryAppend } from '../history-append.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
+import type { ImageLayerSource, Layer, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -844,6 +845,60 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
     } finally {
       begin.mockRestore();
       reconcile.mockRestore();
+      registry.disposeDocument(store().documentId);
+    }
+  });
+
+  it('plans a paint-tool layer through the durable source admission rule', () => {
+    const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
+    const { store, dispatch } = openDocument();
+    conversion.mockClear();
+    const registry = getAssetRegistry();
+    const layerId2 = 'pencil-layer';
+    const source: ToolLayerSource = {
+      kind: 'tool',
+      args: {
+        toolName: 'pencil',
+        alpha: 1,
+        color: '#00ff00',
+        penType: 'pen',
+        lineWidth: 3,
+        points: [{ x: 1, y: 1 }],
+        smoothing: 0,
+        blendMode: 'source-over',
+      },
+      isBedrock: false,
+      pos: { x: 12, y: 18, width: 40, height: 30 },
+    };
+    const addedLayer: Layer = {
+      ...createMockLayer({ id: layerId2, pos: source.pos }),
+      source,
+    };
+    const entry: HistoryItem = {
+      id: 'create-pencil-layer',
+      actionName: NEW_LAYER_ACTION,
+      layerId: layerId2,
+      layerSource: source,
+    };
+    try {
+      act(() => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { layers: { ...store().layers, [layerId2]: addedLayer }, activeLayerId: layerId2 },
+            historyItem: entry,
+          },
+        });
+      });
+
+      const durableEntry = store().durableDocument!.history.at(-1);
+      expect(durableEntry?.operation.kind).toBe('create-layer');
+      if (durableEntry?.operation.kind !== 'create-layer') return;
+      expect(durableEntry.operation.layer.source.kind).toBe('paint');
+      expect(store().durableStatus).toBe('current');
+      expect(conversion).not.toHaveBeenCalled();
+    } finally {
+      conversion.mockRestore();
       registry.disposeDocument(store().documentId);
     }
   });

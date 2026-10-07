@@ -224,7 +224,7 @@ describe.each([
       changeOpacity('35');
 
       // `ctx.globalAlpha` takes a fraction, not a percentage
-      // (`src/tools/draw.ts:35`), so the bar has to divide on the way out.
+      // (`src/tools/draw.ts:34`), so the bar has to divide on the way out.
       expect(lastPatch()).toEqual([toolName, { alpha: 0.35 }]);
       expect(screen.getByText('35%')).toBeInTheDocument();
     });
