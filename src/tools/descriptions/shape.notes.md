@@ -1,11 +1,33 @@
 # SHAPE family — research notes
 
-Prose half of `src/tools/descriptions/shape.ts`. Seven keys: `shape`, `rectangle`, `ellipse`,
-`line`, `triangle`, `polygon`, `custom-shape`.
+Prose half of `src/tools/descriptions/shape.ts`. Eight keys: `shape`, `rectangle`, `ellipse`,
+`line`, `triangle`, `polygon`, `star`, `custom-shape`.
 
 `shape` is the generic Shape Tool processor. The five `figure` variants are separate registered
 `ToolName`s that each resolve to the same processor through a different `figure` value.
 `custom-shape` is registered and selectable and renders a `PlaceholderTool`.
+
+## `star` — Star Tool
+
+Adobe's current Star pages document a dedicated Star tool in the Shapes group, Number of
+Points, Outer Radius, Inner Radius, Corner Radius, Fill/Stroke, Shift proportional constraint,
+and Alt/Option from-center drawing:
+
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html>
+- <https://helpx.adobe.com/photoshop/using/create-star-shape.html>
+
+The app keeps the existing shared shape processor and geometry normalization. Star points use
+the existing `polygonSides()` bounds (3–100) and default to 5. The renderer emits alternating
+outer and inner vertices, with `starRatio` expressed as the inner radius percentage of the
+outer radius. Adobe does not publish exact inner/outer defaults or all min/max bounds; the
+app's 50% default and 1–99% range are explicit app decisions, not Adobe facts. Corner Radius,
+separate Outer/Inner Radius fields, and true Photoshop vector/path commits remain limitations
+of the shared shape architecture.
+
+The older research sections below describe the pre-Star state of this worktree, where the fly-out
+had six entries and Star was recorded as missing. The implementation and limitations above are
+the current Star record; those historical notes are retained as provenance rather than as the
+current capability claim.
 
 **Every citation below and in the data file was re-derived against this worktree by opening the
 file, and the previous revision of this file was wrong about nearly all of them.** Its closing
@@ -32,7 +54,7 @@ the pass that re-derived it, not the tree today, which has moved again:
 | the oval branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'oval'` branch                                               | 24                                                       |
 | the line branch                               | `src/tools/shape.ts` — `drawShape()`'s `figure === 'line'` branch                                               | 24                                                       |
 | Shift geometry                                | `src/tools/shape.ts` — `normalizeShapeGeometry()` and its `if (shiftKey)` arm                                   | 22 and 24                                                |
-| the six figure blocks                         | `src/tools/settings.ts` — `defaultSettings`                                                                     | 7 each                                                   |
+| the seven saved figure presets                | `src/tools/settings.ts` — `savedArgsPerFigure`                                                                  | 7 each                                                   |
 | the canvas dispatch                           | `src/components/Main/Main.tsx` — `Main()`: `toolName === 'shape' \|\|`, first arm of the dispatch               | 8                                                        |
 | the six fly-out entries                       | `toolbar-mapping.ts` — `toolbarMap`'s shapes fly-out                                                            | **6 higher** — the only one here that went the other way |
 | `orderedFigures` and the index arithmetic     | `AppKeyboardShortcuts.tsx` — `selectShapeTool()`                                                                | 40 — the furthest in the family                          |

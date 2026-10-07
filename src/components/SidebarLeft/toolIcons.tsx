@@ -31,6 +31,7 @@ import { QuickSelectionIcon } from './icons/QuickSelectionIcon';
 import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
 import { RectangleShapeIcon } from './icons/RectangleShapeIcon';
 import { ShapeIcon } from './icons/ShapeIcon';
+import { StarIcon } from './icons/StarIcon';
 import { SharpenIcon } from './icons/SharpenIcon';
 import { SingleColumnMarqueeIcon } from './icons/SingleColumnMarqueeIcon';
 import { SingleRowMarqueeIcon } from './icons/SingleRowMarqueeIcon';
@@ -39,7 +40,7 @@ import { SpongeIcon } from './icons/SpongeIcon';
 import { TextIcon } from './icons/TextIcon';
 import { TransformIcon } from './icons/TransformIcon';
 
-export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
+export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-star', SvgIconFactory> = {
   reposition: MoveIcon,
   color: ColorIcon,
   blur: BlurIcon,
@@ -53,6 +54,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'shape-line': LineShapeIcon,
   'shape-triangle': ShapeIcon,
   'shape-polygon': ShapeIcon,
+  'shape-star': StarIcon,
   text: TextIcon,
   'freehand-lasso': FreehandLassoIcon,
   'polygonal-lasso': PolygonalLassoIcon,

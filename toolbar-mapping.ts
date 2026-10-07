@@ -151,6 +151,7 @@ export const toolbarMap = [
       { label: 'Line Tool', name: 'shape', figure: 'line' },
       { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
       { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
+      { label: 'Star Tool', name: 'shape', figure: 'star' },
       { label: 'Custom Shape Tool', name: 'custom-shape' },
     ],
   ],

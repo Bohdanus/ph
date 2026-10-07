@@ -161,7 +161,9 @@ describe('defaultSettings', () => {
 
   it('covers every pen type and figure type in the saved presets', () => {
     expect(Object.keys(savedDrawPerPen).sort()).toEqual(['pen', 'pen-dashed', 'spray']);
-    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle'].sort());
+    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(
+      ['line', 'oval', 'polygon', 'rectangle', 'star', 'triangle'].sort()
+    );
 
     for (const penType of Object.keys(savedDrawPerPen) as PenType[]) {
       expect(savedDrawPerPen[penType].lineWidth, penType).toBeGreaterThan(0);
@@ -328,6 +330,8 @@ const figurePresets: readonly [FigureType, Record<string, unknown>][] = [
   // the seed: 5 is Adobe's Polygon-tool default, and a store that arrives
   // without the key must still draw a pentagon.
   ['polygon', { alpha: 1, lineWidth: 5, sides: 5, toolMode: 'shape' }],
+  // Adobe does not publish the Star Ratio default; 50% is this app's explicit choice.
+  ['star', { alpha: 1, lineWidth: 5, sides: 5, starRatio: 50, toolMode: 'shape' }],
 ];
 
 /** Walks nested settings values (e.g. `reposition.move`) looking for non-finite numbers. */

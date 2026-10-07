@@ -8,7 +8,7 @@ import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
-import { DEFAULT_POLYGON_SIDES } from './shape.ts';
+import { DEFAULT_POLYGON_SIDES, DEFAULT_STAR_RATIO } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
@@ -61,6 +61,15 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
     sides: DEFAULT_POLYGON_SIDES,
     toolMode: 'shape',
   },
+  star: {
+    alpha: 1,
+    lineWidth: 5,
+    // Adobe publishes the Star Ratio control but not its initial value. 50% is an app decision
+    // matching the conventional five-point polygon star used by this shape family.
+    sides: DEFAULT_POLYGON_SIDES,
+    starRatio: DEFAULT_STAR_RATIO,
+    toolMode: 'shape',
+  },
 };
 
 export const defaultSettings = {
@@ -89,6 +98,9 @@ export const defaultSettings = {
   } satisfies DrawToolArgs,
   shape: {
     ...savedArgsPerFigure['rectangle'],
+    // Keep the shared shape args safe when the generic shape tool is switched directly to Star.
+    sides: DEFAULT_POLYGON_SIDES,
+    starRatio: DEFAULT_STAR_RATIO,
     figure: 'rectangle',
     color: '#000000',
     backgroundColor: null,

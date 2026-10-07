@@ -53,6 +53,7 @@ const toolIconNames = [
   'shape-line',
   'shape-triangle',
   'shape-polygon',
+  'shape-star',
   'text',
   'color',
   'blur',
@@ -85,7 +86,7 @@ const iconNameForFigure = (figure: string) => `shape-${figure}` as ToolIconName;
 
 describe('toolIcons shape figure entries', () => {
   it('provides an icon for every figure of the narrowed union', () => {
-    for (const figure of ['rectangle', 'oval', 'line', 'triangle', 'polygon'] as const) {
+    for (const figure of ['rectangle', 'oval', 'line', 'triangle', 'polygon', 'star'] as const) {
       const iconName = iconNameForFigure(figure);
 
       expect(Object.hasOwn(toolIcons, iconName)).toBe(true);

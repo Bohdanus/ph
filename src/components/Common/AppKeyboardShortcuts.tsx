@@ -165,9 +165,9 @@ export const AppKeyboardShortcuts = () => {
   const selectShapeTool = (shiftKey = false) => {
     if (shiftKey) {
       // The cycle IS the flyout, in the rail's own order: `toolbar-mapping.ts` —
-      // `toolbarMap`'s five `shape`-named entries. The Custom Shape tool is the sixth entry of
+      // `toolbarMap`'s six `shape`-named entries. The Custom Shape tool is the seventh entry of
       // that same group rather than a figure, because it carries its own `toolName`, so it gets
-      // the one index past the last figure and the modulus spans all six entries.
+      // the one index past the last figure and the modulus spans all seven entries.
       //
       // The group CLOSES, which is what Adobe's "cycle through tools with the same shortcut
       // key" does: the press after the last entry advances to the first, so the press after
@@ -187,6 +187,7 @@ export const AppKeyboardShortcuts = () => {
         'line',
         'triangle',
         'polygon',
+        'star',
       ] as const satisfies readonly FigureType[];
       const customShapeIndex = orderedFigures.length;
       const currentFigure = toolArgs.toolName === 'shape' ? toolArgs.figure : 'rectangle';
