@@ -3,7 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import HistoryTab from '../HistoryTab.tsx';
 import type { HistoryItem } from '@/contexts/history-types.ts';
 import { getHistoryItemTitle } from '@/contexts/useHistory.ts';
-import { NEW_LAYER_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION, HIDE_LAYER_ACTION } from '@/util/constants.ts';
+import {
+  NEW_LAYER_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  TOOL_ACTION,
+  HIDE_LAYER_ACTION,
+} from '@/util/constants.ts';
 import { createMockHistoryItem } from '@/__tests__/fixtures/history.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
@@ -101,6 +107,14 @@ describe('HistoryTab', () => {
     expect(items[0]).toHaveTextContent(hideTitle);
     expect(items[1]).toHaveTextContent(toolTitle);
     expect(items[2]).toHaveTextContent(renameTitle);
+  });
+
+  it('gives opacity changes a meaningful history title', () => {
+    const item = createMockHistoryItem({
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+    });
+    expect(getHistoryItemTitle(item)).toBe('Set Opacity');
   });
 
   it('highlights current history item', () => {

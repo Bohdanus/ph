@@ -528,7 +528,12 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
   throw new SelectionCanvasContextError('copyPolygonToCanvas', bounds.width, bounds.height);
 }
 
-function rasterizePolygonMask(points: Point[], width: number, height: number): Uint8Array {
+type RasterizedPolygonMask = {
+  values: Uint8Array;
+  preservesCoverage: boolean;
+};
+
+function rasterizePolygonMask(points: Point[], width: number, height: number): RasterizedPolygonMask {
   const canvas = createSelectionCanvas(width, height);
   const ctx = getSelectionCanvasContext(canvas);
 
@@ -544,10 +549,10 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): U
       const imageData = ctx.getImageData(0, 0, width, height);
       const mask = new Uint8Array(width * height);
       for (let i = 0; i < mask.length; i++) {
-        mask[i] = imageData.data[i * 4 + 3] > 0 ? 1 : 0;
+        mask[i] = imageData.data[i * 4 + 3];
       }
 
-      return mask;
+      return { values: mask, preservesCoverage: true };
     } catch {
       // Fall through to CPU rasterization for tests and reduced canvas environments.
     }
@@ -560,7 +565,7 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): U
     }
   }
 
-  return mask;
+  return { values: mask, preservesCoverage: false };
 }
 
 function chamferDistanceFromSeeds(seedMask: Uint8Array, width: number, height: number): Float32Array {
@@ -625,14 +630,24 @@ export function createFeatheredAlphaMask(
   width: number,
   height: number,
   featherRadius: number,
-  antiAlias = true
+  antiAlias = true,
+  preservesCoverage = false
 ): Uint8Array {
+  // Canvas read-back stores coverage as 0-255 alpha, while the CPU fallback deliberately
+  // remains a 0/1 mask. The explicit flag keeps a canvas pixel with alpha 1 distinguishable
+  // from that fallback's selected value.
+  const useCoverage = preservesCoverage || binaryMask.some((value) => value > 1);
   const outsideSeeds = new Uint8Array(binaryMask.length);
   const insideSeeds = new Uint8Array(binaryMask.length);
 
   for (let i = 0; i < binaryMask.length; i++) {
-    insideSeeds[i] = binaryMask[i];
-    outsideSeeds[i] = binaryMask[i] ? 0 : 1;
+    if (useCoverage) {
+      insideSeeds[i] = binaryMask[i] === 255 ? 1 : 0;
+      outsideSeeds[i] = binaryMask[i] === 0 ? 1 : 0;
+    } else {
+      insideSeeds[i] = binaryMask[i];
+      outsideSeeds[i] = binaryMask[i] ? 0 : 1;
+    }
   }
 
   const distanceToOutside = chamferDistanceFromSeeds(outsideSeeds, width, height);
@@ -640,7 +655,13 @@ export function createFeatheredAlphaMask(
   const alphaMask = new Uint8Array(binaryMask.length);
 
   for (let i = 0; i < binaryMask.length; i++) {
-    const signedDistance = binaryMask[i] ? distanceToOutside[i] : -distanceToInside[i];
+    const coverage = binaryMask[i] / 255;
+    const signedDistance =
+      useCoverage && binaryMask[i] > 0 && binaryMask[i] < 255
+        ? coverage - 0.5
+        : binaryMask[i]
+          ? distanceToOutside[i]
+          : -distanceToInside[i];
     alphaMask[i] = alphaFromSignedDistance(signedDistance, featherRadius, antiAlias);
   }
 
@@ -708,7 +729,14 @@ export function copyFeatheredPolygonSelectionToCanvas(
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const mask = rasterizePolygonMask(relativePoints, width, height);
-  const alphaMask = createFeatheredAlphaMask(mask, width, height, featherRadius, antiAlias);
+  const alphaMask = createFeatheredAlphaMask(
+    mask.values,
+    width,
+    height,
+    featherRadius,
+    antiAlias,
+    mask.preservesCoverage
+  );
 
   for (let i = 0; i < alphaMask.length; i++) {
     const alphaIndex = i * 4 + 3;

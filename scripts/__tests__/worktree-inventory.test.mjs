@@ -1045,6 +1045,16 @@ describe('blocked-question detection', () => {
       // skipped because it is followed by a quote rather than a space.
       expect(s.blockedOn).toBe('que_latest0001UM8oJl32u9X3ko');
       expect(s.reasons.join(' ')).toContain('waiting for input');
+
+      const verify = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const indexes = verify
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_part_%'")
+          .all();
+        expect(indexes).toEqual([]);
+      } finally {
+        verify.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -3252,6 +3262,24 @@ describe('the call history', () => {
       liveWindowMs: 30 * 60 * 1000,
       ...extra,
     });
+
+  it('rolls back temporary query indexes after the write audit', () => {
+    const fx = makeSessionDb({});
+    try {
+      run(fx.dbPath);
+      const verify = new DatabaseSync(fx.dbPath, { readOnly: true });
+      try {
+        const indexes = verify
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_part_%'")
+          .all();
+        expect(indexes).toEqual([]);
+      } finally {
+        verify.close();
+      }
+    } finally {
+      fx.cleanup();
+    }
+  });
 
   it('reads the worktree name out of a path, and only out of a worktree path', () => {
     // The separator is the whole test. The root arrives with no trailing slash,

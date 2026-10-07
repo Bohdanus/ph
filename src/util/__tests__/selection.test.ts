@@ -52,7 +52,7 @@ const triangle = (offset = 0): Point[] => [
  * unguarded `ctx.getImageData` at `src/util/selection.ts:549` and still reaches the
  * CPU rasterization fallback at `src/util/selection.ts:405`.
  */
-type MaskReadBack = 'all-opaque' | 'left-half-opaque' | 'throw';
+type MaskReadBack = 'all-opaque' | 'left-half-opaque' | 'partial-alpha' | 'throw';
 
 const readBacks: MaskReadBack[] = [];
 
@@ -65,8 +65,15 @@ const maskReadBack = (width: number, height: number, readBack: MaskReadBack): Im
   const imageData = makeMockImageData(width, height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const opaque = readBack === 'all-opaque' || x < Math.floor(width / 2);
-      imageData.data[(y * width + x) * 4 + 3] = opaque ? 255 : 0;
+      const alpha =
+        readBack === 'all-opaque'
+          ? 255
+          : readBack === 'partial-alpha' && x === Math.floor(width / 2)
+            ? 64
+            : readBack === 'left-half-opaque' && x < Math.floor(width / 2)
+              ? 255
+              : 0;
+      imageData.data[(y * width + x) * 4 + 3] = alpha;
     }
   }
 
@@ -1051,6 +1058,25 @@ describe('canvas snapshot helpers', () => {
       expect(alphaAt(1, 9)).toBe(255);
     });
 
+    it('preserves partial canvas coverage instead of promoting it to fully selected', () => {
+      readBacks.push('all-opaque', 'partial-alpha');
+      copyFeatheredPolygonSelectionToCanvas(
+        makeMockCanvas(20, 20),
+        [
+          { x: 2, y: 2 },
+          { x: 17, y: 2 },
+          { x: 17, y: 17 },
+        ],
+        { featherRadius: 0, imageSize: { width: 20, height: 20 } }
+      );
+
+      const ctx = firstConstructed().contexts[0];
+      const written = ctx.putImageData.mock.calls[0][0] as ImageData;
+      const alphaAt = (x: number, y: number) => written.data[(y * written.width + x) * 4 + 3];
+
+      expect(alphaAt(8, 1)).toBe(64);
+    });
+
     it('rasterizes the mask on the CPU when canvas read-back throws', () => {
       readBacks.push('all-opaque', 'throw');
       const result = copyFeatheredPolygonSelectionToCanvas(
@@ -1210,6 +1236,12 @@ describe('mask rasterization on the HTMLCanvasElement fallback path', () => {
     // A CPU-rasterized mask would have kept those pixels, so this pins the branch.
     expect(alphaAt(1, 1)).toBe(255);
     expect(alphaAt(9, 1)).toBe(0);
+  });
+
+  it('preserves partial canvas coverage on the HTMLCanvasElement path', () => {
+    const alphaAt = copyWithDomContexts(installPixelDomContexts(['all-opaque', 'partial-alpha']));
+
+    expect(alphaAt(6, 1)).toBe(64);
   });
 
   it('takes the CPU fallback when only the mask read-back throws', () => {

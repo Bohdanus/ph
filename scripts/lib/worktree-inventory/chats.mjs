@@ -42,6 +42,7 @@
  * why the window is a flag and why the queries are not run per worktree.
  */
 
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { LIVE_WINDOW_MS } from './classify.mjs';
 
@@ -82,17 +83,49 @@ export function resolveSessionDb(home = process.env.HOME) {
 }
 
 /**
- * Open the session database read-only, or return `null` when it is absent.
+ * Open the session database, or return `null` when it is absent.
  *
  * A missing database is not an error: the inventory must still generate on a
  * machine with no Kilo history, with every chat field empty and a
  * `dataSources` entry saying why.
+ *
+ * The `node:sqlite` module does not support `CREATE TEMP INDEX`, so indexes
+ * are created as regular indexes inside a transaction that is rolled back in
+ * the caller's `finally` block. This speeds up the JSON-extraction scans
+ * (~13.5s each over 428k rows) without mutating the external database file.
+ * The connection is opened without `readOnly` to allow index creation.
  */
 function openDb(dbPath) {
+  if (!existsSync(dbPath)) return null;
+  let db;
   try {
-    return new DatabaseSync(dbPath, { readOnly: true });
+    db = new DatabaseSync(dbPath);
+    db.exec('BEGIN');
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_part_type ON part(json_extract(data, '$.type'));
+       CREATE INDEX IF NOT EXISTS idx_part_status ON part(json_extract(data, '$.state.status'));
+       CREATE INDEX IF NOT EXISTS idx_part_tool ON part(json_extract(data, '$.tool'));`
+    );
+    return db;
   } catch {
-    return null;
+    if (db) {
+      try {
+        db.exec('ROLLBACK');
+      } finally {
+        db.close();
+      }
+    }
+
+    // Indexes are an optimization; retain read access if DDL is unavailable.
+    let fallback;
+    try {
+      fallback = new DatabaseSync(dbPath, { readOnly: true });
+      fallback.exec('BEGIN');
+      return fallback;
+    } catch {
+      if (fallback) fallback.close();
+      return null;
+    }
   }
 }
 
@@ -145,11 +178,8 @@ function readSubagentCounts(db, sinceMs) {
  * `tool-calls` never got to summarise, which is the machine-readable form of
  * "stopped with work unfinished".
  *
- * Combined into a SINGLE query using conditional aggregation to avoid
- * multiple full table scans over the unindexed `part` table.
- *
- * For the last step-finish reason, we need the row with MAX(time_created).
- * Since SQLite doesn't easily support "argmax", we use a subquery approach.
+ * Combined into one query over only the relevant top-level parts. The scalar
+ * lookups retain the latest event in the requested window.
  */
 function readOutcomes(db, sinceMs) {
   // Read outcome counts in one pass. The two scalar lookups preserve the
@@ -167,7 +197,8 @@ function readOutcomes(db, sinceMs) {
            LIMIT 1) AS last_reason,
          COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
                     AND json_extract(p.data, '$.state.status') = 'error' THEN 1 END) AS tool_errors,
-         COUNT(CASE WHEN p.data LIKE '%Add credits%' THEN 1 END) AS credits_failures,
+         COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
+                    AND p.data LIKE '%Add credits%' THEN 1 END) AS credits_failures,
          COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
                     AND json_extract(p.data, '$.state.status') = 'error'
                     AND p.data LIKE '%is waiting for input%' THEN 1 END) AS blocked_count,
@@ -184,6 +215,7 @@ function readOutcomes(db, sinceMs) {
          JOIN session s ON s.id = p.session_id
         WHERE s.parent_id IS NULL
           AND p.time_created >= ?
+          AND json_extract(p.data, '$.type') IN ('tool', 'step-finish')
         GROUP BY p.session_id`
     )
     .all(sinceMs, sinceMs, sinceMs);
@@ -336,6 +368,7 @@ export function auditChats({
       windowMs: nowMs - sinceMs,
     };
   } finally {
+    db.exec('ROLLBACK');
     db.close();
   }
 }

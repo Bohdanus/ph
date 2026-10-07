@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import type { Layer, LayerId, LayersRecord, ToolLayerSource } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
-import { RENAME_LAYER_ACTION } from '@/util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '@/util/constants.ts';
 import type { TextToolArgs } from '@/tools/text.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
@@ -234,6 +234,32 @@ describe('LayersTab', () => {
     const eyeIcon = layerDivs[1].querySelector('[data-testid="eye-icon"]');
     expect(eyeIcon).toBeInTheDocument();
     expect(eyeIcon).toHaveAttribute('data-open', 'false');
+  });
+
+  it('commits one opacity history entry when a slider gesture ends', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.change(slider, { target: { value: '50' } });
+    fireEvent.change(slider, { target: { value: '42' } });
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(slider);
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
+    expect(liveStore.snapshot.layers['layer-2'].opacity).toBe(0.42);
+    expect(screen.getByText('42%', { selector: 'summary' })).toBeInTheDocument();
+  });
+
+  it('disables opacity changes for a locked layer', () => {
+    seed({ ...mockLayers, 'layer-2': { ...mockLayers['layer-2'], locked: true } });
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+
+    expect(screen.getByRole('slider', { name: 'Layer opacity' })).toBeDisabled();
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
   it('toggles visibility on eye button click', () => {

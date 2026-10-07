@@ -156,14 +156,12 @@ Two controls on one row: an unlabelled blend-mode pop-up on the left (default **
   tool's own Mode select writes, and that PSD import sets. `docs/TOOLS.md` §Smudge Tool states the
   consequence for the Smudge tool: "a grep for `blendMode` across `src/components/` finds only that
   select - the Layers panel has no blend-mode control at all."
-- `GAP` — no opacity control. `Layer.opacity` (`src/contexts/layer-types.ts`) is written by
-  exactly three sites, none of them a UI: PSD import and the import composite
-  (`src/contexts/psd-utils.ts` — `loadPsd()`), and `createLayerSource()` defaulting it to `1`
-  (`src/contexts/layer-utils.ts`). **No user gesture in the app writes it.** The defect record is
-  `HANDOFF.md` §56, which uses the same loose phrasing; `docs/TOOLS-TOO-HARD.md`
-  §"Layer opacity, and the paint model" records only that closing it is not a small change, and says
-  so explicitly. This file does not restate that defect — see
-  [§9](#9-the-layer-model-the-panel-requires).
+- `PARTIAL` — an `Opacity:` pop-up slider writes the selected, unlocked layer from 0–100%. A completed
+  gesture creates one titled `SET_LAYER_OPACITY_ACTION` history entry that is derived, append-validated,
+  and replayable. The Adobe-documented preset drop-down is not included: its exact values are
+  unverified. `Layer.opacity` (`src/contexts/layer-types.ts`) is also populated by PSD import
+  (`src/contexts/psd-utils.ts` — `loadPsd()`) and defaults to `1` in `createLayerSource()`
+  (`src/contexts/layer-utils.ts`).
 - Group default is **`Pass Through`**, not `Normal` — "By default, the blending mode of a layer group
   is Pass Through, which means that the group has no blending properties of its own." (Adobe, primary)
 - Adobe documents no preset list for the Opacity drop-down. **Unverified**: the exact preset values.
@@ -596,25 +594,23 @@ than repeated in every section.
   (`src/contexts/useLayer.ts` — `updateLayer()`)**, and that function plans a durable append **only**
   when `isSetLayerPropertiesAction(actionName)` is true. The whitelist is
   `LAYER_PROPERTY_BY_ACTION` (`src/contexts/history-adapter.ts`) and its key type is the
-  closed set `LayerPropertyKey = 'visible' | 'name'`.
-- `DurableLayerPropertyPatch` already **admits** `opacity`, `locked`, `blendMode` and `pos`
-  (`src/contexts/history-model.ts`). Admitting a key in that type without adding the action to
-  `LAYER_PROPERTY_BY_ACTION` and giving `deriveSetLayerPropertiesEntry` its branch is worse than
-  leaving it out: the write falls into the visibility arm as a **silent default**.
+  closed set `LayerPropertyKey = 'visible' | 'name' | 'opacity'`.
+- `DurableLayerPropertyPatch` admits `opacity`, `locked`, `blendMode` and `pos`
+  (`src/contexts/history-model.ts`). A property is supported only when its dedicated action has an
+  explicit branch in `LAYER_PROPERTY_BY_ACTION`, its derivation and append validation, legacy replay,
+  and a History title. Its currently supported keys are `'visible' | 'name' | 'opacity'`.
 - `LAYER_TRANSPARENCY_ACTION` already exists in `src/util/constants.ts`, carrying the comment
   `// todo this is not triggered not recorded nor replayed yet`. It is a placeholder, not a
   half-implementation.
-- `HANDOFF.md` §56 is the full worked example: a slider reaching for
-  `updateLayer(id, { opacity }, TOOL_ACTION)` fails three times silently — no durable translation,
-  legacy replay skips it, and the History panel grows an untitled row **per step**. It is the
-  template for every property the panel adds. Read it before writing one.
+- The opacity path is the worked example: use its dedicated action, rather than `TOOL_ACTION`, and
+  keep durable derivation, append validation, legacy replay, and the History title in agreement.
 
 **Requirements.**
 
 - Every document-visible property the panel can change is **one** history entry per user gesture, with
   a **titled** entry, and it **replays**.
 - A gesture that fires many steps (a slider drag, a spin control) commits **once**, on release. This
-  is not a performance nicety; per-step entries are the §56 failure mode.
+  prevents one user gesture from creating a trail of intermediate history entries.
 - Selection of the active layer is **not** a history entry. `HAVE` — `SET_ACTIVE_LAYER`
   (`useLayer.ts` — `setActiveLayer()`) dispatches no history item.
 - Panel **display** state — filter kind, thumbnail size, expanded groups, which tab is open — is
@@ -729,13 +725,10 @@ Not this file's scope, named once so nobody files the omission here:
 is currently **richer** than the desktop panel: it has a `New Layer` button, a delete button, rename,
 and explicit move-up / move-down, all with 44px hit targets.
 
-- **The requirement is that both panels satisfy the same document rules**, and they are close to
-  diverging already. The mobile drawer carries no opacity control and says why, in a comment worth
-  reading before you touch either panel
-  (the "There is deliberately no layer-opacity control here" comment above the layer list in
-  `src/components/Mobile/MobileLayersDrawer.tsx`): the control dispatched `TOOL_ACTION`,
-  whose history entries carry no `toolName`, so `history-replay.ts` skipped them and the History panel
-  grew an untitled row **per drag step**. That is §56 again, reached from a different direction.
+- The mobile drawer remains without an opacity control, and `MobileLayersDrawer.test.tsx` pins that
+  absence as **intended**. The desktop opacity action/replay path now exists; adding a mobile control
+  is outside this desktop change. The component's old comment records the former `TOOL_ACTION`
+  failure mode, not a current limitation in the shared history path.
 - `MobileLayersDrawer.test.tsx` pins the absence of an opacity control as **intended**. Any change here
   changes a test's meaning, not just its result.
 - The mobile drawer's row is a plain `div` (`MobileLayersDrawer.tsx` — the row whose `onClick` calls
@@ -795,7 +788,7 @@ this table or explicitly marked as not blocking.
 | 2   | **Layer kind discriminator**       | The `T` badge, the folder, the filter icons, the mask column, and every type-specific rule. One field, and half the visual requirements become reachable ([§9](#9-the-layer-model-the-panel-requires)) |
 | 3   | **Layer thumbnail**                | The most-read element in the panel, and the only one that makes a 60-stroke stack navigable ([§3](#3-layer-row-anatomy))                                                                               |
 | 4   | **Bottom action bar**              | New layer and delete-as-a-drag-target. **New layer and delete only** — the new-group button needs #8 ([§2.6](#26-the-bottom-action-bar))                                                               |
-| 5   | **Opacity + blend mode**           | Needs the §56 path, not a slider, and they share the writer. Unblocks the Gradient and Smudge `Mode`/`Opacity` rows in `docs/TOOLS.md` ([§2.4](#24-blend-mode-and-opacity))                            |
+| 5   | **Opacity + blend mode**           | The desktop opacity slider is implemented; blend mode remains a separate gap. Preset values remain unverified and are intentionally absent. ([§2.4](#24-blend-mode-and-opacity))                       |
 | 6   | **Lock controls**                  | Four flags, not one boolean. Unblocks the PSD lock round-trip ([§2.5](#25-the-lock-row-and-fill))                                                                                                      |
 | 7   | **Selection set**                  | The Move tool's Shift-click row (`docs/TOOLS.md` §Move Tool) and Shift-click-to-extend selection ([§5](#5-selection))                                                                                  |
 | 8   | **Group nesting**                  | The new-group button, the folder row, the filter icons, the mask column, and the `Pass Through` default. The largest model change, so it gates rather than follows ([§4](#4-groups))                   |
