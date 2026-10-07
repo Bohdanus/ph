@@ -194,6 +194,42 @@ describe('useSelectionClipboard copy guards', () => {
       expect.objectContaining({ pos: { x: 95, y: 95, width: 5, height: 5 } })
     );
   });
+
+  it('does not truncate a canvas-space selection reaching the canvas backing store edge when document size is smaller', async () => {
+    // Canvas backing store: 200x200, document: 100x100, frame offset: (50, 50)
+    // Selection in document space at right/bottom edge: pos { x: 90, y: 90, width: 10, height: 10 }
+    // In canvas space: pos { x: 40, y: 40, width: 10, height: 10 } (subtracting frame origin)
+    // But the selection extends to canvas x: 50, y: 50 which is within the 200x200 canvas
+    // The old code would clamp to totalSize (100x100) in canvas space, truncating at 100
+    // The fix uses canvasRef.current.width/height (200x200) as the clamp bound
+    storeState.documentFrame = { x: 50, y: 50, width: 100, height: 100 };
+    storeState.totalSize = { width: 100, height: 100 };
+    storeState.canvasRef = { current: createMockCanvas({ width: 200, height: 200 }) };
+    storeState.selections = [
+      polygonSelection({
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 },
+        ],
+        pos: { x: 90, y: 90, width: 10, height: 10 },
+      }),
+    ];
+    const api = renderProbe();
+
+    expect(api.copyActiveSelection()).toBe(true);
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'SET_SELECTION_CLIPBOARD',
+      payload: expect.objectContaining({ pos: { x: 90, y: 90, width: 10, height: 10 } }),
+    });
+
+    dispatchMock.mockClear();
+    await expect(api.layerViaCopy()).resolves.toBe(true);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pos: { x: 90, y: 90, width: 10, height: 10 } })
+    );
+  });
 });
 
 describe('useSelectionClipboard layerViaCopy', () => {

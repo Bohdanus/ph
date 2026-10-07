@@ -42,7 +42,10 @@ export const useSelectionClipboard = () => {
     if (!selection) return false;
 
     const canvasSelection = { ...selection, pos: documentToCanvasPos(selection.pos, documentFrame) };
-    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize);
+    const canvasSize = canvasRef.current
+      ? { width: canvasRef.current.width, height: canvasRef.current.height }
+      : totalSize;
+    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, canvasSize);
     if (!snapshot) return false;
 
     dispatch({
@@ -94,7 +97,10 @@ export const useSelectionClipboard = () => {
     if (!activeSelection) return false;
 
     const canvasSelection = { ...activeSelection, pos: documentToCanvasPos(activeSelection.pos, documentFrame) };
-    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize);
+    const canvasSize = canvasRef.current
+      ? { width: canvasRef.current.width, height: canvasRef.current.height }
+      : totalSize;
+    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, canvasSize);
     if (!snapshot) return false;
 
     try {
