@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2782,50 +2782,6 @@ working tree to have anything to assert.
 `liveWorktreeFacts()` and the
 `it('protects that shape in a worktree NOBODY has written anything down about')` case;
 `scripts/lib/worktree-inventory/classify.mjs` — `RECENT_IO_WINDOW_MS` and `hasLiveSession()`
-
-## 145. The Dodge's and the Burn's tonal-range shortcuts are described as working, and are bound to nothing
-
-**Problem.** `src/tools/descriptions/focus.ts` carries six `shortcuts` rows that state, as fact, what
-`Shift+Alt+S`, `Shift+Alt+M` and `Shift+Alt+H` do to the Dodge and to the Burn — "Sets the stroke to
-the Shadows range while the Dodge tool is active" (the Dodge's `Shift+Alt+S` row, the Burn's
-`Shift+Alt+S` row, and the four sibling `Shift+Alt+M` / `Shift+Alt+H` rows beside them). **No
-keyboard handler anywhere in the app binds them.** The only two
-`alt: true` registrations in `src/components/Common/AppKeyboardShortcuts.tsx` are the Sponge's own
-two `useKeyDownShortcut({ key: 'd' … alt: true })` / `{ key: 's' … alt: true })` mode-key
-registrations. The Range select is the only thing that writes
-`DodgeBurnToolArgs.range`, and it writes it from the user's click
-(`src/components/ToolbarsRight/Tonal/Tonal.tsx` — `handleRangeChange()`).
-
-**Why it is a defect and not a gap.** A missing capability is filed `missing` per control. These rows
-are in the `shortcuts` array, which has **no status field at all** — a row there reads as a statement
-about what the app does, so a reader of the tooltip, of the generated `docs/TOOLS.md`, and of this
-file's own `implementationRefs` is told six keys work. The Dodge and the Burn are both filed
-`partial`, and their `appNotes` names the missing `Protect Tones` and `Airbrush` controls without
-once mentioning that three of their documented keys are inert.
-
-**How it became visible.** Building the Sponge forced the question. Adobe gives the Sponge
-`Shift+Alt+D` and `Shift+Alt+S` and gives the Dodge and the Burn `Shift+Alt+S/M/H` **on the same page
-of the same table** — Julieanne Kost's Adobe-blog post states both sets, and the Adobe-branded CS2
-sheet carries all five rows
-(<http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf>). Photoshop resolves the
-`Shift+Alt+S` collision by which tool is active, and the Sponge now does too
-(`enabled: toolName === 'sponge'`). That asymmetry is correct and is the whole point of the gate, but
-it leaves the pair's three keys as the only rows in the family describing something that does not
-happen.
-
-**Fix.** Bind all three for both tools in `selectTonalTool`'s neighbourhood, each gated on the active
-tool being `dodge` or `burn`, using `patchToolArgs(tool, { range })` — the same `alt`/`shift`
-registration shape the Sponge's two mode keys use. The three values already exist as
-`DODGE_BURN_RANGES`, so this is three registrations and a small table, with no new args field. Until
-then, either delete the six rows or add a `status` field to
-`ToolShortcut` (`src/tools/descriptions/types.ts` — `ToolShortcut`) so a documented key can be recorded
-as unbound; the second
-is the durable fix, because the field is the reason this could not be caught mechanically.
-
-**Files.** `src/tools/descriptions/focus.ts` — the Dodge's and the Burn's `Shift+Alt+S/M/H` shortcut
-rows; `src/components/Common/AppKeyboardShortcuts.tsx` — the Sponge's two `alt: true` mode-key
-registrations; `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `handleRangeChange()`;
-`src/tools/descriptions/types.ts` — `ToolShortcut`
 
 ## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
 
