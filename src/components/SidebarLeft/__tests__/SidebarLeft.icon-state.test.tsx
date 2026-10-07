@@ -43,6 +43,7 @@ vi.mock('../toolIcons.tsx', () => {
   const iconNames = [
     'reposition',
     'red-eye',
+    'spot-healing',
     'hand',
     'zoom',
     'rotate-view',

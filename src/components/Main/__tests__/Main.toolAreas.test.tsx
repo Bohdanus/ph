@@ -127,6 +127,7 @@ vi.mock('../SpongeToolArea.tsx', () => ({ SpongeToolArea: marker('sponge') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
 vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
 vi.mock('../ViewToolArea.tsx', () => ({ ViewToolArea: marker('view') }));
+vi.mock('../SpotHealingToolArea.tsx', () => ({ SpotHealingToolArea: marker('spot-healing') }));
 vi.mock('../TextEditOverlay.tsx', () => ({ TextEditOverlay: overlayMarker }));
 
 /**
@@ -158,6 +159,7 @@ const TOOL_AREA_IDS = [
   'color-replacement',
   'gradient',
   'view',
+  'spot-healing',
 ] as const;
 
 const toolAreaTestId = () => {
@@ -251,6 +253,7 @@ describe('Main tool-area routing', () => {
     // still resolves: a tool the routing table forgot falls through to the hidden dummy,
     // which renders no marker and would otherwise pass as a working area.
     ['sponge', 'sponge'],
+    ['spot-healing', 'spot-healing'],
     ['magic-eraser', 'fill'],
     ['paint-bucket', 'fill'],
     ['gradient', 'gradient'],
@@ -302,6 +305,7 @@ describe('Main tool-area routing', () => {
       'dodge',
       'burn',
       'sponge',
+      'spot-healing',
       'paint-bucket',
       'gradient',
     ] as const;

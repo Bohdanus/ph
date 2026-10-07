@@ -19,6 +19,7 @@ import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { RulerToolArea } from './RulerToolArea.tsx';
 import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
 import { RedEyeToolArea } from './RedEyeToolArea.tsx';
+import { SpotHealingToolArea } from './SpotHealingToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -202,6 +203,8 @@ const Main = () => {
     interactionMode = 'clone-stamp';
   } else if (toolName === 'red-eye') {
     interactionMode = 'red-eye';
+  } else if (toolName === 'spot-healing') {
+    interactionMode = 'spot-healing';
   } else if (toolName === 'sharpen') {
     interactionMode = 'sharpen';
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
@@ -326,7 +329,8 @@ const Main = () => {
       | typeof GradientToolArea
       | typeof FillToolArea
       | typeof ColorReplacementToolArea
-      | typeof RedEyeToolArea;
+      | typeof RedEyeToolArea
+      | typeof SpotHealingToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -353,6 +357,7 @@ const Main = () => {
       else if (interactionMode === 'sponge') EventHandler = SpongeToolArea;
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
       else if (interactionMode === 'red-eye') EventHandler = RedEyeToolArea;
+      else if (interactionMode === 'spot-healing') EventHandler = SpotHealingToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
       else if (interactionMode === 'gradient') EventHandler = GradientToolArea;
@@ -416,6 +421,7 @@ const Main = () => {
               // chrome over the document and never part of it, so there is no layer to preview
               // through `tempUpdateLayer` and the markers must sit on top of the canvas instead.
               'color-sampler',
+              'spot-healing',
             ].includes(interactionMode)
               ? 'block'
               : 'none',

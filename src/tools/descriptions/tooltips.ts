@@ -94,6 +94,10 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or Independent mode, with a soft or hard tip.',
     implementation: 'partial',
   },
+  'spot-healing': {
+    summary: 'Repairs small marks by blending nearby texture into a soft brush stroke.',
+    implementation: 'partial',
+  },
   'red-eye': {
     summary: 'Reduces the red flash reflection in an eye with adjustable pupil size and darkening.',
     implementation: 'partial',

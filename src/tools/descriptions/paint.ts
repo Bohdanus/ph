@@ -1,7 +1,15 @@
 import type { ToolDescription } from './types.ts';
 
 export const paintDescriptions: Record<
-  'brush' | 'pencil' | 'color-replacement' | 'eraser' | 'magic-eraser' | 'paint-bucket' | 'clone-stamp' | 'red-eye',
+  | 'brush'
+  | 'pencil'
+  | 'color-replacement'
+  | 'eraser'
+  | 'magic-eraser'
+  | 'paint-bucket'
+  | 'clone-stamp'
+  | 'red-eye'
+  | 'spot-healing',
   ToolDescription
 > = {
   brush: {
@@ -883,6 +891,64 @@ export const paintDescriptions: Record<
       'https://www.psdvault.com/basics/photoshop-clone-stamp-tool/',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
       'https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned',
+    ],
+  },
+  'spot-healing': {
+    photoshopName: 'Spot Healing Brush Tool',
+    summary: 'Repairs small marks by blending nearby texture into a soft brush stroke.',
+    purpose:
+      'Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.',
+    options: [
+      {
+        control: 'Size',
+        detail: 'Tip diameter in pixels.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Hardness',
+        detail: 'Controls the falloff at the tip edge.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Opacity',
+        detail: 'Per-dab healing strength from 0 to 100 percent.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Type',
+        detail:
+          'Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented.',
+        status: 'missing',
+      },
+      {
+        control: 'Sample',
+        detail:
+          'Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.',
+        status: 'missing',
+      },
+      {
+        control: 'Diffusion',
+        detail: 'Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.',
+        status: 'missing',
+      },
+    ],
+    modifiers: [],
+    shortcuts: [{ keys: 'J', action: 'Selects the healing-tool flyout family.' }],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/spotHealing.ts:1',
+      'src/components/Main/SpotHealingToolArea.tsx:1',
+      'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+    ],
+    appNotes:
+      'The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.',
+    sources: [
+      'https://www.adobe.com/products/photoshop/spot-heal.html',
+      'https://helpx.adobe.com/photoshop/using/healing-examples.html',
+      'https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
     ],
   },
   'red-eye': {
