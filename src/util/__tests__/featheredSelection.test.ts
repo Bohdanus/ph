@@ -97,6 +97,12 @@ describe('alphaFromSignedDistance', () => {
 });
 
 describe('createFeatheredAlphaMask', () => {
+  it('preserves partial canvas coverage when no feather is requested', () => {
+    const coverageMask = Uint8Array.from([0, 64, 128, 255]);
+
+    expect(createFeatheredAlphaMask(coverageMask, 4, 1, 0, true)).toEqual(coverageMask);
+  });
+
   it('produces only fully opaque pixels when every pixel is inside the mask', () => {
     const mask = new Uint8Array(16).fill(1);
 
