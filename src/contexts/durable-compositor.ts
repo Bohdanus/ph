@@ -67,7 +67,10 @@ export async function composeDurableDocument(
   request: DurableCompositorRequest
 ): Promise<DurableComposite> {
   const { frame = replay.frame, ...materializationRequest } = request;
-  const materialized = await materializeDocument(replay, materializationRequest);
+  const materialized = await materializeDocument(replay, {
+    ...materializationRequest,
+    pixelGridFrame: frame,
+  });
   let bitmap: BitmapSource;
 
   try {
