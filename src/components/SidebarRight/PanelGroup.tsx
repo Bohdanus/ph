@@ -33,7 +33,7 @@ import type { PanelId } from '../../contexts/PanelLayout.tsx';
  */
 
 /**
- * Renders the body inside its own `overflow-y: auto` box and gives it the id the tab's
+ * Renders the body inside its own `overflow-y: auto` box and gives the expanded tab the id its
  * `aria-controls` points at. The caller passes the panel's CONTENT, not a wrapper: a wrapper
  * here would be a second scroll container, and the tab would name an element that is not the one
  * holding anything.
@@ -131,7 +131,7 @@ const PanelGroup = ({
       >
         <div
           {...handleProps}
-          aria-controls={`panel-body-${id}`}
+          aria-controls={isRolledUp ? undefined : `panel-body-${id}`}
           aria-expanded={!isRolledUp}
           className="flex min-w-0 flex-1 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
           onDoubleClick={() => {

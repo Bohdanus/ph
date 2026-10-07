@@ -153,16 +153,13 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
-    } catch (e) {
-      console.error('Failed to save image:', e);
-      // `null` is the in-band failure signal every caller already guards with
-      // `if (data)`, so it still resolves, and it still resolves the promise exactly once
-      // because it is the first and only caller of a resolver that is nulled immediately
-      // after. The dialog, the staged input and the dialog's own controls all stay put, so
-      // the retry re-enters this `try` with `fileInput` intact and the now-nulled
-      // `saveResolverRef` makes the second resolution a no-op rather than a stale resolve.
+    } catch (error) {
+      // Preserve the null result for openSaveImageDialog callers, but reject this callback so
+      // SaveDialog can show the failure. Clearing the resolver first keeps retries from
+      // settling an already-completed promise.
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
+      throw error;
     }
   }
 

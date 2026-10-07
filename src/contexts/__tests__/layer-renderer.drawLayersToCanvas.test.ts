@@ -397,21 +397,45 @@ describe('drawLayersToCanvas', () => {
     expect(target.context.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
   });
 
-  it('reports a publish failure when resizing the visible canvas throws', () => {
+  it('restores the visible canvas when resizing fails after changing one dimension', () => {
     const target = createTargetCanvas();
     const failure = new Error('resize failed');
-    Object.defineProperty(target.canvas, 'width', {
-      configurable: true,
-      get: () => 300,
-      set: () => {
-        throw failure;
+    let width = 300;
+    let height = 150;
+    const resizeWrites: ResizeRecord[] = [];
+    Object.defineProperties(target.canvas, {
+      width: {
+        configurable: true,
+        get: () => width,
+        set: (value: number) => {
+          resizeWrites.push(['width', value]);
+          width = value;
+        },
+      },
+      height: {
+        configurable: true,
+        get: () => height,
+        set: (value: number) => {
+          resizeWrites.push(['height', value]);
+          if (value === 480) throw failure;
+          height = value;
+        },
       },
     });
 
     expect(drawLayersToCanvas(target.canvas, [], frame(0, 0, 640, 480))).toBe(false);
 
+    expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith('Unable to publish runtime layer presentation', failure);
-    expectNoContextCalls(target.context);
+    expect(resizeWrites).toEqual([
+      ['width', 640],
+      ['height', 480],
+      ['width', 300],
+    ]);
+    expect(target.canvas.width).toBe(300);
+    expect(target.canvas.height).toBe(150);
+    expect(target.context.clearRect).not.toHaveBeenCalled();
+    expect(target.context.drawImage).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed without touching the visible canvas when the staging context is unavailable', () => {

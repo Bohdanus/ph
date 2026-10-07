@@ -147,7 +147,7 @@ describe('setupDrawCtx, legacy identity', () => {
     setupDrawCtx(ctx, legacyArgs());
     drawLine({ args: legacyArgs(), ctx });
 
-    // `setLineDash([])` is the pre-existing null-dash reset at src/tools/draw.ts:38-40, and it
+    // `setLineDash([])` is the pre-existing null-dash reset at src/tools/draw.ts:37-39, and it
     // runs before the path, exactly as it did before the flags existed.
     expect(calls).toEqual(['setLineDash', 'beginPath', 'moveTo', 'bezierCurveTo', 'stroke']);
   });

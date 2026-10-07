@@ -80,11 +80,12 @@ export async function composeDurableDocument(
       if (!layer) {
         throw new Error(`Unable to compose durable layer ${layerId}: materialization was refused`);
       }
+      if (!layer.visible) continue;
 
       context.save();
       try {
-        context.globalAlpha = replayLayer.snapshot.opacity;
-        context.globalCompositeOperation = replayLayer.snapshot.blendMode;
+        context.globalAlpha = layer.opacity;
+        context.globalCompositeOperation = layer.blendMode;
         context.drawImage(
           layer.bitmap as CanvasImageSource,
           layer.bounds.x - frame.x,

@@ -61,7 +61,7 @@ const DEAD_WORD = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|la
  * rather than silently widening what the board will lock.
  */
 const ROOT_FILE_SHAPED =
-  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|DEPENDENCIES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
+  /^(?:index|package|package-lock|tsconfig(?:\.[\w.]+)?|vitest(?:\.[\w.]+)?|vite(?:\.[\w.]+)?|playwright(?:\.[\w.]+)?|postcss|eslint|node|AGENTS|HANDOFF|TEST-FLAKES|README)\b[^/]*\.(?:ts|tsx|js|jsx|mjs|json|jsonc|html|md)$/i;
 
 /** The items a document still calls open: everything its dead set does not name. */
 function liveItems(parsed) {
@@ -209,6 +209,16 @@ describe('the three real documents', () => {
     const severities = countHeadings(openProblems.text, /^#{1,6}[ \t]+P\d{1,3}\b/gim);
     expect(severities, 'OPEN_PROBLEMS.md').toBeGreaterThan(0);
     expect(openProblems.parsed.items.length).toBe(severities);
+  });
+
+  it('reports duplicate numbers and does not import an ambiguous origin', () => {
+    const text = ['## 79. First entry', '', 'First body.', '', '## 79. Second entry', '', 'Second body.'].join('\n');
+    const parsed = parseHandoffDoc({ file: 'HANDOFF.md', text });
+
+    expect([...text.matchAll(/^#{1,6}[ \t]+(?:Item[ \t]+)?\d+\b/gim)]).toHaveLength(2);
+    expect(parsed.duplicateNumbers).toEqual([79]);
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#79']);
+    expect(planImport([parsed], []).create).toEqual([]);
   });
 });
 
@@ -610,11 +620,12 @@ describe('the document shapes the parser has to survive', () => {
   });
 
   it('yields nothing at all for a document with no items', () => {
-    expect(parse('')).toEqual({ scope: 'history', items: [], dead: [] });
+    expect(parse('')).toEqual({ scope: 'history', items: [], dead: [], duplicateNumbers: [] });
     expect(parse('# Handoff\n\nJust prose, and a `src/a.ts` citation.\n')).toEqual({
       scope: 'history',
       items: [],
       dead: [],
+      duplicateNumbers: [],
     });
   });
 
@@ -623,7 +634,7 @@ describe('the document shapes the parser has to survive', () => {
       expect(() => parseHandoffDoc({ file: 'HANDOFF.md', text: value }), String(value)).not.toThrow();
     }
     expect(() => parseHandoffDoc()).not.toThrow();
-    expect(parseHandoffDoc()).toEqual({ scope: null, items: [], dead: [] });
+    expect(parseHandoffDoc()).toEqual({ scope: null, items: [], dead: [], duplicateNumbers: [] });
   });
 
   it('reads CRLF line endings the same as LF', () => {

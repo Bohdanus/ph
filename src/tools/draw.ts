@@ -13,7 +13,6 @@ export type DrawToolArgs = {
   lineDash?: null | number[];
   points?: Point[];
   /**
-  /**
    * Erase instead of paint: the stroke subtracts alpha from whatever is already there.
    *
    * `setupDrawCtx` is the only function that configures both the live preview overlay

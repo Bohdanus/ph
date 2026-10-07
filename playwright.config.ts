@@ -53,10 +53,8 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   // A FLAKY test is one that failed an attempt and passed a later one, and
   // Playwright REPORTS that as a pass: `ok()` accepts `"expected"`, `"flaky"` and
-  // `"skipped"` alike, and the process exit code is `status === "passed" ? 0 : 1`.
-  // The `retries: 2` above is what makes the state reachable at all, so without
-  // this key a green `e2e` job is COMPATIBLE WITH A FIRST-ATTEMPT FAILURE, and
-  // nothing in the repository says otherwise — which is HANDOFF.md §217.
+  // `"skipped"` alike. `failOnFlakyTests` below turns a pass after retry into a
+  // failed run; the policy is documented in `docs/TESTING.md#ci`.
   //
   // Playwright's own default is `false`, and the key gates ONLY the flaky term of a
   // five-term disjunction, so its absence is not a permissive default that happens

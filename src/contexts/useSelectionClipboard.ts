@@ -67,11 +67,13 @@ export const useSelectionClipboard = () => {
     try {
       const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
       const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
-      // Paste centers the new layer in the document. The layer position is document-space,
-      // so add the cropped document-frame origin before the renderer subtracts it.
+      // `createLayerFromBitmap` reaches `createLayerSource` with a non-bedrock source, which
+      // copies `pos` onto the layer verbatim — so `pos` is DOCUMENT space and the centre must
+      // be computed there. Adding the frame origin here would offset the layer twice, since
+      // the renderer already translates document space onto the frame.
       const centerPos = {
-        x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2)),
-        y: documentFrame.y + Math.max(0, Math.round((totalSize.height - height) / 2)),
+        x: Math.max(0, Math.round((totalSize.width - width) / 2)),
+        y: Math.max(0, Math.round((totalSize.height - height) / 2)),
         width,
         height,
       };

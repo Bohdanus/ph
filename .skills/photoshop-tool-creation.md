@@ -635,7 +635,7 @@ Investigate and report on, with `file:line` evidence for EVERY claim:
 4. `src/components/Main/DrawToolArea.tsx` — read fully. This is the canvas event surface. Report: which pointer events are bound (pointerdown/move/up?), how `pressure`, `tiltX`, `tiltY`, `pointerType`, `buttons` are read from the PointerEvent (or not), how the stroke is batched/throttled, how it calls into the tool, and how the stroke is committed to history.
 5. Where do brush settings live in the store? Search `src/contexts/StoreContext.tsx` and the settings context. Report the exact shape: which fields, their types, their defaults, the action/reducer names that update them, with `file:line`.
 6. `src/util/settings.ts` — read fully. Report the settings persistence shape (localStorage? per-tool?).
-7. The pointer pipeline: read `src/hooks/usePointerPosition.ts` and `src/hooks/useDrag.ts`. Report what pointer data is threaded through and whether `pressure` survives.
+7. The pointer pipeline: read `src/hooks/usePointerPosition.ts` and `src/hooks/useRect.ts`. Report what pointer data is threaded through and whether `pressure` survives.
 8. Search the whole `src/` tree for the literal strings: `hardness`, `flow`, `spacing`, `jitter`, `scatter`, `wetEdges`, `pressure`, `opacity`, `airbrush`, `autoErase`, `smoothing`. For each hit report `file:line` + the line. This tells me exactly which of the Photoshop controls already have any support at all. Be complete — use grep, not a sample.
 9. `src/components/ToolbarsRight/Draw/Draw.tsx` — read fully. It is the EXISTING options bar for the `draw` tool. Report every control it renders, its `data-testid`s, how it reads/writes the store, and its full props. This is my closest template.
 10. `src/tools/__tests__/paint-tools.test.ts` — report what it already covers for brush/pencil.
@@ -3753,9 +3753,9 @@ some project's `include`" step is a real constraint — a new file no project in
 type-checked by nothing, with no error anywhere. Scope it correctly, though: `tsc -b --listFiles`
 catches a file no project reaches but **not** one reachable only through its importers. And there
 are no coverage thresholds anywhere (`vitest.config.ts` — its `coverage` block, which declares no thresholds, `vitest.e2e.config.ts` — its `coverage` block);
-`--coverage` is for the report, not a percentage gate. The `dependency-review` job is gone, and the
-licence policy it read is written down in `DEPENDENCIES.md` and is not a gate — `npm audit` is the
-vulnerability half.
+`--coverage` is for the report, not a percentage gate. Dependency licence terms are not checked by
+CI; the README's dependency licensing note distinguishes that gap from `npm audit`, which checks
+vulnerability advisories.
 
 ### 8.6 The one rule
 

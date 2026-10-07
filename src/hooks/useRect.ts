@@ -69,24 +69,14 @@ export type UseRectProps = {
   allowOutsideCanvas?: boolean;
 
   /**
-   * Paint each corner handle WHOLE outside the rect, instead of straddling its corner.
+   * Paint and hit-test each corner handle WHOLE outside the rect, instead of straddling its corner.
    *
    * Opt-in per consumer because this hook is shared, and only the Type tool has a reason. Its
    * contenteditable overlay occupies the whole box, so a handle centred on a corner puts its inner
    * half under the editor, where a press places a caret instead of resizing. Crop, the marquee and
-   * the Move tool have no overlay over their box, so a grip straddling its corner is correct for
-   * them — which is what this repository's own description of the overlay records, in
-   * `src/tools/descriptions/transform.ts`, as "four painted corner handles sitting on eight
-   * draggable edges", and what `edgeAtPoint` below still hit-tests: it
-   * takes `HANDLE_SIZE / scale / 2` either side of the corner, so a straddling handle is grabbable
-   * across its whole width and an outside one is grabbable across half of it and invisible across
-   * the rest. Painting them outside for everyone moved the crop, the marquee and the Move tool away
-   * from the geometry this repository documents and out of agreement with their own hit test, which
-   * is the regression `e2e/selection-gestures.spec.ts` and `e2e/select-move.spec.ts` both caught.
-   *
-   * PAINTING ONLY, and the hit test is deliberately untouched: the Type tool's own geometry is
-   * measured off the painted handle by `e2e/text-tool.spec.ts` and `e2e/text-edit.spec.ts`, so
-   * moving the grip and moving the grab target together would change what those read.
+   * the Move tool have no overlay over their box, so their grip continues to straddle its corner.
+   * The Type tool's hit area matches the entire outside grip; other consumers retain the centred
+   * hit area.
    */
   handlesOutside?: boolean;
 
@@ -325,20 +315,28 @@ export function useRect({
     if (_initialRect) {
       const { x1, y1, x2, y2 } = _initialRect;
       const { scale } = dimensionsRef.current;
+      const h1 = HANDLE_SIZE / scale;
       const h2 = HANDLE_SIZE / scale / 2;
 
-      // check for tops
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
-        return 'top-left';
-      }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
-        return 'top-right';
-      }
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
-        return 'bottom-left';
-      }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
-        return 'bottom-right';
+      if (handlesOutside) {
+        if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y1 - h1 && point.y <= y1) return 'top-left';
+        if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y1 - h1 && point.y <= y1) return 'top-right';
+        if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y2 && point.y <= y2 + h1) return 'bottom-left';
+        if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y2 && point.y <= y2 + h1) return 'bottom-right';
+      } else {
+        // check for tops
+        if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+          return 'top-left';
+        }
+        if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+          return 'top-right';
+        }
+        if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+          return 'bottom-left';
+        }
+        if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+          return 'bottom-right';
+        }
       }
 
       // check for line
@@ -473,10 +471,8 @@ export function useRect({
     // nothing to grab.
     //
     // Draw handles. `hIn` is the offset from the rect's LEFT and TOP edge and `hOut` the one added to
-    // its RIGHT and BOTTOM edge, and they differ because a wholly-outside grip ENDS at its corner
-    // rather than straddling it: a whole handle back on the minus sides, none on the plus sides. A
-    // straddling grip is half a handle back on all four, which is what `edgeAtPoint` hit-tests.
-    // See `handlesOutside` for why only the Type tool asks for the other pair.
+    // its RIGHT and BOTTOM edge. Outside grips end at their corners; the matching hit areas in
+    // `edgeAtPoint` cover those same squares. Other consumers keep a straddling grip and hit area.
     const h1 = HANDLE_SIZE / scale;
     const hIn = handlesOutside ? -h1 : -h1 / 2;
     const hOut = handlesOutside ? 0 : -h1 / 2;

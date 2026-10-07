@@ -330,9 +330,9 @@ describe('SaveDialog rejected save', () => {
     });
     await drain();
 
-    // A non-Error rejection reason still reaches the catch, which records it verbatim
-    // rather than stringifying it into a message for the user.
+    // A non-Error string reason is logged verbatim and surfaced in the alert.
     expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file:', 'PSD encoder exploded');
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to save the file: PSD encoder exploded');
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();

@@ -165,6 +165,35 @@ describe('useSelectionClipboard copy guards', () => {
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-2' } });
     expect(dispatchMock).not.toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-1' } });
   });
+
+  it('preserves the cropped document lower-right edge in both copy paths', async () => {
+    storeState.documentFrame = { x: 10, y: 20, width: 90, height: 80 };
+    storeState.totalSize = { width: 90, height: 80 };
+    storeState.selections = [
+      polygonSelection({
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+          { x: 5, y: 5 },
+          { x: 0, y: 5 },
+        ],
+        pos: { x: 95, y: 95, width: 5, height: 5 },
+      }),
+    ];
+    const api = renderProbe();
+
+    expect(api.copyActiveSelection()).toBe(true);
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'SET_SELECTION_CLIPBOARD',
+      payload: expect.objectContaining({ pos: { x: 95, y: 95, width: 5, height: 5 } }),
+    });
+
+    dispatchMock.mockClear();
+    await expect(api.layerViaCopy()).resolves.toBe(true);
+    expect(createLayerFromBitmapMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pos: { x: 95, y: 95, width: 5, height: 5 } })
+    );
+  });
 });
 
 describe('useSelectionClipboard layerViaCopy', () => {

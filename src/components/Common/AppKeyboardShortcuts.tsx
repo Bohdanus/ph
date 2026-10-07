@@ -201,8 +201,8 @@ export const AppKeyboardShortcuts = () => {
         return;
       }
 
-      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
       goToTool('shape');
+      patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
       return;
     }
 
@@ -211,8 +211,8 @@ export const AppKeyboardShortcuts = () => {
       return;
     }
 
-    patchToolArgs('shape', { figure: 'rectangle' });
     goToTool('shape');
+    patchToolArgs('shape', { figure: 'rectangle' });
   };
 
   const selectMarqueeTool = (shiftKey = false) => {

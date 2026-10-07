@@ -471,16 +471,20 @@ differ by the box origin and nothing in the types distinguishes them.
 the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
 longer depends on where the app put the letterbox. That is the right idea and it works.
 
-**What does not.** The idea reached four production files, at seventeen call sites:
+**What remains.** The mapping now appears in five suite files, at eighteen call sites:
 `e2e/canvas-growth.spec.ts` (4), `e2e/filter-tools.spec.ts` (3), `e2e/shape-tools.spec.ts` (6) and
-`e2e/export/helpers.ts` (4), counting the calls and not the imports. `LINE_START_X`/`LINE_START_Y`/
-`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still "relative to the canvas box",
-and thirteen specs import them: `adjustments`, `color`, `document-dialogs`,
-`erase-fill-eyedropper`, `example`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
-`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, the suite
-writes its gestures as `box.x + <something>` throughout, and **none of them invert the mapping back
-to document space**. Counted, with the counting command, because a number here without one is
-worse than none:
+`e2e/export/helpers.ts` (4), plus `e2e/example.spec.ts` (1), counting the calls and not the imports.
+`LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/`LINE_END_Y` in `e2e/helpers/canvas-helpers.ts` are still
+"relative to the canvas box",
+and twelve specs import them: `adjustments`, `color`, `document-dialogs`,
+`erase-fill-eyedropper`, `file-roundtrip`, `history-panel`, `keyboard-shortcuts`,
+`layers-panel`, `levels`, `paint-tool-pixels`, `select-move`, `transform`. Beyond those, many
+gestures still use box-relative offsets that change the document point when the window changes.
+Counted, with the counting command, because a number here without one is worse than none:
+
+`e2e/example.spec.ts` is the first simple gesture migrated: it maps seeded document points with
+`documentToCanvasOffset` and uses the resulting page clip for both redraw polling and capture.
+`drawLine` remains box-relative; the broader migration remains open.
 
 ```
 grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 36  canvas-relative LITERALS
@@ -503,12 +507,12 @@ mapping has to be inverted before such a literal is meaningful, and it is not. S
 asserts against whatever geometry the current layout happens to produce, and a layout change
 silently changes what is being tested rather than failing.
 
-**Three assertions still fail outright on a 1px change**, all in `e2e/responsive-shell.spec.ts`:
-`reclaims the layers column by default and offers a toggle for it` expects the expanded right panel
-at 250, `gives the canvas the space the collapsed panel freed` expects the panel's own width delta at
-250, and `has no tablet toggle and keeps the layers panel open` expects the collapsed panel at 250.
-Those are `toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same
-defect: a number written into a test is a pin on the layout, and the layout is not the subject.
+Three panel assertions in `e2e/responsive-shell.spec.ts` used to pin the right panel at 250px.
+The tests `reclaims the layers column by default and offers a toggle for it` and
+`has no tablet toggle and keeps the layers panel open` already prove visibility and state, so their
+numeric width reads have been removed. `gives the canvas the space the collapsed panel freed` now
+compares the canvas-width change to the panel's measured width. These changes remove the panel's
+three fixed-width pins; the broader document-space gesture migration remains open.
 
 **Two more were in this list and are gone.** The entry used to name five. The other two were the
 rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
@@ -520,7 +524,8 @@ the pattern the rest of this entry asks for: the tablet band's rail is now asser
 `e2e/responsive-shell.spec.ts`, and the two-column rail
 by a width RELATION the test measures against itself — one column against two, both measured in the
 same test, `keeps the layout toggle and can reach the two-column rail` in the same spec — so
-neither pins a pixel. The panel's 250 is the same defect and still needs the same treatment.
+neither pins a pixel. The panel-width pins have likewise been removed or made relational; the
+unconverted gesture inventory remains the open work.
 
 **The pattern to copy is already in the tree.** `measureAtViewport()` in
 `e2e/viewport-drawing.spec.ts` gestures at
@@ -531,40 +536,6 @@ box instead of the window. That is the shape every one of them should take, via
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
 a moving letterbox before `e8f17ba` specified the line in document space.
-
-## P2 — the dialog spec's `documentSize` pins a read that no longer proves the resize happens
-
-`e2e/document-dialogs.spec.ts`
-
-The spec's claim is that the dialog's dimensions are the thing under test, and it pins the
-document size to prove the app resized its canvas to it. The read is real: the size comes
-off the canvas backing store rather than being assumed, and asserting it is what makes that
-read observable. But the resize it is taken to prove is not, and it is not close.
-
-Neighbouring `src/hooks/useApp.ts` resizes the same element at **two** sites —
-`handleImageCreate()` and `setImageFromUpload()` — and `createSnapshotSurface()` in
-`src/contexts/layer-renderer.ts` resizes it again. Neutering the call the
-spec's comment names, and leaving the other two live, turns all four dialog tests green.
-So a build in which `useApp`'s resize is dead still passes every one of them.
-
-The draft-outline wait in the same file has the same shape, one level up: it proves the
-DRAG happened, not that the commit did. The pixel containment assertion is what proves the
-commit, and it is the one that would fail if a resize were wrong.
-
-**Fix.** Pin the resize where it happens rather than at a distance: assert that the
-document canvas's backing store equals the size the dialog committed, after the resize path
-that owns it has run, and name which of the three sites the test is covering. Until then,
-`documentSize` proves the READ and the word "resized" in its comment is doing work the test
-does not do.
-
-> **Re-verification baseline, restated.** Every line-numbered citation in this file —
-> above and below this line — was re-derived against this tree as it stands after the
-> e2e campaign branch merged into main, by content match and not by offset arithmetic,
-> and the ones the merge moved were corrected. That is the whole authority behind the
-> numbers here: they describe one tree, and the next merge moves them again, so
-> re-derive a `file:NNN` from the claim before acting on it.
-
----
 
 ## P2 — a collapsed tool's selection assertion is GROUP-level, so it passes for any member of the collapsed set
 

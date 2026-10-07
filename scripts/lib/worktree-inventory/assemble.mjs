@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -37,7 +37,7 @@ function relativePathFor(root, absolute) {
   return absolute;
 }
 
-/** Build the inventory object. Pure with respect to every input except `nowMs`. */
+/** Build the inventory object from an evaluation clock and a generation clock. */
 export function buildInventory({
   worktrees,
   root,
@@ -48,6 +48,7 @@ export function buildInventory({
   writeAudit = null,
   readAudit = { available: false, byId: new Map(), records: [] },
   nowMs,
+  generatedAtMs = Date.now(),
   chatWindowMs = 24 * 60 * 60 * 1000,
   liveWindowMs = 30 * 60 * 1000,
   /**
@@ -74,12 +75,9 @@ export function buildInventory({
   // Every other source above is injected for the same reason.
   curatedOf = curatedFor,
 }) {
-  // `nowMs` is clamped to the newest thing the data can know about, on BOTH
-  // sides. `chats.mjs` clamps internally for its own classification, but
-  // `classify` was still handed the raw value, so a `--now` pinned in the past
-  // made `nowMs - lastActivity` negative — which passes the liveness test — and
-  // flipped a dozen worktrees from `salvage` to `in-use`. A flag whose purpose
-  // is reproducibility must not change the answer.
+  // Keep the evaluation clock separate from the wall-clock generation time.
+  // `--now` may deliberately reproduce recency decisions at another time, but
+  // it must never make a fresh inventory appear future-dated to `dispose`.
   const newestKnown = chatAudit?.newestSessionAt ?? 0;
   const effectiveNow = Math.max(nowMs, newestKnown);
 
@@ -178,6 +176,8 @@ export function buildInventory({
       mergeChecked: verdict.mergeChecked,
       riskScore: riskScore(verdict),
       statusReasons: verdict.reasons,
+      patchEquivalence: verdict.patchEquivalence,
+      patchEquivalenceReason: verdict.patchEquivalenceReason,
 
       // The three facts that decide everything else, kept flat so a reader
       // scanning a diff can see a worktree's state change without opening it.
@@ -186,6 +186,9 @@ export function buildInventory({
       mergedIntoMain: wt.mergedIntoBase,
       dirty: wt.workingTree.modified,
       untracked: wt.workingTree.untracked,
+      statusError: wt.workingTree.statusError ?? null,
+      locked: Boolean(wt.locked),
+      prunableReason: wt.prunableReason ?? null,
       // The subset of `dirty` whose content main does NOT already hold, plus
       // every untracked path. Reported beside `dirty` and never instead of it:
       // `dirty` counts what differs from this worktree's own HEAD, so on a
@@ -203,6 +206,7 @@ export function buildInventory({
       // the two agree, so a stale `landed: true` fails the suite instead of
       // quietly contradicting `mergedIntoMain` in the same record.
       claimedLanded: curated?.landed ?? null,
+      legacy: Boolean(curated?.legacy),
 
       summary: curated?.summary ?? null,
       summarySource: curated?.summary ? 'curated' : 'none',
@@ -211,16 +215,6 @@ export function buildInventory({
       note: curated?.note ?? null,
       liveNote: curated?.liveNote ?? null,
       mustNotPrune: Boolean(curated?.mustNotPrune),
-      // The claim ITSELF, not just the verdict it produced, and the reason this
-      // is emitted for `legacy` and not for any other curated field: the two
-      // flags can both be set, and `mustNotPrune` wins, which is only useful to a
-      // reader if the record shows that a `legacy` claim existed and was
-      // overridden. Without this field a human sees `action: "at-risk"` and
-      // `mustNotPrune: true` and cannot tell a silent override from an entry that
-      // never claimed to be legacy. `preflight` derives `keepBranch` from
-      // `action`, so nothing depends on this — it is for the person reading.
-      legacy: Boolean(curated?.legacy),
-
       // Merges on `main` whose subject already carried this branch's name.
       // Advisory and verdict-free — it exists so a reader about to read a name as
       // proof of landing sees, in the same record, that the name proves nothing.
@@ -350,10 +344,12 @@ export function buildInventory({
   // also appears under no other action: it is disposable AND worth keeping, and
   // one `action` field can only say one of those at a time. See `ACTION.LEGACY`.
   const legacy = byActionNames(ACTION.LEGACY);
+  const inUse = byActionNames(ACTION.IN_USE);
+  const undecided = byActionNames(ACTION.UNDECIDED);
 
   return {
     schemaVersion: SCHEMA_VERSION,
-    generatedAt: new Date(effectiveNow).toISOString(),
+    generatedAt: new Date(generatedAtMs).toISOString(),
     generator: 'scripts/worktree-inventory.mjs',
     base,
     mainHead,
@@ -527,6 +523,8 @@ export function buildInventory({
       }))
       .sort((a, b) => RISK_ORDER[a.readRisk] - RISK_ORDER[b.readRisk] || a.id.localeCompare(b.id)),
     readLostWorktreeHighRisk: readAudit.records.filter((r) => r.worktreeGone && r.readRisk === 'high').length,
+    inUse,
+    undecided,
 
     totals: {
       worktrees: records.length,
@@ -535,6 +533,8 @@ export function buildInventory({
       disposalCandidates: disposalCandidates.length,
       atRisk: atRisk.length,
       legacy: legacy.length,
+      inUse: inUse.length,
+      undecided: undecided.length,
       salvage: records.filter((r) => r.recommendation === 'salvage').length,
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,

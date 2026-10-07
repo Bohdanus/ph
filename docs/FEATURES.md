@@ -424,6 +424,8 @@ through Pointer Events with single-pointer capture, so drawing works on touch
 **Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
 and pan entirely, not a mobile-specific omission.
 
+**MOBILE AND TABLET ARE VERY LOW PRIORITY, SKIP ALL MOBILE ISSUES UNLESS ASKED EXPLICITLY BY OPERATOR**
+
 ## Non-destructive editing
 
 **Photoshop:** smart objects, adjustment layers, Smart Filters, Generative Fill,

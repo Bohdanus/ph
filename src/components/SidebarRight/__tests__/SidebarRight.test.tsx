@@ -445,8 +445,9 @@ describe('SidebarRight', () => {
     expect(tab).not.toHaveAttribute('id');
 
     fireEvent.doubleClick(tab);
-    // Rolled up, the reference DANGLE rather than pointing at nothing that exists: the honest
-    // pair is `aria-expanded="false"` and no `aria-controls`, not a name with no target.
+    // Rolled up, the honest pair is `aria-expanded="false"` and no `aria-controls`; the body is
+    // absent rather than named by a dangling reference.
+    expect(tab).not.toHaveAttribute('aria-controls');
     expect(container.querySelector(`#${bodyId}`)).toBeNull();
   });
 

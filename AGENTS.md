@@ -7,7 +7,7 @@ Photoshop clone
 The main checkout is **READ-ONLY**.
 Running `git status`, `git rev-parse`, `npm test` - will break.
 
-**Before doing ANYTHING, verify you are in your worktree:**
+**Before editing tracked files or running project commands, verify you are in your worktree:**
 
 ```bash
 git rev-parse --show-toplevel
@@ -16,29 +16,33 @@ git rev-parse --show-toplevel
 
 Every tracked-file change happens in worktree. `main` is for reading
 and merging. The exceptions are listed in [`docs/ORCHESTRATION.md#worktrees`](docs/ORCHESTRATION.md#worktrees).
+If a task starts outside a worktree, the setup commands below are the only git
+commands to run before creating one.
 
 ```bash
-git rev-parse --show-toplevel
-# `git worktree list` puts the main checkout first; keep $MAIN absolute.
-MAIN="$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)"
-git worktree add -b <prefix>/<slug> "$MAIN/.kilo/worktrees/<slug>"
+# Find the checkout actually on main; the first listed worktree can be a bare repo.
+MAIN="$(git worktree list --porcelain | awk '
+  /^worktree / { path = substr($0, 10) }
+  /^branch refs\/heads\/main$/ { print path; found = 1; exit }
+  END { if (!found) exit 1 }
+')" || { printf 'Could not find a worktree on refs/heads/main\n' >&2; exit 1; }
+
+# Pick a task-specific slug that is not already a branch or directory.
+SLUG=task-specific-name
+BRANCH="fix/$SLUG"
+TARGET="$MAIN/.kilo/worktrees/$SLUG"
+if git show-ref --verify --quiet "refs/heads/$BRANCH" || [ -e "$TARGET" ]; then
+  printf 'Branch or worktree path already exists; choose another SLUG\n' >&2
+  exit 1
+fi
+git worktree add -b "$BRANCH" "$TARGET"
 ```
 
-Every commit must carry `Chat: ses_<id>` trailer.
+Every commit must carry a `Chat: <native-session-id>` trailer; resolve it as described in
+[`docs/CHAT-ID.md`](docs/CHAT-ID.md). Do not infer or translate one host's session ID into another.
 Every merge into `main` must carry `Branch: <source-branch>`.
-Resolve chat id before the first commit. It is also
-the swarm identity used by `npm run swarm -- --agent ses_…`.
-
-Find the id in the session store with a phrase you typed, matching
-words rather than a multi-line literal:
-
-```bash
-sqlite3 -readonly ~/.local/share/kilo/kilo.db "SELECT s.id FROM session s
-  JOIN message m ON m.session_id=s.id JOIN part p ON p.message_id=m.id
-  WHERE s.parent_id IS NULL AND json_extract(p.data,'\$.type')='text'
-    AND lower(json_extract(p.data,'\$.text')) LIKE '%a%phrase%you%typed%'
-  ORDER BY s.time_updated DESC LIMIT 1;"
-```
+Resolve the session ID before the first commit. `ses_…` is the Kilo format; it is accepted by
+the Kilo swarm command when needed, but swarm identity otherwise defaults to the branch.
 
 ## Subagents
 
@@ -111,6 +115,9 @@ The default headless run has no failing E2E tests and three declared skips. Read
 [`docs/TESTING.md#e2e-failures`](docs/TESTING.md#e2e-failures) and
 [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) before investigating a failure; its entries
 are latent defects, not current failures.
+
+A CI E2E result marked flaky is a failed run even if a retry passed; investigate it rather
+than treating it as green. See [`docs/TESTING.md#ci`](docs/TESTING.md#ci) for the retry policy.
 
 A pin or `it.fails(...)` test is a tripwire for known broken behavior, not a skip. When the
 defect is fixed, remove its pin in the same change. Read failure artifacts from disk; never
