@@ -162,94 +162,73 @@ function gitAsync(cwd, args, fallback = null) {
   });
 }
 
-/**
- * Execute multiple async git calls with a concurrency limit.
- * @param {Array<{cwd: string, args: string[], fallback: any}>} tasks
- * @param {number} concurrency - max parallel executions (default 8)
- */
-async function gitAsyncParallel(tasks, concurrency = 8) {
-  const results = new Array(tasks.length);
+/** Run independent tasks without letting large worktree fleets overwhelm git. */
+async function mapConcurrent(items, mapper, concurrency = 8) {
+  const results = new Array(items.length);
   let nextIndex = 0;
 
   async function worker() {
-    while (nextIndex < tasks.length) {
+    while (nextIndex < items.length) {
       const i = nextIndex++;
-      const task = tasks[i];
-      results[i] = await gitAsync(task.cwd, task.args, task.fallback);
+      results[i] = await mapper(items[i], i);
     }
   }
 
-  // Launch `concurrency` workers that each pull from the shared task queue
-  const workers = [];
-  const workerCount = Math.min(concurrency, tasks.length);
-  for (let w = 0; w < workerCount; w++) {
-    workers.push(worker());
-  }
-
-  await Promise.all(workers);
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
   return results;
 }
 
 /**
- * Batch collect ahead/behind, tip commit, and commits ahead in ONE git log call per worktree.
+ * Collect ahead/behind and commit details with bounded parallel git calls.
  * Returns { ahead, behind, tip, commitsAhead } for each worktree path.
  */
 async function batchAheadBehindTipCommits(paths, base, limit = 20) {
-  const tasks = paths.map((path) => ({
-    cwd: path,
-    args: [
-      'log',
-      '--format=%H%x1f%s%x1f%cI%x1f%an%x1f%P',
-      `${base}..HEAD`,
-      `-n${limit + 1}`, // +1 to detect truncation
-    ],
-    fallback: null,
-  }));
+  return mapConcurrent(paths, async (path) => {
+    const [logOutput, countOutput] = await Promise.all([
+      gitAsync(path, ['log', `${base}..HEAD`, '--format=%H%x1f%s%x1f%cI%x1f%an', `-n${limit + 1}`]),
+      gitAsync(path, ['rev-list', '--left-right', '--count', `${base}...HEAD`]),
+    ]);
 
-  const results = await gitAsyncParallel(tasks);
-
-  // Also need ahead/behind for each
-  const abTasks = paths.map((path) => ({
-    cwd: path,
-    args: ['rev-list', '--left-right', '--count', `${base}...HEAD`],
-    fallback: null,
-  }));
-  const abResults = await gitAsyncParallel(abTasks);
-
-  return paths.map((path, i) => {
-    // Parse ahead/behind
-    let ahead = null,
-      behind = null;
-    if (abResults[i]) {
-      const [b, a] = abResults[i].split(/\s+/).map((n) => Number.parseInt(n, 10));
-      if (Number.isInteger(b) && Number.isInteger(a)) {
-        behind = b;
-        ahead = a;
+    let ahead = null;
+    let behind = null;
+    if (countOutput !== null) {
+      const [left, right] = countOutput.split(/\s+/).map((n) => Number.parseInt(n, 10));
+      if (Number.isInteger(left) && Number.isInteger(right)) {
+        behind = left;
+        ahead = right;
       }
     }
 
-    // Parse commits and tip
+    const lines = logOutput?.split('\n').filter(Boolean) ?? [];
+    const commits = lines.slice(0, limit).map((line) => {
+      const [sha, subject, date] = line.split('\x1f');
+      return { sha, subject, date };
+    });
+
+    // The range is empty for branches whose HEAD is already on the base. Their
+    // tip is still relevant to the inventory and must not be reported as unknown.
     let tip = null;
-    let commits = [];
-    let truncated = false;
-
-    if (results[i]) {
-      const lines = results[i].split('\n').filter(Boolean);
-      if (lines.length > 0) {
-        // First line is tip commit
-        const [sha, subject, date, author, parents] = lines[0].split('\x1f');
+    if (lines.length > 0) {
+      const [sha, subject, date, author] = lines[0].split('\x1f');
+      tip = { sha, subject, date, author };
+    } else {
+      const tipOutput = await gitAsync(path, ['log', '-1', '--format=%H%x1f%s%x1f%cI%x1f%an']);
+      if (tipOutput !== null && tipOutput !== '') {
+        const [sha, subject, date, author] = tipOutput.split('\x1f');
         tip = { sha, subject, date, author };
-
-        // All lines are commits ahead
-        commits = lines.slice(0, limit).map((line) => {
-          const [csha, csubject, cdate] = line.split('\x1f');
-          return { sha: csha, subject: csubject, date: cdate };
-        });
-        truncated = lines.length > limit;
       }
     }
 
-    return { ahead, behind, tip, commitsAhead: { commits, truncated } };
+    return {
+      ahead,
+      behind,
+      tip,
+      commitsAhead: {
+        commits,
+        truncated: typeof ahead === 'number' && ahead > commits.length,
+      },
+    };
   });
 }
 
@@ -408,42 +387,57 @@ function isMergedInto(cwd, base) {
  * direction to be wrong in is the one that keeps the work.
  */
 function notOnBase(cwd, base, { modifiedPaths, untracked }) {
+  if (modifiedPaths.length === 0) return untracked;
+
+  // Two batched calls rather than two per path: a worktree can report
+  // hundreds of modified paths and this runs for every worktree in the
+  // repository.
+  //
+  // `hash-object` prints one hash per argument, in order, which pairs with
+  // `modifiedPaths` positionally. `ls-tree` prints only the paths that DO
+  // exist on the base, so a missing path is absent from the set below and
+  // counts as not-on-base, which is the correct reading: the base has no such
+  // path at all.
+  return countNotOnBase(
+    modifiedPaths,
+    untracked,
+    git(cwd, ['hash-object', '--', ...modifiedPaths]),
+    git(cwd, ['ls-tree', base, '--', ...modifiedPaths])
+  );
+}
+
+function countNotOnBase(modifiedPaths, untracked, hashes, tree) {
   const onBase = new Set();
 
-  if (modifiedPaths.length > 0) {
-    // Two batched calls rather than two per path: a worktree can report
-    // hundreds of modified paths and this runs for every worktree in the
-    // repository.
-    //
-    // `hash-object` prints one hash per argument, in order, which pairs with
-    // `modifiedPaths` positionally. `ls-tree` prints only the paths that DO
-    // exist on the base, so a missing path is absent from the set below and
-    // counts as not-on-base, which is the correct reading: the base has no such
-    // path at all.
-    const hashes = git(cwd, ['hash-object', '--', ...modifiedPaths]);
-    const tree = git(cwd, ['ls-tree', base, '--', ...modifiedPaths]);
-
-    if (hashes !== null && tree !== null) {
-      const worktreeHashes = hashes.split('\n').filter(Boolean);
-      const baseBlobs = new Map();
-      for (const line of tree.split('\n')) {
-        if (!line.trim()) continue;
-        const tab = line.indexOf('\t');
-        if (tab === -1) continue;
-        const [meta] = [line.slice(0, tab)];
-        const path = line.slice(tab + 1);
-        const blob = meta.split(/\s+/)[2];
-        if (blob) baseBlobs.set(path, blob);
-      }
-      modifiedPaths.forEach((path, i) => {
-        const mine = worktreeHashes[i];
-        const theirs = baseBlobs.get(path);
-        if (mine && theirs && mine === theirs) onBase.add(path);
-      });
+  if (hashes !== null && tree !== null) {
+    const worktreeHashes = hashes.split('\n').filter(Boolean);
+    const baseBlobs = new Map();
+    for (const line of tree.split('\n')) {
+      if (!line.trim()) continue;
+      const tab = line.indexOf('\t');
+      if (tab === -1) continue;
+      const path = line.slice(tab + 1);
+      const blob = line.slice(0, tab).split(/\s+/)[2];
+      if (blob) baseBlobs.set(path, blob);
     }
+    modifiedPaths.forEach((path, i) => {
+      const mine = worktreeHashes[i];
+      const theirs = baseBlobs.get(path);
+      if (mine && theirs && mine === theirs) onBase.add(path);
+    });
   }
 
   return modifiedPaths.filter((p) => !onBase.has(p)).length + untracked;
+}
+
+async function notOnBaseAsync(cwd, base, { modifiedPaths, untracked }) {
+  if (modifiedPaths.length === 0) return untracked;
+
+  const [hashes, tree] = await Promise.all([
+    gitAsync(cwd, ['hash-object', '--', ...modifiedPaths]),
+    gitAsync(cwd, ['ls-tree', base, '--', ...modifiedPaths]),
+  ]);
+  return countNotOnBase(modifiedPaths, untracked, hashes, tree);
 }
 
 /**
@@ -522,48 +516,6 @@ function commitsAhead(cwd, base, ahead, limit = 20) {
 }
 
 /**
- * Async version of commitsAhead for parallel execution.
- */
-async function commitsAheadAsync(cwd, base, ahead, limit = 20) {
-  const out = await gitAsync(cwd, ['log', `${base}..HEAD`, '--format=%h%x1f%s%x1f%cI', `-n${limit}`]);
-  const list =
-    out === null || !out
-      ? []
-      : out
-          .split('\n')
-          .filter(Boolean)
-          .map((line) => {
-            const [sha, subject, date] = line.split('\x1f');
-            return { sha, subject, date };
-          });
-
-  return { commits: list, truncated: typeof ahead === 'number' && ahead > list.length };
-}
-
-/**
- * Async version of tipCommit for parallel execution.
- */
-async function tipCommitAsync(cwd) {
-  const out = await gitAsync(cwd, ['log', '-1', '--format=%H%x1f%s%x1f%cI%x1f%an']);
-  if (out === null) return null;
-
-  const [sha, subject, date, author] = out.split('\x1f');
-  return { sha, subject, date, author };
-}
-
-/**
- * Async version of aheadBehind for parallel execution.
- */
-async function aheadBehindAsync(cwd, base) {
-  const out = await gitAsync(cwd, ['rev-list', '--left-right', '--count', `${base}...HEAD`]);
-  if (out === null) return { ahead: null, behind: null };
-
-  const [behind, ahead] = out.split(/\s+/).map((n) => Number.parseInt(n, 10));
-  if (!Number.isInteger(behind) || !Number.isInteger(ahead)) return { ahead: null, behind: null };
-  return { ahead, behind };
-}
-
-/**
  * Async version of workingTreeState for parallel execution.
  */
 async function workingTreeStateAsync(cwd, base) {
@@ -593,30 +545,9 @@ async function workingTreeStateAsync(cwd, base) {
     }
   }
 
-  const offBase = base ? notOnBase(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
+  const offBase = base ? await notOnBaseAsync(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
 
   return { modified, untracked, notOnBase: offBase, paths, statusError: null };
-}
-
-/**
- * Async version of isMergedInto for parallel execution.
- * Uses execFile to check exit code asynchronously.
- */
-function isMergedIntoAsync(cwd, base) {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      ['merge-base', '--is-ancestor', 'HEAD', base],
-      {
-        cwd,
-        stdio: 'ignore',
-      },
-      (err) => {
-        if (!err) return resolve(true);
-        resolve(err?.status === 1 ? false : null);
-      }
-    );
-  });
 }
 
 /**
@@ -775,14 +706,9 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
   // Batch ahead/behind, tip commit, and commits ahead in parallel (single git log per worktree)
   const batchResults = await batchAheadBehindTipCommits(paths, base);
 
-  // Parallelize remaining independent git calls
-  const mergedTasks = paths.map((path) => ({ cwd: path, base }));
+  // Parallelize working-tree reads; ancestry is already captured by ahead.
   const workingTreeTasks = paths.map((path) => ({ cwd: path, base }));
-
-  const [mergedResults, workingTreeResults] = await Promise.all([
-    Promise.all(mergedTasks.map(({ cwd, base }) => isMergedIntoAsync(cwd, base))),
-    Promise.all(workingTreeTasks.map(({ cwd, base }) => workingTreeStateAsync(cwd, base))),
-  ]);
+  const workingTreeResults = await mapConcurrent(workingTreeTasks, ({ cwd, base }) => workingTreeStateAsync(cwd, base));
 
   // For unmerged branches, check merge conflict and patch equivalence in parallel
   const unmergedIndices = batchResults
@@ -797,8 +723,8 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
     const unmergedAheads = unmergedIndices.map((i) => batchResults[i].ahead);
 
     [mergeResults, patchResults] = await Promise.all([
-      Promise.all(unmergedPaths.map((path, idx) => mergeConflictAsync(path, base))),
-      Promise.all(unmergedIndices.map((idx, i) => patchEquivalenceAsync(paths[idx], base, unmergedAheads[i]))),
+      mapConcurrent(unmergedPaths, (path) => mergeConflictAsync(path, base)),
+      mapConcurrent(unmergedIndices, (idx, i) => patchEquivalenceAsync(paths[idx], base, unmergedAheads[i])),
     ]);
   }
 
@@ -817,7 +743,10 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
       tip,
       ahead,
       behind,
-      mergedIntoBase: mergedResults[i],
+      // The right-hand count is the number of commits reachable from HEAD but
+      // not from base. Zero is exactly the ancestry condition; a failed count
+      // remains unknown rather than being read as "not merged".
+      mergedIntoBase: typeof ahead === 'number' ? ahead === 0 : null,
       locked: Boolean(w.locked),
       prunableReason: w.prunableReason ?? null,
       workingTree: workingTreeResults[i],
@@ -978,5 +907,5 @@ export const __testables = {
   commitsAhead,
   batchAheadBehindTipCommits,
   gitAsync,
-  gitAsyncParallel,
+  mapConcurrent,
 };

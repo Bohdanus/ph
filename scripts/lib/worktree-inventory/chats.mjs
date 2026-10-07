@@ -152,8 +152,8 @@ function readSubagentCounts(db, sinceMs) {
  * Since SQLite doesn't easily support "argmax", we use a subquery approach.
  */
 function readOutcomes(db, sinceMs) {
-  // First, get the last step-finish reason per session using a correlated subquery
-  // This is more efficient than multiple full scans
+  // Read outcome counts in one pass. The two scalar lookups preserve the
+  // previous "latest event in the window" behavior without a separate scan.
   const rows = db
     .prepare(
       `SELECT
@@ -162,6 +162,7 @@ function readOutcomes(db, sinceMs) {
             FROM part p2
            WHERE p2.session_id = p.session_id
              AND json_extract(p2.data, '$.type') = 'step-finish'
+             AND p2.time_created >= ?
            ORDER BY p2.time_created DESC
            LIMIT 1) AS last_reason,
          COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
@@ -170,16 +171,22 @@ function readOutcomes(db, sinceMs) {
          COUNT(CASE WHEN json_extract(p.data, '$.type') = 'tool'
                     AND json_extract(p.data, '$.state.status') = 'error'
                     AND p.data LIKE '%is waiting for input%' THEN 1 END) AS blocked_count,
-         MAX(CASE WHEN json_extract(p.data, '$.type') = 'tool'
-                  AND json_extract(p.data, '$.state.status') = 'error'
-                  AND p.data LIKE '%is waiting for input%' THEN p.data END) AS blocked_data
+         (SELECT p2.data
+            FROM part p2
+           WHERE p2.session_id = p.session_id
+             AND json_extract(p2.data, '$.type') = 'tool'
+             AND json_extract(p2.data, '$.state.status') = 'error'
+             AND p2.data LIKE '%is waiting for input%'
+             AND p2.time_created >= ?
+           ORDER BY p2.time_created DESC
+           LIMIT 1) AS blocked_data
          FROM part p
          JOIN session s ON s.id = p.session_id
         WHERE s.parent_id IS NULL
           AND p.time_created >= ?
         GROUP BY p.session_id`
     )
-    .all(sinceMs);
+    .all(sinceMs, sinceMs, sinceMs);
 
   const out = new Map();
   for (const row of rows) {

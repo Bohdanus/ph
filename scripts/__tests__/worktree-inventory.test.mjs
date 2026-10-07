@@ -35,6 +35,7 @@ import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../l
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
+  collectWorktrees,
   findMissingWorktrees,
   listWorktrees,
   mergeConflict,
@@ -390,6 +391,47 @@ function liveInventory() {
 }
 
 describe('git.mjs against a real repository', () => {
+  it('keeps tip commit details when the branch has no commits ahead', async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'modified');
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      expect(worktree.ahead).toBe(0);
+      expect(worktree.tip.sha).toBe(head);
+      expect(worktree.mergedIntoBase).toBe(true);
+      expect(worktree.workingTree.modified).toBe(1);
+      expect(worktree.workingTree.notOnBase).toBe(1);
+
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      const [side] = await collectWorktrees(dir, { base: 'main' });
+      expect(side.ahead).toBe(2);
+      expect(side.mergedIntoBase).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds concurrent tasks while preserving input order', async () => {
+    let active = 0;
+    let peak = 0;
+    const doubled = await __testables.mapConcurrent(
+      [1, 2, 3, 4, 5],
+      async (value) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return value * 2;
+      },
+      2
+    );
+
+    expect(peak).toBe(2);
+    expect(doubled).toEqual([2, 4, 6, 8, 10]);
+  });
+
   it('maps rev-list --left-right --count to behind=left, ahead=right', () => {
     const dir = makeRepo();
     try {
@@ -985,6 +1027,14 @@ describe('blocked-question detection', () => {
         null
       );
       db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run('p1', 'm1', 'ses_x', NOW - 100, NOW - 100, payload);
+      db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run(
+        'p2',
+        'm2',
+        'ses_x',
+        NOW - 50,
+        NOW - 50,
+        payload.replace('que_0e49a9650001UM8oJl32u9X3ko', 'que_latest0001UM8oJl32u9X3ko')
+      );
       db.close();
 
       const { auditChats } = await_import();
@@ -993,7 +1043,7 @@ describe('blocked-question detection', () => {
       expect(s.state).toBe('blocked');
       // Not the `"/"` placeholder from the input JSON — that occurrence is
       // skipped because it is followed by a quote rather than a space.
-      expect(s.blockedOn).toBe('que_0e49a9650001UM8oJl32u9X3ko');
+      expect(s.blockedOn).toBe('que_latest0001UM8oJl32u9X3ko');
       expect(s.reasons.join(' ')).toContain('waiting for input');
     } finally {
       rmSync(dir, { recursive: true, force: true });
