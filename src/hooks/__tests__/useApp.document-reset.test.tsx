@@ -510,6 +510,7 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
 
     expectOutgoingDocumentKilled(result);
+    expect(result.current.store.fileName).toBe('');
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.totalSize).toEqual({ width: 320, height: 240 });
     expect(result.current.store.hasImage).toBe(true);
@@ -542,6 +543,7 @@ describe('creating a new image kills the outgoing document history and layers', 
     });
 
     expectOutgoingDocumentKilled(result);
+    expect(result.current.store.fileName).toBe('');
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
   });
 

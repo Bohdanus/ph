@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100, 102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1692,63 +1692,6 @@ frame at the pre-add size when a bedrock layer is added mid-history')` titles (t
 The append-boundary test citations were a separate drift cluster, not part of this file's
 `history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
 outstanding.
-
----
-
-## 101. A new blank image keeps the previous document's file name, so Save As pre-fills the old file's name
-
-**Problem.** `_addLayer()`'s `newDocument` branch (`useLayer.ts`) builds the `REPLACE_DOCUMENT` payload
-for a new
-document and omits `fileName` from `updates`. `REPLACE_DOCUMENT` spreads caller `updates` over state
-(the `'REPLACE_DOCUMENT'` case in `StoreContext.tsx`), so the field is simply never written and the
-outgoing
-document's name survives. The other two document-creation paths both set it — the raster open through
-`_setFileName()` (called from `setImageFromUpload()` in `useApp.ts`) and the PSD open through
-`updates.fileName` (that same function's PSD arm) — which is exactly why the omission reads as an
-accident rather than a
-decision.
-
-Measured 2026-09-30 against the real `StoreProvider`, driving `setBlankImage` after seeding a document
-named `holiday-photo.png`:
-
-```
-PROBE fileName after setBlankImage = "holiday-photo.png"
-PROBE hasUnsavedChanges = true
-```
-
-Consequence: a document the user just created from scratch is named after a file that had nothing to
-do with it. The stale name reaches the export path through three hops — the store's `fileName` into
-`openSaveImageDialog()` (`DesktopHeader.tsx` — its File > Save handler), into
-`openSaveImageDialog()`'s `setFileInput`
-(`useFile.tsx`), and out as `SaveDialog`'s `proposedName`
-(also `useFile.tsx`) — so the save dialog is pre-filled from the old file. On mobile the
-staleness is also on screen, in the two components that render it (the `fileName` binding in
-`MobileHeader.tsx` and in `MobileMenuDrawer.tsx`); on desktop nothing displays it, so there the stale
-name is invisible until
-a save. `hasUnsavedChanges` is not rendered anywhere, so there is no dirty-marker reading either way —
-its only consumers are the two `confirmDiscard()` guards in `DesktopHeader.tsx` — the `new-document`
-and `open-document` ones.
-
-**Fix.** Add `fileName` to the `updates` block in `_addLayer`'s `newDocument` branch
-(`useLayer.ts`). A new document's name is a product decision, not a derivation — the
-PSD arm sets the imported name, so the blank arm needs the untitled one (`BlankImageParams` in
-`tool-types.ts` carries no name field, so either a constant is introduced or the
-value arrives from the caller alongside `size`; `DEFAULT_BLANK_IMAGE` in
-`App.tsx` is the
-existing precedent for a caller-supplied default). `src/hooks/__tests__/useApp.document-reset.test.tsx`
-is the place to pin it, and its `expectOutgoingDocumentKilled` helper deliberately asserts nothing
-about `fileName` today — adding that assertion is the fix's own tripwire, so it must be added in the
-same change.
-
-**Files.** `src/contexts/useLayer.ts` — `_addLayer()`; `src/contexts/StoreContext.tsx` — the
-`'REPLACE_DOCUMENT'` case;
-`src/hooks/useApp.ts` — `setImageFromUpload()` (both its `_setFileName()` call and its PSD arm),
-`src/contexts/useFile.tsx` — `openSaveImageDialog()`, `handleNewImageClose()` and `SaveDialog`'s
-`proposedName`,
-`src/components/DesktopHeader/DesktopHeader.tsx` — its File > Save handler and the two
-`confirmDiscard()` guards, `src/components/Mobile/MobileHeader.tsx` — its `fileName` binding
-
----
 
 ---
 
