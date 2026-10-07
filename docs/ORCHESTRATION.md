@@ -138,6 +138,7 @@ Three things stay allowed, each deliberately:
 
 ### Landing
 
+- **Merge only work you are confident is complete and ready:** the requested scope is met, behavior is verified, and required gates pass. If any is uncertain or blocked, leave it unmerged and report why.
 - **The main worktree is a landing, not a negotiation.** A branch merges into
   `main` only after `main` has already been merged or rebased **into the branch,
   in the branch's own worktree**, and the gates re-run there. The merge into
@@ -410,10 +411,10 @@ node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, writ
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
-Inventory generation and `npm run inventory:verify` can take several minutes.
-Run either command asynchronously, continue only with independent work, and wait
-for that same run to finish before using its report. Do not start a duplicate
-while one is still running.
+Inventory generation and `--check` can take several minutes. Run them
+asynchronously, continue only with independent work, and wait for that same run
+to finish before using its report. Do not start a duplicate while one is still
+running.
 
 ## What Git Is Doing Right Now
 
