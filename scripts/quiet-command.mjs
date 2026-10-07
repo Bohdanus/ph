@@ -3,9 +3,23 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+const GIT_REPOSITORY_CONTEXT = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_COMMON_DIR',
+  'GIT_PREFIX',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+];
+
 export function runQuiet(command, args, { cwd = process.cwd(), env = process.env } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['inherit', 'pipe', 'pipe'] });
+    const childEnv = { ...env };
+    for (const key of GIT_REPOSITORY_CONTEXT) delete childEnv[key];
+
+    // Git exports these for hooks; nested test repositories must resolve their own git dirs and indexes.
+    const child = spawn(command, args, { cwd, env: childEnv, stdio: ['inherit', 'pipe', 'pipe'] });
     const chunks = [];
     let finished = false;
 

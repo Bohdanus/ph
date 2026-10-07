@@ -60,6 +60,34 @@ describe('quiet-command', () => {
     expect(result.stderr).toEqual(Buffer.from([0xe2, 0x82, 0xac]));
   });
 
+  it('clears repository context inherited from a git hook before starting a gate', () => {
+    const variables = [
+      'GIT_DIR',
+      'GIT_WORK_TREE',
+      'GIT_INDEX_FILE',
+      'GIT_COMMON_DIR',
+      'GIT_PREFIX',
+      'GIT_OBJECT_DIRECTORY',
+      'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    ];
+    const env = {
+      ...process.env,
+      ...Object.fromEntries(variables.map((key) => [key, `/fixture/${key}`])),
+    };
+    const script =
+      `const keys = ${JSON.stringify(variables)}; ` +
+      'process.stdout.write(JSON.stringify(keys.filter((key) => process.env[key] !== undefined))); ' +
+      'process.exit(1);';
+    const result = spawnSync(process.execPath, [SCRIPT, process.execPath, '-e', script], {
+      encoding: 'buffer',
+      maxBuffer: 1024 * 1024,
+      env,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toEqual(Buffer.from('[]'));
+  });
+
   it('reports spawn errors with a nonzero status', () => {
     const result = run('this-command-does-not-exist-xyz');
 
