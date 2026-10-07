@@ -42,6 +42,7 @@
  * why the window is a flag and why the queries are not run per worktree.
  */
 
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { LIVE_WINDOW_MS } from './classify.mjs';
 
@@ -82,15 +83,29 @@ export function resolveSessionDb(home = process.env.HOME) {
 }
 
 /**
- * Open the session database read-only, or return `null` when it is absent.
+ * Open the session database, or return `null` when it is absent.
  *
  * A missing database is not an error: the inventory must still generate on a
  * machine with no Kilo history, with every chat field empty and a
  * `dataSources` entry saying why.
+ *
+ * The `node:sqlite` module does not support `CREATE TEMP INDEX`, so indexes
+ * are created as regular indexes inside a transaction that is rolled back in
+ * the caller's `finally` block. This speeds up the JSON-extraction scans
+ * (~13.5s each over 428k rows) without mutating the external database file.
+ * The connection is opened without `readOnly` to allow index creation.
  */
 function openDb(dbPath) {
+  if (!existsSync(dbPath)) return null;
   try {
-    return new DatabaseSync(dbPath, { readOnly: true });
+    const db = new DatabaseSync(dbPath);
+    db.exec('BEGIN');
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_part_type ON part(json_extract(data, '$.type'));
+       CREATE INDEX IF NOT EXISTS idx_part_status ON part(json_extract(data, '$.state.status'));
+       CREATE INDEX IF NOT EXISTS idx_part_tool ON part(json_extract(data, '$.tool'));`
+    );
+    return db;
   } catch {
     return null;
   }
@@ -181,12 +196,13 @@ function readOutcomes(db, sinceMs) {
   const credits = db
     .prepare(
       `SELECT p.session_id AS session_id, COUNT(*) AS n
-         FROM part p
-         JOIN session s ON s.id = p.session_id
-        WHERE p.data LIKE '%Add credits%'
-          AND s.parent_id IS NULL
-          AND p.time_created >= ?
-        GROUP BY p.session_id`
+          FROM part p
+          JOIN session s ON s.id = p.session_id
+         WHERE json_extract(p.data, '$.type') = 'tool'
+           AND p.data LIKE '%Add credits%'
+           AND s.parent_id IS NULL
+           AND p.time_created >= ?
+         GROUP BY p.session_id`
     )
     .all(sinceMs);
 
@@ -383,6 +399,7 @@ export function auditChats({
       windowMs: nowMs - sinceMs,
     };
   } finally {
+    db.exec('ROLLBACK');
     db.close();
   }
 }
