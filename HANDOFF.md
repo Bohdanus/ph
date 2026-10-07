@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61-62, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -545,14 +545,6 @@ on the append path a settled question and left this as the one place where the *
 scope's liveness set and the registry still have to agree without saying so. The invariant is
 cheapest to pin as a test now, while it is still unstated rather than load-bearing.
 
-## 64. `useDrag` has no importer anywhere in `src`
-
-`src/hooks/useDrag.ts` is exported, has its own test file, and is referenced by nothing outside them.
-Its sibling `useRect` is used by four tool areas. Dead code a reader must still evaluate on every
-change, and a plausible future source of a second drag implementation. Deleting it means deleting
-`useDrag.test.ts` with it. Re-derive the grep before acting, because a worktree-local import would
-not be visible from `main`.
-
 ## 66. A refused pointer gesture is a silent no-op on the document
 
 `src/hooks/usePointerPosition.ts` — `isPointerDownValid()` and `isPointerUpValid()` — and every
@@ -587,30 +579,6 @@ settle it is a `console.warn` carrying the reason at each of the four early
 returns, which is a product decision rather than a test one.
 
 ---
-
----
-
-## 72. A duplicated `/**` makes `DrawToolArgs.composite`'s doc comment a comment about itself
-
-`src/tools/draw.ts` — `DrawToolArgs`'s `composite` field opens two block comments back to back.
-JavaScript block comments do not
-nest, so the second `/**` is swallowed as comment text and the `composite` field's documentation is
-malformed from its first line. It parses, no line number moves, and every test in the tree passes —
-which is why nothing reports it.
-
-It matters because the field's real comment is load-bearing prose rather than decoration: it names
-`setupDrawCtx` as the single place both the live preview and the committed raster read, names the
-`e2e/export/visual-regression.spec.ts` baselines that depend on the absent case writing
-`source-over`, and explains why a legacy stroke still renders as it did. Anyone re-deriving a
-citation from that comment reads a comment that starts `/**` and has to work out what it was
-supposed to say. Found while researching `draw` for `docs/TOOLS.md`, where the resulting
-misreading is recorded as a caveat rather than acted on: deleting the duplicated `/**` shifts every
-line below
-it, and three `file:line` citations into this file in the description record were written against
-the current numbering.
-
-Fix is deleting the second `/**` in `src/tools/draw.ts`, then re-deriving any citation into that file
-below it.
 
 ---
 

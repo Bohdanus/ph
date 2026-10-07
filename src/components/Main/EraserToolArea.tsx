@@ -182,7 +182,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // in the commit path below, the missing-active-layer one among them.
     releaseDocumentClaim();
 
-    // Cancel AND null, as `useDrag`/`useRect` do. Nulling alone would leave `frameRequested`
+    // Cancel AND null, as `useRect` does. Nulling alone would leave `frameRequested`
     // permanently non-null and every later stroke's preview silently dropped; cancelling alone would
     // drop the last preview, because the frame that would have painted the final point is the one
     // being cancelled.
