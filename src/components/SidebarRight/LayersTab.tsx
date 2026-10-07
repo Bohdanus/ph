@@ -84,6 +84,11 @@ export default function LayersTab() {
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { goToTool } = useApp();
 
+  const isMovableLayer = (layerId: LayerId | null): layerId is LayerId => {
+    const layer = layerId ? layers[layerId] : null;
+    return Boolean(layer && !layer.isBedrock);
+  };
+
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
   const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
   const [isOverBottom, setIsOverBottom] = useState(false);
@@ -171,6 +176,8 @@ export default function LayersTab() {
   }
 
   function animateMove(layerToMoveId: LayerId, layerToPlaceAfterId?: LayerId) {
+    if (!isMovableLayer(layerToMoveId)) return;
+
     // Start shrinking layerToMove
     setAnimatingLayerId(layerToMoveId);
     setIsShrinking(true);
@@ -222,7 +229,10 @@ export default function LayersTab() {
             const isPickedLayer = draggedLayerId === layer.id;
             const prevLayerId = sortedLayers[index - 1]?.id;
             const isDropTarget =
-              dropTargetId === layer.id && dropTargetId !== draggedLayerId && prevLayerId !== draggedLayerId;
+              isMovableLayer(draggedLayerId) &&
+              dropTargetId === layer.id &&
+              dropTargetId !== draggedLayerId &&
+              prevLayerId !== draggedLayerId;
             const isEditable = editingLayerId === layer.id;
             const isAnimating = animatingLayerId === layer.id;
 
@@ -237,7 +247,7 @@ export default function LayersTab() {
                   ${isAnimating && isShrinking ? 'h-0 opacity-0' : 'h-10 opacity-100'} 
                   ${isAnimating && isExpanding ? 'animate-height-increase' : ''}`}
                 style={{
-                  cursor: 'grab',
+                  cursor: layer.isBedrock ? 'default' : 'grab',
                   top: isPickedLayer ? undefined : '-3px',
                   opacity: isPickedLayer ? 0.17 : undefined,
                   transform: isPickedLayer ? 'scale(1, 0.95)' : undefined,
@@ -247,9 +257,10 @@ export default function LayersTab() {
                 {isDropTarget && <div className="relative mb-1 h-2 bg-blue-500 rounded" />}
 
                 <div
-                  draggable={editingLayerId !== layer.id}
+                  data-testid="layer-row-content"
+                  draggable={!layer.isBedrock && editingLayerId !== layer.id}
                   onDragStart={(e) => {
-                    if (isEditable) {
+                    if (isEditable || !isMovableLayer(layer.id)) {
                       e.preventDefault();
                       return;
                     }
@@ -269,9 +280,11 @@ export default function LayersTab() {
                     setIsOverBottom(false);
                   }}
                   onDragOver={(e) => {
+                    e.stopPropagation();
+                    if (!isMovableLayer(draggedLayerId)) return;
+
                     setDropTargetId(layer.id);
                     setIsOverBottom(false);
-                    e.stopPropagation();
                     if (!draggedLayerId || !isDropTarget) return; // not allowed
 
                     e.preventDefault();
@@ -282,7 +295,7 @@ export default function LayersTab() {
                     setDropTargetId(null);
                     setIsOverBottom(false);
 
-                    if (!draggedLayerId || !isDropTarget) return;
+                    if (!isMovableLayer(draggedLayerId) || !isDropTarget) return;
 
                     e.preventDefault();
                     animateMove(draggedLayerId, layer.id);
@@ -313,7 +326,7 @@ export default function LayersTab() {
                     <EyeIcon open={layer.visible} />
                   </button>
 
-                  <DragHandleIcon disabled={isPickedLayer} />
+                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock} />
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
@@ -404,7 +417,7 @@ export default function LayersTab() {
         className="flex-1 min-h-[20px]"
         onDragOver={(e) => {
           e.stopPropagation();
-          if (!draggedLayerId) return;
+          if (!isMovableLayer(draggedLayerId)) return;
 
           e.preventDefault();
           setIsOverBottom(true);
@@ -416,7 +429,7 @@ export default function LayersTab() {
           setDropTargetId(null);
           setIsOverBottom(false);
 
-          if (!draggedLayerId) return;
+          if (!isMovableLayer(draggedLayerId)) return;
 
           e.preventDefault();
           animateMove(draggedLayerId);
