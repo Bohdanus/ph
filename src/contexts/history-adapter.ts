@@ -317,7 +317,7 @@ function frameFromLegacy(
 }
 
 /**
- * The frame the FIRST entry establishes when it is a bedrock source rather than a
+ * The frame an ENABLED first entry establishes when it is a bedrock source rather than a
  * document source — the shape `File > New` produces, where `createBlankLayer(params,
  * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
  * `{ isBedrock: true, size }` (`useLayer.ts:245-258`, `history-utils.ts:22-25`).
@@ -329,12 +329,12 @@ function frameFromLegacy(
  * `currentFrame` alone, which is right for every LATER entry and wrong for the one
  * that opened the document.
  *
- * It outranks `options.initialFrame` deliberately, and for the same reason legacy
- * replay does: that option is the store's CURRENT frame, which a later crop has
- * already moved, while legacy replay restores the bedrock size when the cursor walks
- * back to index 0. A converter that preferred it would describe cursor -1 as the
- * cropped document, so the two models would disagree at exactly the cursor where the
- * user can undo into the un-cropped original.
+ * For an enabled first entry it outranks `options.initialFrame` deliberately, and
+ * for the same reason legacy replay does: that option is the store's CURRENT frame,
+ * which a later crop has already moved, while legacy replay restores the bedrock
+ * size when the cursor walks back to index 0. A converter that preferred it would
+ * describe cursor -1 as the cropped document, so the two models would disagree at
+ * exactly the cursor where the user can undo into the un-cropped original.
  */
 function frameFromFirstEntryBedrock(item: HistoryItem | undefined): DocumentFrame | undefined {
   if (!item || item.documentSource) return undefined;
@@ -752,7 +752,9 @@ export function legacyHistoryToDurable(
   const documentId = options.documentId ?? uuidv4();
   const registry = options.registry ?? getAssetRegistry();
   const first = legacyHistory[0];
-  const initialSize = options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 };
+  const firstIsEnabled = !!first && isEntryEnabled(first);
+  const initialSize = options.initialSize ??
+    (firstIsEnabled ? first.documentSource?.size : undefined) ?? { width: 1, height: 1 };
   // Both branches must seed identically, so the durable baseline reads the same
   // unbounded rule legacy replay uses. It cannot be narrowed to the pre-first-entry
   // state while a selection is created outside history: the tool-switch clear's
@@ -763,7 +765,10 @@ export function legacyHistoryToDurable(
   // at history index 0; the durable path's only frame writer is the
   // `set-document-frame` operation.
   const initial = (first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null) ?? {
-    frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
+    frame:
+      (firstIsEnabled ? frameFromFirstEntryBedrock(first) : undefined) ??
+      options.initialFrame ??
+      documentFrameFromSize(initialSize),
     layers: [],
     activeLayerId: null,
   };

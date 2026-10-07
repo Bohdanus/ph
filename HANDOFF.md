@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1112,82 +1112,6 @@ The dash pattern remains `[5 / scale, 5 / scale]`; the two existing `setLineDash
 `src/components/Main/TextToolArea.tsx` — `TextToolArea`; `src/hooks/useSelectionAnts.ts` —
 `useSelectionMarchingAnts()`; `src/hooks/__tests__/useRect.drag.test.ts` — the two `setLineDash`
 titles named above
-
-## 90. A disabled FIRST history entry still sizes the durable baseline's FRAME
-
-**Problem.** The converter's baseline branch (`history-adapter.ts` — `legacyHistoryToDurable()`, the
-`initial` binding) gates the **layers** on the entry being enabled:
-`first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null`.
-A disabled first entry therefore yields `layers: []`, which is what `replayHistory()` produces. That
-half is FIXED, and pinned by the `it('a disabled first entry replays as the empty state legacy
-replays')` title in `history-adapter.branches.test.ts`.
-
-The **frame** on that same fallback object is not gated, and TWO expressions read the disabled entry
-rather than one:
-
-```ts
-frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
-```
-
-- `frameFromFirstEntryBedrock()` inspects `first` with no reference to its enabled state. This is
-  the reachable read for a real document: `createBlankLayer()` commits the opening entry through
-  `REPLACE_DOCUMENT` with `{ layerId, actionName: NEW_LAYER_ACTION, layerSource }` and **no**
-  `documentSource` — the size is carried in the dispatch's `updates`, not on the history item — and
-  `App.tsx`'s `DEFAULT_BLANK_IMAGE` seeds `isBedrock: true`, so a disabled opening entry sizes the
-  durable document here.
-- `initialSize` is bound from `options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 }`,
-  so a disabled first entry that DOES carry a `documentSource` still sizes the frame through
-  `documentFrameFromSize()`. Gating only `frameFromFirstEntryBedrock` leaves this open.
-
-**User-visible failure, and it is REACHABLE.** `replayHistory()` skips a disabled item at the top of
-its loop (`history-replay.ts` — at its `if (!item || item.disabled) continue`), so it never reaches a
-bedrock source and never sizes the canvas from one. Measured on this tree: a single-entry timeline
-whose only entry is a DISABLED bedrock `NEW_LAYER_ACTION` of 640x480 converts to a durable baseline
-of `{x:0, y:0, width:640, height:480}`, and `replayDurableDocument(converted.document, -1)` returns
-that same frame, where `replayHistory()` reports the 1x1 document its own `initialSize` default
-produces. The same fixture carrying a `documentSource` and no caller frame measures 640x480 against
-the same 1x1, and with a caller `initialFrame` of a cropped `{x:80, y:270, width:640, height:300}`
-the durable frame reports the cropped document where legacy reports 1x1. Disable the first History
-row of a document that opened on a bedrock source and the canvas blanks while the durable shadow
-still describes the full opening frame: the layers now agree and the frame does not.
-
-**Nothing reports it, which is worse than a misleading warning.** The `invalid-history-entry`
-diagnostic fires only when the disabled first entry carries a `documentSource`. For the production
-shape — a bedrock `layerSource` with no `documentSource` — the conversion returns an EMPTY
-`diagnostics` array next to the divergent frame, so the shadow is marked healthy while the two
-models disagree about the same timeline.
-
-**How the toggle is exposed.** The History tab renders one eye button per row, including the first:
-the row's `onClick` in `HistoryTab.tsx` — `HistoryTab` — calls `handleToggleDisabled`, whose `title`
-reads "Disable history item"
-→ `toggleDisabled(itemId)` (`HistoryTab.tsx` — inside `handleToggleDisabled`) → `useHistory.ts` —
-`toggleDisabled()` → `updateHistoryTimeline`'s
-`toggle-disabled` command, which flips `disabled` on the addressed entry
-(`history-timeline.ts` — the `toggle-disabled` arm of `updateHistoryTimeline()`). `sortedHistory` is
-`[...history].reverse()` (`HistoryTab.tsx` — the `sortedHistory` binding),
-so the first entry is the **last** row — the one closest to the panel's footer, not a row anyone
-treats as special. The mobile drawer exposes the same control
-(`MobileLayersDrawer.tsx` — its `handleToggleDisabled`).
-
-**Fix.** Gate the frame on the same predicate the layers are gated on, so the whole fallback object
-agrees with `replayHistory()` in one move rather than half of it. The shape to decide is what a
-timeline whose baseline is disabled converts to: `"an empty baseline"` and `"a baseline derived from
-the first **enabled** entry"` are two different answers and only one of them is the document
-`replayHistory()` produces. Answer that first — the residual is only correct once the answer is
-chosen, because gating `frameFromFirstEntryBedrock` on `isEntryEnabled(first)` alone leaves BOTH
-`initialSize`, which reads the disabled entry's own `documentSource.size`, and the `options.initialFrame`
-fallback reading an ungated value.
-
-**TRIPWIRE.** There is none for the frame half. The existing case asserts the layers and the cursor
-only, so a fix here is free to regress silently; the fix must extend it to assert the replayed FRAME
-as well, and to cover a disabled opening entry that carries a `documentSource` as well as one that
-does not, or the same change regresses with the suite green.
-
-**Files.** `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`'s `initialSize` binding and
-its `initial` fallback object, and `frameFromFirstEntryBedrock()`;
-`src/contexts/__tests__/history-adapter.branches.test.ts`
-
----
 
 ## 94. A skipped duplicate leaves the fold advanced, so a later `set-document-frame` can carry a `previous` the durable history never reached
 
