@@ -5,7 +5,7 @@ Autonomous, token-conscious pass over documented defects and unfinished work. Fi
 ## Operating Rules
 
 - Use one worktree per task. Work serially.
-- Use subagent with more thorough model settings for complex tasks.
+- Complex problems require websearch.
 - Complex implementation requires focused read-only code-review subagent before landing. Complexity: cross-module behavior, persistence/migration, architecture boundaries, broad regression risk.
 - Security vulnerability → invoke security-review process.
 - Do not run worktree inventory routinely. Run `npm run repo:state` before landing.
@@ -25,21 +25,20 @@ Rank order:
 
 Before editing: identify exact behavior, evidence, affected surfaces, existing tests, relevant gate. If two issues close, choose greater unblock value and clearer verification.
 
-## Phase 2: Work Loop
+## Phase 2: Loop — Find → Solve → Merge → Repeat
 
 For each selected issue:
 
-1. Read problem entry + minimal relevant code/docs. Verify still open; reproduce/confirm cause.
-2. High confidence → narrowest complete fix across affected surfaces. Update directly related docs/tests only as needed.
-3. Validate with smallest useful focused check. Consult `docs/TESTING.md` for commands/known failures. Run required commit gates; no broad/E2E suites by default.
-4. Review diff for unintended behavior, stale refs, missing surfaces, changes outside issue. Complex task → required focused code review.
-5. Commit verified coherent fix with `Chat` trailer. Remove/retire problem entry per document rules.
-6. Insufficient evidence/behavior/validation → no speculative fix. Write concise, evidence-backed, actionable handoff with affected files and specific decision/experiment needed. Commit and land handoff, continue.
+1. **Find**: Read problem entry + minimal relevant code/docs. Verify still open; reproduce/confirm cause.
+2. **Solve**: High confidence → narrowest complete fix across affected surfaces. Update directly related docs/tests only as needed.
+3. **Validate**: Smallest useful focused check. Consult `docs/TESTING.md` for commands/known failures. Run required commit gates; no broad/E2E suites by default.
+4. **Review**: Diff for unintended behavior, stale refs, missing surfaces, changes outside issue. Complex task → required focused code review.
+5. **Commit**: Verified coherent fix with `Chat` trailer. Remove/retire problem entry per document rules.
+6. **Handoff** (if insufficient evidence): No speculative fix. Write concise, evidence-backed, actionable handoff with affected files and specific decision/experiment needed. Commit and land handoff.
+7. **Merge**: Land to `main` per landing procedure with `Branch` trailer. Before merge: check `npm run repo:state`, re-read `main` status and diff, stage only this task's paths. Never resolve conflict in `main`.
 
 Repeat until no high-value actionable candidates, run window exhausted, or gate blocks safe progress. Blocked/uncertain item ≠ abandon unrelated ready work. Do not revisit rejected candidate without new evidence.
 
-## Phase 3: Land and Report
+## Phase 3: Report
 
-Land verified fixes and valid handoffs to `main` per landing procedure; each merge must identify source branch with `Branch` trailer. Before landing: check `npm run repo:state`, re-read `main` status and diff, stage only this task's paths. Never resolve conflict in `main`.
-
-Final report: what fixed/landed, what remains open and why, focused validation performed (including failures/unavailable checks), resulting commit. No separate status document; keep unresolved work in canonical problem document.
+Final report: what fixed/landed, what remains open and why, focused validation performed (including failures/unavailable checks), resulting commits. No separate status document; keep unresolved work in canonical problem document.
