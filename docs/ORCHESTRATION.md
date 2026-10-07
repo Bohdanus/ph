@@ -870,6 +870,9 @@ heartbeat` still exists and is still correct — it is the only thing that can
 - **`swarm health` answers "is this thing being used, or only carried?"** It is
   the traffic mix, the locks, live vs expired claims, reclaims so far, live vs
   imported issues, and live findings idle for over six hours.
+- **`swarm defer` parks work instead of resolving it.** A deferred issue without
+  `--until` stays out of `swarm ready`; one with a deadline is offered again
+  once that deadline is reached, subject to its claims and dependencies.
 - **The traffic mix is in TWO UNITS, and adding them is a mistake.** `lock.hold` is
   **one event per command**, `lock.release` is **one event per file**. Read
   `activity.perCommand` and `activity.perFile` as two measures, never as two halves
