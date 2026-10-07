@@ -498,6 +498,31 @@ describe('useRect marquee border animation', () => {
     expect(dashOffsets).toHaveLength(paintedFrames);
   });
 
+  it('starts crawling an existing selection border when the drag begins', () => {
+    const { ctx, result, event } = setup({ borderMode: 'while-dragging', initialRect: RECT });
+    const dashOffsets: number[] = [];
+    vi.spyOn(ctx, 'strokeRect').mockImplementation(() => {
+      dashOffsets.push(ctx.lineDashOffset);
+    });
+
+    // The production pointer-down guard sets this before useRect handles the press. The test
+    // double leaves that responsibility to the helper, so set it before calling the handler here.
+    pointer.data.isMouseDown.current = true;
+    act(() => {
+      result.current.pointerHandlers.onPointerDown(event(200, 175));
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+
+    expect(dashOffsets.length).toBeGreaterThan(1);
+    expect(new Set(dashOffsets).size).toBeGreaterThan(1);
+
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(200, 175));
+    });
+  });
+
   it('keeps the always-mode border static while dragging', () => {
     const { ctx, result, event } = setup({ borderMode: 'always', initialRect: RECT });
     const dashOffsets: number[] = [];

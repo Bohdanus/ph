@@ -710,6 +710,11 @@ export function useRect({
       drawMask();
     }
 
+    // An existing rect is already painted when the press is accepted, so do not wait for the
+    // first pointer move to start the marquee's crawl. Fresh drags have no rect yet and are
+    // started by the pointer-move frame after `calculateMaskRect` creates one.
+    scheduleBorderAnimation();
+
     return isHandleClicked;
   };
 
