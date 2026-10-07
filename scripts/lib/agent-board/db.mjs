@@ -30,7 +30,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -400,6 +400,53 @@ function resolveSymlinksBestEffort(path) {
     }
   }
   return null;
+}
+
+function isMissingPath(error) {
+  return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+/**
+ * On case-insensitive volumes, return the directory-entry spelling for existing
+ * components. A failed stat leaves a differently-cased path distinct.
+ */
+function canonicalizeExistingPathCase(root, path) {
+  if (!root || path.startsWith('/') || /^[a-z]:\//i.test(path) || path === '..' || path.startsWith('../')) {
+    return path;
+  }
+
+  const segments = path.split('/');
+  const normalized = [];
+  let current = root;
+
+  for (const [index, segment] of segments.entries()) {
+    let entries;
+    try {
+      entries = readdirSync(current);
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      normalized.push(...segments.slice(index));
+      break;
+    }
+
+    let actual = segment;
+    if (!entries.includes(segment)) {
+      const caseMatch = entries.find((entry) => entry.toLowerCase() === segment.toLowerCase());
+      if (caseMatch) {
+        try {
+          statSync(join(current, segment));
+          actual = caseMatch;
+        } catch (error) {
+          if (!isMissingPath(error)) throw error;
+        }
+      }
+    }
+
+    normalized.push(actual);
+    current = join(current, actual);
+  }
+
+  return normalized.join('/');
 }
 
 /**
@@ -1827,7 +1874,8 @@ export class Board {
    */
   toRepoPath(path) {
     const typed = String(path ?? '').trim();
-    const direct = normalizePaths([path], { roots: this.pathRoots() })[0];
+    const roots = this.pathRoots();
+    const direct = normalizePaths([path], { roots })[0];
     // A path that WAS given and normalised to nothing — the empty string, or a
     // worktree root with a trailing slash — is not a free file. It is a path
     // this board does not cover, and `check` answering "free" there is the
@@ -1838,11 +1886,14 @@ export class Board {
     // it against the process's directory would turn the stored answer into an
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
-    if (!String(path).trim().startsWith('/')) return direct;
-    if (direct !== String(path).trim().replace(/^\.\//, '')) return direct;
+    const input = typed.split('\\').join('/');
+    const root = roots.find((candidate) => input.startsWith(candidate))?.slice(0, -1) ?? this.identity?.worktree;
+    const canonicalize = (candidate) => canonicalizeExistingPathCase(root, candidate);
+    if (!input.startsWith('/')) return canonicalize(direct);
+    if (direct !== input.replace(/^\.\//, '')) return canonicalize(direct);
     const resolved = resolveSymlinksBestEffort(path);
-    if (resolved === null) return direct;
-    return normalizePaths([resolved], { roots: this.pathRoots() })[0] ?? direct;
+    if (resolved === null) return canonicalize(direct);
+    return canonicalize(normalizePaths([resolved], { roots })[0] ?? direct);
   }
 
   /**

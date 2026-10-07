@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -547,6 +547,22 @@ describe('file locks make one-file-one-agent real', () => {
     expect(b.checkPath('src/util/draw.ts').holders.map((holder) => holder.agent_id)).toEqual(['a']);
     expect(b.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/util/draw.ts']);
     b.close();
+  });
+
+  it('uses actual path casing on case-insensitive volumes', () => {
+    const a = boardFor('a');
+    const root = a.identity.worktree;
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'Draw.ts'), '');
+    const caseInsensitive = existsSync(join(root, 'src', 'draw.ts'));
+    a.touchAgent();
+    a.holdFiles(['src/draw.ts']);
+    expect(a.locksHeldBy('a').map((lock) => lock.path)).toEqual([caseInsensitive ? 'src/Draw.ts' : 'src/draw.ts']);
+
+    const b = boardFor('b');
+    b.touchAgent();
+    expect(b.checkPath('src/Draw.ts').free).toBe(!caseInsensitive);
+    expect(b.checkPath(`${root}/src/draw.ts`).free).toBe(!caseInsensitive);
   });
 
   it('reports your own lease as heldByYou, so your lock is not indistinguishable from a free file', () => {
