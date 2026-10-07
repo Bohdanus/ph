@@ -236,7 +236,8 @@ export function classify(
   const uncommitted = isWorkingTreeHeld(wt);
   const unmerged = hasUnmergedCommits(wt);
   const treeUnreadable = Boolean(wt.workingTree.statusError);
-  const gitFactsUnreadable = wt.ahead === null || wt.behind === null || wt.mergedIntoBase === null;
+  const branchUnreadable = typeof wt.branch !== 'string' || wt.branch.length === 0;
+  const gitFactsUnreadable = branchUnreadable || wt.ahead === null || wt.behind === null || wt.mergedIntoBase === null;
   const liveAgent = boardAgents.find((a) => a.live);
   // EITHER source makes a worktree in-use. The session database is blind to a
   // session that was opened in the main checkout and then driven into a task
@@ -298,7 +299,9 @@ export function classify(
     reasons.push(
       treeUnreadable
         ? `git could not read the working tree (${wt.workingTree.statusError})`
-        : 'git could not establish the branch relationship to the base'
+        : branchUnreadable
+          ? 'git could not establish the worktree branch identity'
+          : 'git could not establish the branch relationship to the base'
     );
   } else if (uncommitted && wt.ahead === 0) {
     status = STATUS.UNCOMMITTED_ONLY;
@@ -332,11 +335,13 @@ export function classify(
   const legacyUnknown = curatedLegacy
     ? treeUnreadable
       ? 'the working tree could not be read'
-      : gitFactsUnreadable
-        ? 'the branch relationship to the base could not be established'
-        : wt.detached
-          ? 'the worktree has no branch to keep'
-          : null
+      : wt.detached
+        ? 'the worktree has no branch to keep'
+        : branchUnreadable
+          ? 'the worktree branch identity could not be established'
+          : gitFactsUnreadable
+            ? 'the branch relationship to the base could not be established'
+            : null
     : null;
   const mergeState = mergeVerdict(wt);
   let recommendation;
