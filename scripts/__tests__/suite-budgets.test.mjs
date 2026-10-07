@@ -42,6 +42,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript';
 
 /**
  * Built from `import.meta.dirname`, never from `import.meta.url`: Vitest gives this
@@ -140,6 +141,26 @@ function readDeclaredBudget(source) {
   return { ms: Number(matches[0][1].replace(/_/g, '')) };
 }
 
+function isTestCall(expression) {
+  if (ts.isPropertyAccessExpression(expression)) return isTestCall(expression.expression);
+  if (ts.isCallExpression(expression)) return isTestCall(expression.expression);
+  return ts.isIdentifier(expression) && (expression.text === 'it' || expression.text === 'test');
+}
+
+function readPerTestTimeouts(source, file) {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const overrides = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && isTestCall(node.expression) && node.arguments.length >= 3) {
+      const timeout = node.arguments[2];
+      if (ts.isNumericLiteral(timeout)) overrides.push(Number(timeout.text.replace(/_/g, '')));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return overrides;
+}
+
 /** The shape a declaration has to have for this reader to see it. */
 const REQUIRED_SHAPE = 'a line of its own reading exactly `vi.setConfig({ testTimeout: <digits> });`';
 
@@ -203,10 +224,7 @@ describe('the scripts suites declare a budget their own work fits inside', () =>
     // low per-test override anywhere else would have gone unnoticed, which is the same
     // mistake as the hard-coded list above pointed at a different file.
     const overrides = BUDGETED.flatMap((file) =>
-      [...readFileSync(join(HERE, file), 'utf8').matchAll(/\},\s*([0-9_]+)\s*\);/g)].map((m) => ({
-        file,
-        ms: Number(m[1].replace(/_/g, '')),
-      }))
+      readPerTestTimeouts(readFileSync(join(HERE, file), 'utf8'), file).map((ms) => ({ file, ms }))
     );
 
     expect(overrides.length, 'the suites kept their per-test declarations').toBeGreaterThan(0);
@@ -274,6 +292,14 @@ describe('the budget reader fails closed', () => {
     // reporting a red for a file that was fine.
     const source = ['const s = "/*";', 'vi.setConfig({ testTimeout: 30_000 });', 'const t = "*/";', ''].join('\n');
     expect(readDeclaredBudget(source)).toEqual({ ms: 30_000 });
+  });
+
+  it('does not mistake a helper argument for a per-test timeout', () => {
+    const source = [
+      'mapConcurrent([1, 2], async (value) => value, 2);',
+      "it('uses an explicit timeout', () => {}, 30_000);",
+    ].join('\n');
+    expect(readPerTestTimeouts(source, 'sample.test.mjs')).toEqual([30_000]);
   });
 
   it('sees one declaration in a file that also explains itself in a JSDoc block', () => {
