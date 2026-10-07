@@ -458,7 +458,10 @@ export function preflight({
     refuse('unknown-worktree', target);
     return { ok: false, failures, record: null };
   }
-  if (gitState.isPrimary) refuse('main-worktree');
+  // The main checkout can be a linked worktree when the repository root is a
+  // bare working directory. Protect the base branch independently of Git's
+  // `isPrimary` marker so a stale inventory cannot classify it for removal.
+  if (gitState.isPrimary || gitState.branch === 'main') refuse('main-worktree');
   if (gitState.detached) refuse('detached');
   // `readGitState` writes one of two parenthesised placeholders when
   // `git worktree list --porcelain` gave no `branch` line. They are matched by
@@ -1314,6 +1317,38 @@ export function dispose(
       salvage: saved,
       branchKept: keepBranch,
     };
+  }
+
+  const hasDirtyWork = (gitState.modified ?? 0) + (gitState.untracked ?? 0) > 0;
+  if (keepBranch && hasDirtyWork) {
+    if (!saved || saved.written?.length === 0) {
+      steps.push(`KEPT worktree ${gitState.absolutePath}: dirty files were not archived`);
+      return {
+        steps,
+        branchDeleted: false,
+        worktreeRemoved: false,
+        anchorRef: ref,
+        salvage: saved,
+        branchKept: true,
+      };
+    }
+    try {
+      run(gitState.absolutePath, ['reset', '--hard', 'HEAD']);
+      run(gitState.absolutePath, ['clean', '-fd']);
+      const remaining = run(gitState.absolutePath, ['status', '--porcelain']).stdout;
+      if (remaining.trim()) throw new Error('working tree remains dirty after archive cleanup');
+      steps.push('cleared tracked and untracked files after verifying their archive');
+    } catch (err) {
+      steps.push(`KEPT worktree ${gitState.absolutePath}: unable to clear archived edits (${firstLine(err)})`);
+      return {
+        steps,
+        branchDeleted: false,
+        worktreeRemoved: false,
+        anchorRef: ref,
+        salvage: saved,
+        branchKept: true,
+      };
+    }
   }
 
   // Catching git's refusal rather than propagating it. An uncaught throw here

@@ -212,6 +212,11 @@ describe('dispose preflight', () => {
       ['the target is not a worktree at all', { gitState: { found: false } }, 'unknown-worktree'],
       ['it is the main checkout', { gitState: greenState({ isPrimary: true }) }, 'main-worktree'],
       [
+        'it is the base branch in a linked worktree of a bare repository',
+        { gitState: greenState({ branch: 'main' }) },
+        'main-worktree',
+      ],
+      [
         'a merge is in progress in it',
         {
           operationState: greenOperationState({
@@ -787,6 +792,34 @@ describe('dispose execution', () => {
       expect(removeAt).toBeGreaterThan(salvageAt);
       expect(result.salvage.written.sort()).toEqual(['tracked.patch', 'untracked.tar']);
       expect(tars).toHaveLength(1);
+    });
+
+    it('clears dirty files only after archiving them, then verifies cleanliness before removal', () => {
+      const h = harness({
+        'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
+        'ls-files --others --exclude-standard -z': 'notes.md\0',
+      });
+      const tars = [];
+      const result = dispose('/repo', greenState({ modified: 1, untracked: 1, dirtyPaths: ['x.png', 'notes.md'] }), {
+        run: h.run,
+        fs: h.fs,
+        keepBranch: true,
+        tar: (...args) => tars.push(args),
+      });
+
+      const archiveAt = h.calls.findIndex((call) => call[0] === 'diff');
+      const resetAt = h.calls.findIndex((call) => call[0] === 'reset');
+      const cleanAt = h.calls.findIndex((call) => call[0] === 'clean');
+      const verifyAt = h.calls.findIndex((call) => call.join(' ') === 'status --porcelain');
+      const removeAt = h.calls.findIndex((call) => call[0] === 'worktree' && call[1] === 'remove');
+      expect(tars).toHaveLength(1);
+      expect(archiveAt).toBeLessThan(resetAt);
+      expect(resetAt).toBeLessThan(cleanAt);
+      expect(cleanAt).toBeLessThan(verifyAt);
+      expect(verifyAt).toBeLessThan(removeAt);
+      expect(result.worktreeRemoved).toBe(true);
+      expect(result.branchKept).toBe(true);
+      expect(h.calls.some((call) => call[0] === 'branch')).toBe(false);
     });
 
     it('keeps the branch even when git would have refused to delete it anyway', () => {
