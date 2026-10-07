@@ -1250,6 +1250,8 @@ describe('land vs at-risk: the split that salvage used to hide', () => {
       [RECOMMENDATION.REVIEW_RESIDUE, wt({ ahead: 0, mergedIntoBase: true }), { curated: { mustNotPrune: true } }],
       [RECOMMENDATION.IN_USE, wt({ ahead: 0, mergedIntoBase: true }), { boardAgents: [{ live: true, agentId: 'a' }] }],
       [RECOMMENDATION.KEEP, wt({ isPrimary: true }), {}],
+      [RECOMMENDATION.KEEP, wt({ branch: 'main' }), {}],
+      [RECOMMENDATION.KEEP, wt({ branch: 'trunk' }), { base: 'trunk' }],
       // A curated `legacy` on a branch git already calls disposable. The shape is
       // the ordinary one so the ONLY thing producing the verdict is the flag.
       [

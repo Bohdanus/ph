@@ -230,6 +230,7 @@ export function classify(
     shellHistory = null,
     readHistory = null,
     liveWritersSuppressed = null,
+    base = 'main',
   }
 ) {
   const reasons = [];
@@ -345,7 +346,7 @@ export function classify(
     : null;
   const mergeState = mergeVerdict(wt);
   let recommendation;
-  if (wt.isPrimary) {
+  if (wt.isPrimary || wt.branch === base) {
     // The main checkout is never a prune candidate, whatever git says about
     // it. It is the landing site, it is where the operator works, and every
     // other session in the repository resolves paths through it.
@@ -353,7 +354,7 @@ export function classify(
     // written back onto the input record, so `wt.live` was always undefined
     // and the main worktree could never report `in-use`.
     recommendation = live ? RECOMMENDATION.IN_USE : RECOMMENDATION.KEEP;
-    reasons.push('the main worktree is never a deletion candidate');
+    reasons.push('the base worktree is never a deletion candidate');
   } else if (live) {
     recommendation = RECOMMENDATION.IN_USE;
     reasons.push(
