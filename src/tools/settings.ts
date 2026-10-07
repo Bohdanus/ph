@@ -36,6 +36,12 @@ import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
 import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
 import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
+import {
+  RED_EYE_DEFAULT_DARKEN_AMOUNT,
+  RED_EYE_DEFAULT_PUPIL_SIZE,
+  type RedEyeToolArgs,
+  type RedEyeToolSettings,
+} from './redEye.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -335,6 +341,12 @@ export const defaultSettings = {
     points: [],
     toolName: 'clone-stamp',
   } satisfies CloneStampToolArgs,
+  'red-eye': {
+    pupilSize: RED_EYE_DEFAULT_PUPIL_SIZE,
+    darkenAmount: RED_EYE_DEFAULT_DARKEN_AMOUNT,
+    point: null,
+    toolName: 'red-eye',
+  } satisfies RedEyeToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },
@@ -405,6 +417,7 @@ export type SavedSettings =
   | SmudgeToolSettings
   | DodgeBurnToolSettings
   | SpongeToolSettings
-  | CloneStampToolSettings;
+  | CloneStampToolSettings
+  | RedEyeToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

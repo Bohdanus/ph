@@ -10,6 +10,7 @@ import type { ColorsToolArgs } from '../tools/colors.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
 import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
+import type { RedEyeToolArgs } from '../tools/redEye.ts';
 
 /**
  * Tool args may arrive from an older build that still had dedicated Circle and
@@ -97,6 +98,8 @@ export function saveLastSettings(args: ToolArgs) {
     // "These samplers are saved in the image" — and that gap is recorded in the tool's description
     // rather than papered over with a field the app has no document to hang it on.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args });
+  } else if (toolName === 'red-eye') {
+    lastSavedSettings['red-eye'] = cloneDeep(omit(args as RedEyeToolArgs, 'point'));
   } else if (
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||

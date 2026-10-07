@@ -25,6 +25,7 @@ import type { SmudgeToolArgs } from '../tools/smudge.ts';
 import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
 import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { CloneStampToolArgs } from '../tools/cloneStamp.ts';
+import type { RedEyeToolArgs } from '../tools/redEye.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -59,6 +60,7 @@ export type ToolArgsByName = {
    */
   sponge: SpongeToolArgs;
   'clone-stamp': CloneStampToolArgs;
+  'red-eye': RedEyeToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
   'color-replacement': ColorReplacementToolArgs;
