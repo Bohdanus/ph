@@ -81,6 +81,9 @@ export default defineConfig({
     headers: {
       'Cache-Control': 'no-store, no-cache, must-revalidate',
     },
+    fs: {
+      allow: [path.resolve(import.meta.dirname), path.resolve(import.meta.dirname, '..', '..', '..', 'node_modules')],
+    },
   },
   // No `test` block here on purpose. This file is the Vite build config; unit-test
   // settings live in `vitest.config.ts` (app, jsdom) and `vitest.e2e.config.ts`
