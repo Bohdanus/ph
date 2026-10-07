@@ -42,6 +42,7 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 vi.mock('../toolIcons.tsx', () => {
   const iconNames = [
     'reposition',
+    'red-eye',
     'hand',
     'zoom',
     'rotate-view',

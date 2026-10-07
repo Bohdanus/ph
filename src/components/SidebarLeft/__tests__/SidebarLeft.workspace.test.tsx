@@ -60,6 +60,7 @@ vi.mock('../toolIcons.tsx', () => {
     'eyedropper',
     'eraser',
     'clone-stamp',
+    'red-eye',
     'paint-bucket',
     'gradient',
     'sharpen',

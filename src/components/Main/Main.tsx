@@ -18,6 +18,7 @@ import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { RulerToolArea } from './RulerToolArea.tsx';
 import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
+import { RedEyeToolArea } from './RedEyeToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -199,6 +200,8 @@ const Main = () => {
     interactionMode = 'sponge';
   } else if (toolName === 'clone-stamp') {
     interactionMode = 'clone-stamp';
+  } else if (toolName === 'red-eye') {
+    interactionMode = 'red-eye';
   } else if (toolName === 'sharpen') {
     interactionMode = 'sharpen';
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
@@ -322,7 +325,8 @@ const Main = () => {
       | typeof SharpenToolArea
       | typeof GradientToolArea
       | typeof FillToolArea
-      | typeof ColorReplacementToolArea;
+      | typeof ColorReplacementToolArea
+      | typeof RedEyeToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -348,6 +352,7 @@ const Main = () => {
       else if (interactionMode === 'burn') EventHandler = BurnToolArea;
       else if (interactionMode === 'sponge') EventHandler = SpongeToolArea;
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
+      else if (interactionMode === 'red-eye') EventHandler = RedEyeToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
       else if (interactionMode === 'gradient') EventHandler = GradientToolArea;

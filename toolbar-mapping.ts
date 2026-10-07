@@ -106,6 +106,7 @@ export const toolbarMap = [
     // Photoshop's Stamp flyout is its own tile immediately after the Brush group; the
     // pattern and patch stamps behind it are not implemented and stay out of the map.
     [{ label: 'Clone Stamp Tool', name: 'clone-stamp', shortcut: 'S' }],
+    [{ label: 'Red Eye Tool', name: 'red-eye' }],
     [
       { label: 'Blur Tool', name: 'blur' },
       { label: 'Sharpen Tool', name: 'sharpen' },
@@ -205,6 +206,7 @@ export const availableTools: readonly ToolName[] = [
   'eraser',
   'magic-eraser',
   'clone-stamp',
+  'red-eye',
   'paint-bucket',
   'gradient',
   'sharpen',

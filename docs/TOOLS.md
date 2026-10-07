@@ -974,6 +974,36 @@ Sources:
 
 ---
 
+### Red Eye Tool
+
+`red-eye`
+
+Reduces the red flash reflection in an eye with adjustable pupil size and darkening.
+
+The Red Eye tool corrects the red appearance caused when flash reflects from the retina. Click the red pupil on the active layer; Pupil Size limits the local region examined, and Darken Amount controls how strongly the red pixels are darkened. Adobe’s current help page explains the cause and prevention of red eye but does not describe the tool’s detection algorithm, slider ranges, defaults, or shortcut. The app therefore uses a bounded connected red-pixel correction as an explicit approximation, not as a claim to Photoshop’s undocumented detector.
+
+**Options bar**
+
+| Control       | Photoshop                                                                                                                                                                                                                                                                             | In this app                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Pupil Size    | Sets the bounded local region examined around the click. The inventory identifies this as a Photoshop control; its exact range and default are not specified by the current Adobe help page. This app maps 0–100 to a radius proportional to the image dimensions and seeds it at 50. | `present` — `src/components/ToolbarsRight/RedEye/RedEye.tsx:21` |
+| Darken Amount | Controls how strongly pixels in the detected red region are darkened after the red cast is neutralized. The current Adobe help page does not specify a range or default. This app exposes a 0–100 percent slider seeded at 50.                                                        | `present` — `src/components/ToolbarsRight/RedEye/RedEye.tsx:25` |
+
+**In this app:** `partial` — The app corrects a connected region of red-dominant pixels on the active layer and records the edit as a replayable raster operation. It does not implement Photoshop’s proprietary eye/pupil detector, and this bounded threshold-based correction can miss low-red eyes or include connected red detail. The current Adobe HelpX page establishes the flash-reflection cause and prevention advice, not the tool interaction or numerical controls; the exact shortcut, ranges, defaults and detection method remain unverified. The app deliberately does not claim Photoshop fidelity for those details.
+
+Implementation:
+
+- `src/tools/redEye.ts:38`
+- `src/components/Main/RedEyeToolArea.tsx:19`
+- `src/tools/toolProcessors.ts:314`
+- `src/tools/toolsMap.ts:115`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-red-eye-in-flash-photos.html>
+
+---
+
 ## Focus and tone
 
 Long-form research, provenance and unverified claims: [`src/tools/descriptions/focus.notes.md`](../src/tools/descriptions/focus.notes.md).

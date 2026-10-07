@@ -15,6 +15,7 @@ import { EraserIcon } from './icons/EraserIcon';
 import { EyedropperIcon } from './icons/EyedropperIcon';
 import { ColorSamplerIcon } from './icons/ColorSamplerIcon';
 import { RulerIcon } from './icons/RulerIcon';
+import { RedEyeIcon } from './icons/RedEyeIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
@@ -72,6 +73,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-sta
   'single-column-marquee': SingleColumnMarqueeIcon,
   'quick-selection': QuickSelectionIcon,
   'clone-stamp': CloneStampIcon,
+  'red-eye': RedEyeIcon,
   gradient: GradientIcon,
   sharpen: SharpenIcon,
   smudge: SmudgeIcon,

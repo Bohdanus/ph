@@ -2,6 +2,7 @@ import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
 import { cloneStamp } from './cloneStamp.ts';
+import { redEye } from './redEye.ts';
 import { colors } from './colors.ts';
 import { colorReplacement } from './colorReplacement.ts';
 import { crop } from './crop.ts';
@@ -316,6 +317,12 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: cloneStamp,
+  },
+  'red-eye': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: redEye,
   },
   brush: {
     commit: 'raster',
