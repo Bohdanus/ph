@@ -2091,6 +2091,13 @@ displaced fetch. There is no shared region-write primitive to hang a common help
 per-processor change and needs its own tests — a "clip the whole result afterwards" approach
 re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
 
+**Replay contract.** Capture the effective selection input with each committed raster operation, or
+undo/redo will read the current selection rather than the one that constrained the original edit.
+`replayHistory()` and durable materialization rerun processors from stored args; clipping only from
+live store state is not replay-safe. Preserve feathered alpha and selection geometry in that
+snapshot, and avoid duplicating a full-document alpha plane per history entry without measuring its
+memory cost.
+
 **Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
 now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
 different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
@@ -2098,7 +2105,8 @@ different architecture, so this is a rebuild, not a merge. Two of that branch's 
 addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
 
 **Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
-`src/contexts/useLayer.ts` (the commit path)
+`src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
+`src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
 ## 123. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
 
