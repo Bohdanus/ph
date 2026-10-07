@@ -367,7 +367,8 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    *
    * THE CLAIM IS TAKEN FIRST, AND THE REF ONLY WHEN IT SUCCEEDS. Every other claim
    * site in the app — `DrawToolArea`, `ShapeToolArea`, `EraserToolArea`,
-   * `RectangularSelectionToolArea`, and the drag-handle half of `MoveToolArea` —
+   * `RectangularSelectionToolArea`, the drag-handle half of `MoveToolArea`, and
+   * the selection-drag pair below —
    * writes its ref under `if (claim(...))`; this one wrote it before the call and
    * threw the answer away, and the ref is what every release route names. A press
    * that lost the race therefore left the ref on a pointer that owns nothing: the
@@ -378,10 +379,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    * page reload. `handlePointerDown` refuses a second press while a stroke is
    * running, so the race is unreachable here — but a discarded return value is a
    * defect on its own, and the guard that closes it belongs to the call, not to the
-   * caller. (The selection-drag pair below writes its ref the same unsafe way and is
-   * left alone: `handlePointerDown` displaces a running drag on every press before it
-   * reaches there, so its claim is always closed first, and there is no second
-   * claimant for this kind.)
+   * caller. The selection-drag pair below follows the same ordering now, so a
+   * refused claim cannot leave a release route naming a pointer this component does
+   * not own.
    *
    * The capture is not conditional on the pointer id being real, because the two
    * answer different questions: capture needs a real pointer id to ask the browser
@@ -452,9 +452,12 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
    */
   function captureSelectionPointer(event: PointerEvent<HTMLDivElement>) {
     const pointerId = getPointerId(event);
-    selectionPointerIdRef.current = pointerId;
 
-    claimDocumentGesture('polygon-selection', pointerId);
+    // A losing press owns neither the document nor the surface capture. Keep the
+    // ref untouched so its release route cannot release a foreign pointer.
+    if (!claimDocumentGesture('polygon-selection', pointerId)) return;
+
+    selectionPointerIdRef.current = pointerId;
 
     if (pointerId === null) return;
 
