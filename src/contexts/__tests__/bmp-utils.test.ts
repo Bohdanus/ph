@@ -503,6 +503,16 @@ describe('BMP decoding error paths', () => {
     expect(() => decodeBmp(view.buffer)).toThrow('Invalid BMP dimensions');
   });
 
+  it.each([10_000, -10_000])('rejects over-budget dimensions before reading pixels (%i height)', (rawHeight) => {
+    const view = makeBmpHeader();
+    view.setInt32(18, 10_001, true);
+    view.setInt32(22, rawHeight, true);
+
+    expect(() => decodeBmp(view.buffer)).toThrow(
+      'BMP image is too large to open (10001×10000). Maximum is 100000000 pixels.'
+    );
+  });
+
   it.each([0, 2, 15, 48])('rejects the unsupported color depth %i', (bitsPerPixel) => {
     const view = makeBmpHeader();
     view.setUint16(28, bitsPerPixel, true);
