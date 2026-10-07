@@ -98,6 +98,7 @@ export const toolbarMap = [
       { label: 'Pencil Tool', name: 'pencil' },
       { label: 'Color Replacement Tool', name: 'color-replacement' },
       { label: 'Spot Healing Brush Tool', name: 'spot-healing' },
+      { label: 'Healing Brush Tool', name: 'healing-brush' },
       { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
       // Photoshop binds the Magic Eraser to nothing, so it is declared without a shortcut rather
       // than given one that would collide with the Paint Bucket's `G`.
@@ -172,6 +173,7 @@ export const availableTools: readonly ToolName[] = [
   'pencil',
   'color-replacement',
   'spot-healing',
+  'healing-brush',
   'pen',
   'freeform-pen',
   'curvature-pen',

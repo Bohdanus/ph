@@ -489,6 +489,26 @@ Sources:
 - <https://helpx.adobe.com/photoshop/web/edit-images/retouch/remove-spots.html>
 - <https://helpx.adobe.com/photoshop/using/healing-examples.html>
 
+## Healing Brush Tool
+
+Adobe distinguishes the Healing Brush from Spot Healing by its manual
+Alt/Option-click source. This implementation samples a source point, carries the
+source offset across the stroke when Aligned is on, and adjusts the sampled RGB
+texture toward the destination luminance before compositing it through the tip.
+That is a deterministic approximation, not a claim to Adobe’s private
+Poisson-blending implementation.
+
+Pattern source, Sample Current & Below / All Layers, Ignore Adjustment Layers,
+Diffusion, pressure-driven size, blend-mode selection, cross-document sampling
+and selection clipping remain deferred. They are recorded as missing controls in
+`paint.ts` rather than exposed as inert options.
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
+
 ## Unverified
 
 Claims that came up in the brief, in the prior research corpus, or in this pass and could **not** be established from a source that was actually opened. They are deliberately absent from `paint.ts`. Each entry names the URL that came closest.

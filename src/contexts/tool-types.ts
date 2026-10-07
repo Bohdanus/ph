@@ -27,6 +27,7 @@ import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { CloneStampToolArgs } from '../tools/cloneStamp.ts';
 import type { RedEyeToolArgs } from '../tools/redEye.ts';
 import type { SpotHealingToolArgs } from '../tools/spotHealing.ts';
+import type { HealingBrushToolArgs } from '../tools/healingBrush.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -63,6 +64,7 @@ export type ToolArgsByName = {
   'clone-stamp': CloneStampToolArgs;
   'red-eye': RedEyeToolArgs;
   'spot-healing': SpotHealingToolArgs;
+  'healing-brush': HealingBrushToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
   'color-replacement': ColorReplacementToolArgs;

@@ -170,7 +170,8 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'burn' ||
     toolName === 'sponge' ||
     toolName === 'clone-stamp' ||
-    toolName === 'spot-healing'
+    toolName === 'spot-healing' ||
+    toolName === 'healing-brush'
   ) {
     // These five are brushes, so `points` is the stroke that was just committed and not
     // a setting: reseeding it would hand the next drag the previous one. Emptied the

@@ -21,6 +21,7 @@ export type ToolIconName =
   | 'clone-stamp'
   | 'red-eye'
   | 'spot-healing'
+  | 'healing-brush'
   | 'paint-bucket'
   | 'gradient'
   | 'sharpen'

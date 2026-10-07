@@ -427,7 +427,7 @@ export const AppKeyboardShortcuts = () => {
     key: 'j',
     mod: false,
     enabled: hasImage,
-    onKeyDown: () => goToTool('spot-healing'),
+    onKeyDown: () => goToTool('healing-brush'),
   });
 
   useKeyDownShortcut({
