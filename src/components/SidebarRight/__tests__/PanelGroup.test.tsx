@@ -163,9 +163,7 @@ describe('PanelGroup', () => {
       expect(screen.queryByText(BODY_MARKER)).toBeNull();
       // A roll-up leaves the tab bar, not an empty box: the title is meant to still be there.
       expect(screen.getByText('Layers')).toBeInTheDocument();
-      // The target `aria-controls` names is gone while the attribute still names it — asserted
-      // because that is what the component does, and a fix has to change this line, not this test.
-      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
+      expect(control).not.toHaveAttribute('aria-controls');
       expect(document.getElementById('panel-body-layers')).toBeNull();
     });
 

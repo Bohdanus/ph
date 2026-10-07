@@ -376,7 +376,7 @@ const SidebarRight = () => {
             <button
               aria-label={layout.isCollapsed ? 'Expand panels' : 'Collapse panels to icons'}
               aria-pressed={layout.isCollapsed}
-              className="ml-2 rounded px-1 text-sm leading-none text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-600 dark:hover:text-gray-100"
+              className="ml-2 rounded px-1 text-sm leading-none text-gray-600 transition-colors hover:bg-gray-300 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-gray-100"
               onClick={layout.toggleCollapsed}
               onPointerDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}

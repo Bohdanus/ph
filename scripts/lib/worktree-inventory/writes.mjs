@@ -540,10 +540,10 @@ function summariseKind(kind, { nowMs, liveWindowMs, suppressed = false, released
     };
   });
 
-  const latest = all.reduce((n, c) => Math.max(n, Date.parse(c.lastAt ?? 0) || 0), 0);
   const chats = all
     .filter((c) => (Date.parse(c.lastAt ?? 0) || 0) > releasedBeforeMs)
     .sort((a, b) => (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0));
+  const latest = chats.reduce((n, c) => Math.max(n, Date.parse(c.lastAt ?? 0) || 0), 0);
 
   const derived = chats
     .filter((c) => latest > 0 && nowMs - (Date.parse(c.lastAt) || 0) < liveWindowMs)

@@ -288,7 +288,7 @@ export const DRAW_TOOL_STROKE_WIDTH = 10;
  *
  * WHY A NUMBER AND NOT A RULE. A stroke rasterised into the document canvas has boundaries at
  * its two endpoints and at `lineWidth/2` beyond each of them in every direction; the pen is
- * `moveTo` + `bezierSmoothedLine` + `stroke` with a ROUND cap (`src/tools/draw.ts:56`), and
+ * `moveTo` + `bezierSmoothedLine` + `stroke` with a ROUND cap (`src/tools/draw.ts:55`), and
  * the layer is composited at float x/y (`src/contexts/layer-renderer.ts:81`). A boundary that
  * lands exactly on an integer document pixel therefore sits on a Skia anti-aliasing rounding
  * tie, and the SIGN of a sub-pixel error decides an 8-bit coverage value.

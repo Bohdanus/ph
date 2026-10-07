@@ -3,7 +3,7 @@ import type { DrawToolArgs } from '../tools/draw.ts';
 import { smoothStrokePoints } from '../tools/brush.ts';
 import { hexToRgb } from './rect.ts';
 
-export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+function getPointExtents(points: Point[]) {
   const pp = points!;
   let minX = pp[0].x;
   let minY = pp[0].y;
@@ -18,11 +18,31 @@ export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: numbe
     if (p.y > maxY) maxY = p.y;
   }
 
+  return { minX, minY, maxX, maxY };
+}
+
+export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+  const { minX, minY, maxX, maxY } = getPointExtents(points);
+
   return {
     x: minX - lineWidth,
     y: minY - lineWidth,
     width: maxX - minX + 2 * lineWidth,
     height: maxY - minY + 2 * lineWidth,
+  };
+}
+
+/** Aligns padded stroke bounds to whole-pixel raster dimensions without narrowing them. */
+export function pointsBoundingPosOutward({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
+  const { minX, minY, maxX, maxY } = getPointExtents(points);
+  const x = Math.floor(minX - lineWidth);
+  const y = Math.floor(minY - lineWidth);
+
+  return {
+    x,
+    y,
+    width: Math.ceil(maxX + lineWidth) - x,
+    height: Math.ceil(maxY + lineWidth) - y,
   };
 }
 

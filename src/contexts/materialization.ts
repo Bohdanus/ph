@@ -27,6 +27,9 @@ export type MaterializedLayer = Readonly<{
   layerId: string;
   bitmap: BitmapSource;
   bounds: Pos;
+  visible: boolean;
+  opacity: number;
+  blendMode: GlobalCompositeOperation;
   lease: MaterializationLease<Pos>;
 }>;
 
@@ -344,6 +347,9 @@ export async function materializeLayer(
     layerId: layer.snapshot.id,
     bitmap: lease.bitmap,
     bounds: lease.metadata,
+    visible: layer.snapshot.visible,
+    opacity: layer.snapshot.opacity,
+    blendMode: layer.snapshot.blendMode,
     lease,
   };
 }

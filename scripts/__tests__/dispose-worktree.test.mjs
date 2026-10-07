@@ -35,12 +35,14 @@ import {
   locateInventory,
   preflight,
   protectedContentOnDisk,
+  readInventory,
   REFUSALS,
   readGitState,
   readOperationState,
   rebuildCommand,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
+import { SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 // Imported from its own module, not re-exported: the test asserts against the
 // same constant objects the generator writes into WORKTREES.json, so a rename of
 // an action value breaks these cases rather than silently agreeing with them.
@@ -88,7 +90,15 @@ function greenInventory(overrides = {}) {
     reason: null,
     generatedAt: new Date(NOW - 60_000).toISOString(),
     generatedAtMs: NOW - 60_000,
-    record: { action: ACTION.DISPOSE, mustNotPrune: false, derivedLive: false, writeHistory: { derivedChatIds: [] } },
+    evaluationAt: new Date(NOW - 60_000).toISOString(),
+    evaluationAtMs: NOW - 60_000,
+    record: {
+      action: ACTION.DISPOSE,
+      prunable: true,
+      mustNotPrune: false,
+      derivedLive: false,
+      writeHistory: { derivedChatIds: [] },
+    },
     ...overrides,
   };
 }
@@ -183,6 +193,11 @@ describe('dispose preflight', () => {
       ['HEAD is detached', { gitState: greenState({ detached: true, branch: '(detached)' }) }, 'detached'],
       ['there is no branch to delete', { gitState: greenState({ branch: '(unknown)' }) }, 'no-branch'],
       ['the inventory is absent', { inventory: { ok: false, reason: 'missing' } }, 'inventory-missing'],
+      [
+        'the inventory schema is from another disposer',
+        { inventory: { ok: false, reason: 'version', version: 3 } },
+        'inventory-version',
+      ],
       ['the inventory has no entry for it', { inventory: greenInventory({ record: null }) }, 'not-in-inventory'],
       [
         'the inventory is older than the limit',
@@ -322,7 +337,7 @@ describe('dispose preflight', () => {
         modified: 0,
         untracked: 0,
       }),
-      inventory: greenInventory({ record: { action: ACTION.DISPOSE, mustNotPrune: false } }),
+      inventory: greenInventory({ record: { action: ACTION.DISPOSE, prunable: true, mustNotPrune: false } }),
       board: {
         available: true,
         claims: [],
@@ -404,14 +419,65 @@ describe('dispose preflight', () => {
     expect(codes(verdict)).toEqual(['board-unavailable', 'dirty-tree', 'sessions-unavailable']);
   });
 
-  it('accepts an inventory exactly at the age limit and refuses one millisecond past it', () => {
+  it('accepts a past inventory at the age limit but refuses any future timestamp', () => {
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS }) }).ok).toBe(true);
     expect(green({ inventory: greenInventory({ generatedAtMs: NOW - MAX_INVENTORY_AGE_MS - 1 }) }).ok).toBe(false);
+    expect(green({ inventory: greenInventory({ generatedAtMs: NOW + 1 }) }).ok).toBe(false);
+  });
+
+  it('refuses any future pinned evaluation clock even when generation is current', () => {
+    const verdict = green({
+      inventory: greenInventory({ evaluationAtMs: NOW + 1 }),
+    });
+
+    expect(codes(verdict)).toContain('inventory-evaluation-stale');
+    expect(verdict.failures.find((failure) => failure.code === 'inventory-evaluation-stale').message).toContain(
+      'without `--now`'
+    );
+  });
+
+  it('refuses a future-dated inventory beyond the freshness limit', () => {
+    const verdict = green({
+      inventory: greenInventory({ generatedAtMs: NOW + MAX_INVENTORY_AGE_MS + 1 }),
+    });
+    expect(codes(verdict)).toContain('inventory-stale');
+    expect(verdict.failures[0].message).toContain('generated in 15 min');
   });
 
   it('refuses an inventory whose generatedAt is unparseable rather than treating it as fresh', () => {
     const verdict = green({ inventory: greenInventory({ generatedAt: 'not-a-date', generatedAtMs: NaN }) });
     expect(codes(verdict)).toContain('inventory-stale');
+  });
+});
+
+describe('inventory schema', () => {
+  it.each([
+    ['missing', { generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
+    ['unsupported', { schemaVersion: SCHEMA_VERSION - 1, generatedAt: new Date(NOW).toISOString(), worktrees: [] }],
+  ])('refuses an inventory with a %s schema', (label, doc) => {
+    const path = writeFixture(`schema-${label}.json`, JSON.stringify(doc));
+    const inventory = readInventory('/repo', greenState(), { nowMs: NOW, path });
+    expect(inventory).toMatchObject({ ok: false, reason: 'version', path });
+
+    expect(codes(green({ inventory }))).toContain('inventory-version');
+  });
+
+  it('reads the current inventory schema', () => {
+    const path = writeFixture(
+      'schema-current.json',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        generatedAt: new Date(NOW).toISOString(),
+        ownership: { asOf: new Date(NOW).toISOString() },
+        worktrees: [],
+      })
+    );
+    expect(readInventory('/repo', greenState(), { nowMs: NOW, path })).toMatchObject({
+      ok: true,
+      reason: null,
+      evaluationAtMs: NOW,
+      record: null,
+    });
   });
 });
 
@@ -517,8 +583,11 @@ describe('dispose execution', () => {
 
   it('writes no anchor when even the slugged ref is invalid', () => {
     const { run, fs, calls } = harness({ 'check-ref-format refs/keep/disposed/weird': new Error('bad name') });
-    dispose('/repo', greenState({ branch: '(weird)', name: '(weird)' }), { run, fs });
+    const result = dispose('/repo', greenState({ branch: '(weird)', name: '(weird)' }), { run, fs });
     expect(calls.some((c) => c[0] === 'update-ref')).toBe(false);
+    expect(calls.some((c) => c[0] === 'worktree' && c[1] === 'remove')).toBe(false);
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
   });
 
   it('never passes --force or -f to worktree remove', () => {
@@ -574,6 +643,14 @@ describe('dispose execution', () => {
         [
           'derived-live-writer',
           { inventory: legacyInventory({ derivedLive: true, writeHistory: { derivedChatIds: ['ses_abc'] } }) },
+        ],
+        [
+          'operation-in-progress',
+          {
+            operationState: greenOperationState({
+              operations: [{ operation: 'merge', marker: 'MERGE_HEAD', value: 'd' }],
+            }),
+          },
         ],
         ['ignored-content', { gitState: greenState({ ignoredWork: ['notes.log'] }) }],
       ];
@@ -635,63 +712,6 @@ describe('dispose execution', () => {
       expect(result.steps.join('\n')).toContain('legacy');
     });
 
-    it('says the no-anchor step, because it is the whole difference between the two modes', () => {
-      // Unpinned before this test: deleting the line that reports the skipped anchor
-      // left every other assertion green, which is how a step that exists to explain
-      // a missing ref can be removed without anything noticing.
-      const { run, fs } = harness();
-      const result = dispose('/repo', greenState(), { run, fs, keepBranch: true });
-      expect(result.steps.join('\n')).toContain('no anchor ref');
-      // And an ordinary disposal says nothing of the kind, because it anchors.
-      const ordinary = harness();
-      const plain = dispose('/repo', greenState(), { run: ordinary.run, fs: ordinary.fs });
-      expect(plain.steps.join('\n')).not.toContain('no anchor ref');
-      expect(plain.anchorRef).not.toBeNull();
-    });
-
-    it('does not send a failed legacy disposal to an anchor that was never written', () => {
-      // `ref ?? 'no anchor'` was unreachable while `ref` was null only on a refusal
-      // path. `keepBranch` makes a null ref the NORMAL state, so the fallback turned
-      // a routine legacy failure into "its branch is still anchored at no anchor" —
-      // self-contradicting, and pointing at a ref this module documents as the only
-      // recovery point for a DISPOSED branch. It is the last line printed before exit 2.
-      const { run, fs } = harness({
-        'worktree remove /repo/.kilo/worktrees/task': new Error('use `remove -f -f` to override'),
-      });
-      const legacy = dispose('/repo', greenState(), { run, fs, keepBranch: true });
-      expect(legacy.worktreeRemoved).toBe(false);
-      const said = legacy.steps.join('\n');
-      expect(said).toContain('is untouched');
-      expect(said, 'must not point at an anchor a legacy disposal never writes').not.toContain('anchored at no anchor');
-      // An ordinary disposal still names the anchor it actually wrote.
-      const ordinary = harness({
-        'worktree remove /repo/.kilo/worktrees/task': new Error('use `remove -f -f` to override'),
-      });
-      const plain = dispose('/repo', greenState(), { run: ordinary.run, fs: ordinary.fs });
-      expect(plain.steps.join('\n')).toContain(`anchored at refs/keep/disposed/fix-task`);
-    });
-
-    it('reports the same result shape whichever refusal ended the preflight', () => {
-      // The early return for an unknown target had a different key set from the
-      // final one, so a caller destructuring the result got `undefined` here and a
-      // boolean there — and this is the return a new caller hits first.
-      const unknown = preflight({ target: 'nope', gitState: { found: false } });
-      const refused = green({ inventory: legacyInventory() });
-      expect(Object.keys(unknown).sort()).toEqual(Object.keys(refused).sort());
-      expect(unknown.keepBranch).toBe(false);
-    });
-
-    it('reports keepBranch even when the verdict refuses the record it came from', () => {
-      // It is a CLAIM, not an outcome, until `ok`. It is computed before the
-      // freshness, action, `mustNotPrune`, live and ownership checks, so it reads
-      // `true` beside `ok: false` for any refused record. Nothing destructive
-      // follows — `main()` gates on `ok` — but the pairing is the contract.
-      const verdict = green({ inventory: legacyInventory({ mustNotPrune: true }) });
-      expect(codes(verdict)).toContain('must-not-prune');
-      expect(verdict.ok).toBe(false);
-      expect(verdict.keepBranch).toBe(true);
-    });
-
     it('still salvages before removing the directory', () => {
       // Ordering, not coverage: the salvage is the only thing standing between a
       // tree that turned out to hold something and its loss, and skipping it for
@@ -738,6 +758,17 @@ describe('dispose execution', () => {
     expect(refused.steps.join('\n')).toContain(KEEP_REF_PREFIX);
   });
 
+  it('uses guarded -D only for a patch-absorbed branch after anchoring it', () => {
+    const h = harness();
+    const result = dispose('/repo', greenState(), { run: h.run, fs: h.fs, deleteAbsorbedBranch: true });
+    const anchorAt = h.calls.findIndex((c) => c[0] === 'update-ref');
+    const deleteAt = h.calls.findIndex((c) => c.join(' ') === 'branch -D fix/task');
+    expect(anchorAt).toBeGreaterThanOrEqual(0);
+    expect(deleteAt).toBeGreaterThan(anchorAt);
+    expect(result.branchDeleted).toBe(true);
+    expect(result.steps.join('\n')).toContain('patch-equivalence verification');
+  });
+
   it('salvages a binary-safe patch and an untracked archive, and lists what it wrote', () => {
     const h = harness({
       'diff HEAD --binary': 'diff --git a/x.png b/x.png\n',
@@ -778,6 +809,8 @@ describe('dispose execution', () => {
     expect(result.salvage.failed[0]).toContain('untracked.tar');
     // And the caller says so out loud rather than returning quietly.
     expect(result.steps.join('\n')).toContain('SALVAGE INCOMPLETE');
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
   });
 
   it('salvages nothing, and says so, when there is nothing uncommitted', () => {

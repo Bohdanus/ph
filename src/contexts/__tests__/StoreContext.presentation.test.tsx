@@ -2,6 +2,8 @@ import { act, render } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as durableCompositor from '../durable-compositor.ts';
+import type { DurableComposite } from '../durable-compositor.ts';
 import {
   durablePresentationIsRendererIdentical,
   type StoreData,
@@ -12,7 +14,8 @@ import {
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayersRecord } from '../layer-types.ts';
+import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
+import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
 import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
@@ -432,6 +435,104 @@ describe('PROMOTE_LAYER_PRESENTATIONS', () => {
 
     expect(store().layers[layerId]).toBeUndefined();
     expect(owned.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('durable navigation presentation freshness', () => {
+  it('declines a composition after the same document ID is replaced with a new frame', async () => {
+    const sourceBitmap = createMockImageBitmap(100, 80);
+    const staged = canvas(100, 80);
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const source: ImageLayerSource = { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos };
+    const existingLayer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      bitmap: sourceBitmap,
+      tmpCanvas: staged,
+      source,
+    };
+    const materializedBitmap = createMockImageBitmap(100, 80);
+    const releaseMaterialized = vi.fn();
+    const materialized: MaterializedLayer = {
+      layerId,
+      bitmap: materializedBitmap,
+      bounds: pos,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      lease: {
+        key: 'stale-frame-composition',
+        bitmap: materializedBitmap,
+        byteSize: 100 * 80 * 4,
+        metadata: pos,
+        release: releaseMaterialized,
+      },
+    };
+    const layers = { [layerId]: materialized };
+    const releaseDetached = vi.fn(() => releaseMaterialized());
+    const releaseComposite = vi.fn();
+    const composite: DurableComposite = {
+      bitmap: materializedBitmap,
+      frame: defaultFrame,
+      layers,
+      takeLayers: () => ({ layers, release: releaseDetached }),
+      release: releaseComposite,
+    };
+    let finishComposition!: () => void;
+    const composition = new Promise<void>((resolve) => {
+      finishComposition = resolve;
+    });
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument').mockImplementation(async () => {
+      await composition;
+      return composite;
+    });
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: existingLayer });
+    replayTo(dispatch(), { [layerId]: existingLayer }, {});
+    expect(compose).toHaveBeenCalledTimes(1);
+
+    const changedFrame = { x: 12, y: 8, width: 200, height: 150 };
+    const replacementHistory: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId,
+        documentSource: {
+          layers: { [layerId]: existingLayer },
+          size: { width: 200, height: 150 },
+          frame: changedFrame,
+        },
+      },
+    ];
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-1',
+          history: replacementHistory,
+          historyIndex: 0,
+          updates: {
+            layers: { [layerId]: existingLayer },
+            documentFrame: changedFrame,
+            totalSize: { width: 200, height: 150 },
+          },
+        },
+      });
+    });
+    expect(store().durableStatus).toBe('current');
+
+    await act(async () => {
+      finishComposition();
+      await composition;
+      await Promise.resolve();
+    });
+
+    expect(store().documentFrame).toEqual(changedFrame);
+    expect(store().durableStatus).toBe('current');
+    expect(store().layers[layerId].tmpCanvas).toBe(staged);
+    expect(releaseDetached).toHaveBeenCalledOnce();
+    expect(releaseMaterialized).toHaveBeenCalledOnce();
+    expect(releaseComposite).toHaveBeenCalledOnce();
   });
 });
 
