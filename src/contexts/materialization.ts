@@ -19,6 +19,7 @@ export type MaterializationRequest = Readonly<{
   baselineAssetGeneration: number;
   operationSetRevision: number;
   frame?: DocumentFrame;
+  pixelGridFrame?: DocumentFrame;
   assetRegistry: AssetRegistry;
   signal?: AbortSignal;
 }>;
@@ -64,6 +65,19 @@ function createCanvas(width: number, height: number): OffscreenCanvas | HTMLCanv
     return canvas;
   }
   throw new Error('No canvas implementation is available for materialization');
+}
+
+function alignBoundsToFrame(bounds: Pos, frame: DocumentFrame): Pos {
+  const left = Math.floor(bounds.x - frame.x);
+  const top = Math.floor(bounds.y - frame.y);
+  const right = Math.ceil(bounds.x + bounds.width - frame.x);
+  const bottom = Math.ceil(bounds.y + bounds.height - frame.y);
+  return {
+    x: frame.x + left,
+    y: frame.y + top,
+    width: right - left,
+    height: bottom - top,
+  };
 }
 
 function context2d(
@@ -200,6 +214,7 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
       (operation) => (operation as { kind?: string }).kind === 'apply-affine-transform'
     ),
     ...(request.frame ? { frame: request.frame } : {}),
+    ...(request.pixelGridFrame ? { pixelGridFrame: request.pixelGridFrame } : {}),
   });
 }
 
@@ -231,7 +246,11 @@ export async function materializeLayer(
         ownsBitmap = previous === next ? previousWasOwned : true;
       };
 
-      const renderRetainedSegment = async (operations: readonly DurableOperation[], force = false) => {
+      const renderRetainedSegment = async (
+        operations: readonly DurableOperation[],
+        force = false,
+        pixelGridFrame?: MaterializationRequest['pixelGridFrame']
+      ) => {
         if (!force && operations.length === 0) return;
         const evaluation = evaluatePresentation({
           position: { x: origin.x, y: origin.y, width: size.width, height: size.height },
@@ -239,10 +258,16 @@ export async function materializeLayer(
           operations: presentationOperations(operations),
           mode: 'layer-bounds',
         });
-        const output = createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
+        const pixelGridBounds = pixelGridFrame ? alignBoundsToFrame(evaluation.bounds, pixelGridFrame) : undefined;
+        const output = pixelGridBounds
+          ? createCanvas(pixelGridBounds.width, pixelGridBounds.height)
+          : createCanvas(evaluation.localBounds.width, evaluation.localBounds.height);
         const ctx = context2d(output);
         ctx.save();
         try {
+          if (pixelGridBounds) {
+            ctx.translate(evaluation.bounds.x - pixelGridBounds.x, evaluation.bounds.y - pixelGridBounds.y);
+          }
           // The evaluator composes affine operations first, then applies the
           // joined filter string to that presentation.
           drawEvaluatedPresentation(ctx, bitmap, evaluation, { kind: 'bounds' });
@@ -250,8 +275,12 @@ export async function materializeLayer(
           ctx.restore();
         }
         replaceOwnedBitmap(await toOwnedBitmap(output));
-        origin = { x: evaluation.bounds.x, y: evaluation.bounds.y };
-        size = { width: evaluation.bounds.width, height: evaluation.bounds.height };
+        origin = pixelGridBounds
+          ? { x: pixelGridBounds.x, y: pixelGridBounds.y }
+          : { x: evaluation.bounds.x, y: evaluation.bounds.y };
+        size = pixelGridBounds
+          ? { width: pixelGridBounds.width, height: pixelGridBounds.height }
+          : { width: evaluation.bounds.width, height: evaluation.bounds.height };
       };
 
       try {
@@ -294,7 +323,12 @@ export async function materializeLayer(
           size.width <= 0 ||
           size.height <= 0 ||
           area <= MAX_AFFINE_PIXELS;
-        await renderRetainedSegment(retainedOperations, requiresSurface);
+        const hasRetainedAffine = retainedOperations.some((operation) => operation.kind === 'apply-affine-transform');
+        await renderRetainedSegment(
+          retainedOperations,
+          requiresSurface,
+          hasRetainedAffine ? request.pixelGridFrame : undefined
+        );
         const bounds: Pos = { x: origin.x, y: origin.y, width: size.width, height: size.height };
         // The materialization cache owns every bitmap it publishes, and it
         // outlives this producer's lease on the source. Skipping the final
