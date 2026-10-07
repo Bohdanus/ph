@@ -253,6 +253,7 @@ const FIGURE_TOOL_NAMES = {
   line: 'line',
   triangle: 'triangle',
   polygon: 'polygon',
+  star: 'shape',
 } satisfies Record<FigureType, ToolName>;
 
 /**

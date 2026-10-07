@@ -4,10 +4,14 @@ import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { useDevicePixelRatio } from '../../../hooks/useDevicePixelRatio.ts';
 import {
   shape,
+  DEFAULT_STAR_RATIO,
   DEFAULT_POLYGON_SIDES,
   MAX_POLYGON_SIDES,
   MIN_POLYGON_SIDES,
   polygonSides,
+  MIN_STAR_RATIO,
+  MAX_STAR_RATIO,
+  starRatio,
   type ShapeLineCap,
   type ShapeToolArgs,
   type ShapeToolMode,
@@ -56,6 +60,7 @@ const figureLabel = (figure: ShapeToolArgs['figure']) => {
   if (figure === 'oval') return 'Ellipse Tool';
   if (figure === 'triangle') return 'Triangle Tool';
   if (figure === 'polygon') return 'Polygon Tool';
+  if (figure === 'star') return 'Star Tool';
   if (figure === 'line') return 'Line Tool';
   return 'Rectangle Tool';
 };
@@ -102,6 +107,7 @@ const Shape: React.FC = () => {
       lineCap: newArgs.lineCap,
       cornerRadius: newArgs.cornerRadius,
       sides: newArgs.sides,
+      starRatio: newArgs.starRatio,
       toolMode: newArgs.toolMode,
     };
     setToolArgs(newArgs);
@@ -201,6 +207,10 @@ const Shape: React.FC = () => {
     }
   };
 
+  const handleStarRatioChange = (event: ChangeEvent<HTMLInputElement>) => {
+    handleChange({ ...args, starRatio: starRatio(Number(event.target.value)) });
+  };
+
   const handleCapChange = (event: ChangeEvent<HTMLSelectElement>) => {
     handleChange({ ...args, lineCap: event.target.value as ShapeLineCap });
   };
@@ -220,6 +230,7 @@ const Shape: React.FC = () => {
     lineDash,
     cornerRadius = 0,
     sides = DEFAULT_POLYGON_SIDES,
+    starRatio: ratio = DEFAULT_STAR_RATIO,
     lineCap = 'butt',
     toolMode = 'shape',
   } = args;
@@ -327,20 +338,20 @@ const Shape: React.FC = () => {
         * off-step entry invalid and dispatches `onChange` anyway, which is why the
         * bound lives in `polygonSides` at commit and is tested there.
       */}
-      {figure === 'polygon' && (
+      {(figure === 'polygon' || figure === 'star') && (
         <div className="flex flex-col">
           <label
-            htmlFor="polygon-sides-input"
+            htmlFor={`${figure === 'star' ? 'star-points' : 'polygon-sides'}-input`}
             className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
           >
-            Sides{' '}
+            {figure === 'star' ? 'Points' : 'Sides'}{' '}
             <span className="font-bold text-gray-900 dark:text-gray-200">
               {sidesDraft === null ? sides : polygonSides(Number(sidesDraft)) || DEFAULT_POLYGON_SIDES}
             </span>
           </label>
           <input
-            id="polygon-sides-input"
-            aria-label="Sides"
+            id={`${figure === 'star' ? 'star-points' : 'polygon-sides'}-input`}
+            aria-label={figure === 'star' ? 'Points' : 'Sides'}
             type="number"
             min={MIN_POLYGON_SIDES}
             max={MAX_POLYGON_SIDES}
@@ -350,6 +361,28 @@ const Shape: React.FC = () => {
             onBlur={handleSidesCommit}
             onKeyDown={handleSidesKeyDown}
             className="h-7 w-20 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
+          />
+        </div>
+      )}
+
+      {figure === 'star' && (
+        <div className="flex flex-col">
+          <label
+            htmlFor="star-ratio-slider"
+            className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          >
+            Star Ratio <span className="font-bold text-gray-900 dark:text-gray-200">{starRatio(ratio)}%</span>
+          </label>
+          <input
+            id="star-ratio-slider"
+            aria-label="Star Ratio"
+            type="range"
+            min={MIN_STAR_RATIO}
+            max={MAX_STAR_RATIO}
+            step={1}
+            value={starRatio(ratio)}
+            onChange={handleStarRatioChange}
+            className="h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
         </div>
       )}

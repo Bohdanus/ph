@@ -57,6 +57,7 @@ const FIGURE_TOOL_NAMES = {
   line: 'line',
   triangle: 'triangle',
   polygon: 'polygon',
+  star: 'shape',
 };
 
 const descriptionKeyFor = (name, figure) => (figure === undefined ? name : FIGURE_TOOL_NAMES[figure]);
@@ -217,6 +218,8 @@ export const renderToolDocs = async () => {
  */
 export const renderTooltips = async () => {
   const entries = Object.entries(toolDescriptions)
+    // Star is a FigureType carried by the shared shape ToolName, not a separate registry name.
+    .filter(([key]) => key !== 'star')
     .map(
       ([key, tool]) =>
         `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)} },`
@@ -255,13 +258,14 @@ ${entries}
  * separately, so a figure added there with no entry here resolves to \`undefined\` at runtime
  * and renders a tooltip with no description; this turns that into a compile error instead.
  */
-const FIGURE_TOOL_NAMES = {
-  rectangle: 'rectangle',
-  oval: 'ellipse',
-  line: 'line',
-  triangle: 'triangle',
-  polygon: 'polygon',
-} satisfies Record<FigureType, ToolName>;
+ const FIGURE_TOOL_NAMES = {
+   rectangle: 'rectangle',
+   oval: 'ellipse',
+   line: 'line',
+   triangle: 'triangle',
+   polygon: 'polygon',
+   star: 'shape',
+ } satisfies Record<FigureType, ToolName>;
 
 /**
  * Which description a toolbar entry shows.

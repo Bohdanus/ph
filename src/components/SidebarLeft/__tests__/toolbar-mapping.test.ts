@@ -18,7 +18,7 @@ const railFigures: readonly string[] = [
 ];
 
 /**
- * The five shape figure aliases, and the only ids in `availableTools` that carry no rail
+ * The five registered shape figure aliases, and the only ids in `availableTools` that carry no rail
  * `name`. They are not `extraTools`: the Rectangle, Ellipse, Triangle, Polygon and Line
  * TILES are all in `toolbarMap`, as `figure` values on entries whose `name` is `shape`.
  *
@@ -26,7 +26,8 @@ const railFigures: readonly string[] = [
  * figure as `oval` while the registry calls that tool `ellipse`, so "is this id on the rail,
  * as a name or as a figure" has no rule to apply to it — the mapping between the two
  * vocabularies is data, and data has to be written down. The set is pinned as exactly these
- * five by the assertions below, so a sixth alias cannot join the exception silently.
+ * five by the assertions below. Star is a figure-only entry and intentionally has no
+ * corresponding `availableTools` name.
  */
 const figureAliases = ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
 const figureAliasSet: ReadonlySet<string> = new Set(figureAliases);
@@ -35,13 +36,14 @@ const figureAliasSet: ReadonlySet<string> = new Set(figureAliases);
  * Hard-coded copy of the narrowed `FigureType` union plus the expected shape flyout.
  * The imported type cannot be enumerated at runtime, so the contract is spelled out.
  */
-const figureTypes = ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const;
+const figureTypes = ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const;
 const expectedShapeFlyout = [
   { label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
   { label: 'Ellipse Tool', name: 'shape', figure: 'oval' },
   { label: 'Line Tool', name: 'shape', figure: 'line' },
   { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
   { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
+  { label: 'Star Tool', name: 'shape', figure: 'star' },
   { label: 'Custom Shape Tool', name: 'custom-shape' },
 ] as const;
 

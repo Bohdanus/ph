@@ -31,6 +31,7 @@ export type ToolIconName =
   | 'shape-line'
   | 'shape-triangle'
   | 'shape-polygon'
+  | 'shape-star'
   | 'text'
   | 'color'
   | 'blur'
