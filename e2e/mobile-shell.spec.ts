@@ -61,7 +61,7 @@ test.describe('Mobile shell', () => {
 
   test('the options sheet carries the group picker, and it selects a sibling tool', async ({ page }) => {
     const toggle = page.getByTestId('mobile-tool-options-toggle');
-    await bottomBar(page).getByRole('button', { name: 'Brush Tool' }).click();
+    await bottomBar(page).getByRole('button', { name: 'Brush Tool', exact: true }).click();
     await toggle.click();
 
     // The sheet's outer div is rendered whether or not the sheet is open — only its content
@@ -73,7 +73,10 @@ test.describe('Mobile shell', () => {
     // unreachable on a phone. The sheet is the only place the other members exist.
     const picker = sheet.getByRole('group', { name: 'Brush tools' });
     await expect(picker).toBeVisible();
-    await expect(picker.getByRole('button', { name: 'Brush Tool' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(picker.getByRole('button', { name: 'Brush Tool', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
 
     await picker.getByRole('button', { name: 'Pencil Tool' }).click();
     await expect(picker.getByRole('button', { name: 'Pencil Tool' })).toHaveAttribute('aria-pressed', 'true');

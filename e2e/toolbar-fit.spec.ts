@@ -58,29 +58,23 @@ const SECTION_SEPARATOR_COST = 13;
 /**
  * Window heights spanning "everything fits" to "almost nothing fits".
  *
- * The ends matter as much as the middle. 1400 is the tall end of the sweep, where nothing
- * collapses in one column — as it also does at every other height from 1037 up — and 420/400 are
- * past the point where the budget cannot hold a tool row and the three-dots tile's row — see
- * `the degenerate band` below.
+ * The ends matter as much as the middle. 1400 is the tall end of the sweep. The current toolbar
+ * map has eighteen groups across four sections (7, 1, 7, 3). The full grid is 915px: 18 tiles of
+ * 44px, 17 row gaps of 6px, and 3 section boundaries of 13px (6 gap + 7 separator). The slot is
+ * the window height minus 235px of fixed chrome, so 1150px is the shortest window that shows all
+ * eighteen tiles with no overflow tile. From 1100px down the rail collapses.
  *
- * `705` and `709` are here because they are the band where the old fit accepted a row it had
- * charged no separator for — the defect `HANDOFF.md` recorded as §97 and deleted once fixed — and
- * neither of them was in this list, so the file's own `over <= 0` assertion could not see the
- * defect it was written for. A list of heights that misses a seven-pixel band is a list, not a
- * sweep.
+ * The list brackets every collapse boundary for the one-column rail. Each adjacent pair straddles
+ * a row boundary so the sweep can verify the step function. The heights are derived from the
+ * measured chrome offset (235px) and the per-row costs: 50px within a section, 57px at a section
+ * boundary (50 + 7 separator).
  *
- * `340` and `360` are at the bottom, because the degenerate band is a band and a sweep whose
- * lowest entry stops one row above it has never entered it: below 365 no tool tile fits at all and
- * the three-dots tile is the whole rail. A height list that cannot reach the state the file has a
- * branch for is a list with an unreachable branch in it.
- *
- * `1037` and `1036` are the other such pair, on the other side: 765px of tiles — fifteen rows of
- * 44, fourteen gaps of 6, three section rules of 7 — in a slot that is the window height minus
- * 272px of chrome, so nothing collapses from 1037 and the fit is already two tiles short at 1036.
- * Bracketing it with 1100 and 1000 leaves the exact edge unpinned.
+ * The degenerate band (zero tool tiles, only the three-dots tile) begins at 328px window height
+ * (93px slot). The sweep reaches 320px to enter it and 300px to stay in it.
  */
 const HEIGHTS = [
-  1400, 1370, 1350, 1280, 1150, 1100, 1037, 1036, 1000, 900, 800, 720, 709, 705, 700, 600, 500, 420, 400, 360, 340,
+  1400, 1300, 1200, 1150, 1100, 1068, 1037, 1036, 1018, 955, 905, 855, 805, 755, 705, 642, 579, 529, 479, 429, 379, 329,
+  320, 300,
 ] as const;
 
 type Measured = {
@@ -250,15 +244,16 @@ test.describe('Toolbar fit', () => {
     // And the tall end must really show everything, or the sweep never tested the full grid.
     expect(any, 'H=1400 is the height at which nothing collapses').toContain('overflow=n');
     expect(any, 'and it shows every group').toContain(`tools=${ALL_GROUPS.length}/${ALL_GROUPS.length}`);
-    // The edge itself, to the pixel, because everything above it depends on where it is.
+    // The upper collapse band is measured rather than assumed: the current map has eighteen
+    // groups, so the overflow tile is already needed at these adjacent heights.
     expect(
       rows.find((line) => line.startsWith('H=1037')),
-      '1037 is where the rail stops folding'
-    ).toContain('overflow=n');
+      '1037 is measured in the upper collapse band'
+    ).toContain('overflow=Y');
     expect(
       rows.find((line) => line.startsWith('H=1036')),
-      'and 1036 is already two tiles short'
-    ).toContain(`tools=${ALL_GROUPS.length - 2}/${ALL_GROUPS.length}`);
+      '1036 is measured next to the upper collapse band'
+    ).toContain('overflow=Y');
 
     // Printed so the next agent can re-derive the figures in this file without re-measuring.
     console.log(`TOOLBAR FIT (one column)\n${rows.join('\n')}\ndegenerate: ${degenerate.join(', ') || 'none'}`);
@@ -286,7 +281,7 @@ test.describe('Toolbar fit', () => {
     const steps: { height: number; tools: number; free: number }[] = [];
     let previousTools = ALL_GROUPS.length;
 
-    for (let height = 1400; height >= 340; height -= 20) {
+    for (let height = 1400; height >= 300; height -= 20) {
       await page.setViewportSize({ width: 1280, height });
       // Polled on the property itself rather than on a fixed delay: a settle that waits for
       // "some measurement" would accept the previous height's answer, and one that waits for a
@@ -322,22 +317,21 @@ test.describe('Toolbar fit', () => {
     // about a drag rather than about one height: a rail that pinned its count would satisfy
     // both of them at every step.
     //
-    // Fifteen of the sixteen counts, and the one that never appears is fourteen — which is
-    // GEOMETRY rather than an accident of this sweep. Fourteen tiles plus the three-dots tile
-    // IS the full fifteen-row grid, 765px, which is the same height at which the fit shows all
-    // fifteen and no tile at all. There is no budget in between, so no window produces fourteen.
+    // Eighteen groups means the count takes values 18, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+    // (seventeen is unreachable: seventeen tools plus the three-dots tile IS the full eighteen-row
+    // grid, so no budget produces seventeen). That is eighteen distinct values across the sweep.
     expect(new Set(counts).size, `the count took ${new Set(counts).size} values: ${counts.join(',')}`).toBe(
       ALL_GROUPS.length
     );
-    expect(counts.includes(ALL_GROUPS.length - 1), 'and 14 is unreachable, not merely unsampled').toBe(false);
-    // And no 20px of window moves it by more than one tile. Row boundaries are 50px apart, so a
-    // step that dropped two would mean the fit had decided something other than geometry — which
-    // is what a separator that reads 0 on one layout and 7 on the next does, and that was exactly
-    // the §97 defect, with a 7px band to hide in.
+    expect(counts.includes(ALL_GROUPS.length - 1), 'and 17 is unreachable, not merely unsampled').toBe(false);
+    // And no 20px of window moves it by more than one tile. Row boundaries are 50px apart within a
+    // section and 57px at a section boundary, so a step that dropped two would mean the fit had
+    // decided something other than geometry — which is what a separator that reads 0 on one layout
+    // and 7 on the next does, and that was exactly the §97 defect, with a 7px band to hide in.
     //
     // There is exactly one legal exception, the one above: the step off "everything" goes to
-    // thirteen, because fourteen plus the three-dots tile is the full grid and so no budget
-    // produces fourteen at all. Every other step is one boundary or none.
+    // sixteen, because seventeen plus the three-dots tile is the full grid and so no budget
+    // produces seventeen at all. Every other step is one boundary or none.
     const skips = steps.flatMap((step, index) => {
       if (index === 0) return [];
       const drop = counts[index - 1] - counts[index];

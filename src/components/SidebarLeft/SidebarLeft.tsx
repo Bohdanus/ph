@@ -20,6 +20,7 @@ import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
+import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import { useDockDrag } from '../../hooks/useDockDrag.ts';
 import { edgePlacement } from '../../util/edge-placement.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
@@ -261,7 +262,8 @@ const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { toolsSide, setToolsSide } = usePanelLayout();
+  const { toolsSide, dockSide, setToolsSide } = usePanelLayout();
+  const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
@@ -1143,7 +1145,7 @@ const SidebarLeft = () => {
     ...(overflowPlan.showOverflowTile ? [{ kind: 'overflow' as const }] : []),
   ];
 
-  const railPlacement = edgePlacement(toolsSide, 'full');
+  const railPlacement = edgePlacement(toolsSide, isRightPanelOpen && toolsSide === dockSide ? 'top' : 'full');
 
   return (
     <aside
@@ -1156,8 +1158,8 @@ const SidebarLeft = () => {
       // canvas — and the grid area follows from the same fact.
       className={`scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
         toolsSide === 'left'
-          ? 'border-r border-gray-300 dark:border-gray-700'
-          : 'border-l border-gray-300 dark:border-gray-700'
+          ? 'border-r border-gray-300 dark:border-gray-700 justify-self-start'
+          : 'border-l border-gray-300 dark:border-gray-700 justify-self-end'
       } ${railPlacement}`}
       data-testid="left-sidebar"
       ref={setRailElement}
