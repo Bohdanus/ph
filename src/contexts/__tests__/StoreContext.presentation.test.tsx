@@ -456,6 +456,9 @@ describe('durable navigation presentation freshness', () => {
       layerId,
       bitmap: materializedBitmap,
       bounds: pos,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
       lease: {
         key: 'stale-frame-composition',
         bitmap: materializedBitmap,
