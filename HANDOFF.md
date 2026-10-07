@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61-62, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -524,43 +524,6 @@ call sites in all. One leaked claim therefore disables undo, redo, rewind and st
 once, and the only recovery is a remount. **`claimDocumentGesture` returning `false` must be honoured at every
 call site**: take the ref, and any state flag, only when the claim succeeds — as `DrawToolArea`,
 `ShapeToolArea`, `EraserToolArea`, `MoveToolArea` and the freehand branch now all do.
-
-## 62. The error boundary's fallback loses the region's own sizing and grid cell
-
-`ErrorBoundary`'s fallback renders a bare `div` with no `grid-area`
-(`ErrorBoundary.tsx` — `ErrorBoundaryFallback()`),
-while the regions it replaces are `[grid-area:main]` (`Main.tsx` — the region's own container) and
-`[grid-area:right]`
-(`SidebarRight.tsx` — the region's own container). Its props are a human-readable `label` and the
-`children` it has already
-replaced (`ErrorBoundary.tsx` — `ErrorBoundaryProps`), so it does not know which region it wrapped.
-
-**The auto-placement half of the original claim is wrong, and the consequence is different.** The
-grid template in `App.tsx` — the shell's `[grid-template-areas:…]` class names `header`, `toolbar`,
-`left`, `main`, `right` and `footer`, but
-`header` and `toolbar` are claimed by `DesktopHeader.tsx` — its `[grid-area:header]` `<header>` — and
-`ToolbarHorizontal.tsx` — `TOOLBAR_BASE_CLASS`, both
-rendered by `Menu.tsx` — `Menu()` **before** the boundaries in document order — so auto-placement does
-not start at the toolbar row. With `left` claimed by `SidebarLeft.tsx` — its `[grid-area:left]` branch,
-the first free cell in
-document order is row 3 col 2, which is exactly the canvas's own cell; the second boundary's
-fallback then takes `right`. On mobile the template collapses to `'header'`/`'main'`/`'bottom'` with
-`main` again the first free cell. Both messages land in the right cells.
-
-**What genuinely remains** is the sizing: the fallback also drops the region's own
-`relative overflow-y-auto` (`Main.tsx` — the `[grid-area:main]` container), so the canvas's message
-renders content-height instead
-of filling the cell.
-
-**Fix.** A new optional `gridArea` prop **plus** the two `App.tsx` call sites — the
-`<ErrorBoundary label="Canvas">` and `<ErrorBoundary label="Right sidebar">` wrappers — and the
-sizing class alongside it. Do not add the prop without them — an always-`undefined` prop is worse
-than the current auto-placement, which at least lands in the right cell.
-
-**Files.** `src/components/Common/ErrorBoundary.tsx` — `ErrorBoundaryProps` and
-`ErrorBoundaryFallback()`, `src/App.tsx` — the grid template and its two `ErrorBoundary` call sites,
-`src/components/Main/Main.tsx` — the `[grid-area:main]` container,
-`src/components/SidebarRight/SidebarRight.tsx` — the `[grid-area:right]` container
 
 ## 63. The presentation scope's liveness set assumes an invariant it does not enforce
 
@@ -2520,46 +2483,6 @@ size only across dialogs (`e2e/document-dialogs.spec.ts` — `documentSize()`). 
 tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
-
-## 126. The five figure tools never see the foreground colour, because of one guard in the swatch
-
-**Problem.** `rectangle`, `ellipse`/`oval`, `triangle`, `polygon` and `line` all take their colour from
-a hardcoded literal rather than the foreground swatch:
-
-- `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`, in the `args.toolName !== 'shape'`
-  guard — mirrors the swatch behind that guard, and one options-bar component serves all six of
-  `toolsMap.ts`
-- `src/tools/settings.ts` — the five figure entries in `defaultSettings`, which give each of those
-  five a hardcoded `color: '#000000'`
-- `src/components/Main/ShapeToolArea.tsx` contains **zero** occurrences of `color` — it reads
-  `args.color` and nothing sets it
-
-So moving the foreground swatch does nothing for five of the six figure tools.
-
-**Fix.** In `ShapeToolArea.tsx`, read `color` and `backgroundColor` off the store AT GESTURE TIME —
-the same shape `FillToolArea.tsx` already ships — and inject them into the committed args and the
-live preview. Do **not** route through `setToolArgs`: `saveLastSettings` persists those five names as
-a bare `{ toolName }`, so a tool-args write would leave `args.points` and `lineWidth` undefined after a
-tool switch. The alternative — deleting the `args.toolName !== 'shape'` guard in
-`Figures/Shape.tsx`'s `Shape()` — writes through the args context, so that persistence hazard has to
-be closed first.
-
-Baked-in args rather than replay-time reads are what keep undo/redo re-rasterising in the painted
-colour with no migration, because the durable `legacy-tool` conversion already serialises the whole
-args object. Add BOTH colours: `hasFill` and the fill swatch are store-owned for the same reason, and
-a half-fixed shape tool strokes in the swatch while still filling in the default.
-
-**Where this came from.** The abandoned branch `fix/paint-overlay`. Its other two commits are dead:
-`139cc432` (clear the tool overlay on unmount) is on `main` verbatim in `useRect.ts`'s unmount
-cleanup `useEffect`, and
-`37132d95`'s primary claim about `brush`/`pencil`/`color-replacement` being wired to a placeholder is
-false on main, which built a real options panel in
-`src/components/ToolbarsRight/Paint/Paint.tsx` — `createPaintToolbar()`'s `PaintToolbar`. Only this
-rider survives.
-
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx` — `Shape()`;
-`src/tools/settings.ts` — the five figure entries in `defaultSettings`;
-`src/components/Main/ShapeToolArea.tsx`
 
 ## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
 
