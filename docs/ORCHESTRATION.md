@@ -379,6 +379,27 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
     per-run folder would leave it with nothing to open.
 
+## Branches nobody holds
+
+`npm run branches:orphan` reports every branch `main` does not contain that no worktree
+holds, with its behind-count, the commits `main` lacks, and its number of merge-conflicting
+paths. It is `scripts/orphan-branches.mjs`, and it exits non-zero when it could not read the
+repository rather than answering with an empty list.
+
+The inventory enumerates worktrees, `npm run repo:state` reads operations in each worktree,
+and `npm run dispose` acts on a named worktree. An unmerged branch whose worktree is gone
+is invisible to those worktree-based reports even though Git retains its ref; it can keep
+falling behind `main` and accruing conflicts. `git branch --no-merged` appears in no other
+script here.
+
+**It reports and retires nothing.** Landing, rebasing, archiving and deleting a branch stay
+with a person or an agent that has read the report. A report that also acted would be a
+second `npm run dispose` with none of that command's inventory, board and lock checks.
+
+**The conflict count reads both of git's phrasings.** Ordinary conflicts use
+`Merge conflict in <path>`; modify/delete and add/delete conflicts use `deleted in <x> and
+modified in <y>` or `added in <x> and modified in <y>`. The command counts both forms.
+
 ## The list of worktrees: `WORKTREES.json`
 
 `WORKTREES.json` at the repository root is a generated inventory of every
