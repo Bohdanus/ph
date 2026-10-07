@@ -765,6 +765,50 @@ Sources:
 
 ---
 
+### Healing Brush Tool
+
+`healing-brush`
+
+Blends sampled texture into a brush stroke while preserving destination lighting and tone.
+
+Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.
+
+**Options bar**
+
+| Control   | Photoshop                                                                      | In this app                                                                |
+| --------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Size      | Tip diameter in pixels.                                                        | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Hardness  | Controls the falloff at the tip edge.                                          | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Opacity   | Per-dab healing strength from 0 to 100 percent.                                | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Aligned   | Keeps the sampled offset continuous across the stroke or resets it per stroke. | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Source    | Sampled source via Alt/Option-click; Pattern is deferred.                      | `partial` — `src/components/Main/HealingBrushToolArea.tsx:1`               |
+| Sample    | Current & Below and All Layers are deferred; the MVP edits the active layer.   | `missing`                                                                  |
+| Diffusion | Adobe’s 1–7 diffusion control is deferred.                                     | `missing`                                                                  |
+
+**Modifiers**
+
+- **Alt/Option-click** — Sets the sampled source point without creating history.
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool family; this app selects Healing Brush directly.
+
+**In this app:** `partial` — Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.
+
+Implementation:
+
+- `src/tools/healingBrush.ts:1`
+- `src/components/Main/HealingBrushToolArea.tsx:1`
+- `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
+
+---
+
 ### Eraser Tool
 
 `eraser` · **E**

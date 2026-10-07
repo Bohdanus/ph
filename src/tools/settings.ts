@@ -43,6 +43,7 @@ import {
   type RedEyeToolSettings,
 } from './redEye.ts';
 import type { SpotHealingToolArgs } from './spotHealing.ts';
+import type { HealingBrushToolArgs } from './healingBrush.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -358,6 +359,15 @@ export const defaultSettings = {
     points: [],
     toolName: 'spot-healing',
   } satisfies SpotHealingToolArgs,
+  'healing-brush': {
+    size: 20,
+    hardness: 0,
+    opacity: 1,
+    source: null,
+    aligned: true,
+    points: [],
+    toolName: 'healing-brush',
+  } satisfies HealingBrushToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },

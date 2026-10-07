@@ -20,6 +20,7 @@ import { RulerToolArea } from './RulerToolArea.tsx';
 import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
 import { RedEyeToolArea } from './RedEyeToolArea.tsx';
 import { SpotHealingToolArea } from './SpotHealingToolArea.tsx';
+import { HealingBrushToolArea } from './HealingBrushToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -205,6 +206,8 @@ const Main = () => {
     interactionMode = 'red-eye';
   } else if (toolName === 'spot-healing') {
     interactionMode = 'spot-healing';
+  } else if (toolName === 'healing-brush') {
+    interactionMode = 'healing-brush';
   } else if (toolName === 'sharpen') {
     interactionMode = 'sharpen';
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
@@ -330,7 +333,8 @@ const Main = () => {
       | typeof FillToolArea
       | typeof ColorReplacementToolArea
       | typeof RedEyeToolArea
-      | typeof SpotHealingToolArea;
+      | typeof SpotHealingToolArea
+      | typeof HealingBrushToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -358,6 +362,7 @@ const Main = () => {
       else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
       else if (interactionMode === 'red-eye') EventHandler = RedEyeToolArea;
       else if (interactionMode === 'spot-healing') EventHandler = SpotHealingToolArea;
+      else if (interactionMode === 'healing-brush') EventHandler = HealingBrushToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
       else if (interactionMode === 'gradient') EventHandler = GradientToolArea;
@@ -422,6 +427,7 @@ const Main = () => {
               // through `tempUpdateLayer` and the markers must sit on top of the canvas instead.
               'color-sampler',
               'spot-healing',
+              'healing-brush',
             ].includes(interactionMode)
               ? 'block'
               : 'none',

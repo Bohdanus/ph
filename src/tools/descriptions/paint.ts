@@ -9,7 +9,8 @@ export const paintDescriptions: Record<
   | 'paint-bucket'
   | 'clone-stamp'
   | 'red-eye'
-  | 'spot-healing',
+  | 'spot-healing'
+  | 'healing-brush',
   ToolDescription
 > = {
   brush: {
@@ -891,6 +892,65 @@ export const paintDescriptions: Record<
       'https://www.psdvault.com/basics/photoshop-clone-stamp-tool/',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
       'https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned',
+    ],
+  },
+  'healing-brush': {
+    photoshopName: 'Healing Brush Tool',
+    summary: 'Blends sampled texture into a brush stroke while preserving destination lighting and tone.',
+    purpose:
+      'Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.',
+    options: [
+      {
+        control: 'Size',
+        detail: 'Tip diameter in pixels.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Hardness',
+        detail: 'Controls the falloff at the tip edge.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Opacity',
+        detail: 'Per-dab healing strength from 0 to 100 percent.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Aligned',
+        detail: 'Keeps the sampled offset continuous across the stroke or resets it per stroke.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Source',
+        detail: 'Sampled source via Alt/Option-click; Pattern is deferred.',
+        status: 'partial',
+        appRef: 'src/components/Main/HealingBrushToolArea.tsx:1',
+      },
+      {
+        control: 'Sample',
+        detail: 'Current & Below and All Layers are deferred; the MVP edits the active layer.',
+        status: 'missing',
+      },
+      { control: 'Diffusion', detail: 'Adobe’s 1–7 diffusion control is deferred.', status: 'missing' },
+    ],
+    modifiers: [{ keys: 'Alt/Option-click', action: 'Sets the sampled source point without creating history.' }],
+    shortcuts: [{ keys: 'J', action: 'Selects the healing-tool family; this app selects Healing Brush directly.' }],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/healingBrush.ts:1',
+      'src/components/Main/HealingBrushToolArea.tsx:1',
+      'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+    ],
+    appNotes:
+      'Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html',
+      'https://helpx.adobe.com/photoshop/using/healing-examples.html',
+      'https://helpx.adobe.com/photoshop/using/nondestructive-editing.html',
     ],
   },
   'spot-healing': {

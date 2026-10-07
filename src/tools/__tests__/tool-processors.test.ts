@@ -122,6 +122,7 @@ const replayKinds = {
   'clone-stamp': 'raster-processor',
   'red-eye': 'raster-processor',
   'spot-healing': 'raster-processor',
+  'healing-brush': 'raster-processor',
   brush: 'raster-processor',
   pencil: 'raster-processor',
   'color-replacement': 'raster-processor',
@@ -320,6 +321,7 @@ describe('toolProcessors registry', () => {
         'smudge',
         'sponge',
         'spot-healing',
+        'healing-brush',
       ].sort()
     );
   });
@@ -375,6 +377,7 @@ describe('toolProcessors registry', () => {
         'smudge',
         'sponge',
         'spot-healing',
+        'healing-brush',
       ].sort()
     );
     for (const toolName of rasterCommitted) {
@@ -457,6 +460,7 @@ describe('toolProcessors registry', () => {
       'clone-stamp': 'raster',
       'red-eye': 'raster',
       'spot-healing': 'raster',
+      'healing-brush': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
       'curvature-pen': 'unimplemented',
@@ -1126,6 +1130,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['clone-stamp', 'canvas', 40, 24],
     ['red-eye', 'source-bitmap', 0, 0],
     ['spot-healing', 'canvas', 40, 24],
+    ['healing-brush', 'canvas', 40, 24],
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
@@ -1199,6 +1204,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['clone-stamp', 'canvas', 40, 24],
     ['red-eye', 'bitmap', 0, 0],
     ['spot-healing', 'canvas', 40, 24],
+    ['healing-brush', 'canvas', 40, 24],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1439,6 +1445,7 @@ describe('toolsMap exhaustiveness', () => {
     ['color-replacement', 'color-replacement'],
     ['red-eye', 'red-eye'],
     ['spot-healing', 'spot-healing'],
+    ['healing-brush', 'healing-brush'],
     ['eraser', 'eraser'],
     ['clone-stamp', 'clone-stamp'],
     ['magic-eraser', 'magic-eraser'],

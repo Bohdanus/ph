@@ -5,6 +5,7 @@ import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
 import CloneStamp from '../components/ToolbarsRight/CloneStamp/CloneStamp.tsx';
 import RedEye from '../components/ToolbarsRight/RedEye/RedEye.tsx';
 import SpotHealing from '../components/ToolbarsRight/SpotHealing/SpotHealing.tsx';
+import HealingBrush from '../components/ToolbarsRight/HealingBrush/HealingBrush.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import ColorSampler from '../components/ToolbarsRight/ColorSampler/ColorSampler.tsx';
 import ColorReplacement from '../components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx';
@@ -119,6 +120,7 @@ export const toolsMap: ToolsMap = {
   'clone-stamp': { ...toolProcessors['clone-stamp'], icon: 'clone-stamp', toolboxComponent: CloneStamp },
   'red-eye': { ...toolProcessors['red-eye'], icon: 'red-eye', toolboxComponent: RedEye },
   'spot-healing': { ...toolProcessors['spot-healing'], icon: 'spot-healing', toolboxComponent: SpotHealing },
+  'healing-brush': { ...toolProcessors['healing-brush'], icon: 'healing-brush', toolboxComponent: HealingBrush },
   gradient: { ...toolProcessors.gradient, icon: 'gradient', toolboxComponent: Gradient },
   sharpen: { ...toolProcessors.sharpen, icon: 'sharpen', toolboxComponent: Sharpen },
   smudge: { ...toolProcessors.smudge, icon: 'smudge', toolboxComponent: Smudge },
