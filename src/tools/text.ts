@@ -437,13 +437,12 @@ function xHeightHalf(ctx: Ctx2D, fontSize: number): number {
 /**
  * The width of the INK a line puts down, as opposed to the advance the shaper reports.
  *
- * These differ, and the difference is exactly one tracking gap: Chrome's `letterSpacing` adds the
- * spacing to every character's advance INCLUDING the last one, so `measureText('H').width` at
- * 10px of tracking is 10px wider than the 46.21875px of untracked Arial even though a single
- * glyph has no gap in front of it. Measured at 64px Arial, the advance grows by `n * spacing` for
- * n = 1 through 10 while the ink grows by `(n - 1) * spacing`. Every number that positions
- * something relative to the line — the alignment anchors, the underline's extent — has to use the
- * ink width, and `getTextWidth` has to use it too or the box grows by a gap the text never fills.
+ * These differ by one tracking gap: Chrome's `letterSpacing` adds the spacing to every character's
+ * advance INCLUDING the last one, so `measureText('H').width` at 10px of tracking is 10px wider
+ * than the 46.21875px of untracked Arial even though a single glyph has no gap in front of it.
+ * Measured at 64px Arial, the advance grows by `n * spacing` for `n = 1` through 10 while the ink
+ * grows by `(n - 1) * spacing`. Wrapping and `getTextWidth` use ink width, but alignment and
+ * decoration use the full advance to match the live DOM overlay.
  *
  * Without `letterSpacing` the shaper reports no spacing at all, so the fallback adds `(n - 1)`
  * gaps itself. That fallback also drops kerning, because measuring a string one cluster at a time
@@ -462,6 +461,14 @@ function inkWidth(ctx: Ctx2D, line: string, spacing: number): number {
   if (clusters.length === 0) return 0;
   const unshaped = clusters.reduce((total, cluster) => total + ctx.measureText(cluster).width, 0);
   return unshaped + (clusters.length - 1) * spacing;
+}
+
+/** The CSS text run includes its final tracking gap; keep alignment and decorations on that advance. */
+function lineAdvanceWidth(ctx: Ctx2D, line: string, spacing: number): number {
+  if (spacing === 0) return ctx.measureText(line).width;
+  if (hasLetterSpacing(ctx)) return ctx.measureText(line).width;
+  if (line.length === 0) return 0;
+  return inkWidth(ctx, line, spacing) + spacing;
 }
 
 /**
@@ -814,7 +821,7 @@ function renderTextInto(
 
   layout.lines.forEach((line, index) => {
     const baseline = rect.y1 + TEXT_PADDING + ascent + index * lineStep;
-    const width = inkWidth(ctx, line, spacing);
+    const width = lineAdvanceWidth(ctx, line, spacing);
     // `'left'` is the fallthrough rather than `'right'` because an unrecognised value — a
     // hand-edited or forward-version settings record — should land where the tool starts rather
     // than silently flip the alignment.

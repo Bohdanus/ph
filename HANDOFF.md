@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-212, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4774,24 +4774,6 @@ durable kind has no legacy counterpart; every kind in the union has one today.
 **Files.** `src/contexts/useHistory.ts` — `getHistoryItemTitle()`,
 `src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
 `src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
-
-## 212. The overlay's decorations come from the user agent, so a decorated draft jumps on commit
-
-**Problem.** `domOverlayStyle` emits `textDecorationLine` and `textDecorationColor` and nothing else,
-so the draft's underline and strikethrough take the UA's thickness and offset. `renderTextInto` draws
-them with `decorationThickness(fontSize)` and `UNDERLINE_BELOW_BASELINE_EM`, and the strike at
-`xHeightHalf()`. The DOM rule also spans the line's full advance, while the canvas spans `inkWidth`,
-which subtracts one letter-spacing gap — so with `align: center` or `right` and non-zero tracking the two
-disagree by `spacing / 2` and `spacing` as well. Found independently by two reviews and left unclaimed by
-both.
-
-**Affected.** `src/tools/text.ts` — `DomOverlayStyle` and `domOverlayStyle`; the canvas side is
-`decorationThickness` and `renderTextInto`.
-
-**What would close it.** Emit `textDecorationThickness` and `textUnderlineOffset` from
-`domOverlayStyle`, and anchor the rule to the same extent the canvas measures. The residual after that
-is cosmetic and unmeasured outside the eight cases `domOverlayStyle`'s own comment reports, so treat what
-is left as draft-versus-commit ink that reflows on commit rather than as a defect to close.
 
 ## 213. `type-crop.ts`'s `appRef` line numbers are 60–110 lines off and reach a generated document
 
