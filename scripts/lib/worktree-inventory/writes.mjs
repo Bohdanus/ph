@@ -54,17 +54,50 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 /** The directory this repository keeps its worktrees in. */
 const WORKTREE_DIR_SEGMENT = '.kilo/worktrees/';
 
+/** Cache file path for auditWrites results. */
+const AUDIT_WRITES_CACHE = '.kilo/cache/audit-writes.json';
+
+/**
+ * Read cache file if it exists and is fresh (less than 5 minutes old).
+ */
+function readAuditWritesCache(dbPath) {
+  try {
+    const cachePath = resolve(dbPath, '..', AUDIT_WRITES_CACHE);
+    if (!existsSync(cachePath)) return null;
+    const cache = JSON.parse(readFileSync(cachePath, 'utf8'));
+    // Check if cache is fresh (5 minutes)
+    if (Date.now() - cache.cachedAt > 5 * 60 * 1000) return null;
+    // Verify the database hasn't changed (by checking mtime)
+    const dbStat = statSync(dbPath);
+    if (cache.dbMtime !== dbStat.mtimeMs) return null;
+    return cache.data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write cache file.
+ */
+function writeAuditWritesCache(dbPath, data) {
+  try {
+    const cachePath = resolve(dbPath, '..', AUDIT_WRITES_CACHE);
+    mkdirSync(dirname(cachePath), { recursive: true });
+    const dbStat = statSync(dbPath);
+    writeFileSync(cachePath, JSON.stringify({ cachedAt: Date.now(), dbMtime: dbStat.mtimeMs, data }));
+  } catch {
+    // Cache write failure is non-fatal
+  }
+}
+
 /**
  * Every tool this module looks at, read in ONE statement.
- *
- * The `part` table is unindexed on the JSON fields any of this needs, so each
- * additional pass costs another full extraction — measured at 13.5s over this
- * machine's 428k rows. Reading all of them together costs about what reading one
- * costs, which is the only reason the reader and shell views are affordable.
  */
 export const WRITE_TOOLS = Object.freeze(['edit', 'write', 'apply_patch', 'notebook_edit']);
 export const READ_TOOLS = Object.freeze(['read', 'grep', 'glob', 'semantic_search']);
@@ -624,9 +657,18 @@ const emptyResult = (dbPath) => ({
  * inventory with an empty history on every worktree and a `dataSources` entry
  * saying why.
  */
-export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindowMs }) {
+export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindowMs, useCache = true }) {
   const db = openDb(dbPath);
   if (!db) return emptyResult(dbPath);
+
+  // Try to read from cache first
+  if (useCache) {
+    const cached = readAuditWritesCache(dbPath);
+    if (cached) {
+      db.close();
+      return { ...cached, available: true, dbPath };
+    }
+  }
 
   try {
     const byId = readSessions(db);
@@ -653,7 +695,7 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindo
 
     const sum = (kind) => [...records.values()].reduce((n, r) => n + r[kind].calls, 0);
     const attributedWriteCalls = sum('write');
-    return {
+    const result = {
       available: true,
       dbPath,
       byWorktree: records,
@@ -667,6 +709,13 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindo
         .map(([bucket, calls]) => ({ bucket, calls }))
         .sort((a, b) => b.calls - a.calls),
     };
+
+    // Write cache
+    if (useCache) {
+      writeAuditWritesCache(dbPath, result);
+    }
+
+    return result;
   } finally {
     db.close();
   }

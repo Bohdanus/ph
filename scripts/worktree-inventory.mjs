@@ -36,7 +36,7 @@ import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { collectWorktrees, findMissingWorktrees } from './lib/worktree-inventory/git.mjs';
+import { collectWorktrees, findMissingWorktrees, resolveBaseRef } from './lib/worktree-inventory/git.mjs';
 import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { auditWrites } from './lib/worktree-inventory/writes.mjs';
@@ -332,11 +332,31 @@ function main() {
     return;
   }
 
+  // Run the async main logic
+  runAsyncMain(opts).catch((err) => {
+    process.stderr.write(`worktree-inventory: ${err.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
+async function runAsyncMain(opts) {
   const root = repoRoot(process.cwd());
   const nowMs = Number.isFinite(opts.now) ? opts.now : Date.now();
   const windowMs = opts.windowHours * 60 * 60 * 1000;
 
-  const worktrees = collectWorktrees(root, { base: opts.base });
+  // Resolve base ref before collecting worktrees
+  const base = opts.base ?? resolveBaseRef(root);
+  if (base === null) {
+    throw new Error(
+      `no base ref could be resolved in ${root}, so every ahead/behind and merged-into-base answer ` +
+        'would be null and the inventory would read as "nothing is at risk" for a reason that has nothing ' +
+        `to do with risk. Tried main, origin/main, refs/remotes/origin/main. Pass --base <ref> to name one.`
+    );
+  }
+  opts.base = base;
+
+  // Use async collectWorktrees for parallel execution
+  const worktrees = await collectWorktrees(root, { base: opts.base });
   const missing = findMissingWorktrees(root);
   // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
   // each build their own objects, so `missing.includes(w)` is reference

@@ -23,7 +23,7 @@
  * is never derived from ahead/behind alone.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { basename, relative, resolve } from 'node:path';
 
@@ -49,6 +49,208 @@ function git(cwd, args, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Whether this checkout's history is truncated, so ancestry means nothing here.
+ */
+function isShallow(cwd) {
+  return git(cwd, ['rev-parse', '--is-shallow-repository']) === 'true';
+}
+
+/**
+ * The ref this checkout should be compared against, or `null` if there is none.
+ *
+ * THE LITERAL `main` IS NOT AVAILABLE EVERYWHERE, and assuming it is was a real
+ * outage. `git rev-list main...HEAD` and `git merge-base --is-ancestor HEAD main`
+ * both need a ref NAMED `main` to exist. They do not resolve `origin/main`, and
+ * they do not resolve a remote-tracking ref spelled differently. A checkout made
+ * by `actions/checkout` with the default `fetch-depth: 1` on a `pull_request`
+ * event contains `refs/remotes/pull/N/merge` and `refs/remotes/origin/main` and
+ * NO `refs/heads/main` at all, so on that shape every ahead/behind answer this
+ * module produced was `{ ahead: null, behind: null }` and every "already landed"
+ * answer was `false` — the two values that make a guard read as a machine with
+ * nothing at risk on it.
+ *
+ * So the base is ASKED FOR rather than assumed, in the order that prefers the
+ * most local answer and falls back to the one a shallow clone still has. The
+ * candidates are probed with `rev-parse --verify --quiet <name>^{commit}`, which
+ * asks "does this name resolve to exactly one COMMIT" and is false for a missing
+ * ref, for a name that is ambiguous only in the sense of not existing, for a
+ * tree, and for a blob.
+ *
+ * IT IS NOT false for an ambiguous NAME, and this sentence is here because an
+ * earlier draft of this comment said it was and was wrong. A name that resolves
+ * to more than one thing resolves, and git says which on stderr where nothing
+ * reads it. The two paragraphs below measure that and the shallow case; this one
+ * is only the probe.
+ *
+ * `null` is a real answer and not an error to be papered over: it means this
+ * checkout has no base that can be trusted, which is a fact about the checkout
+ * rather than about any worktree in it. Every caller must pass it through rather
+ * than substitute a default, because substituting one is what produced the
+ * outage.
+ *
+ * TWO WAYS A REF CAN RESOLVE AND STILL BE THE WRONG ANSWER, both found by
+ * building the shapes rather than reasoning about them, and both of which return
+ * a number rather than admitting ignorance.
+ *
+ * A SHALLOW REPOSITORY. `rev-parse --verify` asks "does this name name one
+ * commit", and in a `--depth 1` clone `origin/main` names exactly one commit —
+ * the tip, with its ancestry cut off. So the probe passes and every answer built
+ * on it is confidently wrong. Measured on a depth-1 fetch of a real ancestor of
+ * `origin/main`: `merge-base --is-ancestor HEAD origin/main` exits 1, and
+ * `rev-list --left-right --count origin/main...HEAD` prints `1 1`, for a branch
+ * that IS on the base. Before the shallow check this function returned
+ * `origin/main` there, which converts "I know nothing" into "I am certain and
+ * wrong" — strictly worse than the null it replaced, because a wrong number is
+ * read and a null is checked. `--is-shallow-repository` is the question, and the
+ * answer is that ancestry is not available in such a checkout at any depth, so
+ * there is no ref worth certifying.
+ *
+ * A TAG NAMED `main`. `rev-parse --verify` does NOT reject an ambiguous name. With
+ * a branch `main` and a lightweight tag `main` both present it exits 0, resolves
+ * the TAG, and prints `warning: refname 'main' is ambiguous` to stderr where
+ * nothing reads it. An earlier draft of this comment claimed the probe "is false
+ * for both a missing ref and an ambiguous one"; measured, it is false only for the
+ * missing one. What actually saves the answer is the first candidate being FULLY
+ * QUALIFIED, and `^{commit}` is here to reject a tree and a blob, which it does.
+ * `is-ancestor` against that tag exits 1 where it exits 0 against the branch. The
+ * first candidate is therefore FULLY QUALIFIED. It was `main`, which is the bug
+ * this function's own existence is about.
+ *
+ * ON THE ORDER OF THE REST, which is a deliberate choice and not an oversight: a
+ * stale local base is preferred over a fresh remote one. Comparing against a
+ * `main` that is behind makes a landed branch read as NOT landed, and every
+ * downstream verdict on that branch then protects it — which is the direction
+ * this tool must fail in. Preferring the fresher ref would make more worktrees
+ * read as disposable. Every consumer prints the ref it resolved, so a stale base
+ * is visible rather than silent.
+ */
+export function resolveBaseRef(cwd, candidates = ['refs/heads/main', 'origin/main', 'refs/remotes/origin/main']) {
+  if (isShallow(cwd)) return null;
+  for (const candidate of candidates) {
+    const out = git(cwd, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
+    if (out !== null && out !== '') return candidate;
+  }
+  return null;
+}
+
+/**
+ * Async version of git() that returns a Promise for parallel execution.
+ * Uses child_process.execFile instead of execFileSync for actual parallelism.
+ */
+function gitAsync(cwd, args, fallback = null) {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      args,
+      {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          resolve(fallback);
+        } else {
+          resolve(stdout.replace(/\n+$/, ''));
+        }
+      }
+    );
+  });
+}
+
+/**
+ * Execute multiple async git calls with a concurrency limit.
+ * @param {Array<{cwd: string, args: string[], fallback: any}>} tasks
+ * @param {number} concurrency - max parallel executions (default 8)
+ */
+async function gitAsyncParallel(tasks, concurrency = 8) {
+  const results = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < tasks.length) {
+      const i = nextIndex++;
+      const task = tasks[i];
+      results[i] = await gitAsync(task.cwd, task.args, task.fallback);
+    }
+  }
+
+  // Launch `concurrency` workers that each pull from the shared task queue
+  const workers = [];
+  const workerCount = Math.min(concurrency, tasks.length);
+  for (let w = 0; w < workerCount; w++) {
+    workers.push(worker());
+  }
+
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Batch collect ahead/behind, tip commit, and commits ahead in ONE git log call per worktree.
+ * Returns { ahead, behind, tip, commitsAhead } for each worktree path.
+ */
+async function batchAheadBehindTipCommits(paths, base, limit = 20) {
+  const tasks = paths.map((path) => ({
+    cwd: path,
+    args: [
+      'log',
+      '--format=%H%x1f%s%x1f%cI%x1f%an%x1f%P',
+      `${base}..HEAD`,
+      `-n${limit + 1}`, // +1 to detect truncation
+    ],
+    fallback: null,
+  }));
+
+  const results = await gitAsyncParallel(tasks);
+
+  // Also need ahead/behind for each
+  const abTasks = paths.map((path) => ({
+    cwd: path,
+    args: ['rev-list', '--left-right', '--count', `${base}...HEAD`],
+    fallback: null,
+  }));
+  const abResults = await gitAsyncParallel(abTasks);
+
+  return paths.map((path, i) => {
+    // Parse ahead/behind
+    let ahead = null,
+      behind = null;
+    if (abResults[i]) {
+      const [b, a] = abResults[i].split(/\s+/).map((n) => Number.parseInt(n, 10));
+      if (Number.isInteger(b) && Number.isInteger(a)) {
+        behind = b;
+        ahead = a;
+      }
+    }
+
+    // Parse commits and tip
+    let tip = null;
+    let commits = [];
+    let truncated = false;
+
+    if (results[i]) {
+      const lines = results[i].split('\n').filter(Boolean);
+      if (lines.length > 0) {
+        // First line is tip commit
+        const [sha, subject, date, author, parents] = lines[0].split('\x1f');
+        tip = { sha, subject, date, author };
+
+        // All lines are commits ahead
+        commits = lines.slice(0, limit).map((line) => {
+          const [csha, csubject, cdate] = line.split('\x1f');
+          return { sha: csha, subject: csubject, date: cdate };
+        });
+        truncated = lines.length > limit;
+      }
+    }
+
+    return { ahead, behind, tip, commitsAhead: { commits, truncated } };
+  });
 }
 
 /** `git worktree list --porcelain`, parsed into records. */
@@ -320,6 +522,184 @@ function commitsAhead(cwd, base, ahead, limit = 20) {
 }
 
 /**
+ * Async version of commitsAhead for parallel execution.
+ */
+async function commitsAheadAsync(cwd, base, ahead, limit = 20) {
+  const out = await gitAsync(cwd, ['log', `${base}..HEAD`, '--format=%h%x1f%s%x1f%cI', `-n${limit}`]);
+  const list =
+    out === null || !out
+      ? []
+      : out
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => {
+            const [sha, subject, date] = line.split('\x1f');
+            return { sha, subject, date };
+          });
+
+  return { commits: list, truncated: typeof ahead === 'number' && ahead > list.length };
+}
+
+/**
+ * Async version of tipCommit for parallel execution.
+ */
+async function tipCommitAsync(cwd) {
+  const out = await gitAsync(cwd, ['log', '-1', '--format=%H%x1f%s%x1f%cI%x1f%an']);
+  if (out === null) return null;
+
+  const [sha, subject, date, author] = out.split('\x1f');
+  return { sha, subject, date, author };
+}
+
+/**
+ * Async version of aheadBehind for parallel execution.
+ */
+async function aheadBehindAsync(cwd, base) {
+  const out = await gitAsync(cwd, ['rev-list', '--left-right', '--count', `${base}...HEAD`]);
+  if (out === null) return { ahead: null, behind: null };
+
+  const [behind, ahead] = out.split(/\s+/).map((n) => Number.parseInt(n, 10));
+  if (!Number.isInteger(behind) || !Number.isInteger(ahead)) return { ahead: null, behind: null };
+  return { ahead, behind };
+}
+
+/**
+ * Async version of workingTreeState for parallel execution.
+ */
+async function workingTreeStateAsync(cwd, base) {
+  const out = await gitAsync(cwd, ['status', '--porcelain']);
+  if (out === null) {
+    return {
+      modified: 0,
+      untracked: 0,
+      notOnBase: 0,
+      paths: [],
+      statusError: 'git status --porcelain failed',
+    };
+  }
+
+  const paths = [];
+  const modifiedPaths = [];
+  let modified = 0;
+  let untracked = 0;
+
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    paths.push(line.slice(3));
+    if (line.startsWith('??')) untracked += 1;
+    else {
+      modified += 1;
+      modifiedPaths.push(line.slice(3));
+    }
+  }
+
+  const offBase = base ? notOnBase(cwd, base, { modifiedPaths, untracked }) : modified + untracked;
+
+  return { modified, untracked, notOnBase: offBase, paths, statusError: null };
+}
+
+/**
+ * Async version of isMergedInto for parallel execution.
+ * Uses execFile to check exit code asynchronously.
+ */
+function isMergedIntoAsync(cwd, base) {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['merge-base', '--is-ancestor', 'HEAD', base],
+      {
+        cwd,
+        stdio: 'ignore',
+      },
+      (err) => {
+        if (!err) return resolve(true);
+        resolve(err?.status === 1 ? false : null);
+      }
+    );
+  });
+}
+
+/**
+ * Async version of mergeConflict for parallel execution.
+ * Uses execFile for non-blocking execution.
+ */
+function mergeConflictAsync(cwd, base) {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['merge-tree', '--write-tree', base, 'HEAD'],
+      {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        const combined = `${stdout ?? ''}\n${stderr ?? ''}`;
+        if (/^CONFLICT/m.test(combined) || /CONFLICT \(/.test(combined)) {
+          const files = [...combined.matchAll(/^CONFLICT \([^)]*\): Merge conflict in (.+)$/gm)].map((m) =>
+            m[1].trim()
+          );
+          resolve({ conflict: true, files: [...new Set(files)] });
+          return;
+        }
+
+        if (!err) {
+          resolve({ conflict: false, files: [] });
+          return;
+        }
+
+        const detail = (stderr || '').trim().split('\n')[0] || err.message || 'merge-tree failed';
+        resolve({ conflict: null, files: [], reason: detail });
+      }
+    );
+  });
+}
+
+/**
+ * Async version of patchEquivalence for parallel execution.
+ */
+async function patchEquivalenceAsync(cwd, base, ahead) {
+  if (typeof ahead !== 'number' || ahead <= 0) return { status: PATCH_EQUIVALENCE.NOT_APPLICABLE, reason: null };
+
+  const mergeCount = await gitAsync(cwd, ['rev-list', '--count', '--merges', `${base}..HEAD`]);
+  if (mergeCount === null) {
+    return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'could not count merge commits ahead of the base' };
+  }
+  const mergesAhead = Number.parseInt(mergeCount, 10);
+  if (!Number.isInteger(mergesAhead)) {
+    return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'git returned an invalid merge-commit count' };
+  }
+  if (mergesAhead > 0) {
+    return {
+      status: PATCH_EQUIVALENCE.UNKNOWN,
+      reason: `${mergesAhead} merge commit(s) ahead of the base cannot be compared safely by patch-id`,
+    };
+  }
+
+  const cherry = await gitAsync(cwd, ['cherry', base, 'HEAD']);
+  if (cherry === null) {
+    return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'git cherry could not compare the branch to the base' };
+  }
+  const lines = cherry.split('\n').filter(Boolean);
+  if (lines.length !== ahead) {
+    return {
+      status: PATCH_EQUIVALENCE.UNKNOWN,
+      reason: `git cherry returned ${lines.length} commit(s), expected ${ahead}`,
+    };
+  }
+  if (lines.some((line) => line.startsWith('+ '))) {
+    return {
+      status: PATCH_EQUIVALENCE.UNMERGED,
+      reason: 'at least one branch commit has no equivalent patch on the base',
+    };
+  }
+  if (lines.every((line) => line.startsWith('- '))) {
+    return { status: PATCH_EQUIVALENCE.ABSORBED, reason: 'every branch commit has an equivalent patch on the base' };
+  }
+  return { status: PATCH_EQUIVALENCE.UNKNOWN, reason: 'git cherry returned an unrecognised result' };
+}
+
+/**
  * Would merging this worktree's HEAD into `base` conflict?
  *
  * Answers the only question that decides whether a branch is "waiting to be
@@ -386,32 +766,66 @@ export function mergeConflict(cwd, base) {
  * is a question about the whole repository and a reader counting the entries
  * against `git worktree list` must not come up one short.
  */
-export function collectWorktrees(cwd, { base = 'main' } = {}) {
+export async function collectWorktrees(cwd, { base = 'main' } = {}) {
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);
   const nameCollisions = historicalNameCollisions(root, base);
+  const paths = worktrees.map((w) => w.path);
 
-  return worktrees.map((w) => {
-    const { ahead, behind } = aheadBehind(w.path, base);
-    const tree = workingTreeState(w.path, base);
-    const patches = patchEquivalence(w.path, base, ahead);
+  // Batch ahead/behind, tip commit, and commits ahead in parallel (single git log per worktree)
+  const batchResults = await batchAheadBehindTipCommits(paths, base);
+
+  // Parallelize remaining independent git calls
+  const mergedTasks = paths.map((path) => ({ cwd: path, base }));
+  const workingTreeTasks = paths.map((path) => ({ cwd: path, base }));
+
+  const [mergedResults, workingTreeResults] = await Promise.all([
+    Promise.all(mergedTasks.map(({ cwd, base }) => isMergedIntoAsync(cwd, base))),
+    Promise.all(workingTreeTasks.map(({ cwd, base }) => workingTreeStateAsync(cwd, base))),
+  ]);
+
+  // For unmerged branches, check merge conflict and patch equivalence in parallel
+  const unmergedIndices = batchResults
+    .map((r, i) => (typeof r.ahead === 'number' && r.ahead > 0 ? i : -1))
+    .filter((i) => i >= 0);
+
+  let mergeResults = [];
+  let patchResults = [];
+
+  if (unmergedIndices.length > 0) {
+    const unmergedPaths = unmergedIndices.map((i) => paths[i]);
+    const unmergedAheads = unmergedIndices.map((i) => batchResults[i].ahead);
+
+    [mergeResults, patchResults] = await Promise.all([
+      Promise.all(unmergedPaths.map((path, idx) => mergeConflictAsync(path, base))),
+      Promise.all(unmergedIndices.map((idx, i) => patchEquivalenceAsync(paths[idx], base, unmergedAheads[i]))),
+    ]);
+  }
+
+  // Build results
+  const results = worktrees.map((w, i) => {
+    const batch = batchResults[i];
+    const { ahead, behind, tip, commitsAhead: commitsAheadResult } = batch;
+    const patches = unmergedIndices.includes(i)
+      ? patchResults[unmergedIndices.indexOf(i)]
+      : { status: PATCH_EQUIVALENCE.NOT_APPLICABLE, reason: null };
     const unmerged = typeof ahead === 'number' && ahead > 0 && patches.status !== PATCH_EQUIVALENCE.ABSORBED;
 
     return {
       ...w,
       isPrimary: w.path === root,
-      tip: tipCommit(w.path),
+      tip,
       ahead,
       behind,
-      mergedIntoBase: isMergedInto(w.path, base),
+      mergedIntoBase: mergedResults[i],
       locked: Boolean(w.locked),
       prunableReason: w.prunableReason ?? null,
-      workingTree: tree,
-      ...commitsAhead(w.path, base, ahead),
+      workingTree: workingTreeResults[i],
+      ...commitsAheadResult,
       // Only worth asking when there is something to merge. Asking about a
       // branch that is already on main, or a detached HEAD, produces a
       // meaningless answer that would be read as a real one.
-      merge: unmerged ? mergeConflict(w.path, base) : { conflict: null },
+      merge: unmerged ? mergeResults[unmergedIndices.indexOf(i)] : { conflict: null },
       patchEquivalence: patches.status,
       patchEquivalenceReason: patches.reason,
       // Advisory, and deliberately not part of any verdict — see the note on
@@ -419,6 +833,8 @@ export function collectWorktrees(cwd, { base = 'main' } = {}) {
       nameCollisions: nameCollisions.get(w.branch) ?? [],
     };
   });
+
+  return results;
 }
 
 /**
@@ -517,6 +933,42 @@ export function findMissingWorktrees(cwd) {
   return listWorktrees(cwd).filter((w) => !existsSync(w.path));
 }
 
+/**
+ * Synchronous wrapper for collectWorktrees for backward compatibility.
+ * Runs the async version and blocks until complete.
+ */
+export function collectWorktreesSync(cwd, { base = 'main' } = {}) {
+  // This is only used by tests and legacy callers. The main inventory script
+  // should use the async version directly.
+  const root = resolve(cwd);
+  const worktrees = listWorktrees(root);
+  const nameCollisions = historicalNameCollisions(root, base);
+
+  return worktrees.map((w) => {
+    const { ahead, behind } = aheadBehind(w.path, base);
+    const tree = workingTreeState(w.path, base);
+    const patches = patchEquivalence(w.path, base, ahead);
+    const unmerged = typeof ahead === 'number' && ahead > 0 && patches.status !== PATCH_EQUIVALENCE.ABSORBED;
+
+    return {
+      ...w,
+      isPrimary: w.path === root,
+      tip: tipCommit(w.path),
+      ahead,
+      behind,
+      mergedIntoBase: isMergedInto(w.path, base),
+      locked: Boolean(w.locked),
+      prunableReason: w.prunableReason ?? null,
+      workingTree: tree,
+      ...commitsAhead(w.path, base, ahead),
+      merge: unmerged ? mergeConflict(w.path, base) : { conflict: null },
+      patchEquivalence: patches.status,
+      patchEquivalenceReason: patches.reason,
+      nameCollisions: nameCollisions.get(w.branch) ?? [],
+    };
+  });
+}
+
 export const __testables = {
   aheadBehind,
   patchEquivalence,
@@ -524,4 +976,7 @@ export const __testables = {
   tipCommit,
   isMergedInto,
   commitsAhead,
+  batchAheadBehindTipCommits,
+  gitAsync,
+  gitAsyncParallel,
 };
