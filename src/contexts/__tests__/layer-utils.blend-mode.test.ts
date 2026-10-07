@@ -105,8 +105,8 @@ describe('a paint tool mode reaches the created layer', () => {
 describe('a tool source with no blendMode', () => {
   it('composites as Normal when the paint args predate the seam', () => {
     // `PaintToolArgs` makes the field required so the bar can read it unguarded
-    // (`src/tools/draw.ts:33-41`), but `DrawToolArgs.blendMode` is optional
-    // (`src/tools/draw.ts:26`) precisely so a document saved before the bar
+    // (`src/tools/draw.ts:32-40`), but `DrawToolArgs.blendMode` is optional
+    // (`src/tools/draw.ts:25`) precisely so a document saved before the bar
     // existed still loads. Stripping the key is how such a document arrives here.
     const argsWithoutMode: Record<string, unknown> = { ...paintArgs('brush', 'source-over') };
     delete argsWithoutMode.blendMode;

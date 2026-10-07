@@ -38,7 +38,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
   // One stroke, one bracket, one repaint. `drawLine` re-strokes the whole accumulated path on
   // every call, so the repaint is coalesced into a single animation frame exactly as
-  // `ShapeToolArea`/`useDrag`/`useRect` already do: a pointer that carries several moves per display
+  // `ShapeToolArea`/`useRect` already do: a pointer that carries several moves per display
   // frame otherwise repaints several times for one visible frame, and each repaint costs more than
   // the last.
   //
@@ -115,7 +115,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     // in the commit path below.
     releaseDocumentClaim();
 
-    // Cancel AND null, as `useDrag`/`useRect` do. Nulling alone would leave `frameRequested`
+    // Cancel AND null, as `useRect` does. Nulling alone would leave `frameRequested`
     // permanently non-null and every later drag's preview silently dropped; cancelling alone would
     // drop the last preview, because the frame that would have painted the final point is the one
     // being cancelled.

@@ -12,7 +12,7 @@ import type { Point } from '../contexts/general-types.ts';
  * different options bar. Sharing the union is what let its processor force a `'spray'`
  * `penType` onto `PaintToolArgs` and ignore every other control, which is how Tolerance and
  * Limits ended up with nowhere to live. A tool whose settings do not fit the paint bar must
- * not be in the paint bar's union — see `src/tools/draw.ts:48-62`.
+ * not be in the paint bar's union — see `src/tools/draw.ts:47-61`.
  */
 export type PaintToolName = 'brush' | 'pencil';
 
