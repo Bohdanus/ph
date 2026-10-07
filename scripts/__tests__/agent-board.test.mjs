@@ -925,6 +925,35 @@ describe('dependencies decide what is ready', () => {
   });
 });
 
+describe('deferrals decide what is ready', () => {
+  it('keeps indefinite and future deferrals out until the deadline arrives', () => {
+    const board = boardFor('a');
+    const indefinite = board.createIssue({ title: 'waiting indefinitely' });
+    const scheduled = board.createIssue({ title: 'waiting until later' });
+
+    board.deferIssue(indefinite.id, { reason: 'superseded by a document' });
+    board.deferIssue(scheduled.id, {
+      reason: 'waiting for the deadline',
+      until: new Date(clock + 60_000).toISOString(),
+    });
+
+    expect(board.readyIssues().map((issue) => issue.id)).toEqual([]);
+    advance(59_999);
+    expect(board.readyIssues().map((issue) => issue.id)).toEqual([]);
+    advance(1);
+    expect(board.readyIssues().map((issue) => issue.id)).toEqual([scheduled.id]);
+  });
+
+  it('rejects an invalid deferral deadline', () => {
+    const board = boardFor('a');
+    const { id } = board.createIssue({ title: 'invalid deadline' });
+
+    expect(() => board.deferIssue(id, { reason: 'waiting', until: 'not-a-date' })).toThrow(
+      /deadline must be a valid date/
+    );
+  });
+});
+
 describe('doctor reclaims what dead agents left', () => {
   it('releases a claim held from a worktree that no longer exists', () => {
     const a = boardFor('a');

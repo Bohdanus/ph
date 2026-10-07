@@ -164,7 +164,13 @@ const CLAIMABLE = new Set(['open', 'deferred']);
 const RECLAIMABLE = 'claimed';
 
 /** Offerable to the swarm: unclaimed, unfinished, and not already taken. */
-const READY_STATUSES = new Set(['open', 'deferred', 'claimed']);
+const READY_STATUSES = new Set(['open', 'claimed']);
+
+function deferredIssueIsReady(issue, at) {
+  if (issue.status !== 'deferred' || !issue.defer_until) return false;
+  const deferUntil = Date.parse(issue.defer_until);
+  return Number.isFinite(deferUntil) && deferUntil <= at;
+}
 
 /**
  * A dependency is satisfied once its work is finished — `resolved` or
@@ -1261,9 +1267,10 @@ export class Board {
   }
 
   /**
-   * What the swarm can pick up right now: open or deferred, unblocked, and not
-   * already claimed under a live lease. This is the query that replaces reading
-   * a handoff document to find out whether something is already being done.
+   * What the swarm can pick up right now: open, claimed with an expired lease,
+   * or deferred until its deadline, unblocked, and not already claimed under a
+   * live lease. This is the query that replaces reading a handoff document to
+   * find out whether something is already being done.
    * Expiry is evaluated on read, not by a sweeper: a lease nobody sweeps is
    * still a lease nobody can hold past, and there is no process that would have
    * to be responsible for sweeping it.
@@ -1271,7 +1278,7 @@ export class Board {
   readyIssues({ limit = NO_LIMIT } = {}) {
     const at = this.now();
     return this.listIssues({ limit: NO_LIMIT })
-      .filter((issue) => READY_STATUSES.has(issue.status))
+      .filter((issue) => READY_STATUSES.has(issue.status) || deferredIssueIsReady(issue, at))
       .filter((issue) => {
         // A `claimed` issue whose lease ran out is back on offer: the status
         // still says somebody claimed it, and the lease is the only thing that
@@ -2090,6 +2097,9 @@ export class Board {
   deferIssue(id, { agent, reason, until = null } = {}) {
     const who = agent ?? this.identity?.agentId;
     if (!reason) throw new BoardError('a deferral needs a reason', { code: 1 });
+    if (until !== null && !Number.isFinite(Date.parse(until))) {
+      throw new BoardError('a deferral deadline must be a valid date', { code: 1 });
+    }
     return this.transaction(() => {
       this.getIssue(id);
       this.db
