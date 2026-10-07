@@ -20,6 +20,7 @@ export type ToolIconName =
   | 'eraser'
   | 'clone-stamp'
   | 'red-eye'
+  | 'spot-healing'
   | 'paint-bucket'
   | 'gradient'
   | 'sharpen'

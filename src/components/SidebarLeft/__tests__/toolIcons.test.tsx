@@ -42,6 +42,7 @@ const toolIconNames = [
   'eraser',
   'clone-stamp',
   'red-eye',
+  'spot-healing',
   'paint-bucket',
   'gradient',
   'sharpen',

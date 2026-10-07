@@ -92,6 +92,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'spot-healing', label: 'Spot Healing Brush Tool' },
   { toolName: 'eraser', label: 'Eraser Tool' },
   { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
   { toolName: 'ruler', label: 'Ruler Tool' },

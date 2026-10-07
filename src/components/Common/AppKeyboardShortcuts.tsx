@@ -424,6 +424,13 @@ export const AppKeyboardShortcuts = () => {
   });
 
   useKeyDownShortcut({
+    key: 'j',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('spot-healing'),
+  });
+
+  useKeyDownShortcut({
     key: 'h',
     mod: false,
     enabled: hasImage,

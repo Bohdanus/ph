@@ -726,6 +726,45 @@ Sources:
 
 ---
 
+### Spot Healing Brush Tool
+
+`spot-healing`
+
+Repairs small marks by blending nearby texture into a soft brush stroke.
+
+Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.
+
+**Options bar**
+
+| Control   | Photoshop                                                                                                                                              | In this app                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Size      | Tip diameter in pixels.                                                                                                                                | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Hardness  | Controls the falloff at the tip edge.                                                                                                                  | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Opacity   | Per-dab healing strength from 0 to 100 percent.                                                                                                        | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Type      | Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented. | `missing`                                                                |
+| Sample    | Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.                                 | `missing`                                                                |
+| Diffusion | Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.                                                        | `missing`                                                                |
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool flyout family.
+
+**In this app:** `partial` — The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.
+
+Implementation:
+
+- `src/tools/spotHealing.ts:1`
+- `src/components/Main/SpotHealingToolArea.tsx:1`
+- `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1`
+
+Sources:
+
+- <https://www.adobe.com/products/photoshop/spot-heal.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
+
+---
+
 ### Eraser Tool
 
 `eraser` · **E**
