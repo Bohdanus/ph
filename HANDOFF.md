@@ -4262,44 +4262,6 @@ ref of this repository; `.skills/photoshop-tool-creation.md` records that the un
 has since landed and that these claims are mainline. The finding outlived the branch, and the
 branch's own entry died with it, which is how it came to have no entry at all.
 
-## 184. The feathered selection path thresholds its own anti-aliased edge to fully-in or fully-out
-
-**Problem.** `rasterizePolygonMask()` in `src/util/selection.ts` fills a polygon path into a canvas,
-reads the pixels back, and reduces the alpha channel with a presence test rather than a scale. The
-threshold is "greater than zero", not a midpoint, so a pixel the canvas covered at five per cent is
-recorded as **fully** selected. The CPU fallback is binary for the same reason rather than by
-accident: `isPointInPolygon()` samples at pixel centres and returns a boolean.
-
-The loss is then compounded downstream. `createFeatheredAlphaMask()` re-derives a smooth alpha from
-that already-binary mask by way of `chamferDistanceFromSeeds()`, so the coverage the canvas computed
-is gone before feathering begins. What the user gets is a distance-transform ramp across a
-one-pixel-wide boundary rather than the antialiased ramp the renderer had.
-
-**Scope, which is narrower than it first appears.** `rasterizePolygonMask()` has exactly one caller,
-inside `copyFeatheredPolygonSelectionToCanvas()`, so this reaches production only for a selection
-whose `sourceTool` is `'feather-magnetic-lasso'`. The other arms of `copySelectionToCanvas()` do not
-touch it: the rectangle arm is a bare `drawImage`, and the default polygon arm masks with `ctx.clip()`
-and blits, which keeps the canvas's own antialiasing.
-
-**How this sits against what is already recorded.** `docs/FEATURES.md` — Selection records the
-representation decision: a selection is a polygon point list rather than a pixel channel, which is
-why marching ants read points. That document owns the _choice_, and the choice does not require
-discarding coverage — a mask is exactly where it would live. `docs/TOOLS-TOO-HARD.md` — Selection
-combination modes is the same missing structure seen from the model side: it names "a single point
-path cannot express" boolean operations.
-
-**Affected.** `src/util/selection.ts` — `rasterizePolygonMask()`, `isPointInPolygon()`,
-`chamferDistanceFromSeeds()`, `createFeatheredAlphaMask()`, and `copyFeatheredPolygonSelectionToCanvas()`
-as the only production caller.
-
-**What would close it.** Return the alpha channel from `rasterizePolygonMask()` instead of the
-thresholded mask, and build the feathered alpha from that coverage rather than from a
-`chamferDistanceFromSeeds()` pass over a binary mask. `alphaFromSignedDistance()` is not where the
-change lands — it takes a signed distance, a feather radius and an anti-alias flag, and coverage is
-none of those — so this is a change to how the seeds are chosen. On its own it changes little the user
-can see, because the mask is still recomputed from the point list on every use, so it belongs with
-making the mask authoritative rather than derived, not before.
-
 ## 185. The Magic Wand discards every matched region except the largest, on every click
 
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
