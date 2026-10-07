@@ -36,9 +36,9 @@
     "test:e2e:install": "playwright install chrome",
     "probe:console": "node scripts/probe-console.mjs",
     "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
-    "gate:verify": "npm run tsc && npm run build",
-    "gate:commit": "lint-staged --fail-on-changes --no-stash && npm run gate:verify",
-    "gate:push": "npm run test -- --reporter=dot --silent"
+    "gate:verify": "npm run --silent tsc && npm run --silent build",
+    "gate:commit": "node scripts/quiet-command.mjs lint-staged --fail-on-changes --no-stash && npm run --silent gate:verify",
+    "gate:push": "node scripts/quiet-command.mjs npm run --silent test -- --silent"
   },
   "engines": {
     "node": ">=24"

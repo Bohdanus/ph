@@ -183,6 +183,10 @@ a failing check.
   `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
   first two steps are guards.
 
+- The commit and push gates buffer successful subprocess output. Lint, typecheck, build,
+  and unit-test output is replayed on failure, so a successful hook stays silent without
+  hiding diagnostics from a failed check.
+
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
   commit-gate step. It is the blocking `e2e-unit` CI job; run it when touching
   `e2e/`.

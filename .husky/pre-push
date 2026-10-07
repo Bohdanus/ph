@@ -15,4 +15,4 @@
 # else.
 set -e
 
-npm run gate:push
+npm run --silent gate:push
