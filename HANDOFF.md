@@ -6,7 +6,7 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175, 177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 57-59, 61, 65, 67-68, 69-71, 73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125, 127-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204, 208, 210-211, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4253,22 +4253,6 @@ the operator's to write.
 `src/contexts/UnsavedChangesContext.tsx`, `src/contexts/useFile.tsx` (the `proposedName` the save
 dialog is rendered with), `src/components/SaveDialog/SaveDialog.tsx` (its own title),
 `src/contexts/StoreContext.tsx` (`projectPublishedTimeline()`), `docs/FEATURES.md`
-
-## 176. Copy clamps canvas-space points against the document size
-
-**Problem.** `layerViaCopy` converts the selection out of document space
-(`documentToCanvasPos` in `src/contexts/useSelectionClipboard.ts`) and then hands the
-canvas-space points to `copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize)` in the
-same call. `totalSize` is the document size from `documentFrameSize` in `StoreContext.tsx`, and the copy path clamps against it —
-`getSelectionCanvasBounds()` in `src/util/selection.ts` does
-`maxX = Math.min(imageSize.width, maxX)`. Canvas coordinates run as high as
-`frame.x + totalSize.width`, so the rightmost `frame.x` pixels and the bottom `frame.y` pixels of a
-cropped document are unclippable and a selection reaching them is silently truncated, while a
-selection one pixel left of the origin clamps to 0.
-
-**Fix.** Pass the canvas-space extent — `totalSize` offset by the frame origin, or the canvas's own
-`width`/`height` — as the clamp bound rather than the document size. The other
-`copySelectionToCanvas` call in the same file needs the same bound.
 
 ## 178. `fix/rail-drop-draw` is parked on a premise OVR-2 voided
 
