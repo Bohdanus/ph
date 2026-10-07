@@ -6,9 +6,7 @@ touch — and this file is the detail behind it.
 
 ## Find the trap you are in
 
-This file is over a thousand lines and **97 of 3,244 sessions — 3.0% — have ever opened it
-with a real read**, so reading it front to back is not a strategy and arriving at the right
-section by scrolling is not either. Start from the symptom. Every row is a trap that has
+Start from the symptom. Every row is a trap that has
 actually cost time in this repository, and the right-hand column is the paragraph that will
 save you the next one.
 
@@ -136,7 +134,7 @@ Three things stay allowed, each deliberately:
   broken environment, not a decision, and blocking there would trade a real gate
   for a phantom one.
 
-### Landing
+## Landing
 
 - **Merge only work you are confident is complete and ready:** the requested scope is met, behavior is verified, and required gates pass. If any is uncertain or blocked, leave it unmerged and report why.
 - **The main worktree is a landing, not a negotiation.** A branch merges into

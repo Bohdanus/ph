@@ -36,7 +36,7 @@ violations on `main`.
   `draw` itself is a freehand-annotation layer tool; Photoshop's nearest is the
   Brush, and the app already has a Brush. **It is to be deleted**, not relabelled —
   except that `draw` is the one tool this requirement does not reach, under the
-  operator's override recorded below.
+  operator's override in [`OVERRIDES.md`](OVERRIDES.md).
 
 - **The operator has decided: the three come out of the rail.** 2026-10-01, in
   their words, "I decide to remove them." The **rail entries** go — Photoshop's

@@ -4,17 +4,7 @@ Open defects in this code. [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) is t
 verified DELETES the entry**, a tombstone is not a record, and this file is scoped to `history` by
 `SCOPE_BY_FILE`. Where a finding belongs in another document, that document is named in the entry.
 
-Numbering is stable and gaps are expected — a deleted entry's number is not reused.
-
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 222, 224-227, 229-230 — deleted
-
-Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
-board from re-filing a number as new work
-(`scripts/lib/agent-board/handoff-import.mjs` `deadNumbers`), so the numbers have to outlive the
-entries. What must not outlive them is prose — a "fixed in `abc123`" line per entry is the
-tombstone the lifecycle rule forbids, because it invites a reader to trust a claim instead of
-re-deriving the code. So this is a list and nothing else; each number was deleted on verification,
-and the verification is `git log`, not this file.
+### Items 127 — deleted
 
 ## 1. P0 — the durable replay path is only mounted as a navigation presentation cache
 
@@ -2091,6 +2081,13 @@ displaced fetch. There is no shared region-write primitive to hang a common help
 per-processor change and needs its own tests — a "clip the whole result afterwards" approach
 re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
 
+**Replay contract.** Capture the effective selection input with each committed raster operation, or
+undo/redo will read the current selection rather than the one that constrained the original edit.
+`replayHistory()` and durable materialization rerun processors from stored args; clipping only from
+live store state is not replay-safe. Preserve feathered alpha and selection geometry in that
+snapshot, and avoid duplicating a full-document alpha plane per history entry without measuring its
+memory cost.
+
 **Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
 now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
 different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
@@ -2098,7 +2095,8 @@ different architecture, so this is a rebuild, not a merge. Two of that branch's 
 addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
 
 **Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
-`src/contexts/useLayer.ts` (the commit path)
+`src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
+`src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
 ## 123. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
 

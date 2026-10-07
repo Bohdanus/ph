@@ -14,8 +14,6 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 | [`FEATURES.md`](FEATURES.md)                   | What the app can and cannot do, system-wide, against Photoshop                             |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)           | What the code is and how it fits together                                                  |
 | [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | Durable-history requirements, sequencing, and operator gates                               |
-| [`../AGENTS.md`](../AGENTS.md)                 | The rules an agent reads first: delegation, worktrees, gates, no browser windows           |
-| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)           | The product requirement for the Tools rail, and its open violations                        |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -68,11 +66,19 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words                        |
 | [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
-The agent procedures live outside this directory, under `.skills/`:
-`.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
-`.skills/worktree-merge-harvest.md`, `.skills/broad-test-improvement.md` and
-`.skills/overnight-sweep.md`. `AGENTS.md` states the rules; a skill states the procedure for one of
-them. `e2e/fixtures/README.md` is the Playwright fixture conventions note.
+The agent procedures live outside this directory, under `.skills/`. A skill states the procedure for
+one of the situations `AGENTS.md` describes; `AGENTS.md` itself remains the rule book.
+
+| Skill                                                                      | Its one job                                                                                                                         |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [`.skills/broad-test-improvement.md`](.skills/broad-test-improvement.md)   | Fix broken tests, raise coverage, and strengthen assertions without touching source code                                            |
+| [`.skills/hard-merge.md`](.skills/hard-merge.md)                           | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop |
+| [`.skills/overnight-sweep.md`](.skills/overnight-sweep.md)                 | An autonomous, token-conscious pass over documented defects and unfinished work                                                     |
+| [`.skills/photoshop-tool-creation.md`](.skills/photoshop-tool-creation.md) | Build a new Photoshop-faithful tool end to end: research, options bar, implementation, tests, e2e                                   |
+| [`.skills/stale-worktree-reclaim.md`](.skills/stale-worktree-reclaim.md)   | Find abandoned worktrees, prove the owning session dead, triage into delete/land/defer                                              |
+| [`.skills/worktree-merge-harvest.md`](.skills/worktree-merge-harvest.md)   | Land work from free worktrees onto `main`, with reviews and gates                                                                   |
+
+`e2e/fixtures/README.md` is the Playwright fixture conventions note.
 
 ## Open problems
 
