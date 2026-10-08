@@ -253,6 +253,13 @@ status` and `git diff` before staging.
   guard: it stages the real merge result. The fix belongs in a `pre-push` check, where a
   branch's own diff against `main` has two sides to compare.
 
+  `.husky/pre-push` runs `scripts/stale-branch-files.mjs` before the full app suite. For each
+  pushed local branch other than `main`, it compares changed file blobs with history before the
+  merge base against local `main`. A matching older blob is reported and blocks the push;
+  branches whose first-parent history since the merge base contains a merge commit are skipped.
+  This is a stale-snapshot warning, not proof of intent: an intentional restoration of old file
+  content can match too, and should be reviewed rather than automatically rewritten.
+
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
   conflict runs no hook at all, so an operation left open is invisible to it — which is how
   `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting

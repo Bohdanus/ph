@@ -165,7 +165,8 @@ drop.
 ### Local
 
 Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
-`npm run gate:commit`, and `pre-push` at `npm run gate:push`. The other two run
+`npm run gate:commit`, and `pre-push` ends at `npm run gate:push` after the stale-branch
+check. The other two run
 `scripts/*.mjs` directly — `pre-merge-commit` at `merge-takeover-guard.mjs`, `post-merge` at
 `merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev servers** is
 where the takeover guard is documented.
@@ -179,7 +180,8 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
 a failing check.
 
 - `.husky/pre-commit` runs `npm run gate:commit`; `.husky/pre-push` runs
-  `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
+  `node scripts/stale-branch-files.mjs` and then `npm run gate:push`. Keep the gate line last in
+  each of those two; `pre-commit`'s
   first two steps are guards.
 
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
