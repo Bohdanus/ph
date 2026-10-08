@@ -6,7 +6,11 @@ verified DELETES the entry**, a tombstone is not a record, and this file is scop
 
 Numbering is stable and gaps are expected — a deleted entry's number is not reused.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-89, 91-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 222, 224-227, 229-230 — deleted
+For imports, retire numbered entries with an explicit list heading such as `### Items 3, 8 — deleted`.
+A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
+refuse the batch; remove the status word for a live entry.
+
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 82, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -249,20 +253,20 @@ is cheap, and choosing it in one place is the decision nobody has taken.
 
 **Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds? |
-| ----- | ------------- | -------------- | -------------------------------------- |
-| avif  | yes           | yes            | yes                                    |
-| tiff  | yes           | yes            | yes                                    |
-| bmp   | **none**      | **none**       | n/a                                    |
-| gif   | **none**      | 65535/axis     | yes, on the encoder                    |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                           |
-| svg   | **none**      | **none**       | n/a                                    |
-| psd   | yes           | yes            | yes — the reference implementation     |
+| codec | loader budget | encoder budget | check before the allocation it bounds?         |
+| ----- | ------------- | -------------- | ---------------------------------------------- |
+| avif  | yes           | yes            | yes                                            |
+| tiff  | yes           | yes            | yes                                            |
+| bmp   | 100 MP        | **none**       | yes — before payload validation and allocation |
+| gif   | **none**      | 65535/axis     | yes, on the encoder                            |
+| ico   | 256/axis      | 1..256/axis    | yes, on both                                   |
+| svg   | **none**      | **none**       | n/a                                            |
+| psd   | yes           | yes            | yes — the reference implementation             |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `gif`, `svg` and
-`bmp`, and the whole of `bmp` in both directions.
+rather than an exception to it. What the table leaves open is the loader column for `gif` and `svg`,
+and the encoder column for `bmp` and `svg`.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -273,13 +277,12 @@ selected entry decodes above 256 on either axis — a 512×512 PNG entry, which 
 it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
 loosening the load side reintroduces documents this build then cannot write.
 
-**BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
-byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
-`32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
-absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 7×4, so no
-test can reach an interesting ratio. The fix is one comparison before the `width * height * 4`
-allocation; the open question is the number, and it has to be one of the five above rather than a
-sixth.
+**The BMP decoder's amplification is now bounded.** `decodeBmp()` rejects a raster above
+`MAX_CREATABLE_DOCUMENT_PIXELS` (100 MP) before validating the pixel payload or allocating its
+RGBA output. This is the largest document the app can create, so BMP can still open every canvas
+size this build supports without introducing a sixth raster ceiling. A 20000×40000 1-bpp BMP that
+previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header. The BMP
+encoder remains unbudgeted.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
@@ -865,101 +868,6 @@ right thing in a browser, and the two `it.fails` were correctly removed. The fin
 justification for that removal is still in production prose in the opposite form, and a reader who
 trusts it would re-add the tripwires.
 
-## 82. The parser retires a LIVE numbered heading that ends in a status word, silently
-
-`scripts/lib/agent-board/handoff-import.mjs` — `DEAD_HEADING`, consumed by `assemble`
-
-**The defect.** `DEAD_HEADING` requires the status word to be last, which is right, and
-`assemble` consumes a matching heading with `continue` without ever opening it as an item. Those
-two facts compose into a silent loss: a **live** numbered heading that happens to end in a status
-word is retired, and its prose leaves the import with nothing anywhere in the parse result saying
-so. Measured through the real parser, both directions, side by side (indented deliberately: the
-heading-count assertion — `scripts/__tests__/handoff-import.test.mjs`, the
-`it('produces one item per numbered heading, and no item for a prose section')` title — matches
-`^#{1,6}[ \t]+\d+` **without skipping fenced code**, so an example of this shape written at column
-zero inside any fenced block fails that test against the parser being _right_ — a blind spot in the
-assertion, pre-existing, and the reason for the indentation):
-
-```
-  ## 31. The dialog-closed assertion is fixed   ->  dead=[31]  items=[]
-  ## 9.  — deleted .                           ->  dead=[]   items=[#9]
-```
-
-The first is a live entry retired. The second is the **visible** false row — a title printed on
-`swarm ready` that a reader can clear. A numbered heading that genuinely ends in a status word
-(`## 5. Whatever — resolved`) is not _structurally_ distinguishable from one that merely does, so
-anchoring the word does not separate the two cases; it only decides which one the corpus has not
-produced yet. Latent, not live: over the 97 real headings on `main` at `0d64d75` the narrow rule
-and the loose one give the same verdict for every heading except the five the loose one gets
-wrong, and the one genuine retirement is still read as a retirement. The narrowness is a
-judgement about the corpus, not a proof, which is why the paragraph on the obvious fix below
-measures what the alternative actually does rather than assuming it does nothing.
-
-**Why this is a filed defect and not a documentation nit.** The `DEAD_HEADING` docstring carried
-an argument that this risk was one-sided and loud — under-matching a retirement gives a visible
-row, over-matching is always a silent loss. That argument was **false for numbered headings**, for
-the reason `DEAD_HEADING`'s own separator class gives, measured in the table at the end of this
-entry. It is now corrected in place to state that the residual risk is two-sided, with both
-measured rows quoted.
-
-**Provenance, because the false claim is not on `main` and the question was lost with it.** The
-claim was written in `a3f1dcc` (the campaign branch) under a heading reading "THE TWO FAILURE
-MODES ARE NOT SYMMETRIC, AND THAT IS THE ARGUMENT FOR THE RULE". `bd137d0` merged that branch
-after pointing its parser change at `eba42f8`'s implementation and keeping the tests; the
-+146/-0 merge dropped the whole argument block. Dropping a false claim was right. Dropping the
-question it was an answer to was not, and `eba42f8`'s shorter docstring argues the rule
-empirically without ever addressing the over-match direction.
-
-**Why the obvious fix is worse than the defect — and the first version of that paragraph was
-itself wrong.** Requiring a separator before the marker (`— resolved`, `(done)`, `…: fixed`) was
-written off here as "does not distinguish the two cases either", on the grounds that a title may
-legitimately end in a separator character. **That reason is false, and it was the reason the
-paragraph below it was already making correctly.** Dropping `\s` from `DEAD_HEADING`'s separator
-class `(?:^|[\s\-–—(\[])` to `(?:^|[\-–—(\[])` does separate the cases: it keys on _no space before
-the marker_, and the ordinary English shape of a retirement — `… — deleted`, `… — resolved` — has
-one. `## 5. Whatever — resolved` goes from `DEAD` to `live`, and so does `## 31. The
-dialog-closed assertion is fixed`.
-
-What it buys that is real; what it costs is larger, and the cost is measurable. Re-derived by
-patching the separator class and re-running the real parser over the merged corpus:
-
-| Heading                                                                                                                                                                                         | Now                | Separator required |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------ |
-| `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs` — the `it('reads a heading that ENDS with a status marker as a retirement, in every separator form')` title) | `dead=[13]`        | `dead=[]`          |
-| `### Items 5, 7, 9, … — deleted` (this file's preamble heading, the corpus's **only** real retirement)                                                                                          | `dead=` 26 numbers | `dead=[]`          |
-| Whole `HANDOFF.md` — `planImport(...).create`                                                                                                                                                   | 49                 | **51**             |
-
-The second row is the one that decides it. That preamble heading is the one the `DEAD_HEADING`
-docstring names as "the only retirement marker any of the three documents actually uses", and the
-separator requirement re-reads it as live prose: `dead` goes from 26 numbers to **none**, and two
-already-retired items — `HANDOFF.md#7` and `HANDOFF.md#18` — come back to the board as open work.
-So the fix does not trade a silent loss for one false row; it trades it for **26** un-retirements
-and two live ones, on a heading the corpus really contains, and it breaks the pinned fixture while
-doing it. Adopting it is a corpus change, not a parser change, and it is the operator's to make.
-
-**What a fix needs, and why it is not one line.** Either a marker position that cannot be
-incidental, or a **loud** failure when a `NUMBERED` heading is retired without the document having
-listed retired items. The loud option is the only one that preserves both directions, and it is
-not local: it needs a field on `ParseResult` (whose exact shape
-`handoff-import.test.mjs` asserts on an empty document), and a caller in `agent-board.mjs` that
-actually reports it. The importer now reports duplicate numbered origins, but that does not
-identify this different status-word case. The operator should choose which of the two behaviours a
-mistyped heading should have.
-
-**Pinned while unfixed, as an `it.fails` tripwire.** `scripts/__tests__/handoff-import.test.mjs`
-holds the shape in `it.fails('keeps a LIVE numbered heading that ends in a status word as an open,
-filed item')`: the body asserts what a **fixed** parser returns, so it is red today and the `fails`
-is what makes the suite green. It is the marker the repo already uses in ~20 places
-(`image-processors.test.ts` — the `it.fails('clamps a negative or non-finite radius into a valid CSS
-filter …')` inside `describe('tool image processors')`, whose title carries its own stale
-`src/tools/blur.ts` citation; and `StoreContext.durable-boundary.test.tsx` — the `it('uses the
-replacement document baseline when updates omit totalSize and documentFrame')` title) and the one
-`AGENTS.md` describes. **Delete the `it.fails` in the same change that fixes `DEAD_HEADING`** — the
-moment the body goes green, the `fails` goes red, which is the intended signal and not a
-regression to chase. The live side of the same rule, and the visible false row it contrasts with,
-are held in an ordinary green test beside it, so a pin that starts failing for an unrelated reason
-cannot hide behind `it.fails` passing.
-
 ## 83. The panel workspace: seven documented Photoshop behaviours are NOT built, and the list matters more than the feature
 
 `feat/panel-docks` made the tools rail and the History/Layers dock draggable and resizable. The
@@ -1112,82 +1020,6 @@ The dash pattern remains `[5 / scale, 5 / scale]`; the two existing `setLineDash
 `src/components/Main/TextToolArea.tsx` — `TextToolArea`; `src/hooks/useSelectionAnts.ts` —
 `useSelectionMarchingAnts()`; `src/hooks/__tests__/useRect.drag.test.ts` — the two `setLineDash`
 titles named above
-
-## 90. A disabled FIRST history entry still sizes the durable baseline's FRAME
-
-**Problem.** The converter's baseline branch (`history-adapter.ts` — `legacyHistoryToDurable()`, the
-`initial` binding) gates the **layers** on the entry being enabled:
-`first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null`.
-A disabled first entry therefore yields `layers: []`, which is what `replayHistory()` produces. That
-half is FIXED, and pinned by the `it('a disabled first entry replays as the empty state legacy
-replays')` title in `history-adapter.branches.test.ts`.
-
-The **frame** on that same fallback object is not gated, and TWO expressions read the disabled entry
-rather than one:
-
-```ts
-frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
-```
-
-- `frameFromFirstEntryBedrock()` inspects `first` with no reference to its enabled state. This is
-  the reachable read for a real document: `createBlankLayer()` commits the opening entry through
-  `REPLACE_DOCUMENT` with `{ layerId, actionName: NEW_LAYER_ACTION, layerSource }` and **no**
-  `documentSource` — the size is carried in the dispatch's `updates`, not on the history item — and
-  `App.tsx`'s `DEFAULT_BLANK_IMAGE` seeds `isBedrock: true`, so a disabled opening entry sizes the
-  durable document here.
-- `initialSize` is bound from `options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 }`,
-  so a disabled first entry that DOES carry a `documentSource` still sizes the frame through
-  `documentFrameFromSize()`. Gating only `frameFromFirstEntryBedrock` leaves this open.
-
-**User-visible failure, and it is REACHABLE.** `replayHistory()` skips a disabled item at the top of
-its loop (`history-replay.ts` — at its `if (!item || item.disabled) continue`), so it never reaches a
-bedrock source and never sizes the canvas from one. Measured on this tree: a single-entry timeline
-whose only entry is a DISABLED bedrock `NEW_LAYER_ACTION` of 640x480 converts to a durable baseline
-of `{x:0, y:0, width:640, height:480}`, and `replayDurableDocument(converted.document, -1)` returns
-that same frame, where `replayHistory()` reports the 1x1 document its own `initialSize` default
-produces. The same fixture carrying a `documentSource` and no caller frame measures 640x480 against
-the same 1x1, and with a caller `initialFrame` of a cropped `{x:80, y:270, width:640, height:300}`
-the durable frame reports the cropped document where legacy reports 1x1. Disable the first History
-row of a document that opened on a bedrock source and the canvas blanks while the durable shadow
-still describes the full opening frame: the layers now agree and the frame does not.
-
-**Nothing reports it, which is worse than a misleading warning.** The `invalid-history-entry`
-diagnostic fires only when the disabled first entry carries a `documentSource`. For the production
-shape — a bedrock `layerSource` with no `documentSource` — the conversion returns an EMPTY
-`diagnostics` array next to the divergent frame, so the shadow is marked healthy while the two
-models disagree about the same timeline.
-
-**How the toggle is exposed.** The History tab renders one eye button per row, including the first:
-the row's `onClick` in `HistoryTab.tsx` — `HistoryTab` — calls `handleToggleDisabled`, whose `title`
-reads "Disable history item"
-→ `toggleDisabled(itemId)` (`HistoryTab.tsx` — inside `handleToggleDisabled`) → `useHistory.ts` —
-`toggleDisabled()` → `updateHistoryTimeline`'s
-`toggle-disabled` command, which flips `disabled` on the addressed entry
-(`history-timeline.ts` — the `toggle-disabled` arm of `updateHistoryTimeline()`). `sortedHistory` is
-`[...history].reverse()` (`HistoryTab.tsx` — the `sortedHistory` binding),
-so the first entry is the **last** row — the one closest to the panel's footer, not a row anyone
-treats as special. The mobile drawer exposes the same control
-(`MobileLayersDrawer.tsx` — its `handleToggleDisabled`).
-
-**Fix.** Gate the frame on the same predicate the layers are gated on, so the whole fallback object
-agrees with `replayHistory()` in one move rather than half of it. The shape to decide is what a
-timeline whose baseline is disabled converts to: `"an empty baseline"` and `"a baseline derived from
-the first **enabled** entry"` are two different answers and only one of them is the document
-`replayHistory()` produces. Answer that first — the residual is only correct once the answer is
-chosen, because gating `frameFromFirstEntryBedrock` on `isEntryEnabled(first)` alone leaves BOTH
-`initialSize`, which reads the disabled entry's own `documentSource.size`, and the `options.initialFrame`
-fallback reading an ungated value.
-
-**TRIPWIRE.** There is none for the frame half. The existing case asserts the layers and the cursor
-only, so a fix here is free to regress silently; the fix must extend it to assert the replayed FRAME
-as well, and to cover a disabled opening entry that carries a `documentSource` as well as one that
-does not, or the same change regresses with the suite green.
-
-**Files.** `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`'s `initialSize` binding and
-its `initial` fallback object, and `frameFromFirstEntryBedrock()`;
-`src/contexts/__tests__/history-adapter.branches.test.ts`
-
----
 
 ## 94. A skipped duplicate leaves the fold advanced, so a later `set-document-frame` can carry a `previous` the durable history never reached
 
@@ -2167,6 +1999,13 @@ displaced fetch. There is no shared region-write primitive to hang a common help
 per-processor change and needs its own tests — a "clip the whole result afterwards" approach
 re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
 
+**Replay contract.** Capture the effective selection input with each committed raster operation, or
+undo/redo will read the current selection rather than the one that constrained the original edit.
+`replayHistory()` and durable materialization rerun processors from stored args; clipping only from
+live store state is not replay-safe. Preserve feathered alpha and selection geometry in that
+snapshot, and avoid duplicating a full-document alpha plane per history entry without measuring its
+memory cost.
+
 **Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
 now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
 different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
@@ -2174,7 +2013,8 @@ different architecture, so this is a rebuild, not a merge. Two of that branch's 
 addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
 
 **Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
-`src/contexts/useLayer.ts` (the commit path)
+`src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
+`src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
 ## 123. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
 
@@ -2858,50 +2698,6 @@ working tree to have anything to assert.
 `liveWorktreeFacts()` and the
 `it('protects that shape in a worktree NOBODY has written anything down about')` case;
 `scripts/lib/worktree-inventory/classify.mjs` — `RECENT_IO_WINDOW_MS` and `hasLiveSession()`
-
-## 145. The Dodge's and the Burn's tonal-range shortcuts are described as working, and are bound to nothing
-
-**Problem.** `src/tools/descriptions/focus.ts` carries six `shortcuts` rows that state, as fact, what
-`Shift+Alt+S`, `Shift+Alt+M` and `Shift+Alt+H` do to the Dodge and to the Burn — "Sets the stroke to
-the Shadows range while the Dodge tool is active" (the Dodge's `Shift+Alt+S` row, the Burn's
-`Shift+Alt+S` row, and the four sibling `Shift+Alt+M` / `Shift+Alt+H` rows beside them). **No
-keyboard handler anywhere in the app binds them.** The only two
-`alt: true` registrations in `src/components/Common/AppKeyboardShortcuts.tsx` are the Sponge's own
-two `useKeyDownShortcut({ key: 'd' … alt: true })` / `{ key: 's' … alt: true })` mode-key
-registrations. The Range select is the only thing that writes
-`DodgeBurnToolArgs.range`, and it writes it from the user's click
-(`src/components/ToolbarsRight/Tonal/Tonal.tsx` — `handleRangeChange()`).
-
-**Why it is a defect and not a gap.** A missing capability is filed `missing` per control. These rows
-are in the `shortcuts` array, which has **no status field at all** — a row there reads as a statement
-about what the app does, so a reader of the tooltip, of the generated `docs/TOOLS.md`, and of this
-file's own `implementationRefs` is told six keys work. The Dodge and the Burn are both filed
-`partial`, and their `appNotes` names the missing `Protect Tones` and `Airbrush` controls without
-once mentioning that three of their documented keys are inert.
-
-**How it became visible.** Building the Sponge forced the question. Adobe gives the Sponge
-`Shift+Alt+D` and `Shift+Alt+S` and gives the Dodge and the Burn `Shift+Alt+S/M/H` **on the same page
-of the same table** — Julieanne Kost's Adobe-blog post states both sets, and the Adobe-branded CS2
-sheet carries all five rows
-(<http://www.cheat-sheets.org/saved-copy/PSCS2_Shortcuts_Windows.pdf>). Photoshop resolves the
-`Shift+Alt+S` collision by which tool is active, and the Sponge now does too
-(`enabled: toolName === 'sponge'`). That asymmetry is correct and is the whole point of the gate, but
-it leaves the pair's three keys as the only rows in the family describing something that does not
-happen.
-
-**Fix.** Bind all three for both tools in `selectTonalTool`'s neighbourhood, each gated on the active
-tool being `dodge` or `burn`, using `patchToolArgs(tool, { range })` — the same `alt`/`shift`
-registration shape the Sponge's two mode keys use. The three values already exist as
-`DODGE_BURN_RANGES`, so this is three registrations and a small table, with no new args field. Until
-then, either delete the six rows or add a `status` field to
-`ToolShortcut` (`src/tools/descriptions/types.ts` — `ToolShortcut`) so a documented key can be recorded
-as unbound; the second
-is the durable fix, because the field is the reason this could not be caught mechanically.
-
-**Files.** `src/tools/descriptions/focus.ts` — the Dodge's and the Burn's `Shift+Alt+S/M/H` shortcut
-rows; `src/components/Common/AppKeyboardShortcuts.tsx` — the Sponge's two `alt: true` mode-key
-registrations; `src/components/ToolbarsRight/Tonal/Tonal.tsx` — `handleRangeChange()`;
-`src/tools/descriptions/types.ts` — `ToolShortcut`
 
 ## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
 
@@ -4800,38 +4596,6 @@ path outside a per-test temp directory, and the machine-shared paths get an expl
 reads. `scripts/__tests__/suite-budgets.test.mjs` already derives every spawning suite from the tree
 and asserts the derived set against a hard-coded list, so the mechanism for a derived inventory
 exists here already.
-
-## 220. The merge guard cannot see a branch that committed a stale file, and no merge-time check can
-
-**Problem.** `merge-takeover-guard.mjs` compares a merge result against one whole side's content, and
-it is now good at that — the seven shapes an adversarial review measured as silent passes are closed,
-and it reports correctly on all 407 merges on `main` with no verdict changed. What it still cannot
-see is the defect **upstream** of it: a branch that _committed_ a stale copy of a tracked file, from
-a checkout sitting at another HEAD. The merge inherits it. That is the shape `git add -A` in a
-worktree at another HEAD produces, and it is the one that cost this repository 17 files and 1,835
-lines with no conflict anywhere in it.
-
-No check at merge time can distinguish that from a deliberate edit, because the information does not
-exist in the trees — whether the branch's author knew lives in the commit message. Two shapes are
-reachable today:
-
-- **`git add -A` in a worktree that is not at `main`**, committing the stale content. The guard sees
-  only that the result is one whole side's blob, which it now reports as shape 1 — but by then the
-  stale commit is already on the branch and the loss happened when it was written.
-- **`git merge --squash -X ours`**, which produces a staged tree identical to HEAD's, so `git commit`
-  answers "nothing to commit", there is no commit, no `MERGE_HEAD`, and neither hook fires. The
-  branch's payload disappears with no event to hang a check on. Plain `--squash` is fine and stages
-  the real merge result.
-
-**Affected.** `scripts/merge-takeover-guard.mjs`; `docs/ORCHESTRATION.md` — the
-`merge-takeover-guard` limits, which now names this.
-
-**What would close it.** A check in the **branch's own** hook, where a diff against `main` has two
-sides to compare: for each path the branch changed whose result equals some ancestor's content and
-is not the merge-base content, report it — and make it discriminating rather than universal by
-requiring that the branch's first-parent line contains no merge commit. `.husky/pre-push` already
-runs in the branch and already has `main...HEAD`. Do **not** solve this by making the merge guard
-refuse more; it is already refusing correctly, and widening it fires on ordinary landings.
 
 ## 221. The unit suite still has brittle assertion and fixture gaps
 

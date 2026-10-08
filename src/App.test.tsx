@@ -268,18 +268,9 @@ describe('App shell layout', () => {
     step(500, true);
     step(1600, true);
 
-    // Also through the tablet band, in both directions. 900 is deliberately INERT, but
-    // not because nothing happens there: `RightPanelVisibilityProvider` is not mocked
-    // and subscribes to `TABLET_MEDIA_QUERY`, so crossing into the band re-renders it.
-    // What costs nothing is the canvas tree — `<AppContainer />` is the SAME element
-    // reference across the crossing (App.tsx:145), so React reconciles the provider's
-    // children without rendering them, and `useStore` is not reached again.
-    //
-    // Asserted, because it is what makes the four steps above mean "the boundary was
-    // crossed" rather than "the helper re-renders", and because a provider that stopped
-    // bailing out — or a context consumer added below it — would add a render to every
-    // width change, which is the cost the unconditional mount exists to avoid.
-    step(900, false);
+    // Crossing the tablet band changes RightPanelVisibilityProvider context, so
+    // AppContainer re-renders. The canvas must remain the same node regardless.
+    step(900, true);
     step(500, true);
     step(1280, true);
   });

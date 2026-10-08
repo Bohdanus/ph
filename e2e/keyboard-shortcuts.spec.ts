@@ -363,6 +363,7 @@ test.describe('Keyboard shortcuts', () => {
         { label: 'Line', key: 'ellipse -> line, not back to the rectangle' },
         { label: 'Triangle', key: 'line -> triangle, which the old cycle skipped' },
         { label: 'Polygon', key: 'triangle -> polygon, which the old cycle also skipped' },
+        { label: 'Star', key: 'polygon -> star, which the old cycle also skipped' },
       ];
 
       for (const step of expectedFigures) {
@@ -371,7 +372,7 @@ test.describe('Keyboard shortcuts', () => {
       }
 
       await page.keyboard.press('Shift+u');
-      await expect(customShape, 'polygon -> custom shape, the sixth and last entry of the group').toBeVisible();
+      await expect(customShape, 'star -> custom shape, the seventh and last entry of the group').toBeVisible();
 
       await page.keyboard.press('Shift+u');
       await expect(figure, 'custom shape -> rectangle, the step that closes the group').toContainText('Rectangle');

@@ -10,7 +10,6 @@ import {
   drawLine,
   getWorkspaceCanvas,
   inkHeight,
-  inkWidth,
   INK_LUMA_FLOOR,
   measureInk,
   waitForCanvasRedraw,
@@ -272,6 +271,32 @@ export interface ExportGeometry {
   spreadY: number;
 }
 
+async function measureSignificantInkWidth(image: Buffer): Promise<number> {
+  const { data, info } = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const paper = 255 - INK_LUMA_FLOOR;
+  let left = info.width;
+  let right = -1;
+
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      const index = (y * info.width + x) * 4;
+      const alpha = data[index + 3];
+      if (alpha === 0) continue;
+      const luma = 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+      const weight = ((paper - luma) * alpha) / 255;
+      // Weak lossy-codec halos contribute to the centroid but not to the stroke's span.
+      if (weight <= INK_LUMA_FLOOR) continue;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+    }
+  }
+
+  if (right < left) {
+    throw new Error('The exported image carries no significant ink: the document under test is blank');
+  }
+  return right - left + 1;
+}
+
 /**
  * Decode an exported image and report where its ink is, in DOCUMENT pixels.
  *
@@ -294,7 +319,7 @@ export async function readExportGeometry(image: Buffer): Promise<ExportGeometry>
   return {
     centroidX: profile.centroidX,
     centroidY: profile.centroidY,
-    inkWidth: inkWidth(profile),
+    inkWidth: await measureSignificantInkWidth(image),
     inkHeight: inkHeight(profile),
     ink: profile.ink,
     spreadX: profile.spreadX,
