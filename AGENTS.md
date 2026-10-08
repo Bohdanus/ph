@@ -96,6 +96,7 @@ Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for o
 
 - Run slow inventory commands asynchronously; wait for that run to finish before relying on its report. See [`docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson`](docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson).
 - `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
+- `npm run branches:orphan` reports every branch `main` does not contain that no worktree holds, with its behind-count, its commits `main` lacks, and its conflict count. The inventory and `repo:state` enumerate worktrees; `dispose` acts on one, so none sees unmerged branches without a worktree. [`docs/ORCHESTRATION.md#branches-nobody-holds`](docs/ORCHESTRATION.md#branches-nobody-holds) is the detailed source.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
 

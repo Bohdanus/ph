@@ -847,6 +847,26 @@ describe('the shapes an independent review measured as silent passes', () => {
     expect(seen.takeovers).toEqual([]);
   });
 
+  it('accepts a modify/delete conflict resolved by deleting the path', () => {
+    write('f.txt', 'a\nb\nc\n');
+    commit('base');
+    git(['checkout', '-qb', 'feat']);
+    write('f.txt', 'a\nb\nc\nBRANCH\n');
+    commit('branch modifies f');
+    git(['checkout', '-q', 'main']);
+    git(['rm', '-q', 'f.txt']);
+    commit('main deletes f');
+
+    const seen = mergeAndInspect('feat', { resolve: () => git(['rm', '-qf', 'f.txt']) });
+
+    expect(seen.conflicted).toBe(true);
+    expect(seen.takeovers).toEqual([]);
+    const stderr = captureStderr(() => {
+      expect(main([], { cwd: dir })).toBe(0);
+    });
+    expect(stderr).toBe('');
+  });
+
   it('reports a deletion this side had committed that the result undid', () => {
     // The other half of the same case. Restoring the pre-divergence content over a committed
     // deletion IS the loss, and `git status` calls it a modified path rather than a conflict.

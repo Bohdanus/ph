@@ -1,4 +1,9 @@
-import { getCanvasImageData, imageDataToImage, type RgbaImageData } from './raster-utils.ts';
+import {
+  getCanvasImageData,
+  imageDataToImage,
+  MAX_CREATABLE_DOCUMENT_PIXELS,
+  type RgbaImageData,
+} from './raster-utils.ts';
 
 const BMP_SIGNATURE = 0x4d42;
 const BI_RGB = 0;
@@ -42,6 +47,11 @@ export function decodeBmp(buffer: ArrayBuffer): RgbaImageData {
   }
 
   const height = Math.abs(rawHeight);
+  if (width * height > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `BMP image is too large to open (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
   ensureRange(view, pixelOffset, rowStride * height);
   const output = new Uint8ClampedArray(width * height * 4);

@@ -239,20 +239,20 @@ is cheap, and choosing it in one place is the decision nobody has taken.
 
 **Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds? |
-| ----- | ------------- | -------------- | -------------------------------------- |
-| avif  | yes           | yes            | yes                                    |
-| tiff  | yes           | yes            | yes                                    |
-| bmp   | **none**      | **none**       | n/a                                    |
-| gif   | **none**      | 65535/axis     | yes, on the encoder                    |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                           |
-| svg   | **none**      | **none**       | n/a                                    |
-| psd   | yes           | yes            | yes — the reference implementation     |
+| codec | loader budget | encoder budget | check before the allocation it bounds?         |
+| ----- | ------------- | -------------- | ---------------------------------------------- |
+| avif  | yes           | yes            | yes                                            |
+| tiff  | yes           | yes            | yes                                            |
+| bmp   | 100 MP        | **none**       | yes — before payload validation and allocation |
+| gif   | **none**      | 65535/axis     | yes, on the encoder                            |
+| ico   | 256/axis      | 1..256/axis    | yes, on both                                   |
+| svg   | **none**      | **none**       | n/a                                            |
+| psd   | yes           | yes            | yes — the reference implementation             |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `gif`, `svg` and
-`bmp`, and the whole of `bmp` in both directions.
+rather than an exception to it. What the table leaves open is the loader column for `gif` and `svg`,
+and the encoder column for `bmp` and `svg`.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -263,13 +263,12 @@ selected entry decodes above 256 on either axis — a 512×512 PNG entry, which 
 it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
 loosening the load side reintroduces documents this build then cannot write.
 
-**BMP is the worst amplification.** `bmp-utils.ts` — `decodeBmp()` bounds the input by its on-disk
-byte length and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
-`32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
-absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 7×4, so no
-test can reach an interesting ratio. The fix is one comparison before the `width * height * 4`
-allocation; the open question is the number, and it has to be one of the five above rather than a
-sixth.
+**The BMP decoder's amplification is now bounded.** `decodeBmp()` rejects a raster above
+`MAX_CREATABLE_DOCUMENT_PIXELS` (100 MP) before validating the pixel payload or allocating its
+RGBA output. This is the largest document the app can create, so BMP can still open every canvas
+size this build supports without introducing a sixth raster ceiling. A 20000×40000 1-bpp BMP that
+previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header. The BMP
+encoder remains unbudgeted.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
