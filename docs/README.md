@@ -71,7 +71,8 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 The agent procedures live outside this directory, under `.skills/`:
 `.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
 `.skills/worktree-merge-harvest.md`, `.skills/broad-test-improvement.md`,
-`.skills/overnight-sweep.md`, and `.skills/copilot-chat-history.md`. `AGENTS.md` states the rules; a
+`.skills/overnight-sweep.md`, `.skills/copilot-chat-history.md`, `.skills/chat-history-query.md`,
+`.skills/chat-loose-end-scan.md`, and `.skills/kilo-chat-history.md`. `AGENTS.md` states the rules; a
 skill states the procedure for one of them. `e2e/fixtures/README.md` is the Playwright fixture
 conventions note.
 
