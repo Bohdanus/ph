@@ -43,7 +43,7 @@ violations on `main`.
   Tools panel has no such entries, and they have **no replacement tool** because
   Photoshop puts nothing in their place. The **processors are not deleted**; the
   capability is to be restructured, not dropped. **DONE** — the flyout is gone from
-  `toolbar-mapping.ts`, the rail is fifteen groups, and `extraTools` is the list of
+  `toolbar-mapping.ts`, the rail has **four** top-level bands, and `extraTools` is the list of
   registered tool ids that carry no rail entry.
   - **The destination already existed, mislabelled, and two surfaces had to change
     together.** The app's menus were File, Tools, **Edit**, Window. `Edit` already
@@ -105,8 +105,7 @@ violations on `main`.
   never displays" points at the wrong target. `shape` is the only id the flyout
   routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
   Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**;
-  the flyout has **six** today (the shape flyout in `toolbarMap`) and `Star` is the
-  missing one.
+  the flyout has **seven** today (the shape flyout in `toolbarMap`), all present.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
