@@ -119,10 +119,14 @@ expected to be green too — which is the one claim in this file that no run in 
 repository can establish. `test:e2e:headed` prints its warning on every invocation,
 so the tradeoff is visible at the moment it is accepted.
 
-**The invariant is "the default", not "impossible".** `npx playwright test --headed`,
-`npm run test:e2e:ui` and `npm run test:e2e:debug` all bypass `use.headless` and open
-a real window, because that is what they are for. The rule applies to
-`npm run test:e2e` and to anyone interpreting its result.
+**The invariant is layered, not "impossible".** Without the explicit
+`PLAYWRIGHT_ALLOW_HEADED=1` opt-in, `refuseVisibleBrowser()` rejects `--headed`,
+`--debug`, and any project that resolves to `headless: false` before browser launch.
+Playwright UI mode returns before `globalSetup`, so the in-process guard cannot reject
+`--ui`; `kilo.jsonc` denies `--ui` and `test:e2e:ui` for agents and prompts before
+`--debug` and `test:e2e:debug`. Outside that permission layer, UI mode can open a
+window. `npm run test:e2e:headed` is the supported operator opt-in; agents use
+`npm run test:e2e`.
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 
