@@ -67,4 +67,20 @@ describe('patch', () => {
     expect(canvas.ctx.getImageData).not.toHaveBeenCalled();
     expect(canvas.ctx.putImageData).not.toHaveBeenCalled();
   });
+
+  it('keeps diffusion step 7 distinct from step 6', () => {
+    const [diffusionSix] = patch({ size, bitmap: createMockImageBitmap(size.width, size.height) })(
+      args({ sourceRect: { x: 0, y: 0, width: 9, height: 9 }, donorPoint: { x: 1, y: 0 }, diffusion: 6 })
+    );
+    const [diffusionSeven] = patch({ size, bitmap: createMockImageBitmap(size.width, size.height) })(
+      args({ sourceRect: { x: 0, y: 0, width: 9, height: 9 }, donorPoint: { x: 1, y: 0 }, diffusion: 7 })
+    );
+    const sixCanvas = diffusionSix as unknown as RecordingCanvas;
+    const sevenCanvas = diffusionSeven as unknown as RecordingCanvas;
+    const interior = (4 * size.width + 4) * 4;
+
+    expect(Array.from(sixCanvas.buffer.slice(interior, interior + 4))).not.toEqual(
+      Array.from(sevenCanvas.buffer.slice(interior, interior + 4))
+    );
+  });
 });

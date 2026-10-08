@@ -24,7 +24,7 @@ const HealingBrush: React.FC<{}> = () => {
 
   if (!args) return null;
   const publishSlider = (patch: ToolPatch<'healing-brush'>) => {
-    pendingPatchRef.current = patch;
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
     if (rafIdRef.current !== null) return;
     rafIdRef.current = requestAnimationFrame(() => {
       if (pendingPatchRef.current) patchToolArgs('healing-brush', pendingPatchRef.current);

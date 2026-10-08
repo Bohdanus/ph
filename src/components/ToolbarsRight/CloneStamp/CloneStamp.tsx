@@ -86,7 +86,7 @@ const CloneStamp: React.FC<{}> = () => {
   }, []);
 
   const publishSlider = (patch: ToolPatch<'clone-stamp'>) => {
-    pendingPatchRef.current = patch;
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
 
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
