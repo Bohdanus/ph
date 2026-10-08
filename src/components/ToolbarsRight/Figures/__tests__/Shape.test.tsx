@@ -46,6 +46,7 @@ const setToolArgsMock = vi.fn();
 const shapeCreatorMock = vi.fn();
 const shapeSizeMock = vi.fn();
 const pointerScale = vi.hoisted(() => ({ value: 1 }));
+const documentBacked = vi.hoisted(() => ({ value: false }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState],
@@ -56,6 +57,7 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
     const [toolArgs, setToolArgs] = useState<typeof baseToolArgs>({ ...baseToolArgs });
     return {
       toolArgs,
+      isDocumentBacked: documentBacked.value,
       setToolArgs: (...args: unknown[]) => {
         const newArgs = args[0] as Partial<typeof baseToolArgs>;
         setToolArgs({ ...toolArgs, ...newArgs });
@@ -125,6 +127,7 @@ describe('Shape toolbar', () => {
   beforeEach(() => {
     Object.assign(savedArgsPerFigure, structuredClone(PRISTINE_SAVED_ARGS_PER_FIGURE));
     setToolArgsMock.mockClear();
+    documentBacked.value = false;
     shapeCreatorMock.mockClear();
     shapeSizeMock.mockClear();
     pointerScale.value = 1;
@@ -157,6 +160,16 @@ describe('Shape toolbar', () => {
     expect(mode).toHaveValue('shape');
     expect(screen.getByRole('option', { name: 'Path' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Pixels' })).toBeInTheDocument();
+  });
+
+  it('does not persist a store-colour mirror over durable source arguments', () => {
+    documentBacked.value = true;
+    storeState.color = '#ff0000';
+    storeState.backgroundColor = '#00ff00';
+
+    render(<Shape />);
+
+    expect(setToolArgsMock).not.toHaveBeenCalled();
   });
 
   it('changes the tool mode', () => {

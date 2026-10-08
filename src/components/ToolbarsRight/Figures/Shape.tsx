@@ -67,7 +67,7 @@ const figureLabel = (figure: ShapeToolArgs['figure']) => {
 
 const Shape: React.FC = () => {
   const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, isDocumentBacked } = useCurrentTool();
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   const args = toolArgs as ShapeToolArgs;
@@ -94,10 +94,11 @@ const Shape: React.FC = () => {
    * Fill swatch is a separate product decision and not this effect's business.
    */
   useEffect(() => {
+    if (isDocumentBacked) return;
     if (!isShapeFamilyToolName(args.toolName)) return;
     if (args.color === color && args.backgroundColor === backgroundColor) return;
     setToolArgs({ ...args, color, backgroundColor });
-  }, [args, backgroundColor, color, setToolArgs]);
+  }, [args, backgroundColor, color, isDocumentBacked, setToolArgs]);
 
   const handleChange = (newArgs: ShapeToolArgs) => {
     savedArgsPerFigure[newArgs.figure] = {
