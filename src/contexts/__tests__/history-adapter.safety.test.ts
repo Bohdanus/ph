@@ -657,6 +657,7 @@ describe('deriveSetSelectionEntry', () => {
       id: 'selection-clear',
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName: SELECTION_ACTION },
       operation: { kind: 'set-selection', before: previousSelection, after: nextSelection },
     });
   });

@@ -24,6 +24,7 @@ import {
   refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
+import { durableEntryProvenance } from './history-provenance.ts';
 import type { HistoryItem } from './history-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord, ToolLayerSource } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
@@ -346,8 +347,14 @@ function frameFromFirstEntryBedrock(item: HistoryItem | undefined): DocumentFram
   return undefined;
 }
 
-function entry<Op extends DurableOperation>(id: string, operation: Op, enabled = true): DurableHistoryEntry<Op> {
-  return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
+function entry<Op extends DurableOperation>(item: HistoryItem, operation: Op, enabled = true): DurableHistoryEntry<Op> {
+  return Object.freeze({
+    id: item.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled,
+    provenance: durableEntryProvenance(item),
+    operation,
+  });
 }
 
 /**
@@ -369,7 +376,7 @@ export function deriveSetDocumentFrameEntry(
     previous: args?.previousFrame ?? { ...currentFrame },
     next: { ...args.nextFrame },
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -431,7 +438,7 @@ export function deriveSetSelectionEntry(
       : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
     after: selectionSnapshot(next.selections, next.activeSelectionId),
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -515,7 +522,7 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     layerId: item.layerId,
     patch: Object.freeze(patch),
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -530,7 +537,7 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
 export function deriveRemoveLayerEntry(item: HistoryItem): DurableHistoryEntry<RemoveLayerOperation> | null {
   if (item.actionName !== REMOVE_ACTION) return null;
   const operation: RemoveLayerOperation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 /**
@@ -617,7 +624,7 @@ export function deriveReplaceLayerSourceEntry(
     source,
     pos: Object.freeze({ ...runtime.pos }),
   });
-  return entry(item.id, operation, isEntryEnabled(item));
+  return entry(item, operation, isEntryEnabled(item));
 }
 
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
@@ -1084,7 +1091,7 @@ export function legacyHistoryToDurable(
         });
       } else {
         publishedEntryIds.add(item.id);
-        entries.push(entry(item.id, operation, enabled));
+        entries.push(entry(item, operation, enabled));
       }
     }
     legacyCursorToDurableCursor.push(entries.length - 1);

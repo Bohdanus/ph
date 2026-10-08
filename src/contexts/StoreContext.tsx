@@ -64,7 +64,7 @@ import {
   type SourceBackedEntryContext,
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
-import { composeDurableDocument } from './durable-compositor.ts';
+import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -124,6 +124,33 @@ type DurableProjection = {
   diagnostics: readonly MigrationDiagnostic[];
   legacyCursorToDurableCursor?: readonly number[];
 };
+
+export type DurablePresentationStatus = 'unpublished' | 'durable' | 'legacy-fallback';
+export type DurablePresentationReason =
+  'unsupported-source' | 'materialization-refused' | 'layer-coverage' | 'renderer-incompatible' | 'stale';
+
+export type DurablePresentationRecord = Readonly<{
+  status: DurablePresentationStatus;
+  cursor: number | null;
+  layerIds: readonly LayerId[];
+  reason: DurablePresentationReason | null;
+}>;
+
+const EMPTY_DURABLE_PRESENTATION: DurablePresentationRecord = Object.freeze({
+  status: 'unpublished',
+  cursor: null,
+  layerIds: Object.freeze([]),
+  reason: null,
+});
+
+type DurablePresentationPublication = Readonly<{
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  historyIndex: number;
+  durableRevision: number;
+  record: DurablePresentationRecord;
+}>;
 
 export function durablePresentationIsRendererIdentical(
   replayLayer: DurableReplayLayer,
@@ -194,6 +221,8 @@ export type StoreData = {
   /** A non-current sidecar must never be used as a replay or export input. */
   durableStatus: DurableDocumentStatus;
   durableDiagnostics: readonly MigrationDiagnostic[];
+  /** Dev-only evidence of the last durable navigation publication decision. */
+  durablePresentation: DurablePresentationRecord;
   viewStateRef: { current: ViewState };
   viewState: ViewState;
   setViewState: (partial: Partial<ViewState>) => void;
@@ -351,7 +380,11 @@ export type Action =
 
 type InternalAction =
   | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
-  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } };
+  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
+  | {
+      type: 'SET_DURABLE_PRESENTATION';
+      payload: DurablePresentationPublication;
+    };
 
 type StoreAction = Action | InternalAction;
 
@@ -433,6 +466,7 @@ const initialState: StoreData = {
   durableDocument: null,
   durableStatus: 'unavailable',
   durableDiagnostics: [],
+  durablePresentation: EMPTY_DURABLE_PRESENTATION,
 
   color: '#000000',
   backgroundColor: '#ffffff',
@@ -497,6 +531,7 @@ function projectPublishedTimeline(
     durableDocument: durable.document,
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
+    durablePresentation: EMPTY_DURABLE_PRESENTATION,
     hasUnsavedChanges: true,
   };
 }
@@ -534,6 +569,7 @@ function projectReplacedDocument(
     durableDocument: durable.document,
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
+    durablePresentation: EMPTY_DURABLE_PRESENTATION,
     history: payload.history,
     historyIndex: payload.historyIndex ?? payload.history.length - 1,
   };
@@ -679,6 +715,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...state,
         totalSize: action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
       };
     case 'SET_TOOL_NAME':
       return { ...state, toolName: action.payload };
@@ -693,6 +730,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...state,
         layers: action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
       };
     case 'SET_ACTIVE_LAYER':
       if (state.activeLayerId === action.payload) {
@@ -709,6 +747,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         layers: action.payload.layers,
         activeLayerId: action.payload.activeLayerId,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
         hasUnsavedChanges: true,
       };
     case 'PUBLISH_RUNTIME_PRESENTATION':
@@ -717,6 +756,26 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       // promoted cache, so this transition cannot move durable logical state,
       // records no history, and does not invalidate the durable shadow.
       return { ...state, layers: action.payload.layers };
+    case 'SET_DURABLE_PRESENTATION': {
+      const publication = action.payload;
+      if (
+        state.documentId !== publication.documentId ||
+        state.documentRevision !== publication.documentRevision ||
+        state.branchRevision !== publication.branchRevision ||
+        state.historyIndex !== publication.historyIndex ||
+        state.durableStatus !== 'current' ||
+        state.durableDocument?.durableRevision !== publication.durableRevision
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        durablePresentation: Object.freeze({
+          ...publication.record,
+          layerIds: Object.freeze([...publication.record.layerIds]),
+        }),
+      };
+    }
     case 'PROMOTE_LAYER_PRESENTATIONS': {
       // One transition for every promotion a commit produced. The dispatcher
       // already filtered out superseded canvases; the identity re-check keeps the
@@ -747,6 +806,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...state,
         ...action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
       };
     case 'REORDER_LAYERS': {
       if (!action.historyItem || !action.durableProjection) return state;
@@ -811,6 +871,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         durableDocument: action.payload.status === 'current' ? state.durableDocument : null,
         durableStatus: action.payload.status,
         durableDiagnostics: action.payload.diagnostics,
+        durablePresentation: EMPTY_DURABLE_PRESENTATION,
       };
     case 'SET_SELECTIONS':
       // Selection state only; no durable input moves.
@@ -1047,21 +1108,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     durableCursor: number
   ): Promise<void> => {
     const replay = replayDurableAtCursor(document, durableCursor);
+    const publishRecord = (record: DurablePresentationRecord) => {
+      const action: Extract<InternalAction, { type: 'SET_DURABLE_PRESENTATION' }> = {
+        type: 'SET_DURABLE_PRESENTATION',
+        payload: {
+          documentId: state.documentId,
+          documentRevision: document.documentRevision,
+          branchRevision: document.branchRevision,
+          historyIndex: state.historyIndex,
+          durableRevision: document.durableRevision,
+          record,
+        },
+      };
+      const latest = latestStateRef.current;
+      const next = reducer(latest, action);
+      if (next === latest) return;
+      latestStateRef.current = next;
+      rawDispatch(action);
+    };
+
     // Legacy-tool sources remain an explicitly unsupported durable source. Keep
     // navigation on the legacy presentation until that source adapter exists.
-    if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) return;
+    if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) {
+      publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason: 'unsupported-source' });
+      return;
+    }
 
     const registry = getAssetRegistry();
     let composite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
     let detached: ReturnType<NonNullable<typeof composite>['takeLayers']> | undefined;
-    try {
-      composite = await composeDurableDocument(replay, {
-        documentId: state.documentId,
-        baselineAssetGeneration: registry.getDocumentGeneration(state.documentId),
-        operationSetRevision: document.durableRevision,
-        assetRegistry: registry,
-      });
-      detached = composite.takeLayers();
+    let failureReason: DurablePresentationReason = 'materialization-refused';
+    const assertFresh = () => {
       const latest = latestStateRef.current;
       if (
         latest.documentId !== state.documentId ||
@@ -1072,28 +1149,91 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         latest.durableDocument?.durableRevision !== document.durableRevision ||
         !documentFrameEquals(latest.documentFrame, replay.frame)
       ) {
+        failureReason = 'stale';
         throw new Error('Durable navigation presentation became stale before publication');
       }
+    };
+
+    try {
+      composite = await composeDurableDocument(replay, {
+        documentId: state.documentId,
+        baselineAssetGeneration: registry.getDocumentGeneration(state.documentId),
+        operationSetRevision: document.durableRevision,
+        assetRegistry: registry,
+      });
+      assertFresh();
+      const latestBeforeDetach = latestStateRef.current;
+      const durableVisibleLayerIds = Object.values(replay.layers)
+        .filter(({ snapshot }) => snapshot.visible)
+        .map(({ snapshot }) => snapshot.id)
+        .sort();
+      const legacyVisibleLayerIds = Object.values(latestBeforeDetach.layers)
+        .filter((layer) => layer.visible)
+        .map((layer) => layer.id)
+        .sort();
+      if (
+        durableVisibleLayerIds.length !== legacyVisibleLayerIds.length ||
+        durableVisibleLayerIds.some((layerId, index) => layerId !== legacyVisibleLayerIds[index])
+      ) {
+        failureReason = 'layer-coverage';
+        throw new DurableCompositionRefusal(
+          'layer-coverage',
+          'Durable navigation presentation does not cover the same visible layer ids as legacy replay'
+        );
+      }
+      detached = composite.takeLayers();
+      const latest = latestStateRef.current;
       const nextLayers = { ...latest.layers };
-      const declined: Record<string, Awaited<ReturnType<typeof composeDurableDocument>>['layers'][string]> = {};
-      for (const [layerId, materialized] of Object.entries(detached.layers)) {
+      const visibleLayerIds = Object.values(replay.layers)
+        .filter(({ snapshot }) => snapshot.visible)
+        .sort((left, right) => left.snapshot.order - right.snapshot.order)
+        .map(({ snapshot }) => snapshot.id);
+      const materializedLayerIds = Object.keys(detached.layers);
+      if (
+        materializedLayerIds.length !== visibleLayerIds.length ||
+        visibleLayerIds.some((layerId) => !detached?.layers[layerId])
+      ) {
+        failureReason = 'layer-coverage';
+        throw new DurableCompositionRefusal(
+          'layer-coverage',
+          'Durable navigation presentation did not cover every visible replay layer'
+        );
+      }
+      for (const layerId of visibleLayerIds) {
+        const materialized = detached.layers[layerId];
+        if (!materialized) {
+          failureReason = 'layer-coverage';
+          throw new DurableCompositionRefusal('layer-coverage', `Durable navigation layer ${layerId} is missing`);
+        }
         const existing = nextLayers[layerId];
-        if (!existing) throw new Error(`Durable navigation layer ${layerId} is absent from legacy replay`);
+        if (!existing) {
+          failureReason = 'layer-coverage';
+          throw new DurableCompositionRefusal(
+            'layer-coverage',
+            `Durable navigation layer ${layerId} is absent from legacy replay`
+          );
+        }
         const replayLayer = replay.layers[layerId];
         const isRendererIdentical = durablePresentationIsRendererIdentical(replayLayer, existing, materialized.bounds);
         if (!isRendererIdentical) {
-          declined[layerId] = materialized;
-          continue;
+          failureReason = 'renderer-incompatible';
+          throw new DurableCompositionRefusal(
+            'renderer-incompatible',
+            `Durable navigation layer ${layerId} is not renderer-identical`
+          );
         }
         nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
       }
+      assertFresh();
       if (!layersDifferOnlyByPresentation(latest.layers, nextLayers)) {
-        throw new Error('Durable navigation presentation became stale before publication');
+        failureReason = 'renderer-incompatible';
+        throw new DurableCompositionRefusal(
+          'renderer-incompatible',
+          'Durable navigation presentation changed logical layer state'
+        );
       }
 
-      for (const materialized of Object.values(declined)) materialized.lease.release();
-      for (const [layerId, materialized] of Object.entries(detached.layers)) {
-        if (declined[layerId]) continue;
+      for (const materialized of Object.values(detached.layers)) {
         presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
       }
       const action: Extract<InternalAction, { type: 'PUBLISH_RUNTIME_PRESENTATION' }> = {
@@ -1102,10 +1242,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       latestStateRef.current = reducer(latest, action);
       rawDispatch(action);
+      publishRecord({
+        status: 'durable',
+        cursor: durableCursor,
+        layerIds: Object.freeze([...visibleLayerIds].sort()),
+        reason: null,
+      });
       retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
       detached = undefined;
-    } catch {
+    } catch (error) {
       detached?.release();
+      const reason = error instanceof DurableCompositionRefusal ? error.code : failureReason;
+      publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason });
     } finally {
       composite?.release();
     }

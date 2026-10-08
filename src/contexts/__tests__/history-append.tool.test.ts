@@ -479,15 +479,34 @@ describe('decideDurableAppend: a wrong retained tool operation is still refused'
 
   it('accepts a raster-processor plan when its canonical legacy args match', () => {
     const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
-    const planned = rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
-      kind: 'apply-raster-processor',
-      layerId: 'layer-1',
-      processorId: 'sponge',
-      version: 1,
-      args,
-    }));
+    const planned = {
+      ...rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
+        kind: 'apply-raster-processor',
+        layerId: 'layer-1',
+        processorId: 'sponge',
+        version: 1,
+        args,
+      })),
+      provenance: { actionName: TOOL_ACTION, toolName: 'sponge' } as const,
+    };
 
     expect(decide(args, { planned }).outcome).toBe('published');
+  });
+
+  it('refuses a valid raster-processor operation whose provenance does not match the legacy entry', () => {
+    const args = { toolName: 'sponge', mode: 'desaturate', size: 4 };
+    const planned = {
+      ...rewriteNarrow<ProcessorOperation>({ toolName: 'transform', trapezoid: 20 }, () => ({
+        kind: 'apply-raster-processor',
+        layerId: 'layer-1',
+        processorId: 'sponge',
+        version: 1,
+        args,
+      })),
+      provenance: { actionName: TOOL_ACTION, toolName: 'transform' } as const,
+    };
+
+    expect(reasonFor(args, planned)).toBe('the durable history provenance does not match the legacy entry');
   });
 
   it('refuses a trapezoid whose legacy args also carry affine values', () => {

@@ -275,7 +275,11 @@ type Equal<Left, Right> =
  * cannot reach them, and a census that stopped at the public 29 would pass over
  * exactly the arms nothing in production dispatches.
  */
-const INTERNAL_ACTION_TYPES = ['PUBLISH_RUNTIME_PRESENTATION', 'ADOPT_LAYER_BITMAPS'] as const;
+const INTERNAL_ACTION_TYPES = [
+  'PUBLISH_RUNTIME_PRESENTATION',
+  'ADOPT_LAYER_BITMAPS',
+  'SET_DURABLE_PRESENTATION',
+] as const;
 
 /**
  * The reducer's own body, sliced out of the module source.
@@ -430,6 +434,19 @@ describe('StoreContext boundary gates', () => {
       dispatch({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers: {} } });
       // @ts-expect-error internal bitmap adoption is not a public store action
       dispatch({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [] } });
+      const setDurablePresentationAction = {
+        type: 'SET_DURABLE_PRESENTATION',
+        payload: {
+          documentId: '',
+          documentRevision: 0,
+          branchRevision: 0,
+          historyIndex: 0,
+          durableRevision: 0,
+          record: { status: 'unpublished', cursor: null, layerIds: [], reason: null },
+        },
+      };
+      // @ts-expect-error internal durable presentation is not a public store action
+      dispatch(setDurablePresentationAction);
     };
     void typeProbe;
   });
