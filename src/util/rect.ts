@@ -220,11 +220,6 @@ export const calculateNewRect = (
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  // `align` is NOT destructured here, and that is the point arm's whole finding: Adobe scopes
-  // paragraph alignment to paragraph type ("Alignment options are available only for paragraph type",
-  // `formatting-paragraphs.html`), so a point box's left edge never moves and the property has nothing
-  // to say about this geometry. `renderText` still reads it, and computes the same `x` for all three
-  // settings on a box that hugs its ink.
   const { text, rect } = newArgs;
   // No rect means the text has not been placed on the canvas yet, and there is nothing to
   // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
@@ -310,8 +305,9 @@ export const calculateNewRect = (
       /**
        * The point arm, and the ONE place a point box's geometry is decided at all.
        *
-       * **The box hugs its ink, in both directions, and the LEFT EDGE NEVER MOVES.** Both halves of
-       * that are Adobe:
+       * **The box hugs its ink, in both directions, and stays centred on the click.** The width is
+       * recomputed on every edit so replacing the placeholder does not leave unused space, and the
+       * click remains the stable horizontal anchor while the text changes.
        *
        * - The width is recomputed every call rather than compared against what is there. "When you
        *   enter point type, each line of type is independent — the line expands or shrinks as you edit
@@ -320,30 +316,21 @@ export const calculateNewRect = (
        *   true the moment a box is born holding the `'Lorem ipsum'` placeholder, because then it
        *   carries slack the user never chose, and three characters typed over the placeholder left the
        *   line as wide as the placeholder. A grow-only rule cannot tell the two apart.
-       * - `align` does NOT move the box, for any of the three settings. "You can align type to one edge
-       *   of a paragraph (left, center, or right for horizontal type) […] Alignment options are
-       *   available only for paragraph type" (`formatting-paragraphs.html`), and the same scope in
-       *   `setup-paragraph-formatting.html`: "You can align and justify only paragraph text." Point type
-       *   "appears in a straight line without boundaries or a bounding box" (`add-text.html`), so there
-       *   is nothing to align within and the control has no meaning here — `renderText`'s anchor agrees,
-       *   computing the same `x` for all three settings on a box that hugs its ink.
-       *
-       * That is not a style choice. An earlier version of this arm DID displace the box by `align`, and
-       * `HANDOFF.md` entry 195 records the objection: moving the box and then anchoring the ink inside
-       * it shifts the ink by twice the slack. With the box hugging its ink the slack is zero, so the
-       * displacement would be the only shift — but it would still be a shift, for a control Adobe says
-       * is not available on this kind of type. So the arm keeps `x1` and moves only `x2`.
+       * - Point type is not a paragraph alignment box, so the width follows the content rather than
+       *   distributing slack for `align`. The app's point-text interaction keeps the placement click
+       *   centred instead, which makes typing in either direction predictable.
        *
        * A consequence, stated because it is real: widening a POINT box with a handle now survives only
        * until the next keystroke, which snaps it back to its ink. Adobe has no handle on a point line
        * at all, so this is the closer of the two behaviours, and the handle belongs to `HANDOFF.md`'s
        * transform question rather than to point type.
        *
-       * `clampEdge` still applies, to the edge that is kept: a box dragged off the document's left edge
-       * keeps its ink inside the document, which is the one thing this rect's origin may not do.
+       * `clampEdge` still applies to the calculated left edge. A click close to the document edge may
+       * therefore lose perfect centring in order to keep the type origin inside the document.
        */
       const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-      const x1 = clampEdge(newRect.x1, imageSize.width);
+      const centerX = newRect.x1;
+      const x1 = clampEdge(centerX - requiredWidth / 2, imageSize.width);
       newRect = { ...newRect, x1, x2: x1 + requiredWidth };
     }
   }

@@ -2191,7 +2191,7 @@ test.describe('Text tool', () => {
    *      a drag it would have been a paragraph box of the drag's width, and three words that do
    *      not fit it would have become three lines, i.e. an ink about 3x taller than the step.
    *   2. the BOX is as wide as the line plus its own padding — the grew-to-fit claim, and the one
-   *      that fails outright against a box left at the click point. The click's rect is collapsed
+   *      that fails outright against a box that stayed collapsed at the click point. The click's rect is collapsed
    *      to zero width, and a point box that never grew would measure about 14 CSS px of frame
    *      around nothing, against the 512 CSS px of frame measured around the 486 CSS px line here.
    *
@@ -2240,12 +2240,10 @@ test.describe('Text tool', () => {
     // own ink — soft, so that the two width comparisons below are still reported if it fails.
     expectInkInsideFrame(draft, 'the point draft');
 
-    // And it grew RIGHTWARDS from the click, which is what `align: 'left'` resolves to
-    // (`rect.ts:166-169` moves `x2` and leaves `x1`), so the box's left edge is still the point
-    // the user pressed — one handle's width of overhang away from it here.
+    // The box grows equally around the click, so its centre remains at the placement coordinate.
     expect(
-      Math.abs(draft.frame.left + FRAME_OVERHANG_DOC_PX * fit.scale - (box.x + CLICK_POINT.x)),
-      'the point box grew from somewhere other than the click'
+      Math.abs((draft.frame.left + draft.frame.right) / 2 - (box.x + CLICK_POINT.x)),
+      'the point box is not centred on the click'
     ).toBeLessThanOrEqual(3);
 
     // 2. THE BOX GREW TO FIT, on the committed line. The frame measured above IS the frame of the
