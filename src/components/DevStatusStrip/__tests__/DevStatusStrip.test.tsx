@@ -1,7 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DevStatusStrip from '../DevStatusStrip.tsx';
-import type { DurableDocumentStatus } from '../../../contexts/StoreContext.tsx';
+import type {
+  DurableDocumentStatus,
+  DurablePresentationRecord,
+  DurablePresentationStatus,
+} from '../../../contexts/StoreContext.tsx';
 import type { MigrationDiagnostic } from '../../../contexts/history-adapter.ts';
 
 /**
@@ -26,7 +30,17 @@ const storeState = vi.hoisted(
     ({
       durableStatus: 'current' as DurableDocumentStatus,
       durableDiagnostics: [] as readonly MigrationDiagnostic[],
-    }) as { durableStatus: DurableDocumentStatus; durableDiagnostics: readonly MigrationDiagnostic[] }
+      durablePresentation: {
+        status: 'durable' as DurablePresentationStatus,
+        cursor: null,
+        layerIds: [] as readonly string[],
+        reason: null,
+      } as DurablePresentationRecord,
+    }) as {
+      durableStatus: DurableDocumentStatus;
+      durableDiagnostics: readonly MigrationDiagnostic[];
+      durablePresentation: DurablePresentationRecord;
+    }
 );
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({ useStore: () => [storeState, vi.fn()] }));
@@ -38,6 +52,12 @@ function diagnostic(code: MigrationDiagnostic['code'], severity: MigrationDiagno
 beforeEach(() => {
   storeState.durableStatus = 'current';
   storeState.durableDiagnostics = [];
+  storeState.durablePresentation = {
+    status: 'durable',
+    cursor: null,
+    layerIds: [],
+    reason: null,
+  };
 });
 
 describe('DevStatusStrip', () => {
@@ -104,5 +124,67 @@ describe('DevStatusStrip', () => {
     expect(list).toHaveTextContent('invalid-history-entry, conversion-failed, unsupported-history-feature');
     expect(list).toHaveTextContent('+2 more');
     expect(list.textContent).not.toContain('durable-append-mismatch');
+  });
+
+  it('exposes the durable presentation status, cursor, and layer IDs', () => {
+    storeState.durableStatus = 'stale';
+    storeState.durablePresentation = {
+      status: 'durable',
+      cursor: 5,
+      layerIds: ['layer-a', 'layer-b'],
+      reason: null,
+    };
+
+    render(<DevStatusStrip />);
+
+    const strip = screen.getByTestId('dev-status-strip');
+    expect(strip).toHaveAttribute('data-presentation-status', 'durable');
+    expect(strip).toHaveAttribute('data-durable-cursor', '5');
+    expect(strip).toHaveAttribute('data-durable-layer-ids', 'layer-a,layer-b');
+    expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
+    const presentation = screen.getByTestId('dev-status-strip-presentation');
+    expect(presentation).toHaveTextContent('Durable presentation @ 5 [layer-a, layer-b]');
+  });
+
+  it('exposes a legacy-fallback presentation with its reason, cursor, and layer IDs', () => {
+    storeState.durableStatus = 'unavailable';
+    storeState.durablePresentation = {
+      status: 'legacy-fallback',
+      cursor: 3,
+      layerIds: ['foreground'],
+      reason: 'unsupported-source',
+    };
+
+    render(<DevStatusStrip />);
+
+    const strip = screen.getByTestId('dev-status-strip');
+    expect(strip).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+    expect(strip).toHaveAttribute('data-durable-cursor', '3');
+    expect(strip).toHaveAttribute('data-durable-layer-ids', 'foreground');
+    expect(strip).toHaveAttribute('data-durable-fallback-reason', 'unsupported-source');
+    const presentation = screen.getByTestId('dev-status-strip-presentation');
+    expect(presentation).toHaveTextContent('Legacy presentation @ 3 [foreground] (unsupported-source)');
+  });
+
+  it('exposes an unpublished presentation without cursor, layer IDs, or fallback reason', () => {
+    storeState.durableStatus = 'stale';
+    storeState.durablePresentation = {
+      status: 'unpublished',
+      cursor: null,
+      layerIds: [],
+      reason: null,
+    };
+
+    render(<DevStatusStrip />);
+
+    const strip = screen.getByTestId('dev-status-strip');
+    expect(strip).toHaveAttribute('data-presentation-status', 'unpublished');
+    expect(strip).toHaveAttribute('data-durable-cursor', '');
+    expect(strip).toHaveAttribute('data-durable-layer-ids', '');
+    expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
+    const presentation = screen.getByTestId('dev-status-strip-presentation');
+    expect(presentation).toHaveTextContent('Legacy presentation');
+    expect(presentation.textContent).not.toContain('@');
+    expect(presentation.textContent).not.toContain('(');
   });
 });

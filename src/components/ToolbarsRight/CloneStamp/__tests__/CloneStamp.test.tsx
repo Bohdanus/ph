@@ -215,12 +215,7 @@ describe('CloneStamp toolbar', () => {
       expect(mockPatchToolArgs.mock.lastCall?.[1]).toEqual({ size: 30 });
     });
 
-    it('keeps only the last field when two different sliders move inside one frame', () => {
-      // PIN, not endorsement, and unlike the bucket's this one is a deliberate choice: the
-      // pending patch is REPLACED rather than merged (`CloneStamp.tsx:90`), so the flushed
-      // write carries the newest field and the earlier one is not in it. The patch path
-      // merges onto the args inside `patchToolArgs`, so the two sliders' values are not lost
-      // from the document — only one of them is part of the single write this frame makes.
+    it('merges different slider fields that move inside one frame', () => {
       render(<CloneStamp />);
 
       fireEvent.change(getSize(), { target: { value: '20' } });
@@ -228,8 +223,8 @@ describe('CloneStamp toolbar', () => {
       flushRaf();
 
       expect(mockPatchToolArgs).toHaveBeenCalledTimes(1);
-      expect(mockPatchToolArgs.mock.lastCall?.[1]).toEqual({ alpha: 0.6 });
-      expect(lastPublished().size).toBe(40);
+      expect(mockPatchToolArgs.mock.lastCall?.[1]).toEqual({ size: 20, alpha: 0.6 });
+      expect(lastPublished().size).toBe(20);
     });
 
     it('schedules a fresh frame after the previous one has flushed', () => {

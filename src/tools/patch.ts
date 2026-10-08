@@ -28,7 +28,7 @@ export const patch =
 
     const image = ctx.getImageData(0, 0, size.width, size.height);
     const sourceData = new Uint8ClampedArray(image.data);
-    const feather = Math.max(0, Math.min(6, Math.round(diffusion))) / 6;
+    const feather = Math.max(0, Math.min(7, Math.round(diffusion))) / 7;
     const rect = {
       left: Math.round(sourceRect.x),
       top: Math.round(sourceRect.y),

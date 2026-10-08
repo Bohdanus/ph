@@ -628,8 +628,8 @@ rather than deleted, because the point half of the sentence is still exactly tru
   document **before** anything is measured (its `trimRect2()` clamp, so the preview and the
   committed box wrap at the same width), lays the text out against `textWrapWidth` and derives
   **only the height** (its paragraph arm), so the box grows downward and its width is never grown
-  or re-placed; for a point box it measures the widest line and grows or re-centres the width (its
-  point-box arm, whose `align` `switch` does the re-centring) and the height (its post-layout
+  or re-placed; for a point box it measures the widest line and grows or re-centres the width around
+  the placement click (its point-box arm) and the height (its post-layout
   height step), which is what that kind of box is for. The older anchors in this section are the
   point-type arms and they moved with the fork. `layoutText()` is the single layout authority and
   `wrapLine()` the breaker under it, and `renderText` draws what they return, so the box and the ink

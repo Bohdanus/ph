@@ -37,6 +37,7 @@ import {
   type ReplaceLayerSourceOperation,
   type SelectionSnapshot,
 } from './history-model.ts';
+import { durableEntryProvenance } from './history-provenance.ts';
 import { isTrapezoidOnlyTransform, multiplyAffineTransforms, type AffineTransform } from './affine-transform.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
@@ -136,6 +137,7 @@ function durableEntryForOperation(entry: HistoryItem, operation: DurableOperatio
     id: entry.id,
     schemaVersion: DURABLE_SCHEMA_VERSION,
     enabled: isEntryEnabled(entry),
+    provenance: durableEntryProvenance(entry),
     operation,
   });
 }
@@ -485,6 +487,7 @@ export function deriveReorderLayersEntry(
     id: item.id,
     schemaVersion: DURABLE_SCHEMA_VERSION,
     enabled: isEntryEnabled(item),
+    provenance: durableEntryProvenance(item),
     operation: Object.freeze({ kind: 'reorder-layers' as const, orderByLayerId }),
   });
 }
@@ -1144,6 +1147,17 @@ export function validatePlannedDurableEntry(
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
   if (planned.enabled !== isEntryEnabled(entry)) return 'the durable enabled state does not match the legacy entry';
+  const provenanceMismatch = (() => {
+    if (!planned.provenance) return null;
+    const expectedProvenance = durableEntryProvenance(entry);
+    if (
+      planned.provenance.actionName !== expectedProvenance.actionName ||
+      planned.provenance.toolName !== expectedProvenance.toolName
+    ) {
+      return 'the durable history provenance does not match the legacy entry';
+    }
+    return null;
+  })();
 
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
     if (planned.operation.kind !== 'set-document-frame') {
@@ -1174,7 +1188,7 @@ export function validatePlannedDurableEntry(
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
       return 'the durable previous frame does not match the legacy entry';
     }
-    return null;
+    return provenanceMismatch;
   }
 
   if (entry.actionName === SELECTION_ACTION) {
@@ -1195,7 +1209,7 @@ export function validatePlannedDurableEntry(
     if (args.previousSelectionState && !sameSelectionSnapshot(planned.operation.before, args.previousSelectionState)) {
       return 'the durable previous selection state does not match the legacy entry';
     }
-    return null;
+    return provenanceMismatch;
   }
 
   if (entry.actionName === REORDER_ACTION) {
@@ -1216,7 +1230,7 @@ export function validatePlannedDurableEntry(
     // that is behaving exactly as legacy replay does.
     if (!expected) return 'the layer reorder names a layer the document does not hold';
     return sameOrderMap(planned.operation.orderByLayerId, expected)
-      ? null
+      ? provenanceMismatch
       : 'the durable layer order does not match the store order';
   }
 
@@ -1242,18 +1256,20 @@ export function validatePlannedDurableEntry(
         const name = (entry.args as { name?: unknown } | undefined)?.name;
         if (typeof name !== 'string') return 'the layer-property value is invalid';
         if (patch.name !== name) return 'the durable layer name does not match the legacy entry';
-        return null;
+        return provenanceMismatch;
       }
       case 'visible':
         return patch.visible === (entry.actionName === SHOW_LAYER_ACTION)
-          ? null
+          ? provenanceMismatch
           : 'the durable layer visibility does not match the legacy entry';
       case 'opacity': {
         const opacity = (entry.args as { opacity?: unknown } | undefined)?.opacity;
         if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
           return 'the layer-property value is invalid';
         }
-        return patch.opacity === opacity ? null : 'the durable layer opacity does not match the legacy entry';
+        return patch.opacity === opacity
+          ? provenanceMismatch
+          : 'the durable layer opacity does not match the legacy entry';
       }
       default:
         return 'the action does not own a durable layer property';
@@ -1268,7 +1284,9 @@ export function validatePlannedDurableEntry(
     if (operationKeys.length !== 2 || !operationKeys.includes('kind') || !operationKeys.includes('layerId')) {
       return 'the durable remove-layer operation does not have the canonical shape';
     }
-    return planned.operation.layerId === entry.layerId ? null : 'the durable layer id does not match the legacy entry';
+    return planned.operation.layerId === entry.layerId
+      ? provenanceMismatch
+      : 'the durable layer id does not match the legacy entry';
   }
 
   const sourceBackedCreate =
@@ -1335,7 +1353,7 @@ export function validatePlannedDurableEntry(
         }
       }
     }
-    return null;
+    return provenanceMismatch;
   }
 
   // A `TOOL_ACTION` whose entry carries a tool SOURCE is a layer creation and was
@@ -1350,7 +1368,7 @@ export function validatePlannedDurableEntry(
     if (!expectedKind) {
       return `no retained durable translation is published for the tool action on "${String(legacyArgs.toolName)}" yet`;
     }
-    return retainedToolOperationProblem(planned.operation, entry, legacyArgs, expectedKind);
+    return retainedToolOperationProblem(planned.operation, entry, legacyArgs, expectedKind) ?? provenanceMismatch;
   }
 
   // The source-edit arm, after every arm that claims an action by name: creation,
@@ -1364,7 +1382,7 @@ export function validatePlannedDurableEntry(
   if (editableReplacement) {
     const replaceProblem = replaceLayerSourceProblem(planned.operation, entry, editableReplacement);
     if (replaceProblem) return replaceProblem;
-    return null;
+    return replaceProblem ?? provenanceMismatch;
   }
 
   return `no durable translation is published for "${entry.actionName}" yet`;

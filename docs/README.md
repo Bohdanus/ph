@@ -31,15 +31,13 @@ deliberately carries none of it.
 | [`LAYERS-PANEL.md`](LAYERS-PANEL.md)       | The Layers panel's requirements and status                                                                       |
 | [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md)   | Capabilities deliberately not built, so nobody re-audits them                                                    |
 
-The nine per-family research notes live outside this directory, one per tool family:
+The ten per-family research notes live outside this directory, one per tool family:
 `src/tools/descriptions/selection.notes.md`, `src/tools/descriptions/paint.notes.md`,
 `src/tools/descriptions/focus.notes.md`, `src/tools/descriptions/shape.notes.md`,
 `src/tools/descriptions/pen.notes.md`, `src/tools/descriptions/type-crop.notes.md`,
-`src/tools/descriptions/transform.notes.md` and `src/tools/descriptions/eyedropper-draw.notes.md`.
-`src/tools/descriptions/patch.notes.md` records the Patch tool's behavior and deferred capabilities.
-They carry the per-family research notes and the claims `TOOLS.md` deliberately could not source.
-`src/tools/descriptions/view.notes.md` records the View tools' behavior, research sources, and
-deferred capabilities.
+`src/tools/descriptions/transform.notes.md`, `src/tools/descriptions/eyedropper-draw.notes.md`,
+`src/tools/descriptions/patch.notes.md`, and `src/tools/descriptions/view.notes.md`. They carry
+the per-family research notes and the claims `TOOLS.md` deliberately could not source.
 
 And one requirements document outside this directory:
 `src/components/ToolbarsRight/Text/TEXT_TOOL_REQUIREMENTS.md`, the Type tool's requirements, in the
@@ -55,19 +53,20 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 ## Working practice
 
-| Document                                               | Its one job                                                                                 |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| [`../AGENTS.md`](../AGENTS.md)                         | Rules every agent reads first                                                               |
-| [`ORCHESTRATION.md`](ORCHESTRATION.md)                 | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
-| [`CHAT-ID.md`](CHAT-ID.md)                             | Resolving the host-native chat ID used in commit trailers                                   |
-| [`KILO.md`](KILO.md)                                   | The agent-facing Kilo config, including the parts no tracked file holds                     |
-| [`CODE-REVIEW.md`](CODE-REVIEW.md)                     | The verbatim prompt and rules for the code review subagent                                  |
-| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)   | The protocol a per-tool-family research agent works under                                   |
-| [`TESTING.md`](TESTING.md)                             | Every gate, what it proves, and what to read when it fails                                  |
-| [`../README.md`](../README.md)                         | Install, run, test, and the CI jobs — for a new clone                                       |
-| [`../e2e/README.md`](../e2e/README.md)                 | The Playwright suite: helpers, conventions, and how to add a spec                           |
-| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md) | What the history migration left undone, in the e2e suite's own words                        |
-| [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
+| Document                                                                                   | Its one job                                                                                 |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| [`../AGENTS.md`](../AGENTS.md)                                                             | Rules every agent reads first                                                               |
+| [`ORCHESTRATION.md`](ORCHESTRATION.md)                                                     | Worktrees, delegation, the swarm board, dead-agent recovery                                 |
+| [`CHAT-ID.md`](CHAT-ID.md)                                                                 | Resolving the host-native chat ID used in commit trailers                                   |
+| [`KILO.md`](KILO.md)                                                                       | The agent-facing Kilo config, including the parts no tracked file holds                     |
+| [`CODE-REVIEW.md`](CODE-REVIEW.md)                                                         | The verbatim prompt and rules for the code review subagent                                  |
+| [`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md)                                       | The protocol a per-tool-family research agent works under                                   |
+| [`TESTING.md`](TESTING.md)                                                                 | Every gate, what it proves, and what to read when it fails                                  |
+| [`../.kilo/plans/durable-replay-authority.md`](../.kilo/plans/durable-replay-authority.md) | The problem-focused implementation plan for the durable replay authority cutover            |
+| [`../README.md`](../README.md)                                                             | Install, run, test, and the CI jobs — for a new clone                                       |
+| [`../e2e/README.md`](../e2e/README.md)                                                     | The Playwright suite: helpers, conventions, and how to add a spec                           |
+| [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md)                                     | What the history migration left undone, in the e2e suite's own words                        |
+| [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                           | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
 The agent procedures live outside this directory, under `.skills/`:
 `.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,

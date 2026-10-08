@@ -168,12 +168,13 @@ variant or an equivalent atomic history action.
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Transfer RENDER AUTHORITY, which render already reads, and keep EXPORT
-   legacy-authoritative until its own differential is green for every layer kind
-   (§206). Stage successfully before publication and delete the old authority only
-   after the differential and failure-contract gates pass. This is no longer a
-   mounting question: durable pixels already reach both surfaces through
-   `getLayerBitmap()`, and what is unmounted is durable STATE authority.
+6. Transfer RENDER AUTHORITY, which render already reads, through the staged
+   durable projection. Keep both raster and PSD EXPORT legacy-authoritative until
+   their shared differential is green for every layer kind (§206), then transfer
+   them together. Stage successfully before publication and delete each old
+   authority only after its differential and failure-contract gates pass. This is
+   no longer a mounting question: durable pixels already reach both surfaces
+   through `getLayerBitmap()`, and what is unmounted is durable STATE authority.
 
 ## Operator rulings
 
@@ -185,15 +186,40 @@ decisions, not Photoshop overrides, and are intentionally not encoded in
   lossless text and shape post-editing. Its legacy consumer, durable replay,
   and options-bar rehydration must land as one behavior slice.
 - **Authority gate:** durable materialization is the eventual single production
-  authority. Legacy replay remains the logical authority during differential
-  parity; navigation presentation is the first mounted surface, while retired
-  coordination modules stay fail-closed.
+  authority. The transfer is staged surface by surface: each surface must pass
+  its differential, ownership, and failure gates before its legacy reads are
+  removed. During parity, legacy replay is an explicit compatibility fallback,
+  not a second normal authority, and a publication must never mix durable and
+  legacy presentation for one document.
 - **Bedrock UX:** use an explicit Photoshop-faithful Layer-from-Background or
   equivalent conversion action. Keep the bedrock refusal, do not auto-flatten,
   and do not silently relax the gate.
 - **Replay budget:** make the budget configurable, measure replay cooperatively,
   and require explicit user acceptance before any raster baseline is created.
   No automatic rasterization is permitted.
+
+Recorded 2026-10-08 from the operator's direct answers. These decisions extend
+the authority gate above and are architecture decisions, not Photoshop
+overrides; they are intentionally not encoded in `OVERRIDES.md`:
+
+- **History-panel identity:** durable history must preserve the exact labels the
+  panel uses today. Durable entries therefore need stable action provenance or
+  display metadata; deriving labels from `DurableOperation.kind` alone is not
+  accepted because it collapses rename, show, hide, opacity and other distinct
+  actions into one property operation.
+- **Materialization failure:** if one layer cannot be durably materialized, the
+  whole durable publication is declined. The document keeps its last valid
+  presentation, and no mixed durable/legacy composition is exposed.
+- **Unsupported sources:** a document containing a `legacy-tool` source remains
+  on the legacy compatibility path until that source has an explicit durable
+  adapter. It must not be rasterized merely to bypass the authority boundary.
+- **Options-bar hydration:** after durable navigation, the active layer's
+  durable source arguments win when they match the active tool. Saved settings
+  are fallback for a new or unsupported source, and an active preview gesture
+  must never be overwritten by rehydration.
+- **Export authority:** raster and PSD export transfer together through the
+  durable materialized-layer projection. PSD remains the current flattened
+  layer export, not a new editable-operation serializer.
 
 ## Provenance
 

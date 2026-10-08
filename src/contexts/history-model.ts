@@ -2,6 +2,7 @@ import type { DocumentFrame } from './document-frame.ts';
 import type { Selection, Size } from './general-types.ts';
 import type { AffineTransform } from './affine-transform.ts';
 import type { LayerId } from './layer-types.ts';
+import type { ActionType } from '../util/constants.ts';
 
 /** An id is only meaningful through the runtime asset registry. */
 export type AssetId = string & { readonly __assetId: unique symbol };
@@ -186,7 +187,14 @@ export type DurableHistoryEntry<Op extends DurableOperation = DurableOperation> 
   id: string;
   schemaVersion: number;
   enabled: boolean;
+  /** Optional in schema v1 so existing in-memory fixtures and documents remain valid. */
+  provenance?: DurableEntryProvenance;
   operation: Op;
+}>;
+
+export type DurableEntryProvenance = Readonly<{
+  actionName: ActionType;
+  toolName?: string;
 }>;
 
 export type HistoryEntry = DurableHistoryEntry;
@@ -460,6 +468,7 @@ function freezeDurableHistoryEntry(entry: DurableHistoryEntry): DurableHistoryEn
     id: entry.id,
     schemaVersion: entry.schemaVersion,
     enabled: entry.enabled,
+    ...(entry.provenance ? { provenance: Object.freeze({ ...entry.provenance }) } : {}),
     operation: cloneOperation(entry.operation),
   });
 }
