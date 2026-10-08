@@ -294,9 +294,11 @@ The boundary is `history-adapter.ts`: `legacyHistoryToDurable()` in,
 `LAYER_PROPERTY_BY_ACTION`, `deriveSetSelectionEntry()`,
 `operationForTool()`. An unsupported tool throws
 `UnsupportedHistoryFeatureError` from `operationForTool()` rather than fabricating
-a no-op, and one
-`severity: 'error'` diagnostic voids the whole document, which
-`convertLegacyHistorySafely()` does.
+a no-op. That throw is caught per entry, so the entry is omitted and named by an
+`error` diagnostic, and `convertLegacyHistorySafely()` publishes the rest of the
+document rather than withholding it — it withholds only when the result is
+structurally invalid (decided by `isStructurallyValidConversion()` from the cursor
+map) or when the conversion threw before producing a document.
 
 Rasters are named, not embedded. A durable raster is `{ assetId, width, height }` —
 the `'raster'` arm of `DurableLayerSource` — and an `AssetId` is
@@ -343,11 +345,13 @@ Two registries with different key sets, which is easy to misread as one:
   `custom-shape` group. Count them with
   `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts | grep -cE "^  '?[a-zA-Z-]+'?:"`;
   the quoted keys are why the `-` is required in that character class.
-- **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
-  `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
-  is how a tool that needs
-  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper',
-'ruler']`, its two members, which is why the two registries differ by exactly two. Each entry is
+- **`src/tools/toolProcessors.ts`** — **24** processor entries, `PixelToolName` derived by
+  `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`. The
+  registry has fewer entries than `PixelToolName` (43) because many tools share
+  processors: all five shape tools use `shape`, selection tools share `selection`
+  and `rectangularSelection`, and the pen family uses `unimplemented`. This is
+  how a tool that needs no raster stays out of this registry —
+  `PIXEL_FREE_TOOLS` is `['eyedropper', 'ruler']`, its two members. Each entry is
   curried: `(params) => (args) => pixels`, where `params` carries the layer's
   raster and size and `args` the stroke — the shape `ToolProcessorDefinition.imageProcessor` declares.
   `commit` is one of eight kinds, `ToolCommitKind`, and `replay` is a typed
@@ -389,7 +393,8 @@ the clamp JSDoc above `amount` and `radius` in
 `ToolbarsRight/Smudge/Smudge.tsx`,
 both state that settings round-trip through `localStorage`. Grepping `localStorage`
 across `src/` returns two keys — `theme` and `panelLayout`. **Tool settings do not
-survive a reload.** Recorded in `HANDOFF.md`.
+survive a reload.** The same incorrect claim appears in
+`ToolbarsRight/Sharpen/__tests__/Sharpen.test.tsx`. Recorded in `HANDOFF.md` §98.
 
 ## Selection
 

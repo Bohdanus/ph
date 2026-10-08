@@ -98,7 +98,8 @@ So:
   not carry their content.
 - **A generated file is not edited.** `TOOLS.md` is generated from
   `src/tools/descriptions/` by `npm run docs:tools`, and a test fails if it drifts.
-  Edit the source or the generator.
+  Edit the source or the generator. `TOOLS.md` is the only generated documentation
+  file in this repository; no other `docs/*.md` files are generated.
 
 Where a finding goes:
 
@@ -241,6 +242,7 @@ repository checks it — `scripts/__tests__/agents-citations.test.mjs` reads eve
 tracked markdown document and fails on a backticked call the program does not
 contain, a retired symbol named in any of them, a `§N` that is not a live
 `HANDOFF.md` heading, and a `file.ext:‹line›` citation anywhere outside a fence.
+This test runs in CI and blocks merges with citation violations.
 
 **The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number
 citation cannot be stated without one — "`history-replay.ts` cites 47 lines past its
