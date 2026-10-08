@@ -67,7 +67,7 @@ the Kilo swarm command when needed, but swarm identity otherwise defaults to the
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
 - GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
 - `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
-- Findings need evidence. The formatted board message cap is 4096 bytes; its body has about 3840 bytes: 3800 ASCII characters or 1200 characters when non-ASCII may occur. Put longer findings in a file or swarm issue.
+- Findings need evidence. Board messages cap at 4096 bytes (~3800 ASCII or ~1200 with non-ASCII). Put longer findings in a file or swarm issue.
 
 ### Free-model Git restriction
 
@@ -96,6 +96,7 @@ Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for o
 
 - Run slow inventory commands asynchronously; wait for that run to finish before relying on its report. See [`docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson`](docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson).
 - `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
+- `npm run branches:orphan` reports every branch `main` does not contain that no worktree holds, with its behind-count, its commits `main` lacks, and its conflict count. The inventory and `repo:state` enumerate worktrees; `dispose` acts on one, so none sees unmerged branches without a worktree. [`docs/ORCHESTRATION.md#branches-nobody-holds`](docs/ORCHESTRATION.md#branches-nobody-holds) is the detailed source.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
 
@@ -116,7 +117,7 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
 | `npm run test:staged` | nowhere             | manual `vitest related` command                                |
-| `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
+| `npm run gate:push`   | `.husky/pre-push`   | stale-branch check, then full app suite                        |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
 - CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs. It audits high-severity vulnerabilities but does not enforce dependency licences.
@@ -126,10 +127,11 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 
 ## Known failures
 
-The default headless run has no failing E2E tests and three declared skips. Read
+The latest recorded full headless run passed with three declared skips; this is
+one machine's observation, not a guarantee of current status. Read
 [`docs/TESTING.md#e2e-failures`](docs/TESTING.md#e2e-failures) and
-[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) before investigating a failure; its entries
-are latent defects, not current failures.
+[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for the recorded result and open
+E2E issues; run the suite for its current status.
 
 A CI E2E result marked flaky is a failed run even if a retry passed; investigate it rather
 than treating it as green. See [`docs/TESTING.md#ci`](docs/TESTING.md#ci) for the retry policy.
@@ -175,10 +177,11 @@ designing across this legacy/durable boundary.
 
 ## Free subagent models
 
-| Model                   | Provider | Variant  | Notes                                            |
-| ----------------------- | -------- | -------- | ------------------------------------------------ |
-| Nemotron 3 Ultra (free) | kilo     | high     | Best quality; thorough                           |
-| Dots3-Note Preview      | kilo     | thinking | Alternative, good for review and summaries, fast |
-| Step 3.7 Flash          | kilo     | high     | Fast, accurate                                   |
+Poolside Laguna S 2.1 is preferred for subagents. Note: rate-limited — at most 2 subagents using it may run at a time.
 
-Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.
+| Model                   | Provider | Variant  | Note                              |
+| ----------------------- | -------- | -------- | --------------------------------- |
+| Poolside Laguna S 2.1   | kilo     | thinking | Best                              |
+| Nemotron 3 Ultra (free) | kilo     | high     | Thorough, slower                  |
+| Dots3-Note Preview      | kilo     | thinking | Alternative, good summaries, fast |
+| Step 3.7 Flash          | kilo     | high     | Fast, accurate                    |

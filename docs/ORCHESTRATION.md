@@ -211,6 +211,12 @@ status` and `git diff` before staging.
   nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
   finds only the contested subset and reports the rest of a dropped commit as clean.
 
+  A modify/delete conflict explicitly resolved with `git rm` is not the same as a silent
+  `-s ours` discard, even though both leave HEAD and the result without a path. Git's
+  resolve-undo index records stages 1 and 3 for the resolved conflict, but no stage 2;
+  the guard accepts that explicit deletion. A `-s ours` merge leaves no resolve-undo
+  record, so its discarded incoming change is still refused.
+
   All three shapes are measured the same way — by asking whether a line the losing side
   committed is **absent** from the result, not by counting a diff. `--numstat` bills a
   moved line as one deletion plus one insertion, so a result that is a superset in content
@@ -261,6 +267,13 @@ status` and `git diff` before staging.
   disappears with no event to hang a check on. Plain `--squash` is fine and does not need the
   guard: it stages the real merge result. The fix belongs in a `pre-push` check, where a
   branch's own diff against `main` has two sides to compare.
+
+  `.husky/pre-push` runs `scripts/stale-branch-files.mjs` before the full app suite. For each
+  pushed local branch other than `main`, it compares changed file blobs with history before the
+  merge base against local `main`. A matching older blob is reported and blocks the push;
+  branches whose first-parent history since the merge base contains a merge commit are skipped.
+  This is a stale-snapshot warning, not proof of intent: an intentional restoration of old file
+  content can match too, and should be reviewed rather than automatically rewritten.
 
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
   conflict runs no hook at all, so an operation left open is invisible to it — which is how
@@ -378,6 +391,27 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     fails an hour later is diagnosable from the port that served it. The HTML report is
     deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
     per-run folder would leave it with nothing to open.
+
+## Branches nobody holds
+
+`npm run branches:orphan` reports every branch `main` does not contain that no worktree
+holds, with its behind-count, the commits `main` lacks, and its number of merge-conflicting
+paths. It is `scripts/orphan-branches.mjs`, and it exits non-zero when it could not read the
+repository rather than answering with an empty list.
+
+The inventory enumerates worktrees, `npm run repo:state` reads operations in each worktree,
+and `npm run dispose` acts on a named worktree. An unmerged branch whose worktree is gone
+is invisible to those worktree-based reports even though Git retains its ref; it can keep
+falling behind `main` and accruing conflicts. `git branch --no-merged` appears in no other
+script here.
+
+**It reports and retires nothing.** Landing, rebasing, archiving and deleting a branch stay
+with a person or an agent that has read the report. A report that also acted would be a
+second `npm run dispose` with none of that command's inventory, board and lock checks.
+
+**The conflict count reads both of git's phrasings.** Ordinary conflicts use
+`Merge conflict in <path>`; modify/delete and add/delete conflicts use `deleted in <x> and
+modified in <y>` or `added in <x> and modified in <y>`. The command counts both forms.
 
 ## The list of worktrees: `WORKTREES.json`
 
@@ -870,6 +904,9 @@ heartbeat` still exists and is still correct — it is the only thing that can
 - **`swarm health` answers "is this thing being used, or only carried?"** It is
   the traffic mix, the locks, live vs expired claims, reclaims so far, live vs
   imported issues, and live findings idle for over six hours.
+- **`swarm defer` parks work instead of resolving it.** A deferred issue without
+  `--until` stays out of `swarm ready`; one with a deadline is offered again
+  once that deadline is reached, subject to its claims and dependencies.
 - **The traffic mix is in TWO UNITS, and adding them is a mistake.** `lock.hold` is
   **one event per command**, `lock.release` is **one event per file**. Read
   `activity.perCommand` and `activity.perFile` as two measures, never as two halves
@@ -994,6 +1031,10 @@ on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
 `AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever sets
 that variable. Two sessions on one branch are one agent to the board and cannot
 deny each other a file.
+
+Path identity is repository-relative. On case-insensitive volumes, existing
+case-only aliases resolve to the directory entry's actual spelling; on
+case-sensitive volumes, distinct spellings remain distinct.
 
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.

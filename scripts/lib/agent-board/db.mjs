@@ -30,7 +30,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -164,7 +164,13 @@ const CLAIMABLE = new Set(['open', 'deferred']);
 const RECLAIMABLE = 'claimed';
 
 /** Offerable to the swarm: unclaimed, unfinished, and not already taken. */
-const READY_STATUSES = new Set(['open', 'deferred', 'claimed']);
+const READY_STATUSES = new Set(['open', 'claimed']);
+
+function deferredIssueIsReady(issue, at) {
+  if (issue.status !== 'deferred' || !issue.defer_until) return false;
+  const deferUntil = Date.parse(issue.defer_until);
+  return Number.isFinite(deferUntil) && deferUntil <= at;
+}
 
 /**
  * A dependency is satisfied once its work is finished — `resolved` or
@@ -394,6 +400,53 @@ function resolveSymlinksBestEffort(path) {
     }
   }
   return null;
+}
+
+function isMissingPath(error) {
+  return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+/**
+ * On case-insensitive volumes, return the directory-entry spelling for existing
+ * components. A failed stat leaves a differently-cased path distinct.
+ */
+function canonicalizeExistingPathCase(root, path) {
+  if (!root || path.startsWith('/') || /^[a-z]:\//i.test(path) || path === '..' || path.startsWith('../')) {
+    return path;
+  }
+
+  const segments = path.split('/');
+  const normalized = [];
+  let current = root;
+
+  for (const [index, segment] of segments.entries()) {
+    let entries;
+    try {
+      entries = readdirSync(current);
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      normalized.push(...segments.slice(index));
+      break;
+    }
+
+    let actual = segment;
+    if (!entries.includes(segment)) {
+      const caseMatch = entries.find((entry) => entry.toLowerCase() === segment.toLowerCase());
+      if (caseMatch) {
+        try {
+          statSync(join(current, segment));
+          actual = caseMatch;
+        } catch (error) {
+          if (!isMissingPath(error)) throw error;
+        }
+      }
+    }
+
+    normalized.push(actual);
+    current = join(current, actual);
+  }
+
+  return normalized.join('/');
 }
 
 /**
@@ -1261,9 +1314,10 @@ export class Board {
   }
 
   /**
-   * What the swarm can pick up right now: open or deferred, unblocked, and not
-   * already claimed under a live lease. This is the query that replaces reading
-   * a handoff document to find out whether something is already being done.
+   * What the swarm can pick up right now: open, claimed with an expired lease,
+   * or deferred until its deadline, unblocked, and not already claimed under a
+   * live lease. This is the query that replaces reading a handoff document to
+   * find out whether something is already being done.
    * Expiry is evaluated on read, not by a sweeper: a lease nobody sweeps is
    * still a lease nobody can hold past, and there is no process that would have
    * to be responsible for sweeping it.
@@ -1271,7 +1325,7 @@ export class Board {
   readyIssues({ limit = NO_LIMIT } = {}) {
     const at = this.now();
     return this.listIssues({ limit: NO_LIMIT })
-      .filter((issue) => READY_STATUSES.has(issue.status))
+      .filter((issue) => READY_STATUSES.has(issue.status) || deferredIssueIsReady(issue, at))
       .filter((issue) => {
         // A `claimed` issue whose lease ran out is back on offer: the status
         // still says somebody claimed it, and the lease is the only thing that
@@ -1820,7 +1874,8 @@ export class Board {
    */
   toRepoPath(path) {
     const typed = String(path ?? '').trim();
-    const direct = normalizePaths([path], { roots: this.pathRoots() })[0];
+    const roots = this.pathRoots();
+    const direct = normalizePaths([path], { roots })[0];
     // A path that WAS given and normalised to nothing — the empty string, or a
     // worktree root with a trailing slash — is not a free file. It is a path
     // this board does not cover, and `check` answering "free" there is the
@@ -1831,11 +1886,14 @@ export class Board {
     // it against the process's directory would turn the stored answer into an
     // absolute path that matches nothing.
     if (direct === undefined) return undefined;
-    if (!String(path).trim().startsWith('/')) return direct;
-    if (direct !== String(path).trim().replace(/^\.\//, '')) return direct;
+    const input = typed.split('\\').join('/');
+    const root = roots.find((candidate) => input.startsWith(candidate))?.slice(0, -1) ?? this.identity?.worktree;
+    const canonicalize = (candidate) => canonicalizeExistingPathCase(root, candidate);
+    if (!input.startsWith('/')) return canonicalize(direct);
+    if (direct !== input.replace(/^\.\//, '')) return canonicalize(direct);
     const resolved = resolveSymlinksBestEffort(path);
-    if (resolved === null) return direct;
-    return normalizePaths([resolved], { roots: this.pathRoots() })[0] ?? direct;
+    if (resolved === null) return canonicalize(direct);
+    return canonicalize(normalizePaths([resolved], { roots })[0] ?? direct);
   }
 
   /**
@@ -2090,6 +2148,9 @@ export class Board {
   deferIssue(id, { agent, reason, until = null } = {}) {
     const who = agent ?? this.identity?.agentId;
     if (!reason) throw new BoardError('a deferral needs a reason', { code: 1 });
+    if (until !== null && !Number.isFinite(Date.parse(until))) {
+      throw new BoardError('a deferral deadline must be a valid date', { code: 1 });
+    }
     return this.transaction(() => {
       this.getIssue(id);
       this.db

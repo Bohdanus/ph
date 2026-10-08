@@ -166,21 +166,25 @@ drop.
 ### Local
 
 Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
-`npm run gate:commit`, and `pre-push` at `npm run gate:push`. The other two run
+`npm run gate:commit`, and `pre-push` ends at `npm run gate:push` after the stale-branch
+check. The other two run
 `scripts/*.mjs` directly — `pre-merge-commit` at `merge-takeover-guard.mjs`, `post-merge` at
 `merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev servers** is
 where the takeover guard is documented.
 
-The default headless e2e run must have **zero failures**; known failures are not
-allowed. Produce counts from the suite rather than storing them here. If a dead
-Vite server causes a wall of `ERR_CONNECTION_REFUSED`, rerun on a fresh
-`PLAYWRIGHT_PORT` before treating the output as test failures.
+The headless E2E gate requires **zero failures**; do not adopt known failures as
+an acceptable baseline or suppress them. The latest recorded result and open
+E2E issues are in [`../e2e/OPEN_PROBLEMS.md`](../e2e/OPEN_PROBLEMS.md); run the suite
+for its current status. If a dead Vite server causes a wall of
+`ERR_CONNECTION_REFUSED`, rerun on a fresh `PLAYWRIGHT_PORT` before treating the
+output as test failures.
 Hooks use a shared common-git entry rather than a per-worktree husky directory;
 `HUSKY=0` disables the hooks and bypasses these gates; do not use it to get around
 a failing check.
 
 - `.husky/pre-commit` runs `npm run gate:commit`; `.husky/pre-push` runs
-  `npm run gate:push`. Keep the gate line last in each of those two; `pre-commit`'s
+  `node scripts/stale-branch-files.mjs` and then `npm run gate:push`. Keep the gate line last in
+  each of those two; `pre-commit`'s
   first two steps are guards.
 
 - The commit and push gates buffer successful subprocess output. Lint, typecheck, build,
@@ -278,8 +282,9 @@ decision to the operator.
   `test-results/` and `playwright-report/`, and keeps `test-results/results.json`,
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
-- **The default headless run has zero failures, and three tests are `test.skip` by
-  declaration.** The Photopea round-trip needs an external service; the single-tool
+- **The latest recorded full headless run passed; its machine-specific result is
+  in `e2e/OPEN_PROBLEMS.md`.** Three tests are `test.skip` by declaration. The Photopea
+  round-trip needs an external service; the single-tool
   right-click case is recorded under "Known-skip tests" in
   `e2e/OPEN_PROBLEMS.md`; and `e2e/viewport-drawing.spec.ts` is skipped by the
   operator's decision of 2026-09-29 because of intermittent capture drift. Its

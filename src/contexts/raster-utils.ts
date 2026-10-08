@@ -1,3 +1,8 @@
+/**
+ * The largest document this app can create: NewImageDialog caps both axes at 10,000 px.
+ */
+export const MAX_CREATABLE_DOCUMENT_PIXELS = 100_000_000;
+
 export type RgbaImageData = {
   data: Uint8Array | Uint8ClampedArray;
   width: number;

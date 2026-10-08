@@ -104,11 +104,17 @@ test.describe('the Ruler tool', () => {
     await expect(undo).toBeDisabled();
   });
 
-  test('Shift+I cycles the I tile between the Eyedropper and the Ruler', async ({ page }) => {
+  test('Shift+I cycles the I tile between the Eyedropper, Color Sampler, and the Ruler', async ({ page }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await page.keyboard.press('i');
     await expect(page.getByRole('combobox', { name: 'Sample Size' }), 'a bare I selects the tile anchor').toBeVisible();
+
+    await page.keyboard.press('Shift+I');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'Shift+I from Eyedropper reaches Color Sampler'
+    ).toBeVisible();
 
     await page.keyboard.press('Shift+I');
     await expectRulerActive(page);
