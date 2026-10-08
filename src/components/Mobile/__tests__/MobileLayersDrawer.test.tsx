@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileLayersDrawer } from '../MobileLayersDrawer.tsx';
 import { reorderLayers } from '../../../contexts/layer-utils.ts';
-import { RENAME_LAYER_ACTION } from '../../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../../util/constants.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const createBlankLayerMock = vi.hoisted(() => vi.fn());
@@ -266,11 +266,14 @@ describe('MobileLayersDrawer', () => {
     expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
-  it('has no layer-opacity control, because the old one produced untitled unreplayable history entries', () => {
+  it('writes layer opacity through the durable action that replays cleanly', () => {
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(screen.queryByText(/opacity/i)).toBeNull();
+    fireEvent.change(screen.getByRole('slider', { name: 'Opacity for Upper' }), {
+      target: { value: '0.25' },
+    });
+
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
   });
 
   it('selects a layer by clicking the row, for pointer users', () => {

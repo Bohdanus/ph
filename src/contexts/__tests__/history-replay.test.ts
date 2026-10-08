@@ -11,6 +11,7 @@ import {
   RENAME_LAYER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -261,6 +262,7 @@ describe('layer-property parity between the durable derivation and legacy replay
     { label: 'show', actionName: SHOW_LAYER_ACTION, args: { visible: true } },
     { label: 'hide', actionName: HIDE_LAYER_ACTION, args: { visible: false } },
     { label: 'rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } },
+    { label: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.25 } },
   ] as const;
 
   it.each(propertyCases)(
@@ -274,7 +276,7 @@ describe('layer-property parity between the durable derivation and legacy replay
       const patch = planned!.operation.patch;
       expect(Object.keys(patch)).toHaveLength(1);
       for (const [property, value] of Object.entries(patch)) {
-        expect(replayed[property as 'name' | 'visible']).toEqual(value);
+        expect(replayed[property as 'name' | 'visible' | 'opacity']).toEqual(value);
       }
     }
   );
