@@ -130,18 +130,6 @@ Replay all lines before searching. A `kind: 0` record commonly contains `v.sessi
 
 `chatEditingSessions` stores edit state and file-operation content, not the primary conversation transcript. Use it only when the request concerns edits made during a session.
 
-### Copilot CLI stores
-
-If the request includes Copilot CLI rather than VS Code Copilot Chat, also inspect these optional locations:
-
-```text
-~/.copilot/session-state/<session>/events.jsonl
-~/.copilot/session-store.db
-~/.copilot/data.db
-```
-
-Do not assume the VS Code Copilot Chat schema applies to Copilot CLI. List tables and inspect the schema first.
-
 ## Query Kilo
 
 ### List recent sessions
@@ -417,7 +405,7 @@ jq -R -r --arg q 'TERM' '
 
 For each relevant result, report:
 
-- Source: Kilo current DB, Kilo legacy JSON, Copilot Chronicle DB, Copilot JSONL, or Copilot CLI.
+- Source: Kilo current DB, Kilo legacy JSON, Copilot Chronicle DB, or Copilot JSONL.
 - Session ID, title or summary, workspace/cwd, repository, branch, and date.
 - The matching user/assistant text or a concise summary.
 - Whether the result came from a normalized table, a replayed journal, or a legacy file.
