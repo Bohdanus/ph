@@ -113,20 +113,18 @@ workspace where the result is refined with a Refine Edge Brush, a plain Brush, a
 Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a layer mask, a new layer or
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
-**What this app does.** The `Select` menu exists, and every item in it is disabled. The menu bar
-carries Adobe's ten (`DesktopHeader.tsx`) and `Select ▸ All`, `Reselect`,
-`Deselect`, `Inverse`, `Select and Mask…`, `Modify ▸`, `Grow`, `Similar`, `Load Selection…` and
-`Save Selection…` are all on screen and inert — a disabled row records a capability as unbuilt,
-which is why `Select and Mask` has somewhere to hang from even though there is nothing behind it.
+**What this app does.** There is no `Select` menu. The menu bar has five hosts — File, Tools, Image,
+Edit and Window (`DesktopHeader.tsx`) — and `Select` is not one of them, so there is no menu surface
+for Select and Mask to hang from.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
-modes above as its substrate. Building it means giving the disabled `Select ▸ Select and Mask…` row
-its workspace, a per-tool `Select and Mask` button, a Refine Edge Brush with its own edge-detection
-model, and an output dialog. That is a build, not a feature.
+modes above as its substrate. Building it means adding a `Select` menu, a per-tool `Select and Mask`
+button, a Refine Edge Brush with its own edge-detection model, and an output dialog. That is a build,
+not a feature.
 
-**What the app does instead.** Nothing on any selection tool's bar, and the menu row is greyed rather
-than omitted. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
+**What the app does instead.** Nothing, and the app does not pretend otherwise — the controls are
+absent rather than rendered inert. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
 the marquee, lasso, wand and quick-selection bars.
 
 ### Select ▸ Modify, Inverse, Deselect, Grow and Quick Mask
@@ -137,10 +135,9 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. The `Select` menu hosts them — `Modify` with its
-five leaves in Adobe's order, and `Inverse`, `Deselect`, `Grow` and `Similar` beside it
-(`DesktopHeader.tsx`) — and every one of those rows is
-disabled, because no selection operation implements them: `src/util/selection.ts`
+**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
+hosts are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`) — and no selection operation
+implements them: `src/util/selection.ts`
 exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
 does compute a feathered alpha, but only on the clipboard copy path
 (`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
