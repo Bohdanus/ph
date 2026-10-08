@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileLayersDrawer } from '../MobileLayersDrawer.tsx';
 import { reorderLayers } from '../../../contexts/layer-utils.ts';
-import { RENAME_LAYER_ACTION } from '../../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../../util/constants.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const createBlankLayerMock = vi.hoisted(() => vi.fn());
@@ -266,11 +266,48 @@ describe('MobileLayersDrawer', () => {
     expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
-  it('has no layer-opacity control, because the old one produced untitled unreplayable history entries', () => {
+  it('commits one durable opacity action when a slider gesture ends', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '50' } });
+    fireEvent.change(slider, { target: { value: '25' } });
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '25%');
+
+    fireEvent.pointerUp(slider);
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('commits an opacity change on keyboard gesture completion', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '33' } });
+    fireEvent.keyUp(slider, { key: 'ArrowRight' });
+
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.33 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards an opacity draft when the slider gesture is cancelled', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '33' } });
+    fireEvent.pointerCancel(slider);
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '100%');
+  });
+
+  it('disables opacity changes for a locked layer', () => {
+    storeStateMock.layers.upper = { ...freshLayers().upper, locked: true };
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(screen.queryByText(/opacity/i)).toBeNull();
+    expect(screen.getByRole('slider', { name: 'Opacity for Upper' })).toBeDisabled();
+    expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
   it('selects a layer by clicking the row, for pointer users', () => {

@@ -5,10 +5,10 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
 import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
-import type { LayerId } from '../../contexts/layer-types.ts';
+import type { Layer, LayerId } from '../../contexts/layer-types.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
-import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { useModalA11y } from './useModalA11y.ts';
 
 export interface MobileLayersDrawerProps {
@@ -24,6 +24,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   const [activeTab, setActiveTab] = useState<'layers' | 'history'>('layers');
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [draftOpacity, setDraftOpacity] = useState<{ layerId: LayerId; percent: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useModalA11y(isOpen, onClose, panelRef);
@@ -41,6 +42,16 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
       updateLayer(layerId, { name: trimmed }, RENAME_LAYER_ACTION);
     }
     setEditingLayerId(null);
+  };
+
+  const finishOpacityGesture = (layer: Layer) => {
+    const percent = draftOpacity?.layerId === layer.id ? draftOpacity.percent : null;
+    setDraftOpacity(null);
+    if (layer.locked || percent === null) return;
+    const opacity = percent / 100;
+    if (layer.opacity !== opacity) {
+      updateLayer(layer.id, { opacity }, SET_LAYER_OPACITY_ACTION);
+    }
   };
 
   /**
@@ -198,16 +209,12 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
               )}
             </div>
 
-            {/* There is deliberately no layer-opacity control here. It dispatched
-                `updateLayer(id, { opacity }, TOOL_ACTION)`, and `TOOL_ACTION`
-                history entries carry no `toolName` in their args, so
-                `history-replay.ts` skips them and `getHistoryItemTitle` returns
-                `undefined`: every drag step became an untitled, unreplayable
-                entry. Desktop has no equivalent control either. */}
             <ul className="flex-1 overflow-y-auto p-3 space-y-1.5 max-h-[45vh]" aria-label="Layers">
               {sortedLayers.map((layer, index) => {
                 const isActive = activeLayerId === layer.id;
                 const isEditing = editingLayerId === layer.id;
+                const opacityPercent =
+                  draftOpacity?.layerId === layer.id ? draftOpacity.percent : Math.round((layer.opacity ?? 1) * 100);
 
                 return (
                   <li key={layer.id}>
@@ -229,7 +236,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                     */}
                     <div
                       onClick={() => setActiveLayer(layer.id)}
-                      className={`flex items-center justify-between gap-0.5 p-2 rounded-xl border transition-all cursor-pointer ${
+                      className={`flex flex-wrap items-center justify-between gap-0.5 p-2 rounded-xl border transition-all cursor-pointer ${
                         isActive
                           ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 shadow-sm'
                           : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
@@ -292,7 +299,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                         )}
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-0.5">
+                      <div className="flex shrink-0 items-center gap-1.5">
                         <button
                           type="button"
                           onClick={(event) => {
@@ -330,6 +337,36 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                           ▼
                         </button>
                       </div>
+
+                      <label className="flex basis-full items-center gap-2 px-2 pb-1 text-xs text-gray-600 dark:text-gray-300">
+                        <span>Opacity</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={opacityPercent}
+                          disabled={layer.locked}
+                          aria-label={`Opacity for ${layer.name}`}
+                          aria-valuetext={`${opacityPercent}%`}
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            if (!layer.locked) {
+                              setDraftOpacity({ layerId: layer.id, percent: Number(event.currentTarget.value) });
+                            }
+                          }}
+                          onPointerUp={() => finishOpacityGesture(layer)}
+                          onPointerCancel={() => setDraftOpacity(null)}
+                          onKeyUp={() => finishOpacityGesture(layer)}
+                          onBlur={() => finishOpacityGesture(layer)}
+                          className="min-w-0 flex-1 accent-blue-600"
+                        />
+                        <output aria-live="polite" className="min-w-9 text-right font-medium">
+                          {opacityPercent}%
+                        </output>
+                      </label>
                     </div>
                   </li>
                 );
