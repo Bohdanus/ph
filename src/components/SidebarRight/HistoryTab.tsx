@@ -6,10 +6,20 @@ import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../Toolba
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 
 export default function HistoryTab() {
-  const [{ history, historyIndex }] = useStore();
-  const { resetHistoryTo, toggleDisabled } = useHistory();
+  const [store] = useStore();
+  const { resetHistoryTo, toggleDisabled, historyPanelProjection: storedProjection } = useHistory();
+  const historyPanelProjection = storedProjection ?? {
+    source: 'legacy' as const,
+    rows: store.history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= store.historyIndex,
+      isCurrent: originalIndex === store.historyIndex,
+    })),
+  };
 
-  const sortedHistory = [...history].reverse();
+  const sortedHistory = [...historyPanelProjection.rows].reverse();
 
   // Both controls below reach `APPLY_HISTORY_REPLAY` through `useHistory`, the
   // same dispatch the keyboard refuses while a pointer gesture owns the document
@@ -58,16 +68,11 @@ export default function HistoryTab() {
 
   return (
     <div className="flex flex-col gap-2 h-full">
-      {history.length === 0 ? (
+      {sortedHistory.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No history yet.</div>
       ) : (
         <ul className="flex flex-col list-none p-0 gap-1 overflow-y-auto min-h-0">
-          {sortedHistory.map((item) => {
-            const originalIndex = history.indexOf(item);
-            const isActive = originalIndex <= historyIndex;
-            const isCurrent = originalIndex === historyIndex;
-            const itemTitle = getHistoryItemTitle(item);
-
+          {sortedHistory.map(({ item, originalIndex, isActive, isCurrent, title: itemTitle }) => {
             return (
               <li
                 key={item.id}

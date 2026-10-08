@@ -2,7 +2,14 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import HistoryTab from '../HistoryTab.tsx';
 import type { HistoryItem } from '@/contexts/history-types.ts';
-import { getHistoryItemTitle } from '@/contexts/useHistory.ts';
+import { getHistoryItemTitle, selectHistoryPanelProjection } from '@/contexts/useHistory.ts';
+import { durableEntryProvenance, durableEntryTitle } from '@/contexts/history-provenance.ts';
+import {
+  DURABLE_SCHEMA_VERSION,
+  type DurableDocument,
+  type DurableHistoryEntry,
+  type SelectionSnapshot,
+} from '@/contexts/history-model.ts';
 import {
   NEW_LAYER_ACTION,
   RENAME_LAYER_ACTION,
@@ -71,6 +78,66 @@ const renameTitle = getHistoryItemTitle(mockHistory[0]);
 const toolTitle = getHistoryItemTitle(mockHistory[1]);
 const hideTitle = getHistoryItemTitle(mockHistory[2]);
 
+const emptySelectionSnapshot = (): SelectionSnapshot => ({ selections: [], activeSelectionId: null });
+
+/**
+ * Builds the `useHistory` return the component consumes, deriving its
+ * `historyPanelProjection` through the REAL `selectHistoryPanelProjection` so the rows
+ * rendered by the component come from the same projection code path the app uses. Tests
+ * that assert on the rewind/toggle spies inject them; everything else gets fresh spies.
+ */
+function buildReturn(
+  store: { history: readonly HistoryItem[]; historyIndex: number },
+  spies: { resetHistoryTo?: ReturnType<typeof vi.fn>; toggleDisabled?: ReturnType<typeof vi.fn> } = {}
+) {
+  const historyPanelProjection = selectHistoryPanelProjection({
+    history: store.history,
+    historyIndex: store.historyIndex,
+    documentId: 'doc-1',
+    documentRevision: 0,
+    branchRevision: 0,
+    durableStatus: undefined,
+    durableDocument: undefined,
+  });
+  return {
+    resetHistoryTo: spies.resetHistoryTo ?? vi.fn(),
+    toggleDisabled: spies.toggleDisabled ?? vi.fn(),
+    historyPanelProjection,
+  };
+}
+
+/** A `DurableDocument` whose entries mirror a legacy timeline 1:1. */
+function buildDurableEntry(item: HistoryItem): DurableHistoryEntry {
+  return {
+    id: item.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: !item.disabled,
+    provenance: durableEntryProvenance(item),
+    operation: {
+      kind: 'set-selection',
+      before: emptySelectionSnapshot(),
+      after: emptySelectionSnapshot(),
+    },
+  };
+}
+
+function buildCompleteDurableDocument(history: readonly HistoryItem[], historyIndex: number): DurableDocument {
+  return {
+    documentId: 'doc-1',
+    documentRevision: 0,
+    branchRevision: 0,
+    durableRevision: 1,
+    baseline: {
+      frame: { x: 0, y: 0, width: 100, height: 100 },
+      layers: [],
+      selections: emptySelectionSnapshot(),
+      activeLayerId: null,
+    },
+    history: history.map(buildDurableEntry),
+    cursor: historyIndex,
+  };
+}
+
 // The gesture slot is module-level and outlives every mount, so a case that
 // leaked a claim would refuse every later click in this file, and one failure
 // would read as a failure in all of them. Cleared on the way in AND on the way
@@ -87,14 +154,13 @@ describe('HistoryTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useStore.mockReturnValue([mockStore, vi.fn()]);
-    useHistory.mockReturnValue({
-      resetHistoryTo: vi.fn(),
-      toggleDisabled: vi.fn(),
-    });
+    useHistory.mockReturnValue(buildReturn(mockStore));
   });
 
   it('renders "No history yet" when history is empty', () => {
-    useStore.mockReturnValue([{ ...mockStore, history: [], historyIndex: -1 }, vi.fn()]);
+    const store = { ...mockStore, history: [], historyIndex: -1 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
     expect(screen.getByText('No history yet.')).toBeInTheDocument();
   });
@@ -128,7 +194,9 @@ describe('HistoryTab', () => {
       createMockHistoryItem({ id: 'hist-1', disabled: true }),
       createMockHistoryItem({ id: 'hist-2' }),
     ];
-    useStore.mockReturnValue([{ ...mockStore, history: disabledHistory, historyIndex: 1 }, vi.fn()]);
+    const store = { ...mockStore, history: disabledHistory, historyIndex: 1 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     // items[0] = hist-2 (originalIndex 1), active -> opacity-100
@@ -148,7 +216,7 @@ describe('HistoryTab', () => {
 
   it('calls resetHistoryTo on item click', () => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     fireEvent.click(items[0]);
@@ -157,7 +225,7 @@ describe('HistoryTab', () => {
 
   it('toggles disabled state on eye button click', () => {
     const toggleDisabled = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled });
+    useHistory.mockReturnValue(buildReturn(mockStore, { toggleDisabled }));
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     const eyeButton = items[0].querySelector('button');
@@ -179,7 +247,9 @@ describe('HistoryTab', () => {
 
   it('shows eye icon closed for disabled items', () => {
     const disabledHistory = [createMockHistoryItem({ id: 'hist-1', disabled: true })];
-    useStore.mockReturnValue([{ ...mockStore, history: disabledHistory, historyIndex: 0 }, vi.fn()]);
+    const store = { ...mockStore, history: disabledHistory, historyIndex: 0 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     const eyeIcon = items[0].querySelector('[data-testid="eye-icon"]');
@@ -189,7 +259,7 @@ describe('HistoryTab', () => {
 
   it('stops propagation on eye button click', () => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     const eyeButton = items[0].querySelector('button');
@@ -228,7 +298,9 @@ describe('HistoryTab', () => {
 
   it('handles single history item', () => {
     const singleHistory = [createMockHistoryItem({ id: 'hist-1' })];
-    useStore.mockReturnValue([{ ...mockStore, history: singleHistory, historyIndex: 0 }, vi.fn()]);
+    const store = { ...mockStore, history: singleHistory, historyIndex: 0 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(1);
@@ -256,7 +328,7 @@ describe('HistoryTab row behaviour', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useStore.mockReturnValue([mockStore, vi.fn()]);
-    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore));
   });
 
   it.each([
@@ -265,7 +337,7 @@ describe('HistoryTab row behaviour', () => {
     [renameTitle, 0],
   ])('resets history to the original store index behind %s', (title, expectedIndex) => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
 
     fireEvent.click(getItemByTitle(title));
@@ -276,11 +348,10 @@ describe('HistoryTab row behaviour', () => {
 
   it('still resets history when the clicked item is disabled', () => {
     const resetHistoryTo = vi.fn();
-    useStore.mockReturnValue([
-      { ...mockStore, history: [createMockHistoryItem({ id: 'hist-1', disabled: true })], historyIndex: 0 },
-      vi.fn(),
-    ]);
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    const history = [createMockHistoryItem({ id: 'hist-1', disabled: true })];
+    const store = { ...mockStore, history, historyIndex: 0 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store, { resetHistoryTo }));
     render(<HistoryTab />);
 
     fireEvent.click(screen.getByRole('listitem'));
@@ -292,10 +363,10 @@ describe('HistoryTab row behaviour', () => {
     ['an enabled item', false, 'Disable history item'],
     ['a disabled item', true, 'Enable history item'],
   ])('titles the eye control of %s', (_label, disabled, expectedTitle) => {
-    useStore.mockReturnValue([
-      { ...mockStore, history: [createMockHistoryItem({ id: 'hist-1', disabled })], historyIndex: 0 },
-      vi.fn(),
-    ]);
+    const history = [createMockHistoryItem({ id: 'hist-1', disabled })];
+    const store = { ...mockStore, history, historyIndex: 0 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
 
     const eyeButton = within(screen.getByRole('listitem')).getByRole('button');
@@ -312,7 +383,9 @@ describe('HistoryTab row behaviour', () => {
   });
 
   it('marks no item as current when historyIndex points past the end of the list', () => {
-    useStore.mockReturnValue([{ ...mockStore, historyIndex: 99 }, vi.fn()]);
+    const store = { ...mockStore, historyIndex: 99 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
 
     expect(screen.queryByTitle('Current state')).toBeNull();
@@ -323,7 +396,9 @@ describe('HistoryTab row behaviour', () => {
   });
 
   it('keeps a redoable future item inert-looking while older items stay active', () => {
-    useStore.mockReturnValue([{ ...mockStore, historyIndex: 0 }, vi.fn()]);
+    const store = { ...mockStore, historyIndex: 0 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
 
     expect(getItemByTitle(renameTitle)).toHaveClass('opacity-100');
@@ -332,7 +407,9 @@ describe('HistoryTab row behaviour', () => {
   });
 
   it('renders no list at all when history is empty', () => {
-    useStore.mockReturnValue([{ ...mockStore, history: [], historyIndex: -1 }, vi.fn()]);
+    const store = { ...mockStore, history: [], historyIndex: -1 };
+    useStore.mockReturnValue([store, vi.fn()]);
+    useHistory.mockReturnValue(buildReturn(store));
     render(<HistoryTab />);
 
     expect(screen.queryByRole('list')).toBeNull();
@@ -346,7 +423,7 @@ describe('HistoryTab row behaviour', () => {
   // focusing it does not make the row activatable.
   it.fails('lets a keyboard user travel to a history row and activate it with Enter', () => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
 
     const row = getItemByTitle(toolTitle);
@@ -392,7 +469,7 @@ describe('HistoryTab document gesture gate', () => {
 
   it('refuses to rewind to a history entry while a document gesture is open, because the release-time commit would truncate the redo tail', () => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
 
     // Claimed after render, which is the whole point: the slot raises no re-render,
@@ -408,7 +485,7 @@ describe('HistoryTab document gesture gate', () => {
   it('refuses to toggle a history entry enabled state while a document gesture is open, for the same reason', () => {
     const resetHistoryTo = vi.fn();
     const toggleDisabled = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo, toggleDisabled }));
     render(<HistoryTab />);
 
     claimDocumentGesture('layer-transform', 2);
@@ -421,7 +498,7 @@ describe('HistoryTab document gesture gate', () => {
   });
 
   it('leaves the row and its enable control enabled while a gesture is open, so the refusal is the handler and not an attribute', () => {
-    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore));
     render(<HistoryTab />);
 
     const row = getItemByTitle(hideTitle);
@@ -434,7 +511,7 @@ describe('HistoryTab document gesture gate', () => {
 
   it('rewinds with no gesture open, so the gate refuses only while a gesture owns the document', () => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
     expect(isDocumentGestureOpen()).toBe(false);
 
@@ -446,7 +523,7 @@ describe('HistoryTab document gesture gate', () => {
 
   it('toggles with no gesture open, so the gate refuses only while a gesture owns the document', () => {
     const toggleDisabled = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled });
+    useHistory.mockReturnValue(buildReturn(mockStore, { toggleDisabled }));
     render(<HistoryTab />);
     expect(isDocumentGestureOpen()).toBe(false);
 
@@ -458,7 +535,7 @@ describe('HistoryTab document gesture gate', () => {
 
   it('rewinds again once resetDocumentGestures drops the claim, so the gate is a window and not a latch', () => {
     const resetHistoryTo = vi.fn();
-    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    useHistory.mockReturnValue(buildReturn(mockStore, { resetHistoryTo }));
     render(<HistoryTab />);
 
     claimDocumentGesture('polygon-selection', 4);
@@ -471,5 +548,87 @@ describe('HistoryTab document gesture gate', () => {
 
     expect(resetHistoryTo).toHaveBeenCalledTimes(1);
     expect(resetHistoryTo).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('HistoryTab durable historyPanelProjection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.mockReturnValue([mockStore, vi.fn()]);
+  });
+
+  it('supplies the durable title/row state from a complete durable projection', () => {
+    const durableDocument = buildCompleteDurableDocument(mockHistory, mockStore.historyIndex);
+    const projection = selectHistoryPanelProjection({
+      history: mockHistory,
+      historyIndex: mockStore.historyIndex,
+      documentId: durableDocument.documentId,
+      documentRevision: durableDocument.documentRevision,
+      branchRevision: durableDocument.branchRevision,
+      durableStatus: 'current',
+      durableDocument,
+    });
+    // A complete, consistent durable document is admitted.
+    expect(projection.source).toBe('durable');
+
+    const resetHistoryTo = vi.fn();
+    const toggleDisabled = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled, historyPanelProjection: projection });
+    render(<HistoryTab />);
+
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(3);
+    // Rows carry the durable-derived titles (admission requires them to equal the legacy title).
+    expect(items[0]).toHaveTextContent(durableEntryTitle(durableEntryProvenance(mockHistory[2])) ?? '');
+    expect(items[1]).toHaveTextContent(durableEntryTitle(durableEntryProvenance(mockHistory[1])) ?? '');
+    expect(items[2]).toHaveTextContent(durableEntryTitle(durableEntryProvenance(mockHistory[0])) ?? '');
+
+    // historyIndex === 1 marks the middle entry as the current state.
+    expect(items[1]).toHaveClass('bg-white');
+    expect(screen.getByTitle('Current state')).toHaveTextContent('👈');
+
+    // Dispatch still flows through the row's own originalIndex and item id.
+    fireEvent.click(items[0]);
+    expect(resetHistoryTo).toHaveBeenCalledWith(2);
+
+    fireEvent.click(within(items[0]).getByRole('button'));
+    expect(toggleDisabled).toHaveBeenCalledWith('hist-3');
+  });
+
+  it('renders the complete legacy fallback when the durable document is incomplete and still dispatches legacy indices/IDs', () => {
+    // Present and "current", but incomplete: two entries against three legacy items,
+    // so the length-mismatch guard rejects admission and the panel falls back.
+    const incompleteDurable = {
+      ...buildCompleteDurableDocument(mockHistory, mockStore.historyIndex),
+      history: mockHistory.slice(0, 2).map(buildDurableEntry),
+    };
+    const projection = selectHistoryPanelProjection({
+      history: mockHistory,
+      historyIndex: mockStore.historyIndex,
+      documentId: incompleteDurable.documentId,
+      documentRevision: incompleteDurable.documentRevision,
+      branchRevision: incompleteDurable.branchRevision,
+      durableStatus: 'current',
+      durableDocument: incompleteDurable,
+    });
+    expect(projection.source).toBe('legacy');
+
+    const resetHistoryTo = vi.fn();
+    const toggleDisabled = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled, historyPanelProjection: projection });
+    render(<HistoryTab />);
+
+    // The complete legacy set renders (three rows), not the partial two-entry durable slice.
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveTextContent(hideTitle);
+    expect(items[2]).toHaveTextContent(renameTitle);
+
+    // Rewind/toggle target the legacy originalIndex and the legacy item id.
+    fireEvent.click(items[0]);
+    expect(resetHistoryTo).toHaveBeenCalledWith(2);
+
+    fireEvent.click(within(items[0]).getByRole('button'));
+    expect(toggleDisabled).toHaveBeenCalledWith('hist-3');
   });
 });
