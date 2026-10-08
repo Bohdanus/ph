@@ -127,10 +127,10 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 
 ## Known failures
 
-The default headless run has no failing E2E tests and three declared skips. Read
+The latest recorded full headless run failed. Read
 [`docs/TESTING.md#e2e-failures`](docs/TESTING.md#e2e-failures) and
-[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) before investigating a failure; its entries
-are latent defects, not current failures.
+[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for the observed result and active defects;
+run the suite for its current status.
 
 A CI E2E result marked flaky is a failed run even if a retry passed; investigate it rather
 than treating it as green. See [`docs/TESTING.md#ci`](docs/TESTING.md#ci) for the retry policy.
