@@ -21,21 +21,26 @@ entry remains the record of the defect, and this file records only that it is to
 
 ## Revalidate before trusting any citation
 
-Line-number citations into a growing source file go stale, and the prose at a stale line still reads
-plausibly, which is why a `grep` sweep does not catch it. `.skills/hard-merge.md` records the
-measurement: on one branch, inserting lines into a central context file left nearly every citation
-below the insertion point wrong. **Re-derive a citation from the sentence that contains it, never from the old number.**
+Citations into a growing source file go stale, and the prose at a stale line still reads
+plausibly. `.skills/hard-merge.md` records the measurement: on one branch, inserting lines into a
+central context file left nearly every citation below the insertion point wrong. **Re-derive a
+citation from the sentence that contains it, never from the old number.**
 
-To check one without moving through the file by eye, print the line and its neighbours and read them
-against the claim the sentence makes:
+Per `docs/DOCUMENTATION.md` §Citations, tracked documents must cite declared identifiers — a
+function or method in call form (`floodFill()`), a dispatched string literal (`'legacy-tool'`), a
+test title (`it('...')`), or the file alone when the claim covers the whole file. Line-number
+citations are banned.
+
+To verify a citation without moving through the file by eye, search for the declared identifier
+and read its context against the claim the sentence makes:
 
 ```bash
-sed -n '165p' src/tools/quickSelection.ts
+grep -n "floodFill" src/tools/quickSelection.ts
 ```
 
-A citation that resolves to a blank line, an import, a closing brace or a neighbouring function is
-wrong even though the file and the number both exist. If a cited symbol has moved, the fix is the
-citation in this file, not the code.
+A citation that resolves to an import, a closing brace, or a neighbouring function is wrong even
+though the identifier exists. If a cited symbol has moved, the fix is the citation in this file,
+not the code.
 
 ---
 
@@ -108,18 +113,20 @@ workspace where the result is refined with a Refine Edge Brush, a plain Brush, a
 Contrast, Shift Edge and Decontaminate Colors, then output as a selection, a layer mask, a new layer or
 a new document. <https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/refine-your-selection-and-mask.html>
 
-**What this app does.** There is no `Select` menu. The menu bar exists and has five menus — File,
-Tools, Image, Edit, Window (`DesktopHeader.tsx` — the five hosts `menuHostRefs` addresses) — and
-`Select` is not one of them, so there is nothing for Select and Mask to hang from.
+**What this app does.** The `Select` menu exists, and every item in it is disabled. The menu bar
+carries Adobe's ten (`DesktopHeader.tsx`) and `Select ▸ All`, `Reselect`,
+`Deselect`, `Inverse`, `Select and Mask…`, `Modify ▸`, `Grow`, `Similar`, `Load Selection…` and
+`Save Selection…` are all on screen and inert — a disabled row records a capability as unbuilt,
+which is why `Select and Mask` has somewhere to hang from even though there is nothing behind it.
 
 **Why it is too hard.** Select and Mask is not a dialog over the existing model — it is the workspace
 where most of a selection tool's real accuracy actually lives, and it consumes the missing combination
-modes above as its substrate. Building it means adding a `Select` menu, a per-tool
-`Select and Mask` button, a Refine Edge Brush with its own edge-detection model, and an output
-dialog. That is a build, not a feature.
+modes above as its substrate. Building it means giving the disabled `Select ▸ Select and Mask…` row
+its workspace, a per-tool `Select and Mask` button, a Refine Edge Brush with its own edge-detection
+model, and an output dialog. That is a build, not a feature.
 
-**What the app does instead.** Nothing, and the app does not pretend otherwise — the controls are
-absent rather than rendered inert. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
+**What the app does instead.** Nothing on any selection tool's bar, and the menu row is greyed rather
+than omitted. [`TOOLS.md`](./TOOLS.md) records `Select and Mask` as `missing` on
 the marquee, lasso, wand and quick-selection bars.
 
 ### Select ▸ Modify, Inverse, Deselect, Grow and Quick Mask
@@ -130,9 +137,10 @@ it; and Quick Mask mode shows the selection as a red overlay that brushes can cu
 Contract are the three every selection workflow depends on. Feather and Grow in particular are
 reachable from the same Select menu Select and Mask is.
 
-**What this app does.** None of them exist, anywhere. There is no `Select` menu to host them — the five
-that exist are File, Tools, Image, Edit and Window (`DesktopHeader.tsx`'s five `menuHostRefs` hosts) —
-and no selection operation implements them: `src/util/selection.ts`
+**What this app does.** None of them exist, anywhere. The `Select` menu hosts them — `Modify` with its
+five leaves in Adobe's order, and `Inverse`, `Deselect`, `Grow` and `Similar` beside it
+(`DesktopHeader.tsx`) — and every one of those rows is
+disabled, because no selection operation implements them: `src/util/selection.ts`
 exports no inverse, no morphological grow or shrink, and no blur-based feather over a selection. It
 does compute a feathered alpha, but only on the clipboard copy path
 (`copyFeatheredPolygonSelectionToCanvas()` calling `createFeatheredAlphaMask()`); the outline it draws
@@ -145,7 +153,7 @@ missing substrate as Select and Mask above, and it is the reason the first entry
 type change.
 
 **What the app does instead.** No selection can be inverted, grown, shrunk or feathered after the
-fact. A selection is what the last tool drew, and the only edits available are copy, paste and clear
+fact. A selection is what the last tool drew, and the only edits available are copy, paste and deselect
 from the marquee's bar.
 
 ### Regions with holes
@@ -684,9 +692,8 @@ into the layer that is already there.
 
 **What this app does.** `Layer.opacity` is a required field (`layer-types.ts` — `Layer.opacity`),
 populated by PSD import (`psd-utils.ts` — the layer record `loadPsd()`'s `visit()` walk builds).
-The desktop Layers panel now writes it through a dedicated, titled and replayable history action.
-The slider commits once per gesture; preset values remain unverified, and the mobile drawer
-intentionally has no opacity control.
+The desktop Layers panel and mobile drawer write it through a dedicated, titled and replayable
+history action. Both sliders commit once per gesture; preset values remain unverified.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the
 active one. `DrawToolArea` calls `createLayerFromTool` on commit
