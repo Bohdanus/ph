@@ -114,9 +114,10 @@ someone who trusts the source material.
 | ---------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | **Star**   | Drawing — shapes flyout; exact position relative to Line is unresolved | none of its own; reached by cycling the shapes group | Points, corner radius, inner and outer radii | Adobe's drawing-tools overview and Star-tool page; see the sourced Shape-family research in `src/tools/descriptions/shape.notes.md` |
 
-**Star is the best-documented absent rail entry.** Adobe's separate Star-tool page names its
-points and inner/outer radii, and the sourced Shape-family research records its options and
-the app-side gap (`src/tools/descriptions/shape.notes.md`, Star-tool research).
+**Star is now implemented.** Adobe's separate Star-tool page names its points and inner/outer radii,
+and the sourced Shape-family research records its options and the app-side implementation
+(`src/tools/descriptions/shape.notes.md`, Star-tool research). Star renders via the `shape` tool with
+`figure: 'star'`, and `FigureType` in `src/tools/shape.ts` includes `'star'`.
 
 **Star is not Custom Shape.** Adobe documents Star as its own shapes-group tool
 ([Star tool](https://helpx.adobe.com/photoshop/using/create-star-shape.html)); Custom Shape draws
@@ -356,8 +357,7 @@ the Adobe page named in that row and on nothing else in this repository.
   what the deleted row got wrong by citing it as though it already existed.
 - `docs/TOOLS-RESEARCH-BRIEF.md` — the protocol this repository runs research under, including
   the rule that an unsourceable claim goes in an Unverified list rather than into the data.
-- `toolbarMap`'s shape flyout, in `toolbar-mapping.ts` — its six entries, and the missing
-  seventh.
+- `toolbarMap`'s shape flyout, in `toolbar-mapping.ts` — its seven entries: Rectangle, Ellipse, Line, Triangle, Polygon, Star and Custom Shape, all present.
 - `docs/LAYERS-PANEL.md` — the app side of the Artboard gap.
 
 ## Unverified
