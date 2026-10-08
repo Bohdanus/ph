@@ -263,6 +263,7 @@ describe('layer-property parity between the durable derivation and legacy replay
     { label: 'hide', actionName: HIDE_LAYER_ACTION, args: { visible: false } },
     { label: 'rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } },
     { label: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.42 } },
+    { label: 'lower opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.25 } },
   ] as const;
 
   it.each(propertyCases)(

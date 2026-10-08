@@ -177,7 +177,7 @@ export function replayHistory(
         continue;
       }
       const layer = layers[layerId];
-      if (layer) layers = { ...layers, [layerId]: { ...layer, opacity } };
+      if (layer) layers = { ...layers, [layerId]: { ...layer, opacity: (args as { opacity: number }).opacity } };
       continue;
     }
     if (actionName === REORDER_ACTION) {

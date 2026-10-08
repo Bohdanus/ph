@@ -444,8 +444,9 @@ export function deriveSetSelectionEntry(
  * The value is the closed set of properties an action may own, not every key
  * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
  * derivation and the append validator exhaustively switch on the owned key —
- * widening it to `keyof DurableLayerPropertyPatch` would let an action own a
- * property without adding its explicit derivation branch.
+ * widening it to `keyof DurableLayerPropertyPatch` would let a new action own a
+ * property without an explicit derivation and validation arm. That is also why
+ * an action must not own a property without adding its explicit derivation branch.
  */
 type LayerPropertyKey = 'visible' | 'name' | 'opacity';
 
