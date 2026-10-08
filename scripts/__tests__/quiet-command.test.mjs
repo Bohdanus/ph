@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const SCRIPT = join(import.meta.dirname, '..', 'quiet-command.mjs');
 

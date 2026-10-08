@@ -89,6 +89,7 @@ const BUDGETED = [
   'merge-takeover-guard.test.mjs',
   'merge-takeover-guard-install.test.mjs',
   'orphan-branches.test.mjs',
+  'quiet-command.test.mjs',
   'repo-state-gate.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
