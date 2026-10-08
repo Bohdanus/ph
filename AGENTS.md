@@ -67,7 +67,7 @@ the Kilo swarm command when needed, but swarm identity otherwise defaults to the
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
 - GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
 - `agent_manager` inherits the current model unless both values are explicit, so a main turn on a paid model spawns paid worktrees; `explore` cannot run commands, so use `general` when execution is needed.
-- Findings need evidence. The formatted board message cap is 4096 bytes; its body has about 3840 bytes: 3800 ASCII characters or 1200 characters when non-ASCII may occur. Put longer findings in a file or swarm issue.
+- Findings need evidence. Board messages cap at 4096 bytes (~3800 ASCII or ~1200 with non-ASCII). Put longer findings in a file or swarm issue.
 
 ### Free-model Git restriction
 
@@ -177,10 +177,11 @@ designing across this legacy/durable boundary.
 
 ## Free subagent models
 
-| Model                   | Provider | Variant  | Notes                                            |
-| ----------------------- | -------- | -------- | ------------------------------------------------ |
-| Nemotron 3 Ultra (free) | kilo     | high     | Best quality; thorough                           |
-| Dots3-Note Preview      | kilo     | thinking | Alternative, good for review and summaries, fast |
-| Step 3.7 Flash          | kilo     | high     | Fast, accurate                                   |
+Poolside Laguna S 2.1 is preferred for subagents. Note: rate-limited — at most 2 subagents using it may run at a time.
 
-Rate-limited (avoid): Poolside Laguna S 2.1, LiquidAI LFM2.5-2.6B.
+| Model                   | Provider | Variant  | Note                              |
+| ----------------------- | -------- | -------- | --------------------------------- |
+| Poolside Laguna S 2.1   | kilo     | thinking | Best                              |
+| Nemotron 3 Ultra (free) | kilo     | high     | Thorough, slower                  |
+| Dots3-Note Preview      | kilo     | thinking | Alternative, good summaries, fast |
+| Step 3.7 Flash          | kilo     | high     | Fast, accurate                    |
