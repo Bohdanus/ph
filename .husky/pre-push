@@ -15,4 +15,5 @@
 # else.
 set -e
 
+node scripts/stale-branch-files.mjs
 npm run --silent gate:push

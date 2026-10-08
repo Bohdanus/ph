@@ -91,6 +91,7 @@ const BUDGETED = [
   'orphan-branches.test.mjs',
   'quiet-command.test.mjs',
   'repo-state-gate.test.mjs',
+  'stale-branch-files.test.mjs',
   'tsc-guard.test.mjs',
   'worktree-inventory.test.mjs',
 ];
