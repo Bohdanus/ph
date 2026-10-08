@@ -117,7 +117,7 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build`                                               |
 | `npm run test:staged` | nowhere             | manual `vitest related` command                                |
-| `npm run gate:push`   | `.husky/pre-push`   | full app suite                                                 |
+| `npm run gate:push`   | `.husky/pre-push`   | stale-branch check, then full app suite                        |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
 - CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs. It audits high-severity vulnerabilities but does not enforce dependency licences.
