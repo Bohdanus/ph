@@ -445,18 +445,8 @@ describe('calculateNewRect', () => {
     expect(result!.x2).toBe(100 + 2 * 5);
   });
 
-  it('does NOT move a POINT box for center or right align, because Adobe scopes alignment to paragraph type', () => {
-    // This replaces a pin that asserted the opposite — that a center-aligned point box grows
-    // symmetrically about its current centre — on the reasoning that `align` should place the growth.
-    // Adobe settles it: "You can align type to one edge of a paragraph (left, center, or right for
-    // horizontal type). Alignment options are available only for paragraph type"
-    // (`formatting-paragraphs.html`), and "You can align and justify only paragraph text. To manage
-    // spacing for point text, convert it to paragraph text" (`setup-paragraph-formatting.html`).
-    // Point type "appears in a straight line without boundaries or a bounding box"
-    // (`add-text.html`), so there is nothing to align within. All three settings therefore produce
-    // the SAME rect for a point box, which is the geometry the entry in `HANDOFF.md` describes as a
-    // no-op control — a control defect, not a geometry one, and the entry carries the fix.
-    const rect = { x1: 50, y1: 0, x2: 100, y2: 0 };
+  it('expands a point box equally around the click for every alignment setting', () => {
+    const rect = { x1: 100, y1: 0, x2: 100, y2: 0 };
     for (const align of ['left', 'center', 'right'] as const) {
       const result = calculateNewRect(
         {
@@ -470,8 +460,8 @@ describe('calculateNewRect', () => {
         makeCanvasRef(120),
         imageSize
       );
-      expect(result!.x1, align).toBe(50);
-      expect(result!.x2, align).toBe(50 + 120 + 2 * TEXT_PADDING);
+      expect(result!.x1, align).toBe(100 - (120 + 2 * TEXT_PADDING) / 2);
+      expect(result!.x2, align).toBe(100 + (120 + 2 * TEXT_PADDING) / 2);
     }
   });
 
@@ -503,22 +493,33 @@ describe('calculateNewRect', () => {
     expect(result!.x2).toBe(2 * 16 + 2 * TEXT_PADDING);
   });
 
-  it('grows and shrinks a point box in the same direction for left alignment, from a fixed left edge', () => {
-    // The shrinking arm must not walk the LEFT edge leftward the way centre and right do: left
-    // alignment pins x1 and moves x2, so a line that both grows and shrinks keeps its origin. A
-    // sign error here moves the whole line every keystroke.
+  it('grows and shrinks a point box around its fixed click', () => {
     const narrower = calculateNewRect(
-      { ...baseArgs, text: 'hi', rect: { x1: 40, y1: 0, x2: 200, y2: 0 }, align: 'left' } as TextToolArgs,
+      {
+        ...baseArgs,
+        text: 'hi',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 100, y1: 0, x2: 100, y2: 0 },
+        align: 'left',
+      } as TextToolArgs,
       makeCanvasRef(),
       imageSize
     );
     const wider = calculateNewRect(
-      { ...baseArgs, text: 'abcdefghij', rect: { x1: 40, y1: 0, x2: 200, y2: 0 }, align: 'left' } as TextToolArgs,
+      {
+        ...baseArgs,
+        text: 'abcd',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 100, y1: 0, x2: 100, y2: 0 },
+        align: 'left',
+      } as TextToolArgs,
       makeCanvasRef(),
       imageSize
     );
-    expect(narrower!.x1).toBe(40);
-    expect(wider!.x1).toBe(40);
+    expect(narrower!.x1 + narrower!.x2).toBe(200);
+    expect(wider!.x1 + wider!.x2).toBe(200);
     expect(wider!.x2).toBeGreaterThan(narrower!.x2);
   });
 
@@ -626,8 +627,8 @@ describe('calculateNewRect', () => {
       canvasRef,
       imageSize
     );
-    expect(result!.x1).toBe(990);
-    expect(result!.x2).toBe(990 + 300 + 2 * 5);
+    expect(result!.x1).toBe(990 - (300 + 2 * 5) / 2);
+    expect(result!.x2).toBe(990 + (300 + 2 * 5) / 2);
     expect(result!.x2).toBeGreaterThan(imageSize.width);
   });
 
@@ -864,9 +865,9 @@ describe('calculateNewRect', () => {
     const result = calculateNewRect(args, makeCanvasRef(300), imageSize)!;
 
     // 300 of ink plus the padding on both sides grows a 100px box, which is the point-type arm's
-    // move and the one a paragraph box of this width would refuse. A `resolveTextKind` default of
-    // 'paragraph' would have left both edges at 100 and 200.
-    expect(result.x1).toBe(100);
-    expect(result.x2).toBe(100 + 300 + 2 * TEXT_PADDING);
+    // centred placement. The left edge clamps at the document boundary, while a
+    // `resolveTextKind` default of 'paragraph' would have left both edges at 100 and 200.
+    expect(result.x1).toBe(0);
+    expect(result.x2).toBe(300 + 2 * TEXT_PADDING);
   });
 });
