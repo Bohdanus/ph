@@ -31,11 +31,12 @@ deliberately carries none of it.
 | [`LAYERS-PANEL.md`](LAYERS-PANEL.md)       | The Layers panel's requirements and status                                                                       |
 | [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md)   | Capabilities deliberately not built, so nobody re-audits them                                                    |
 
-The eight per-family research notes live outside this directory, one per tool family:
+The nine per-family research notes live outside this directory, one per tool family:
 `src/tools/descriptions/selection.notes.md`, `src/tools/descriptions/paint.notes.md`,
 `src/tools/descriptions/focus.notes.md`, `src/tools/descriptions/shape.notes.md`,
 `src/tools/descriptions/pen.notes.md`, `src/tools/descriptions/type-crop.notes.md`,
 `src/tools/descriptions/transform.notes.md` and `src/tools/descriptions/eyedropper-draw.notes.md`.
+`src/tools/descriptions/patch.notes.md` records the Patch tool's behavior and deferred capabilities.
 They carry the per-family research notes and the claims `TOOLS.md` deliberately could not source.
 `src/tools/descriptions/view.notes.md` records the View tools' behavior, research sources, and
 deferred capabilities.

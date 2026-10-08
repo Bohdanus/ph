@@ -261,6 +261,10 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary: 'Rotates the canvas presentation around the viewport without transforming the image.',
     implementation: 'implemented',
   },
+  patch: {
+    summary: 'Moves an active selection over a donor area and blends the donor texture into the selected target.',
+    implementation: 'partial',
+  },
 };
 
 /**

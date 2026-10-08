@@ -42,6 +42,7 @@ vi.mock('../toolIcons.tsx', () => {
       'red-eye': Icon,
       'spot-healing': Icon,
       'healing-brush': Icon,
+      patch: Icon,
       hand: Icon,
       zoom: Icon,
       'rotate-view': Icon,

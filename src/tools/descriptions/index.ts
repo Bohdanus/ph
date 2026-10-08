@@ -10,6 +10,7 @@ import { shapeDescriptions } from './shape.ts';
 import { transformDescriptions } from './transform.ts';
 import { typeCropDescriptions } from './type-crop.ts';
 import { viewDescriptions } from './view.ts';
+import { patchDescriptions } from './patch.ts';
 
 const { star: _starDescription, ...registeredShapeDescriptions } = shapeDescriptions;
 
@@ -47,6 +48,7 @@ export const toolDescriptions: Record<ToolName, ToolDescription> = {
   ...transformDescriptions,
   ...eyedropperDrawDescriptions,
   ...viewDescriptions,
+  ...patchDescriptions,
 };
 
 export const getToolDescription = (name: ToolName): ToolDescription => toolDescriptions[name];

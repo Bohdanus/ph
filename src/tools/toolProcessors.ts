@@ -5,6 +5,7 @@ import { cloneStamp } from './cloneStamp.ts';
 import { redEye } from './redEye.ts';
 import { spotHealing } from './spotHealing.ts';
 import { healingBrush } from './healingBrush.ts';
+import { patch } from './patch.ts';
 import { colors } from './colors.ts';
 import { colorReplacement } from './colorReplacement.ts';
 import { crop } from './crop.ts';
@@ -337,6 +338,12 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: healingBrush,
+  },
+  patch: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: patch,
   },
   brush: {
     commit: 'raster',

@@ -166,7 +166,7 @@ export const useApp = (): UseAppType => {
     // commit any dirty tool changes before switching
     commitDirtyTool();
 
-    if (nextToolName !== toolName && activeSelectionId) {
+    if (nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
       // The same single writer the Clear/Deselect controls use, so this deselect
       // gains the durable `set-selection` plan and the shadow-failure fallback
       // instead of appending a hand-built entry with no `durableEntry` — which
