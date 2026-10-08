@@ -684,9 +684,8 @@ into the layer that is already there.
 
 **What this app does.** `Layer.opacity` is a required field (`layer-types.ts` — `Layer.opacity`),
 populated by PSD import (`psd-utils.ts` — the layer record `loadPsd()`'s `visit()` walk builds).
-The desktop Layers panel now writes it through a dedicated, titled and replayable history action.
-The slider commits once per gesture; preset values remain unverified, and the mobile drawer
-intentionally has no opacity control.
+The desktop Layers panel and mobile drawer write it through a dedicated, titled and replayable
+history action. Both sliders commit once per gesture; preset values remain unverified.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the
 active one. `DrawToolArea` calls `createLayerFromTool` on commit
