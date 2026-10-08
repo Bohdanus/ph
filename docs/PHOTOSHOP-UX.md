@@ -110,9 +110,9 @@ violations on `main`.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
-  in `" Tool"`. Scanning all **40** `label:` entries in `toolbarMap` (the five
+  in `" Tool"`. Scanning all **50** `label:` entries in `toolbarMap` (the seven
   `shape` figures and the six Pen-family entries each carry their own label, so the
-  entry count is 40 and not the tile count): **none lack the suffix**. It used to be
+  entry count is 50 and not the tile count): **none lack the suffix**. It used to be
   exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
   entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
   rather than tools; `extraTools` (`toolbar-mapping.ts`) is the list that now records
