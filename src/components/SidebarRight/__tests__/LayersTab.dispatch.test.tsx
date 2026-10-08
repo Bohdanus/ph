@@ -156,6 +156,7 @@ describe('LayersTab actions reaching the store', () => {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
           enabled: true,
+          provenance: { actionName: HIDE_LAYER_ACTION },
           operation: {
             kind: 'set-layer-properties',
             layerId: 'layer-3',
@@ -198,6 +199,7 @@ describe('LayersTab actions reaching the store', () => {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
           enabled: true,
+          provenance: { actionName: SHOW_LAYER_ACTION },
           operation: {
             kind: 'set-layer-properties',
             layerId: 'only-layer',
@@ -242,6 +244,7 @@ describe('LayersTab actions reaching the store', () => {
           id: 'history-id',
           schemaVersion: DURABLE_SCHEMA_VERSION,
           enabled: true,
+          provenance: { actionName: RENAME_LAYER_ACTION },
           operation: {
             kind: 'set-layer-properties',
             layerId: 'layer-3',
