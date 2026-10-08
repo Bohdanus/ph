@@ -20,9 +20,9 @@ The numbers this file used to open with — tests passed, expected-fail pins,
 files, mode-specific failure sets — were each a snapshot of one tree, and each has
 been wrong since it was written while the number beside it stayed silent. A count
 that does appear here is a count somebody measured; read the current one off the
-command. The latest recorded full headless run, `2026-10-07T17-21-09-904Z-84103`,
-ran on Chrome `155.0.8059.39` and reported `453 passed, 16 failed, 3 skipped` in
-9.9 minutes. This is one machine's observation, not a new baseline.
+command. The latest recorded full headless run, `2026-10-08T05-48-57-832Z-32316`,
+ran on this macOS arm64 machine and reported `469 passed, 0 failed, 3 skipped` in
+7.2 minutes. This is one machine's observation, not a new baseline.
 
 **A full headed run of the suite as it stands has never been measured, and
 `AGENTS.md` forbids an agent from running one.** The headed observations quoted
@@ -43,42 +43,18 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 
 ## Observed failures
 
-**Run the suite headless** — `npm run test:e2e`. That is the default, and the
-reason is the first entry below.
-
-The latest run failed in 16 tests. Eight export failures are covered by the AVIF
-and visual-baseline entries below. The other eight have these unresolved causes and
-next steps:
-
-- `e2e/color-sampler.spec.ts` — the fifth-sampler cap test emits the expected
-  message, but console police sees its location as `@vite/client` rather than the
-  component URL required by the location-specific allowlist. Trace how Vite reports
-  the source location and preserve the location check; do not turn this into a
-  message-only exemption.
-- `e2e/keyboard-shortcuts.spec.ts`, `e2e/mobile-shell.spec.ts`, and
-  `e2e/ruler.spec.ts` — three tool-group assertions no longer match the current
-  registry: Star precedes Custom Shape, the mobile Brush picker locator also
-  matches the Spot Healing and Healing Brush buttons, and Color Sampler precedes
-  Ruler in the I group. Reconcile the keyboard and cycle expectations with
-  `toolbar-mapping.ts`; make the mobile button locator exact rather than removing
-  group members to satisfy it.
-- `e2e/panel-workspace.spec.ts` — the dock-edge drag measured both the dock and
-  rail at `x = 0`, and the right-edge rail measured `x = 1030` where the assertion
-  requires `x > 1160`. Verify the rendered geometry against the intended workspace
-  behavior before changing either the layout or the assertion.
-- `e2e/toolbar-fit.spec.ts` — at height 1037 the rail measured `14/18` tools,
-  overflow enabled, and 44px free, while the test expects no overflow. The minimum
-  height assertion also found one tool where it expects none. Re-derive the fit
-  boundary from the current rendered groups and preserve the no-overflow and
-  maximal-fit invariants.
+The latest full headless run recorded above had no failures. This is one machine's
+observation, not a baseline; run `npm run test:e2e` for the current result. The
+open findings below describe independent weaknesses in the suite and remain work
+even when a full run passes.
 
 The earlier export-line and `pen-types` failures recorded here are gone because
 their causes were fixed, not because assertions were relaxed:
 `ab5f53c` corrected the export line's document constant, which had been derived
 from the canvas box rather than from the document, so the stroke landed 23 rows
 off the committed baseline. The recorded pixels were correct all along. The
-Chrome 155 visual mismatches above are a separate, current observation, covered
-by the baseline-provenance entry below.
+Chrome 155 visual mismatches recorded in the 2026-10-07 run were not reproduced
+by the latest full headless run.
 
 Three defect groups used to fail here and have been fixed in this repository. Their
 evidence is kept below rather than deleted, because each explains a shape the suite
