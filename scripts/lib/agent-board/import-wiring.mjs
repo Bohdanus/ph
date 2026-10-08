@@ -72,6 +72,21 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     read.push({ file, text, parsed: parseHandoffDoc({ file, text }) });
   }
 
+  const ambiguousRetirements = read.flatMap((entry) =>
+    (entry.parsed.ambiguousRetirements ?? []).map((retirement) => ({ file: entry.file, ...retirement }))
+  );
+  if (ambiguousRetirements.length > 0) {
+    const details = ambiguousRetirements
+      .map(({ file, line, origin, heading }) => `  ${file}:${line} (${origin}): ${JSON.stringify(heading)}`)
+      .join('\n');
+    throw new BoardError(
+      'cannot import handoff documents: numbered headings with retirement status words must use an explicit ' +
+        'retirement-list heading, or remove the status word if the entry is live:\n' +
+        details,
+      { code: 1 }
+    );
+  }
+
   // origin → title, not just origin: a bare origin cannot tell a re-run from a
   // document whose item 2 was renumbered upstream and now names a different
   // defect entirely. `createIssue` re-checks the same thing when it is called
