@@ -18,6 +18,7 @@ import { RulerIcon } from './icons/RulerIcon';
 import { RedEyeIcon } from './icons/RedEyeIcon';
 import { SpotHealingIcon } from './icons/SpotHealingIcon';
 import { HealingBrushIcon } from './icons/HealingBrushIcon';
+import { PatchIcon } from './icons/PatchIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
@@ -78,6 +79,7 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> & Record<'shape-sta
   'red-eye': RedEyeIcon,
   'spot-healing': SpotHealingIcon,
   'healing-brush': HealingBrushIcon,
+  patch: PatchIcon,
   gradient: GradientIcon,
   sharpen: SharpenIcon,
   smudge: SmudgeIcon,

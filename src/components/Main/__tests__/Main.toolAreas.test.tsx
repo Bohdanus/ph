@@ -129,6 +129,7 @@ vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient')
 vi.mock('../ViewToolArea.tsx', () => ({ ViewToolArea: marker('view') }));
 vi.mock('../SpotHealingToolArea.tsx', () => ({ SpotHealingToolArea: marker('spot-healing') }));
 vi.mock('../HealingBrushToolArea.tsx', () => ({ HealingBrushToolArea: marker('healing-brush') }));
+vi.mock('../PatchToolArea.tsx', () => ({ PatchToolArea: marker('patch') }));
 vi.mock('../TextEditOverlay.tsx', () => ({ TextEditOverlay: overlayMarker }));
 
 /**
@@ -162,6 +163,7 @@ const TOOL_AREA_IDS = [
   'view',
   'spot-healing',
   'healing-brush',
+  'patch',
 ] as const;
 
 const toolAreaTestId = () => {
@@ -257,6 +259,7 @@ describe('Main tool-area routing', () => {
     ['sponge', 'sponge'],
     ['spot-healing', 'spot-healing'],
     ['healing-brush', 'healing-brush'],
+    ['patch', 'patch'],
     ['magic-eraser', 'fill'],
     ['paint-bucket', 'fill'],
     ['gradient', 'gradient'],
@@ -310,6 +313,7 @@ describe('Main tool-area routing', () => {
       'sponge',
       'spot-healing',
       'healing-brush',
+      'patch',
       'paint-bucket',
       'gradient',
     ] as const;
