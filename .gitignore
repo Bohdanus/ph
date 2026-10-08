@@ -47,6 +47,12 @@ playwright/.auth
 /WORKTREES.json
 
 .kilo
+!.kilo/
+.kilo/*
+!.kilo/plans/
+.kilo/plans/*
+# This implementation plan is an explicit, tracked handoff for the durable replay cutover.
+!.kilo/plans/durable-replay-authority.md
 .serena
 
 # Editor directories and files
