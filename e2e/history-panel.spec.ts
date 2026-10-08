@@ -134,11 +134,11 @@ test.describe('History panel', () => {
     const strokeClip = canvasRedrawClip(box);
 
     // The panel only renders once the store has a document, and a document's own opening
-    // entry is already on its timeline — so the count here is 1, never 0, and
-    // `HistoryTab`'s "No history yet." branch is unreachable for a real document. What is
-    // worth pinning is that a second document does not inherit the first one's entries,
-    // which says nothing until the first document HAS an entry that the second cannot.
-    await expect(historyRows(page)).not.toHaveCount(0);
+    // entry is already on its timeline — so a fresh document has exactly one opening row,
+    // and `HistoryTab`'s "No history yet." branch is unreachable for a real document. Check
+    // visibility too: a count alone would pass if the row were hidden in a rolled-up panel.
+    await expect(historyRows(page)).toHaveCount(1);
+    await expect(historyRows(page).first()).toBeVisible();
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
@@ -162,6 +162,7 @@ test.describe('History panel', () => {
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
     await expect(drawRows(page), "the new document must not inherit the first one's entries").toHaveCount(0);
     await expect(historyRows(page)).toHaveCount(1);
+    await expect(historyRows(page).first()).toBeVisible();
     await expect(page.getByTestId('undo-button'), 'a new document starts with nothing to undo').toBeDisabled();
     await expect(page.getByTestId('redo-button')).toBeDisabled();
     await waitForCanvasPixels(page, strokeClip, hasNoDarkPixels, { description: "the first document's stroke" });
