@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
-import { composeDurableDocument } from '../durable-compositor.ts';
+import { composeDurableDocument, DurableCompositionRefusal } from '../durable-compositor.ts';
 import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
 import type { DurableLayerSnapshot, DurableLayerSource, DurableOperation } from '../history-model.ts';
@@ -16,6 +16,7 @@ type RecordingContext = CanvasRenderingContext2D & {
 };
 
 const recordingContexts: RecordingContext[] = [];
+const recordingCanvases: RecordingCanvas[] = [];
 
 class RecordingCanvas {
   readonly width: number;
@@ -61,6 +62,7 @@ class RecordingCanvas {
     });
     this.context = context;
     recordingContexts.push(context);
+    recordingCanvases.push(this);
   }
 
   getContext(): RecordingContext {
@@ -141,6 +143,7 @@ afterEach(() => {
   overrideCanvasFilterSupport(null);
   vi.unstubAllGlobals();
   recordingContexts.length = 0;
+  recordingCanvases.length = 0;
 });
 
 describe('durable document refusal and composition', () => {
@@ -181,8 +184,19 @@ describe('durable document refusal and composition', () => {
     vi.stubGlobal('OffscreenCanvas', RecordingCanvas);
     vi.stubGlobal('createImageBitmap', undefined);
     const registry = new AssetRegistry();
-    await expect(
-      composeDurableDocument(
+    const releaseSpies: ReturnType<typeof vi.fn>[] = [];
+    const originalMaterialize = registry.materialize.bind(registry);
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const release = vi.fn(lease.release);
+      releaseSpies.push(release);
+      return { ...lease, release };
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    let error: unknown;
+    try {
+      await composeDurableDocument(
         replay({
           'layer-hidden': layer('layer-hidden', 0, { visible: false }),
           'layer-screen': layer('layer-screen', 1, {
@@ -194,8 +208,25 @@ describe('durable document refusal and composition', () => {
           'layer-bad': layer('layer-bad', 3, { operations: [refusedFilter('layer-bad')] }),
         }),
         request(registry)
-      )
-    ).rejects.toThrow('Unable to compose durable layer layer-bad');
+      );
+    } catch (thrown) {
+      error = thrown;
+    }
+
+    expect(error).toBeInstanceOf(DurableCompositionRefusal);
+    const refusal = error as DurableCompositionRefusal;
+    expect(refusal.code).toBe('materialization-refused');
+    expect(refusal.missingLayerIds).toEqual(['layer-bad']);
+    expect(refusal.unexpectedLayerIds).toEqual([]);
+
+    const compositionCanvas = recordingCanvases.find(
+      (canvas) => canvas.width === frame.width && canvas.height === frame.height
+    );
+    expect(compositionCanvas).toBeUndefined();
+
+    expect(releaseSpies).toHaveLength(2);
+    for (const release of releaseSpies) expect(release).toHaveBeenCalledTimes(1);
+
     registry.shutdown();
   });
 });

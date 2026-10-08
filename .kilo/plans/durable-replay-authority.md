@@ -26,6 +26,8 @@ unsupported source.
   for every supported layer family and cursor.
 - A failed or stale durable publication leaves the last valid visible document
   intact, including its dimensions.
+- A delayed publication record is ignored once the durable sidecar is stale or
+  unavailable; it cannot resurrect a durable status after a document mutation.
 - A document is published either from durable materialization or from the
   legacy compatibility fallback, never a mixture of the two.
 - Durable asset and presentation leases remain live until publication is
@@ -48,6 +50,7 @@ Production files:
 - `src/contexts/history-model.ts`
 - `src/contexts/history-adapter.ts`
 - `src/contexts/history-append.ts`
+- `src/contexts/durable-compositor.ts`
 - `src/contexts/StoreContext.tsx`
 - `src/components/DevStatusStrip/DevStatusStrip.tsx`
 
@@ -60,7 +63,16 @@ Work:
 - Expose durable cursor and published durable-layer ids beside the existing
   development status seam. Keep this diagnostic-only and dev-gated.
 - Make whole-document materialization refusal explicit at the compositor/store
-  boundary. A refused layer must decline the complete durable publication.
+  boundary. A refused visible layer must decline the complete durable
+  publication. Keep `materializeDocument()`'s per-layer omission contract
+  unchanged for existing callers; the compositor owns the all-or-nothing
+  coverage check.
+- Require the durable and legacy presentations to have the same visible layer
+  id set before taking any detached materialization leases. Extra legacy layers
+  are a refusal, not a reason to publish a partial durable cache.
+- Record the effective durable cursor, stable durable layer ids, and either
+  `durable` or `legacy-fallback` with a narrow refusal reason through the
+  dev-only status seam.
 
 Acceptance:
 

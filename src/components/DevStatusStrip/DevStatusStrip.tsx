@@ -7,6 +7,12 @@ import type { MigrationDiagnostic } from '../../contexts/history-adapter.ts';
  * a failure without letting a bad document grow the bar without bound.
  */
 const VISIBLE_DIAGNOSTICS = 3;
+const EMPTY_PRESENTATION = {
+  status: 'unpublished' as const,
+  cursor: null,
+  layerIds: [] as readonly string[],
+  reason: null,
+};
 
 /**
  * The store reader, in a component of its own so the DEV gate can sit ABOVE the subscription. With
@@ -15,7 +21,8 @@ const VISIBLE_DIAGNOSTICS = 3;
  * return `null`, still holding a live subscription to the durable shadow.
  */
 const DevStatusStripContents = () => {
-  const [{ durableStatus, durableDiagnostics }] = useStore();
+  const [{ durableStatus, durableDiagnostics, durablePresentation: storedPresentation }] = useStore();
+  const durablePresentation = storedPresentation ?? EMPTY_PRESENTATION;
 
   // A store slice built by hand can omit the list entirely; treating that as
   // "no diagnostics" keeps the footer renderable instead of throwing while it
@@ -23,7 +30,7 @@ const DevStatusStripContents = () => {
   const diagnostics: readonly MigrationDiagnostic[] = durableDiagnostics ?? [];
   // `current` with a warning is still a real state, so the status alone cannot
   // decide whether there is anything to say.
-  if (durableStatus === 'current' && diagnostics.length === 0) return null;
+  if (durableStatus === 'current' && diagnostics.length === 0 && durablePresentation.status === 'durable') return null;
 
   const shown = diagnostics.slice(0, VISIBLE_DIAGNOSTICS);
   const hidden = diagnostics.length - shown.length;
@@ -32,9 +39,20 @@ const DevStatusStripContents = () => {
     <span
       data-testid="dev-status-strip"
       data-status={durableStatus}
+      data-presentation-status={durablePresentation.status}
+      data-durable-cursor={durablePresentation.cursor ?? ''}
+      data-durable-layer-ids={durablePresentation.layerIds.join(',')}
+      data-durable-fallback-reason={durablePresentation.reason ?? ''}
       className="text-xs text-amber-600 dark:text-amber-400"
     >
       <span data-testid="dev-status-strip-status">Durable: {durableStatus}</span>
+      <span data-testid="dev-status-strip-presentation">
+        {' · '}
+        {durablePresentation.status === 'durable' ? 'Durable presentation' : 'Legacy presentation'}
+        {durablePresentation.cursor !== null ? ` @ ${durablePresentation.cursor}` : ''}
+        {durablePresentation.layerIds.length > 0 ? ` [${durablePresentation.layerIds.join(', ')}]` : ''}
+        {durablePresentation.reason ? ` (${durablePresentation.reason})` : ''}
+      </span>
       {shown.length > 0 && (
         <>
           {' · '}

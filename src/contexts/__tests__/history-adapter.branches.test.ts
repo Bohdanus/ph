@@ -1483,6 +1483,7 @@ describe('deriveSetLayerPropertiesEntry', () => {
       id: 'prop-1',
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName },
       operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch },
     });
     const operation = derived?.operation;
