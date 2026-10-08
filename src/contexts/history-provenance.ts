@@ -16,7 +16,7 @@ export function durableEntryProvenance(item: HistoryItem): DurableEntryProvenanc
   const toolName = typeof sourceToolName === 'string' ? sourceToolName : undefined;
   return Object.freeze({
     actionName: item.actionName,
-    ...(toolName ? { toolName } : {}),
+    ...(toolName !== undefined ? { toolName } : {}),
   });
 }
 
@@ -25,7 +25,7 @@ export function durableEntryProvenance(item: HistoryItem): DurableEntryProvenanc
  * untitled, matching the legacy panel rather than inventing the word "tool".
  */
 export function durableEntryTitle(provenance: DurableEntryProvenance): string | undefined {
-  if (provenance.toolName) return provenance.toolName;
+  if (provenance.toolName !== undefined) return provenance.toolName;
   if (provenance.actionName === TOOL_ACTION) return undefined;
   if (provenance.actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
   if (provenance.actionName === SET_LAYER_OPACITY_ACTION) return 'Set Opacity';

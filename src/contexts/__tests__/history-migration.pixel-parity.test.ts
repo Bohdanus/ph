@@ -12,7 +12,7 @@ import type { Size } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord } from '../layer-types.ts';
 import { durablePresentationIsRendererIdentical } from '../StoreContext.tsx';
-import { useHistory } from '../useHistory.ts';
+import { selectHistoryPanelProjection, useHistory } from '../useHistory.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 import {
   installPixelCanvasElement,
@@ -657,26 +657,30 @@ describe('legacy/durable pixel parity', () => {
 /**
  * NOT AN `it.fails`, because it is not a divergence: it is an axis that does not exist.
  *
- * RQ-4 names history-panel state. `HistoryTab.tsx` renders `useStore()`'s `history` array and
- * labels each row with `getHistoryItemTitle()` — a pure function of a LEGACY `HistoryItem`, and
- * the only title mapping in the tree. The durable document carries operations, not titles, and
- * nothing derives one, so the panel has exactly one authority today and a differential has
- * nothing to compare.
- *
- * The assertion below is the fact that limitation rests on: the converted document carries no
- * title projection at all. Inventing one for the test would make every assertion about the
- * invention rather than about the two models, which is a product decision and not a harness, so
- * it is recorded here and raised in the S1 report instead.
+ * RQ-4 names history-panel state. The panel may use durable provenance only when every legacy
+ * row maps one-to-one to a durable entry. The ordinary scenarios intentionally begin with an
+ * opening document row, which is absorbed into the durable baseline and therefore forces the
+ * complete legacy projection.
  */
 describe('history-panel state', () => {
-  it('has one authority today: the durable document carries no title to difference', () => {
-    const { document, diagnostics } = legacyHistoryToDurable(replayParityScenarios[0]!.history, {
+  it('preserves converted provenance but falls back for the opening baseline row', () => {
+    const legacyHistory = replayParityScenarios[0]!.history;
+    const { document, diagnostics } = legacyHistoryToDurable(legacyHistory, {
       documentId: 'history-panel-axis',
     });
     expect(diagnostics).toEqual([]);
-    expect(Object.keys(document)).not.toContain('title');
-    expect(document.history.flatMap((entry) => Object.keys(entry).concat(Object.keys(entry.operation)))).not.toContain(
-      'title'
-    );
+    expect(document.history.every((entry) => entry.provenance)).toBe(true);
+    expect(document.history.length).toBeLessThan(legacyHistory.length);
+    expect(
+      selectHistoryPanelProjection({
+        history: legacyHistory,
+        historyIndex: document.cursor,
+        documentId: document.documentId,
+        documentRevision: document.documentRevision,
+        branchRevision: document.branchRevision,
+        durableStatus: 'current',
+        durableDocument: document,
+      }).source
+    ).toBe('legacy');
   });
 });

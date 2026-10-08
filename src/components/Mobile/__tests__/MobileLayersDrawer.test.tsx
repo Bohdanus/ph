@@ -6,6 +6,9 @@ import { MobileLayersDrawer } from '../MobileLayersDrawer.tsx';
 import { reorderLayers } from '../../../contexts/layer-utils.ts';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../../util/constants.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import { getHistoryItemTitle } from '../../../contexts/useHistory.ts';
+import type { HistoryPanelProjection } from '../../../contexts/useHistory.ts';
+import type { HistoryItem } from '../../../contexts/history-types.ts';
 
 const createBlankLayerMock = vi.hoisted(() => vi.fn());
 const removeLayerMock = vi.hoisted(() => vi.fn());
@@ -60,6 +63,7 @@ vi.mock('../../../contexts/useHistory.ts', async (importOriginal) => {
     useHistory: () => ({
       resetHistoryTo: resetHistoryToMock,
       toggleDisabled: toggleDisabledMock,
+      historyPanelProjection: buildLegacyProjection(),
       canUndo: () => true,
       canRedo: () => false,
       undo: vi.fn(),
@@ -67,6 +71,20 @@ vi.mock('../../../contexts/useHistory.ts', async (importOriginal) => {
     }),
   };
 });
+
+function buildLegacyProjection(): HistoryPanelProjection {
+  const history = storeStateMock.history as unknown as HistoryItem[];
+  return {
+    source: 'legacy',
+    rows: history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= storeStateMock.historyIndex,
+      isCurrent: originalIndex === storeStateMock.historyIndex,
+    })),
+  };
+}
 
 const makeLayer = (id: string, name: string, order: number) => ({
   id,

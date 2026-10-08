@@ -19,7 +19,17 @@ export interface MobileLayersDrawerProps {
 export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, onClose }) => {
   const [{ layers, activeLayerId, history, historyIndex, totalSize, documentFrame }] = useStore();
   const { createBlankLayer, toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
-  const { resetHistoryTo, toggleDisabled } = useHistory();
+  const { resetHistoryTo, toggleDisabled, historyPanelProjection: storedProjection } = useHistory();
+  const historyPanelProjection = storedProjection ?? {
+    source: 'legacy' as const,
+    rows: history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= historyIndex,
+      isCurrent: originalIndex === historyIndex,
+    })),
+  };
 
   const [activeTab, setActiveTab] = useState<'layers' | 'history'>('layers');
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
@@ -31,7 +41,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   // Index 0 is the TOP layer: `getSortedLayersArray` is ascending, and the drawer
   // shows the stack the way Photoshop does.
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
-  const sortedHistory = useMemo(() => [...history].reverse(), [history]);
+  const sortedHistory = useMemo(() => [...historyPanelProjection.rows].reverse(), [historyPanelProjection.rows]);
 
   if (!isOpen) return null;
 
@@ -358,12 +368,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
 
         {activeTab === 'history' && (
           <ul className="flex-1 overflow-y-auto p-3 space-y-1 max-h-[50vh]" aria-label="History">
-            {sortedHistory.map((item) => {
-              const originalIndex = history.indexOf(item);
-              const isCurrent = originalIndex === historyIndex;
-              const isPast = originalIndex <= historyIndex;
-              const title = getHistoryItemTitle(item);
-
+            {sortedHistory.map(({ item, originalIndex, isCurrent, isActive: isPast, title }) => {
               return (
                 <li key={item.id}>
                   {/* A plain `div`, NOT `role="button"` — the same call as the layer row
