@@ -467,6 +467,48 @@ What survives is the narrower, verified fact that was already in the third versi
 
 ---
 
+## Spot Healing Brush Tool
+
+Adobe documents Spot Healing as a click-or-drag retouch tool with Content-Aware,
+Proximity Match and Create Texture modes, plus Diffusion and Sample All Layers
+controls. Adobe does not publish the Content-Aware or Create Texture algorithm,
+so this app implements only a deterministic Proximity Match approximation: each
+brush dab samples an outward ring from the active layer and blends that local
+texture through the configured size, hardness and opacity. The processor is a
+replayable `raster-processor` action, and one stroke creates one history item.
+
+The current MVP deliberately omits Content-Aware, Create Texture, Diffusion,
+Sample All Layers, pressure-driven size and blend-mode selection. Those controls
+remain `missing` in `paint.ts` rather than appearing as dead options. Photoshop's
+J shortcut is represented by the app's Spot Healing selection; the other J-family
+retouch tools are not yet registered for cycling.
+
+Sources:
+
+- <https://www.adobe.com/products/photoshop/spot-heal.html>
+- <https://helpx.adobe.com/photoshop/web/edit-images/retouch/remove-spots.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+
+## Healing Brush Tool
+
+Adobe distinguishes the Healing Brush from Spot Healing by its manual
+Alt/Option-click source. This implementation samples a source point, carries the
+source offset across the stroke when Aligned is on, and adjusts the sampled RGB
+texture toward the destination luminance before compositing it through the tip.
+That is a deterministic approximation, not a claim to Adobe’s private
+Poisson-blending implementation.
+
+Pattern source, Sample Current & Below / All Layers, Ignore Adjustment Layers,
+Diffusion, pressure-driven size, blend-mode selection, cross-document sampling
+and selection clipping remain deferred. They are recorded as missing controls in
+`paint.ts` rather than exposed as inert options.
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
+
 ## Unverified
 
 Claims that came up in the brief, in the prior research corpus, or in this pass and could **not** be established from a source that was actually opened. They are deliberately absent from `paint.ts`. Each entry names the URL that came closest.

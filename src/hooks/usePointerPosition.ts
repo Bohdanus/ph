@@ -2,6 +2,7 @@ import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
 import { containFit, type ContainDimensions } from '../util/contain-fit.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
+import { inverseViewPoint, viewStateRef, viewportCenter } from '../contexts/view-state.ts';
 
 export type { ContainDimensions } from '../util/contain-fit.ts';
 
@@ -258,8 +259,14 @@ export function usePointerPosition<T extends HTMLElement>(
 
     const { offsetX, offsetY, scale } = dimensionsRef.current;
 
-    const xCss = (e.clientX - offsetX - rect.x) / scale;
-    const yCss = (e.clientY - offsetY - rect.y) / scale;
+    const viewportPoint = { x: e.clientX - rect.x, y: e.clientY - rect.y };
+    const untransformed = inverseViewPoint(
+      viewportPoint,
+      viewStateRef.current,
+      viewportCenter(rect.width, rect.height)
+    );
+    const xCss = (untransformed.x - offsetX) / scale;
+    const yCss = (untransformed.y - offsetY) / scale;
 
     return {
       x: xCss,

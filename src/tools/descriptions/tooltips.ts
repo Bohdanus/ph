@@ -94,6 +94,18 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or Independent mode, with a soft or hard tip.',
     implementation: 'partial',
   },
+  'healing-brush': {
+    summary: 'Blends sampled texture into a brush stroke while preserving destination lighting and tone.',
+    implementation: 'partial',
+  },
+  'spot-healing': {
+    summary: 'Repairs small marks by blending nearby texture into a soft brush stroke.',
+    implementation: 'partial',
+  },
+  'red-eye': {
+    summary: 'Reduces the red flash reflection in an eye with adjustable pupil size and darkening.',
+    implementation: 'partial',
+  },
   blur: {
     summary:
       'Paints blur under the brush, softening hard edges and reducing detail wherever you drag; the effect builds up pass by pass.',
@@ -237,6 +249,18 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
       'Measures a distance on the canvas: drag a nonprinting line and the options bar reports X, Y, W, H, the angle and the length, with Shift snapping to 45 degrees.',
     implementation: 'partial',
   },
+  hand: {
+    summary: 'Pans the canvas view without moving or changing the document pixels.',
+    implementation: 'implemented',
+  },
+  zoom: {
+    summary: 'Magnifies or reduces the canvas around the pointer without changing document pixels.',
+    implementation: 'implemented',
+  },
+  'rotate-view': {
+    summary: 'Rotates the canvas presentation around the viewport without transforming the image.',
+    implementation: 'implemented',
+  },
 };
 
 /**
@@ -253,6 +277,7 @@ const FIGURE_TOOL_NAMES = {
   line: 'line',
   triangle: 'triangle',
   polygon: 'polygon',
+  star: 'shape',
 } satisfies Record<FigureType, ToolName>;
 
 /**

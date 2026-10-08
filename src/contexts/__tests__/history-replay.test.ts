@@ -262,7 +262,8 @@ describe('layer-property parity between the durable derivation and legacy replay
     { label: 'show', actionName: SHOW_LAYER_ACTION, args: { visible: true } },
     { label: 'hide', actionName: HIDE_LAYER_ACTION, args: { visible: false } },
     { label: 'rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } },
-    { label: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.25 } },
+    { label: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.42 } },
+    { label: 'lower opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.25 } },
   ] as const;
 
   it.each(propertyCases)(
@@ -294,6 +295,25 @@ describe('layer-property parity between the durable derivation and legacy replay
 
     expect(deriveSetLayerPropertiesEntry(history[1])).toBeNull();
     expect(replayHistory(history, 1, initialSize, createDependencies()).layers[layerId].name).toBe(42);
+  });
+
+  it('reports an invalid opacity history value without changing the layer', () => {
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      { id: 'bad-opacity', actionName: SET_LAYER_OPACITY_ACTION, layerId, args: { opacity: 1.2 } },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, createDependencies());
+
+    expect(result.layers[layerId].opacity).toBe(1);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'bad-opacity',
+        actionName: SET_LAYER_OPACITY_ACTION,
+        code: 'invalid-layer-opacity',
+        error: expect.any(TypeError),
+      }),
+    ]);
   });
 
   it('records a property entry for a layer replay cannot find', () => {

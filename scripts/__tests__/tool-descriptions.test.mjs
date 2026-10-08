@@ -11,7 +11,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const readRepoFile = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8');
 
-const FAMILIES = ['selection', 'paint', 'focus', 'shape', 'pen', 'type-crop', 'transform', 'eyedropper-draw'];
+const FAMILIES = ['selection', 'paint', 'focus', 'shape', 'pen', 'type-crop', 'transform', 'eyedropper-draw', 'view'];
 
 // Module scope, not inside a `describe`: the dynamic imports need top-level `await`, and
 // vitest's `describe` body is synchronous. Each family module exports exactly one record and
@@ -22,6 +22,10 @@ const entries = await Promise.all(
 );
 
 const descriptions = Object.assign({}, ...entries.map(([, record]) => record));
+// Star is a figure variant whose toolbar identity is the registered `shape` tool; it remains in
+// the full research record so generated docs can describe the variant without becoming a second
+// selectable ToolName.
+const registeredDescriptions = Object.fromEntries(Object.entries(descriptions).filter(([name]) => name !== 'star'));
 
 /** `file:line`, the only citation form `implementationRefs` and `appRef` accept. *
  *
@@ -43,7 +47,7 @@ const REF_PATTERN = /^(?<path>[^\s:]+):(?<line>\d+)$/;
  */
 describe('tool description citations', () => {
   it('covers every registered tool', () => {
-    expect(new Set(Object.keys(descriptions))).toEqual(new Set(availableTools));
+    expect(new Set(Object.keys(registeredDescriptions))).toEqual(new Set(availableTools));
   });
 
   it('cites at least one real file for every tool, and every citation resolves', () => {
@@ -100,7 +104,7 @@ describe('tool description citations', () => {
 
     expect(empty, `family modules with no tools: ${empty.join(', ')}`).toEqual([]);
     expect(duplicates).toEqual([]);
-    expect([...seen.keys()].sort()).toEqual([...availableTools].sort());
+    expect([...seen.keys()].filter((name) => name !== 'star').sort()).toEqual([...availableTools].sort());
   });
 });
 
@@ -129,7 +133,7 @@ describe('the generated files', () => {
     const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
     const drifted = [];
 
-    for (const [key, tool] of Object.entries(descriptions)) {
+    for (const [key, tool] of Object.entries(registeredDescriptions)) {
       const projection = toolTooltips[key];
       if (projection === undefined) {
         drifted.push(`${key}: in the record but not in the projection`);
@@ -140,7 +144,7 @@ describe('the generated files', () => {
     }
 
     expect(drifted).toEqual([]);
-    expect(Object.keys(toolTooltips).sort()).toEqual(Object.keys(descriptions).sort());
+    expect(Object.keys(toolTooltips).sort()).toEqual(Object.keys(registeredDescriptions).sort());
   });
 
   it('documents every tool', () => {

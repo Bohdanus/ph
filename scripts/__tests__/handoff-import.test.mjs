@@ -552,7 +552,10 @@ describe('the document shapes the parser has to survive', () => {
   it('expands a range in a deleted heading, and leaves a severity tag out of it', () => {
     expect(deadNumbers('### Items 5, 7, 21-23 — deleted\n')).toEqual([5, 7, 21, 22, 23]);
     expect(deadNumbers('## Fixed — Enter did not reliably close the flyout (was P2, a real race)\n')).toEqual([]);
-    expect(deadNumbers('## 9. An old thing — resolved\n')).toEqual([9]);
+    expect(deadNumbers('## 9. An old thing — resolved\n')).toEqual([]);
+    expect(parse('## 9. An old thing — resolved\n').ambiguousRetirements).toEqual([
+      { origin: 'HANDOFF.md#9', number: 9, line: 1, heading: '9. An old thing — resolved' },
+    ]);
     expect(deadNumbers('## 1. Still open\n')).toEqual([]);
   });
 
@@ -620,12 +623,19 @@ describe('the document shapes the parser has to survive', () => {
   });
 
   it('yields nothing at all for a document with no items', () => {
-    expect(parse('')).toEqual({ scope: 'history', items: [], dead: [], duplicateNumbers: [] });
+    expect(parse('')).toEqual({
+      scope: 'history',
+      items: [],
+      dead: [],
+      duplicateNumbers: [],
+      ambiguousRetirements: [],
+    });
     expect(parse('# Handoff\n\nJust prose, and a `src/a.ts` citation.\n')).toEqual({
       scope: 'history',
       items: [],
       dead: [],
       duplicateNumbers: [],
+      ambiguousRetirements: [],
     });
   });
 
@@ -634,7 +644,13 @@ describe('the document shapes the parser has to survive', () => {
       expect(() => parseHandoffDoc({ file: 'HANDOFF.md', text: value }), String(value)).not.toThrow();
     }
     expect(() => parseHandoffDoc()).not.toThrow();
-    expect(parseHandoffDoc()).toEqual({ scope: null, items: [], dead: [], duplicateNumbers: [] });
+    expect(parseHandoffDoc()).toEqual({
+      scope: null,
+      items: [],
+      dead: [],
+      duplicateNumbers: [],
+      ambiguousRetirements: [],
+    });
   });
 
   it('reads CRLF line endings the same as LF', () => {
@@ -666,15 +682,15 @@ describe('the document shapes the parser has to survive', () => {
    * the point: it is what proves the fix did not simply delete the concept by
    * making `deadNumbers` return nothing.
    */
-  it('reads a heading that ENDS with a status marker as a retirement, in every separator form', () => {
+  it('reads explicit retirement lists and reports ambiguous numbered status headings', () => {
     const markers = [
-      ['## 5. Whatever — resolved', [5]],
+      ['## 5. — resolved', [5]],
       ['### Items 1, 2 — deleted', [1, 2]],
       ['## 3, 4. — deleted', [3, 4]],
-      ['## 9. An old thing - fixed', [9]],
-      ['## 11. Another: closed', [11]],
-      ['## 12. And a third (done)', [12]],
-      ['## 13. Landed, superseded and deleted', [13]],
+      ['## 9. - fixed', [9]],
+      ['## 11. — closed', [11]],
+      ['## 12. (done)', [12]],
+      ['## 13. — deleted', [13]],
     ];
     for (const [heading, dead] of markers) {
       expect(deadNumbers(`${heading}\n`), heading).toEqual(dead);
@@ -683,15 +699,11 @@ describe('the document shapes the parser has to survive', () => {
     expect(deadNumbers('### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44 — deleted\n')).toEqual([
       5, 7, 9, 13, 14, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 37, 38, 39, 40, 41, 42, 44,
     ]);
-    // A heading that ends in a marker is never opened as an item: `assemble`
-    // consumes it, so the heading and the dead set carry the same information
-    // and the entry is not lost. This is the contract the older
-    // `## 3, 4. — deleted` fixture already pins, stated here next to the rule
-    // that decides it.
-    const parsed = parse('## 5. Whatever — resolved\n\nBody.\n');
-    expect(parsed.dead).toEqual([5]);
-    expect(parsed.items.map((item) => item.origin)).toEqual([]);
-    expect(planImport([parsed], []).create).toEqual([]);
+    const ambiguous = parse('## 31. The dialog-closed assertion is fixed\n\nBody.\n');
+    expect(ambiguous.dead).toEqual([]);
+    expect(ambiguous.ambiguousRetirements).toHaveLength(1);
+    expect(ambiguous.items.map((item) => item.origin)).toEqual(['HANDOFF.md#31']);
+    expect(planImport([ambiguous], []).create).toEqual([]);
   });
 
   /**
@@ -813,7 +825,7 @@ describe('the document shapes the parser has to survive', () => {
    * closes one, and a fix that only widens `NUMBERED` to fix the loss does not
    * address this at all — which is the sentence §77 makes.
    *
-   * `it.fails`, same convention and same reason as the §82 pin: the body below
+   * `it.fails` marks the still-open §77 defect: the body below
    * asserts what a fixed parser returns, so it is red today and the `fails` is
    * what a fixer deletes. §77's own projection is the reason this cannot be an
    * ordinary test: no fix that gives `15a` its own origin can keep returning
@@ -880,7 +892,7 @@ describe('the document shapes the parser has to survive', () => {
     }
     // And the document shape it recovers is a real retirement end to end: the
     // number is retired and the entry is not filed as open work.
-    const parsed = parse('## 5. Whatever — deleted.\n\nBody.\n');
+    const parsed = parse('### Items 5 — deleted.\n\nBody.\n');
     expect(parsed.dead).toEqual([5]);
     expect(parsed.items).toEqual([]);
     expect(planImport([parsed], []).create).toEqual([]);
@@ -961,7 +973,7 @@ describe('the document shapes the parser has to survive', () => {
    * It was untested, and it is the direction that matters for the two documents
    * that use severity or prose headings: a suppression keyed on the marker
    * rather than on the harvested numbers deletes every entry beneath such a
-   * heading, silently, and a test that only covers `## 5. Whatever — resolved`
+   * heading, silently, and a test that only covers `## Resolved`
    * would still be green.
    */
   it('keeps inline item markers under a marker heading that lists no numbers', () => {
@@ -984,59 +996,22 @@ describe('the document shapes the parser has to survive', () => {
     }
   });
 
-  /**
-   * PIN — KNOWN-BROKEN BEHAVIOUR. `it.fails` is the marker, not a convenience:
-   * the body below asserts the behaviour a FIXED parser would have, and it fails
-   * today. Per `AGENTS.md` a pin is a tripwire for broken behaviour and is
-   * **deleted in the same change that fixes `DEAD_HEADING`** — at which point this
-   * `it.fails` goes red, which is the intended signal, not a regression to chase.
-   *
-   * The earlier revision of this test asserted the CURRENT behaviour in an ordinary
-   * `it`, which is green today and red on any correct fix. That is the shape the
-   * repo's own conventions forbid: a red suite reads as a new defect, and a reviewer
-   * meeting it has to reverse-engineer whether the parser or the test is wrong. The
-   * 20-odd other `it.fails` pins in this repository (see `image-processors.test.ts:151`,
-   * `StoreContext.durable-boundary.test.tsx:441`) all take this shape instead.
-   *
-   * THE RESIDUAL RISK IS TWO-SIDED, and this pins the direction that is silent.
-   *
-   * `a3f1dcc` carried a docstring arguing that under-matching a retirement is a
-   * visible false row while over-matching is always a silent loss — "the residual
-   * risk is deliberately one-sided and deliberately loud". It was dropped when
-   * that branch was pointed at `eba42f8`'s implementation (`bd137d0`), which was
-   * right to drop a false claim and wrong to lose the question. The claim was
-   * false because `assemble` consumes a dead heading with `continue` and never
-   * opens it as an item: for a NUMBERED heading, over-matching is silent in
-   * exactly the way under-matching is not.
-   *
-   * So the rule is not safe-by-one-sidedness, and this pin exists to make that
-   * un-arguable rather than a comment nobody can check. A live numbered heading
-   * that happens to END in a status word is retired today, and its prose leaves
-   * the import with nothing in the result saying so. The fix is not in this file:
-   * it is either a marker position that cannot be incidental, or a loud failure,
-   * and the first inverts the safety direction for a genuinely-spaced retirement
-   * while the second needs a change to `ParseResult` and its caller. Filed in
-   * HANDOFF.md §82.
-   */
-  it.fails('keeps a LIVE numbered heading that ends in a status word as an open, filed item', () => {
+  it('reports numbered headings whose status suffix could be prose or a retirement marker', () => {
     for (const [number, heading] of [
       [31, '## 31. The dialog-closed assertion is fixed'],
       [32, '## 32. The only rename that would make it real is done'],
       [34, '## 34. A shape nobody has written yet, and the trap is closed'],
     ]) {
       const parsed = parse(`${heading}\n\nIt is still open work.\n`);
-      // The desired verdict: not a retirement, so not harvested out of the
-      // heading, so not consumed.
       expect(parsed.dead, heading).toEqual([]);
-      // And filed, not merely parsed — `create` is what puts it on the board.
+      expect(parsed.ambiguousRetirements, heading).toEqual([
+        { origin: `HANDOFF.md#${number}`, number, line: 1, heading: heading.slice(3) },
+      ]);
       expect(
         parsed.items.map((item) => item.origin),
         heading
       ).toEqual([`HANDOFF.md#${number}`]);
-      expect(
-        planImport([parsed], []).create.map((item) => item.origin),
-        heading
-      ).toEqual([`HANDOFF.md#${number}`]);
+      expect(planImport([parsed], []).create, heading).toEqual([]);
     }
   });
 

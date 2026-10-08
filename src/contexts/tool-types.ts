@@ -25,6 +25,9 @@ import type { SmudgeToolArgs } from '../tools/smudge.ts';
 import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
 import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { CloneStampToolArgs } from '../tools/cloneStamp.ts';
+import type { RedEyeToolArgs } from '../tools/redEye.ts';
+import type { SpotHealingToolArgs } from '../tools/spotHealing.ts';
+import type { HealingBrushToolArgs } from '../tools/healingBrush.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -59,6 +62,9 @@ export type ToolArgsByName = {
    */
   sponge: SpongeToolArgs;
   'clone-stamp': CloneStampToolArgs;
+  'red-eye': RedEyeToolArgs;
+  'spot-healing': SpotHealingToolArgs;
+  'healing-brush': HealingBrushToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
   'color-replacement': ColorReplacementToolArgs;
@@ -81,6 +87,9 @@ export type ToolArgsByName = {
    * see `PIXEL_FREE_TOOLS` in `toolProcessors.ts` for why the tool has no processor at all.
    */
   ruler: { toolName: 'ruler' };
+  hand: { toolName: 'hand' };
+  zoom: { toolName: 'zoom' };
+  'rotate-view': { toolName: 'rotate-view' };
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };

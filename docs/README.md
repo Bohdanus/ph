@@ -37,6 +37,8 @@ The eight per-family research notes live outside this directory, one per tool fa
 `src/tools/descriptions/pen.notes.md`, `src/tools/descriptions/type-crop.notes.md`,
 `src/tools/descriptions/transform.notes.md` and `src/tools/descriptions/eyedropper-draw.notes.md`.
 They carry the per-family research notes and the claims `TOOLS.md` deliberately could not source.
+`src/tools/descriptions/view.notes.md` records the View tools' behavior, research sources, and
+deferred capabilities.
 
 And one requirements document outside this directory:
 `src/components/ToolbarsRight/Text/TEXT_TOOL_REQUIREMENTS.md`, the Type tool's requirements, in the
@@ -68,9 +70,11 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 
 The agent procedures live outside this directory, under `.skills/`:
 `.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
-`.skills/worktree-merge-harvest.md`, `.skills/broad-test-improvement.md` and
-`.skills/overnight-sweep.md`. `AGENTS.md` states the rules; a skill states the procedure for one of
-them. `e2e/fixtures/README.md` is the Playwright fixture conventions note.
+`.skills/worktree-merge-harvest.md`, `.skills/broad-test-improvement.md`,
+`.skills/overnight-sweep.md`, `.skills/copilot-chat-history.md`, `.skills/chat-history-query.md`,
+`.skills/chat-loose-end-scan.md`, and `.skills/kilo-chat-history.md`. `AGENTS.md` states the rules; a
+skill states the procedure for one of them. `e2e/fixtures/README.md` is the Playwright fixture
+conventions note.
 
 ## Open problems
 

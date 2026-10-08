@@ -85,6 +85,27 @@ describe('the import of the handoff documents', () => {
     expect(board.listIssues()).toHaveLength(0);
   });
 
+  it('refuses the entire import when a numbered status heading is ambiguous', async () => {
+    writeFileSync(
+      join(dir, 'HANDOFF.md'),
+      [
+        '## 1. A valid item',
+        '',
+        'Body.',
+        '',
+        '## 31. The dialog-closed assertion is fixed',
+        '',
+        'It is still open work.',
+      ].join('\n')
+    );
+    const board = boardFor();
+
+    await expect(importDocuments({ board, files: ['HANDOFF.md'], cwd: dir })).rejects.toThrow(
+      /HANDOFF\.md:5 \(HANDOFF\.md#31\).*dialog-closed assertion is fixed/
+    );
+    expect(board.listIssues()).toHaveLength(0);
+  });
+
   it('takes no file locks for imported items', async () => {
     writeFileSync(join(dir, 'HANDOFF.md'), ['## 1. Something in a file', '', 'Fix `src/c.ts` now.', ''].join('\n'));
     const board = boardFor();

@@ -53,7 +53,6 @@
  * not is the defect; an admitted gap is a fact.
  */
 
-import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 /** The directory this repository keeps its worktrees in. */
@@ -61,11 +60,6 @@ const WORKTREE_DIR_SEGMENT = '.kilo/worktrees/';
 
 /**
  * Every tool this module looks at, read in ONE statement.
- *
- * The `part` table is unindexed on the JSON fields any of this needs, so each
- * additional pass costs another full extraction — measured at 13.5s over this
- * machine's 428k rows. Reading all of them together costs about what reading one
- * costs, which is the only reason the reader and shell views are affordable.
  */
 export const WRITE_TOOLS = Object.freeze(['edit', 'write', 'apply_patch', 'notebook_edit']);
 export const READ_TOOLS = Object.freeze(['read', 'grep', 'glob', 'semantic_search']);
@@ -214,25 +208,11 @@ export function patchTargetPaths(patchText) {
 }
 
 /**
- * Open the session database, or return `null` when it is absent.
- *
- * The `node:sqlite` module does not support `CREATE TEMP INDEX`, so indexes
- * are created as regular indexes inside a transaction that is rolled back in
- * the caller's `finally` block. This speeds up the JSON-extraction scans
- * (~13.5s each over 428k rows) without mutating the external database file.
- * The connection is opened without `readOnly` to allow index creation.
+ * Open the session database read-only, or return `null` when it is absent.
  */
 function openDb(dbPath) {
-  if (!existsSync(dbPath)) return null;
   try {
-    const db = new DatabaseSync(dbPath);
-    db.exec('BEGIN');
-    db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_part_type ON part(json_extract(data, '$.type'));
-       CREATE INDEX IF NOT EXISTS idx_part_status ON part(json_extract(data, '$.state.status'));
-       CREATE INDEX IF NOT EXISTS idx_part_tool ON part(json_extract(data, '$.tool'));`
-    );
-    return db;
+    return new DatabaseSync(dbPath, { readOnly: true });
   } catch {
     return null;
   }
@@ -671,7 +651,7 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindo
 
     const sum = (kind) => [...records.values()].reduce((n, r) => n + r[kind].calls, 0);
     const attributedWriteCalls = sum('write');
-    return {
+    const result = {
       available: true,
       dbPath,
       byWorktree: records,
@@ -685,8 +665,9 @@ export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindo
         .map(([bucket, calls]) => ({ bucket, calls }))
         .sort((a, b) => b.calls - a.calls),
     };
+
+    return result;
   } finally {
-    db.exec('ROLLBACK');
     db.close();
   }
 }

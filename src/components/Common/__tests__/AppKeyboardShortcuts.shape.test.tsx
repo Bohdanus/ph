@@ -213,7 +213,7 @@ describe('AppKeyboardShortcuts shape selection', () => {
 
   it('Shift+U advances every flyout entry to the next one and closes on the first', () => {
     // The chain is the flyout itself, read off `toolbar-mapping.ts`, so the assertion is the
-    // mapping's six entries and not a hand-copied order that could drift from it again. The loop
+    // mapping's seven entries and not a hand-copied order that could drift from it again. The loop
     // runs `index <= length` rather than `< length - 1`: the LAST step is the one that closes the
     // group, Custom Shape back onto Rectangle, and a bound that stopped short of it would leave
     // the wrap unasserted while this title claimed every entry.
@@ -223,6 +223,7 @@ describe('AppKeyboardShortcuts shape selection', () => {
       'shape:line',
       'shape:triangle',
       'shape:polygon',
+      'shape:star',
       'custom-shape',
     ]);
 
@@ -259,8 +260,18 @@ describe('AppKeyboardShortcuts shape selection', () => {
     view.dispose();
   });
 
-  it('Shift+U reaches the custom-shape tool after Polygon', () => {
+  it('Shift+U reaches the Star tool after Polygon', () => {
     const view = renderShortcuts('shape', 'polygon');
+
+    pressU(true);
+
+    expect(goToToolMock).toHaveBeenCalledWith('shape');
+    expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'star' });
+    view.dispose();
+  });
+
+  it('Shift+U reaches the custom-shape tool after Star', () => {
+    const view = renderShortcuts('shape', 'star');
 
     pressU(true);
 
@@ -354,8 +365,18 @@ describe('AppKeyboardShortcuts shape selection', () => {
       view.unmount();
     });
 
-    it('hands off to the custom-shape tool from Polygon without patching figure args', () => {
+    it('advances Polygon to Star', () => {
       const view = renderAt({ toolName: 'shape', figure: 'polygon' });
+
+      pressU(true);
+
+      expect(patchToolArgsMock.mock.calls).toEqual([['shape', { figure: 'star' }]]);
+      expect(goToToolMock.mock.calls).toEqual([['shape']]);
+      view.unmount();
+    });
+
+    it('hands off to the custom-shape tool from Star without patching figure args', () => {
+      const view = renderAt({ toolName: 'shape', figure: 'star' });
 
       pressU(true);
 
@@ -364,10 +385,10 @@ describe('AppKeyboardShortcuts shape selection', () => {
       view.unmount();
     });
 
-    it('wraps onto Rectangle from the custom-shape tool, which closes the six-entry group', () => {
+    it('wraps onto Rectangle from the custom-shape tool, which closes the seven-entry group', () => {
       // The Custom Shape tool is the group's LAST entry, so its position has to come from what
       // it is. Deriving it from `indexOf()` instead — it is not a FigureType, so that is -1 — gave
-      // it the rectangle's index, and the cycle then closed over five entries with the Rectangle
+      // it the rectangle's index, and the cycle then closed over six entries with the Rectangle
       // unreachable by Shift+U from any press.
       const view = renderAt({ toolName: 'custom-shape', figure: null });
 
@@ -404,19 +425,35 @@ describe('AppKeyboardShortcuts shape selection', () => {
     it.each([
       {
         figure: 'oval' as const,
-        expected: ['shape:line', 'shape:triangle', 'shape:polygon', 'custom-shape', 'shape:rectangle', 'shape:oval'],
+        expected: [
+          'shape:line',
+          'shape:triangle',
+          'shape:polygon',
+          'shape:star',
+          'custom-shape',
+          'shape:rectangle',
+          'shape:oval',
+        ],
       },
       {
         figure: 'line' as const,
-        expected: ['shape:triangle', 'shape:polygon', 'custom-shape', 'shape:rectangle', 'shape:oval', 'shape:line'],
+        expected: [
+          'shape:triangle',
+          'shape:polygon',
+          'shape:star',
+          'custom-shape',
+          'shape:rectangle',
+          'shape:oval',
+          'shape:line',
+        ],
       },
-    ])('returns to $figure after a full six-press walk of the closed group', ({ figure, expected }) => {
+    ])('returns to $figure after a full seven-press walk of the closed group', ({ figure, expected }) => {
       const view = renderAt({ toolName: 'shape', figure });
       const start = { toolName: 'shape' as ToolName, figure };
       const visited: string[] = [];
       let state: CycleState = start;
 
-      for (let press = 0; press < 6; press += 1) {
+      for (let press = 0; press < 7; press += 1) {
         rerenderAt(view, state);
         state = stepWithShiftU(state);
         visited.push(describeState(state));
@@ -427,12 +464,12 @@ describe('AppKeyboardShortcuts shape selection', () => {
       view.unmount();
     });
 
-    it('returns to the custom-shape tool after a full six-press walk of the closed group', () => {
+    it('returns to the custom-shape tool after a full seven-press walk of the closed group', () => {
       const view = renderAt({ toolName: 'custom-shape', figure: null });
       const visited: string[] = [];
       let state: CycleState = { toolName: 'custom-shape', figure: null };
 
-      for (let press = 0; press < 6; press += 1) {
+      for (let press = 0; press < 7; press += 1) {
         rerenderAt(view, state);
         state = stepWithShiftU(state);
         visited.push(describeState(state));
@@ -444,20 +481,21 @@ describe('AppKeyboardShortcuts shape selection', () => {
         'shape:line',
         'shape:triangle',
         'shape:polygon',
+        'shape:star',
         'custom-shape',
       ]);
       expect(describeState(state)).toBe('custom-shape');
       view.unmount();
     });
 
-    it('re-enters Rectangle from Custom Shape, so ten presses cover the group twice', () => {
+    it('re-enters Rectangle from Custom Shape, so fourteen presses cover the group twice', () => {
       // The title is the defect this pins: while the Custom Shape tool resolved to -1 the cycle
-      // closed over five entries and the rectangle never came back, so `visited` never held it.
+      // closed over six entries and the rectangle never came back, so `visited` never held it.
       const view = renderAt({ toolName: 'shape', figure: 'rectangle' });
       const visited: string[] = [];
       let state: CycleState = { toolName: 'shape', figure: 'rectangle' };
 
-      for (let press = 0; press < 10; press += 1) {
+      for (let press = 0; press < 14; press += 1) {
         rerenderAt(view, state);
         state = stepWithShiftU(state);
         visited.push(describeState(state));
@@ -468,18 +506,22 @@ describe('AppKeyboardShortcuts shape selection', () => {
         'shape:line',
         'shape:triangle',
         'shape:polygon',
+        'shape:star',
         'custom-shape',
         'shape:rectangle',
         'shape:oval',
         'shape:line',
         'shape:triangle',
         'shape:polygon',
+        'shape:star',
+        'custom-shape',
+        'shape:rectangle',
       ]);
       view.unmount();
     });
 
     it('patches exactly once per non-custom-shape press with a narrowed FigureType value', () => {
-      expect([...FIGURE_TYPE_VALUES].sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle']);
+      expect([...FIGURE_TYPE_VALUES].sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'star', 'triangle']);
 
       const starts: CycleState[] = [
         ...FIGURE_TYPE_VALUES.map((figure) => ({ toolName: 'shape' as ToolName, figure })),

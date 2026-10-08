@@ -10,6 +10,7 @@ import type { ColorsToolArgs } from '../tools/colors.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
 import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
+import type { RedEyeToolArgs } from '../tools/redEye.ts';
 
 /**
  * Tool args may arrive from an older build that still had dedicated Circle and
@@ -97,11 +98,16 @@ export function saveLastSettings(args: ToolArgs) {
     // "These samplers are saved in the image" — and that gap is recorded in the tool's description
     // rather than papered over with a field the app has no document to hang it on.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args });
+  } else if (toolName === 'red-eye') {
+    lastSavedSettings['red-eye'] = cloneDeep(omit(args as RedEyeToolArgs, 'point'));
   } else if (
     toolName === 'rectangular-selection' ||
     toolName === 'single-row-marquee' ||
     toolName === 'single-column-marquee' ||
-    toolName === 'ruler'
+    toolName === 'ruler' ||
+    toolName === 'hand' ||
+    toolName === 'zoom' ||
+    toolName === 'rotate-view'
   ) {
     // Typed rather than falling through to the bare group below, because a tool with NO
     // settings still has to persist its identity: an unmatched `toolName` never reaches
@@ -163,7 +169,9 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'dodge' ||
     toolName === 'burn' ||
     toolName === 'sponge' ||
-    toolName === 'clone-stamp'
+    toolName === 'clone-stamp' ||
+    toolName === 'spot-healing' ||
+    toolName === 'healing-brush'
   ) {
     // These five are brushes, so `points` is the stroke that was just committed and not
     // a setting: reseeding it would hand the next drag the previous one. Emptied the

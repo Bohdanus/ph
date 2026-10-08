@@ -46,7 +46,7 @@ import {
 export type ReplayDiagnostic = Readonly<{
   historyId?: string;
   actionName?: ActionType;
-  code: 'canvas-filter-unsupported' | 'invalid-affine-transform';
+  code: 'canvas-filter-unsupported' | 'invalid-affine-transform' | 'invalid-layer-opacity';
   error: unknown;
 }>;
 
@@ -166,6 +166,16 @@ export function replayHistory(
       continue;
     }
     if (actionName === SET_LAYER_OPACITY_ACTION) {
+      const opacity = (args as { opacity?: unknown } | undefined)?.opacity;
+      if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-opacity',
+          error: new TypeError('Layer opacity history value must be a finite number between 0 and 1'),
+        });
+        continue;
+      }
       const layer = layers[layerId];
       if (layer) layers = { ...layers, [layerId]: { ...layer, opacity: (args as { opacity: number }).opacity } };
       continue;

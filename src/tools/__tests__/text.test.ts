@@ -1184,17 +1184,36 @@ describe('renderText', () => {
       expect('letterSpacing' in ctx).toBe(false);
     });
 
-    it('anchors and underlines to the INK width, not to the advance the shaper reports', () => {
-      // Chrome's `letterSpacing` adds the gap to the LAST character's advance too, so the advance
-      // over-reports by exactly one spacing: 90 measured, 88 of ink. Every coordinate derived from
-      // the line has to use the ink, or a tracked line grows a gap at its right edge that no glyph
-      // ever fills — and the underline would be drawn a gap longer than the text above it.
+    it('aligns and underlines to the DOM line advance, including the final tracking gap', () => {
+      // The live editor's text-decoration and text-align span the full CSS advance. Canvas measured
+      // width includes the same final gap when letterSpacing is supported; its fallback adds that
+      // gap to the manually tracked ink width.
       const ctx = makeTextCtx({ modern: true });
 
       renderText(ctx, { ...baseArgs, tracking: 100, underline: true });
 
       expect(ctx.fillText).toHaveBeenCalledWith('Photoshop', TEXT_PADDING, 21);
-      expect(ctx.fillRect).toHaveBeenCalledWith(TEXT_PADDING, 23, 88, 1);
+      expect(ctx.fillRect).toHaveBeenCalledWith(TEXT_PADDING, 23, 90, 1);
+    });
+
+    it.each([
+      ['center', 55],
+      ['right', 105],
+    ] as const)('uses the full tracked advance for %s alignment', (align, x) => {
+      const ctx = makeTextCtx({ modern: true });
+
+      renderText(ctx, { ...baseArgs, tracking: 100, align, underline: true });
+
+      expect(ctx.fillText).toHaveBeenCalledWith('Photoshop', x, 21);
+      expect(ctx.fillRect).toHaveBeenCalledWith(x, 23, 90, 1);
+    });
+
+    it('includes the final tracking gap when letterSpacing is unavailable', () => {
+      const ctx = makeTextCtx();
+
+      renderText(ctx, { ...baseArgs, tracking: 100, underline: true });
+
+      expect(ctx.fillRect).toHaveBeenCalledWith(TEXT_PADDING, 23, 108, 1);
     });
 
     it('places each grapheme cluster itself when the platform has no letterSpacing', () => {

@@ -960,6 +960,31 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(patchToolArgs).toHaveBeenCalledWith('sponge', { mode: 'saturate' });
   });
 
+  it.each([
+    ['dodge', 's', 'shadows'],
+    ['dodge', 'm', 'midtones'],
+    ['dodge', 'h', 'highlights'],
+    ['burn', 's', 'shadows'],
+    ['burn', 'm', 'midtones'],
+    ['burn', 'h', 'highlights'],
+  ] as const)('sets the %s range to %s on Alt+Shift+%s', (toolName, key, range) => {
+    storeState.toolName = toolName;
+    toolState.toolArgs = {
+      toolName,
+      exposure: 50,
+      range: 'midtones',
+      size: 20,
+      hardness: 0.5,
+      points: [],
+    };
+    renderShortcuts();
+
+    press(key, { shiftKey: true, altKey: true });
+
+    expect(patchToolArgs).toHaveBeenCalledExactlyOnceWith(toolName, { range });
+    expect(goToTool).not.toHaveBeenCalled();
+  });
+
   it('still selects the Clone Stamp on a bare S and on Shift+S', () => {
     // The other half of the row above: pinning that the Sponge's chord takes precedence must
     // not have been achieved by narrowing the Clone Stamp's own registration.

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import type { Layer, LayerId, LayersRecord, ToolLayerSource } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
-import { RENAME_LAYER_ACTION } from '@/util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '@/util/constants.ts';
 import type { TextToolArgs } from '@/tools/text.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
@@ -15,7 +15,9 @@ vi.mock('../../Icons/TrashIcon.tsx', () => ({
 }));
 
 vi.mock('../../Icons/DragHandleIcon.tsx', () => ({
-  DragHandleIcon: () => <span data-testid="drag-handle" draggable="true" />,
+  DragHandleIcon: ({ disabled }: { disabled?: boolean }) => (
+    <span data-testid="drag-handle" data-disabled={disabled ?? false} />
+  ),
 }));
 
 const mockLayers: LayersRecord = {
@@ -234,6 +236,32 @@ describe('LayersTab', () => {
     const eyeIcon = layerDivs[1].querySelector('[data-testid="eye-icon"]');
     expect(eyeIcon).toBeInTheDocument();
     expect(eyeIcon).toHaveAttribute('data-open', 'false');
+  });
+
+  it('commits one opacity history entry when a slider gesture ends', () => {
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+    const slider = screen.getByRole('slider', { name: 'Layer opacity' });
+
+    fireEvent.change(slider, { target: { value: '50' } });
+    fireEvent.change(slider, { target: { value: '42' } });
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(slider);
+
+    expect(layerMocks.updateLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-2', { opacity: 0.42 }, SET_LAYER_OPACITY_ACTION);
+    expect(liveStore.snapshot.layers['layer-2'].opacity).toBe(0.42);
+    expect(screen.getByText('42%', { selector: 'summary' })).toBeInTheDocument();
+  });
+
+  it('disables opacity changes for a locked layer', () => {
+    seed({ ...mockLayers, 'layer-2': { ...mockLayers['layer-2'], locked: true } });
+    render(<LayersTab />);
+    fireEvent.click(screen.getByText('100%', { selector: 'summary' }));
+
+    expect(screen.getByRole('slider', { name: 'Layer opacity' })).toBeDisabled();
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
   });
 
   it('toggles visibility on eye button click', () => {
@@ -657,6 +685,27 @@ describe('LayersTab drag and drop guards', () => {
     expect(dataTransfer.effectAllowed).toBe('move');
     expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-layer-id', 'layer-3');
     expect(dataTransfer.setDragImage).toHaveBeenCalled();
+  });
+
+  it('prevents the backing layer from being dragged or reordered', () => {
+    render(<LayersTab />);
+    const backingRow = getListItemFor('Background').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!;
+    const dataTransfer = createDataTransfer();
+    const event = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+
+    expect(backingRow).toHaveAttribute('draggable', 'false');
+    expect(backingRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+
+    act(() => {
+      fireEvent(backingRow, event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
+    expect(dataTransfer.setDragImage).not.toHaveBeenCalled();
+    expect(document.body).not.toHaveClass('cursor-grabbing');
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
   });
 
   it('resets the drag state and the grabbing cursor on drag end', () => {

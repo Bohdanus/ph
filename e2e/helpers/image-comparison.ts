@@ -25,10 +25,22 @@ export interface ChannelDelta {
 /** The four channels of a decoded RGBA buffer, in the order they sit in it. */
 export type ChannelName = 'r' | 'g' | 'b' | 'a';
 
+export interface ImageDimensions {
+  width: number;
+  height: number;
+}
+
+export interface ImageSizeMismatch {
+  actual: ImageDimensions;
+  expected: ImageDimensions;
+}
+
 export interface CompareResult {
   matches: boolean;
   diffPixels: number;
   diffRatio: number;
+  /** Present only when the decoded captures have different dimensions. */
+  sizeMismatch?: ImageSizeMismatch;
   /**
    * Per-channel movement, which `diffPixels` is structurally blind to — see the note on
    * `measureChannelDelta`. Present on every verdict including the size-mismatch sentinel,
@@ -154,6 +166,10 @@ export async function compareScreenshots(
       matches: false,
       diffPixels: Number.MAX_SAFE_INTEGER,
       diffRatio: 1,
+      sizeMismatch: {
+        actual: { width: actualInfo.width, height: actualInfo.height },
+        expected: { width: expectedInfo.width, height: expectedInfo.height },
+      },
       channelDelta: unmeasuredChannelDelta(),
     };
   }

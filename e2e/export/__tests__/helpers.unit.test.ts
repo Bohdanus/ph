@@ -35,6 +35,7 @@ import {
   GEOMETRY_TOLERANCE_HORIZONTAL,
   GEOMETRY_TOLERANCE_SPAN,
   GEOMETRY_TOLERANCE_VERTICAL,
+  readExportGeometry,
 } from '../helpers';
 import {
   CANVAS_REDRAW_CLIP,
@@ -1158,6 +1159,35 @@ describe('Export Helpers', () => {
       // would let a mark twice as wrong through on the axis meant to be tightest.
       expect(GEOMETRY_TOLERANCE_SPAN).toBeGreaterThan(GEOMETRY_TOLERANCE_HORIZONTAL);
       expect(GEOMETRY_TOLERANCE_HORIZONTAL).toBeGreaterThan(GEOMETRY_TOLERANCE_VERTICAL);
+    });
+  });
+
+  describe('readExportGeometry', () => {
+    it('does not let low-contrast codec ringing widen the measured ink span', async () => {
+      const width = DEFAULT_DOCUMENT_WIDTH;
+      const height = DEFAULT_DOCUMENT_HEIGHT;
+      const pixels = Buffer.alloc(width * height * 4, 255);
+      const setPixel = (x: number, y: number, value: number) => {
+        const index = (y * width + x) * 4;
+        pixels[index] = value;
+        pixels[index + 1] = value;
+        pixels[index + 2] = value;
+        pixels[index + 3] = 255;
+      };
+
+      for (let y = 73; y <= 82; y++) {
+        for (let x = 118; x <= 292; x++) setPixel(x, y, 0);
+        for (const x of [116, 117, 293, 294]) setPixel(x, y, 245);
+      }
+
+      const image = await sharp(pixels, {
+        raw: { width, height, channels: 4 },
+      })
+        .png()
+        .toBuffer();
+
+      const geometry = await readExportGeometry(image);
+      expect(geometry.inkWidth).toBe(175);
     });
   });
 

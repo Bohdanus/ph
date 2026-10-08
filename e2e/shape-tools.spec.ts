@@ -298,6 +298,31 @@ test.describe('Shape tools', () => {
       `an oval's corner is outside the curve, read ${JSON.stringify(ovalCorner)}`
     ).toBeGreaterThan(240);
   });
+
+  test('the Star tool selects from the flyout, shows Star Ratio control, and draws a star', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await selectShape(page, 'Star Tool');
+
+    // Verify Star Ratio / Indent control is present
+    const starRatioSlider = page.locator('#star-ratio-slider');
+    await expect(starRatioSlider).toBeVisible();
+    await expect(starRatioSlider).toHaveAttribute('aria-label', 'Star Ratio');
+    // Default value is 50%
+    await expect(starRatioSlider).toHaveValue('50');
+
+    // Change the Star Ratio and verify it updates
+    await starRatioSlider.fill('75');
+    await expect(starRatioSlider).toHaveValue('75');
+
+    // Draw a star
+    const star: Rect = { from: { x: 40, y: 40 }, to: { x: 340, y: 300 } };
+    await dragShape(page, star, 'the star');
+
+    // Measure the drawn star - it should have visible pixels
+    const bounds = await measureShape(page, star, 'the star');
+    expect(bounds.width).toBeGreaterThan(0);
+    expect(bounds.height).toBeGreaterThan(0);
+  });
 });
 
 /**

@@ -20,7 +20,9 @@ The numbers this file used to open with — tests passed, expected-fail pins,
 files, mode-specific failure sets — were each a snapshot of one tree, and each has
 been wrong since it was written while the number beside it stayed silent. A count
 that does appear here is a count somebody measured; read the current one off the
-command.
+command. The latest recorded full headless run, `2026-10-08T05-48-57-832Z-32316`,
+ran on this macOS arm64 machine and reported `469 passed, 0 failed, 3 skipped` in
+7.2 minutes. This is one machine's observation, not a new baseline.
 
 **A full headed run of the suite as it stands has never been measured, and
 `AGENTS.md` forbids an agent from running one.** The headed observations quoted
@@ -41,16 +43,18 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 
 ## Observed failures
 
-**Run the suite headless** — `npm run test:e2e`. That is the default, and the
-reason is the first entry below.
+The latest full headless run recorded above had no failures. This is one machine's
+observation, not a baseline; run `npm run test:e2e` for the current result. The
+open findings below describe independent weaknesses in the suite and remain work
+even when a full run passes.
 
-Nothing fails on the default (headless) configuration. The export-baseline and
-`pen-types` failures that used to be recorded here are gone because the cause was
-fixed, not because an assertion was relaxed: `ab5f53c` corrected the export line's
-document constant, which had been derived from the canvas box rather than from the
-document, so the stroke landed 23 rows off the committed baseline. The recorded
-pixels were correct all along. The remaining entries below are latent defects that
-no run trips.
+The earlier export-line and `pen-types` failures recorded here are gone because
+their causes were fixed, not because assertions were relaxed:
+`ab5f53c` corrected the export line's document constant, which had been derived
+from the canvas box rather than from the document, so the stroke landed 23 rows
+off the committed baseline. The recorded pixels were correct all along. The
+Chrome 155 visual mismatches recorded in the 2026-10-07 run were not reproduced
+by the latest full headless run.
 
 Three defect groups used to fail here and have been fixed in this repository. Their
 evidence is kept below rather than deleted, because each explains a shape the suite
@@ -62,10 +66,10 @@ must not drift back into:
 | `e2e/sidebar-keyboard.spec.ts` — its `Enter activates focused flyout item` and `full keyboard flow: open, navigate, select` tests | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
 | `e2e/levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast` tests                            | 2, both modes                           | canvas found by test id, not document order    |
 
-All of these were introduced with the specs and were independent of how they were
-moved into this repository: each was reproducible with no changes to the specs or
-to `src/`. Apart from the layout entry below, the remaining entries in this file
-are latent defects that no current run trips.
+All of these historical failures were introduced with the specs and were
+independent of how they were moved into this repository: each was reproducible
+with no changes to the specs or to `src/`. The current failures above are separate
+from that fixed history.
 
 ### Invariant — headless is the default, and the refusal is structural
 
@@ -115,10 +119,14 @@ expected to be green too — which is the one claim in this file that no run in 
 repository can establish. `test:e2e:headed` prints its warning on every invocation,
 so the tradeoff is visible at the moment it is accepted.
 
-**The invariant is "the default", not "impossible".** `npx playwright test --headed`,
-`npm run test:e2e:ui` and `npm run test:e2e:debug` all bypass `use.headless` and open
-a real window, because that is what they are for. The rule applies to
-`npm run test:e2e` and to anyone interpreting its result.
+**The invariant is layered, not "impossible".** Without the explicit
+`PLAYWRIGHT_ALLOW_HEADED=1` opt-in, `refuseVisibleBrowser()` rejects `--headed`,
+`--debug`, and any project that resolves to `headless: false` before browser launch.
+Playwright UI mode returns before `globalSetup`, so the in-process guard cannot reject
+`--ui`; `kilo.jsonc` denies `--ui` and `test:e2e:ui` for agents and prompts before
+`--debug` and `test:e2e:debug`. Outside that permission layer, UI mode can open a
+window. `npm run test:e2e:headed` is the supported operator opt-in; agents use
+`npm run test:e2e`.
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 
@@ -601,6 +609,12 @@ both `TimeoutError: page.waitForEvent: Timeout 30000ms exceeded while waiting fo
 jpeg, webp, png, ebp and svg all passed.** The save dialog, the download plumbing and the export
 path are therefore not what fails; AVIF is.
 
+The full headless run `2026-10-07T17-21-09-904Z-84103` exposed a different AVIF
+failure mode: both export tests failed after the wasm request returned HTTP 403.
+The raster export logged a failed wasm fetch, and the visual export did not reach a
+valid baseline comparison. Treat the asset response as a separate problem from the
+older encode-timeout observation.
+
 **What the 30s is actually timing.** `submitSaveDialogForDownload()` (`e2e/export/helpers.ts`)
 waits its `DOWNLOAD_TIMEOUT_MS` for a download event that can only fire once the encoder has
 returned a Blob, and `encodeAvif()` (`src/contexts/avif-utils.ts`) awaits `@jsquash/avif`'s
@@ -616,20 +630,23 @@ these two encode in about a second, so the timeout was not approached at all. Si
 branch that failed carries no export surface, load is the remaining explanation, and it is
 still an explanation rather than a measurement.
 
-**That is the whole remaining verification.** One failing observation, on a loaded
-machine, against a green `main`.
+The old timeout observation does not explain the newer 403. First identify why
+the wasm asset request is forbidden on the failing tree and confirm the served asset
+path; only after the request succeeds can a repeat timeout be attributed to encode
+cost or machine load.
 
 **Fix, in order.**
 
-1. **One run of the same two specs on the failing tree, quiet machine:**
-   `npm run test:e2e -- e2e/export/raster-formats.spec.ts e2e/export/visual-regression.spec.ts`.
-   Green closes this into `TEST-FLAKES.md` as a load observation. Red with `main` green
-   means the encode is over budget under contention, which is a real cost finding and not
-   a gate to be widened.
-2. **If it is the contention, the fix is off the main thread, not a longer wait.**
+1. **Inspect the failed wasm request on the failing tree.** Record its URL and
+   establish why the dev server returns 403 before treating either export as a
+   timing failure.
+2. **After the request succeeds, rerun the same two export specs.** A repeat
+   timeout with the asset available would distinguish encode cost from the
+   historical request failure.
+3. **If it is contention, the fix is off the main thread, not a longer wait.**
    `encodeAvif` holds the save open across a wasm module load and a full-canvas encode;
    that is what consumed the budget.
-3. **Do not raise `DOWNLOAD_TIMEOUT_MS` to get this green.** The same rule as a widened
+4. **Do not raise `DOWNLOAD_TIMEOUT_MS` to get this green.** The same rule as a widened
    pixel budget applies to a widened wait: it hides the cost, and it would equally mask a
    real hang in a format that is not slow at all.
 
@@ -674,6 +691,12 @@ The tolerance question has been answered: the 100-pixel budget is a **tripwire, 
 tolerance**, and the argument is written out at the call site so it is not widened later to
 make a red go green. `browser.version()` is now in the failure message, so a red run can
 answer "did the encoder change?" instead of leaving it to be guessed.
+
+In run `2026-10-07T17-21-09-904Z-84103`, Chrome `155.0.8059.39` exceeded the
+100-pixel budget for PNG (386), JPEG (321), WebP (896), BMP (386), GIF (384), and
+SVG (386). The AVIF visual case failed at the wasm request instead of producing a
+comparison. This records the current encoder version, not the version used to
+create the baselines.
 
 What is still open is the half that cannot be closed from inside a code change:
 **nothing in this repository records which Chrome produced the committed baselines.** No

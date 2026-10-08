@@ -2,6 +2,9 @@ import type { ReactElement } from 'react';
 
 export type ToolIconName =
   | 'reposition'
+  | 'hand'
+  | 'zoom'
+  | 'rotate-view'
   | 'rectangular-selection'
   | 'elliptical-selection'
   | 'single-row-marquee'
@@ -16,6 +19,9 @@ export type ToolIconName =
   | 'ruler'
   | 'eraser'
   | 'clone-stamp'
+  | 'red-eye'
+  | 'spot-healing'
+  | 'healing-brush'
   | 'paint-bucket'
   | 'gradient'
   | 'sharpen'
@@ -31,6 +37,7 @@ export type ToolIconName =
   | 'shape-line'
   | 'shape-triangle'
   | 'shape-polygon'
+  | 'shape-star'
   | 'text'
   | 'color'
   | 'blur'

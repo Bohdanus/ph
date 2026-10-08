@@ -250,6 +250,7 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
     incoming: readTreeBlobs(incomingRef, cwd),
     result: readTreeBlobs(result, cwd),
   };
+  const resolvedModifyDeletePaths = readResolvedModifyDeletePaths(cwd);
 
   /** @type {{ path: string, kind: string, reason: (n: number) => string }[]} */
   const suspects = [];
@@ -337,6 +338,10 @@ export function findTakeovers({ cwd = process.cwd(), head, incoming, resultTree 
 
     const headBlob = trees.head.get(path);
     const resultBlob = trees.result.get(path);
+    // A staged modify/delete resolution that chose deletion has no HEAD or result blob.
+    // Its resolve-undo stages prove this was an explicit conflict decision; the ours
+    // strategy leaves no such record and must still be reported.
+    if (!headBlob && !resultBlob && resolvedModifyDeletePaths.has(path)) continue;
     // Survived the merge verbatim. Nothing to measure.
     if (resultBlob && resultBlob.oid === incomingBlob.oid) continue;
     // HEAD's side did NOT win wholesale, so git actually combined the two or somebody
@@ -469,6 +474,34 @@ function absent() {
 
 function splitZ(text) {
   return text.split('\0').filter((entry) => entry.length > 0);
+}
+
+function readResolvedModifyDeletePaths(cwd) {
+  const raw = tryGit(['ls-files', '--resolve-undo', '-z'], { cwd });
+  if (raw === null) {
+    throw new GuardError(
+      'git ls-files --resolve-undo failed; cannot distinguish a resolved deletion from a silent strategy discard'
+    );
+  }
+
+  const stagesByPath = new Map();
+  for (const entry of splitZ(raw)) {
+    const separator = entry.indexOf('\t');
+    const stage = Number(entry.slice(0, separator).split(' ').at(-1));
+    const filePath = entry.slice(separator + 1);
+    if (separator < 0 || ![1, 2, 3].includes(stage) || !filePath) {
+      throw new GuardError('git ls-files --resolve-undo returned an invalid entry; refusing to guess');
+    }
+    const stages = stagesByPath.get(filePath) ?? new Set();
+    stages.add(stage);
+    stagesByPath.set(filePath, stages);
+  }
+
+  return new Set(
+    [...stagesByPath]
+      .filter(([, stages]) => stages.has(1) && stages.has(3) && !stages.has(2))
+      .map(([filePath]) => filePath)
+  );
 }
 
 function truncate(sha) {

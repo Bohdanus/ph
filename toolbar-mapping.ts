@@ -38,6 +38,11 @@ export const toolbarMap = [
   [
     [{ label: 'Move Tool', name: 'reposition', shortcut: 'V' }],
     [
+      { label: 'Hand Tool', name: 'hand', shortcut: 'H' },
+      { label: 'Rotate View Tool', name: 'rotate-view' },
+    ],
+    [{ label: 'Zoom Tool', name: 'zoom', shortcut: 'Z' }],
+    [
       { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
       { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
       // The two 1-pixel marquees share this flyout and therefore carry no shortcut of
@@ -92,6 +97,8 @@ export const toolbarMap = [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },
       { label: 'Color Replacement Tool', name: 'color-replacement' },
+      { label: 'Spot Healing Brush Tool', name: 'spot-healing' },
+      { label: 'Healing Brush Tool', name: 'healing-brush' },
       { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
       // Photoshop binds the Magic Eraser to nothing, so it is declared without a shortcut rather
       // than given one that would collide with the Paint Bucket's `G`.
@@ -101,6 +108,7 @@ export const toolbarMap = [
     // Photoshop's Stamp flyout is its own tile immediately after the Brush group; the
     // pattern and patch stamps behind it are not implemented and stay out of the map.
     [{ label: 'Clone Stamp Tool', name: 'clone-stamp', shortcut: 'S' }],
+    [{ label: 'Red Eye Tool', name: 'red-eye' }],
     [
       { label: 'Blur Tool', name: 'blur' },
       { label: 'Sharpen Tool', name: 'sharpen' },
@@ -151,15 +159,21 @@ export const toolbarMap = [
       { label: 'Line Tool', name: 'shape', figure: 'line' },
       { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
       { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
+      { label: 'Star Tool', name: 'shape', figure: 'star' },
       { label: 'Custom Shape Tool', name: 'custom-shape' },
     ],
   ],
 ] as const satisfies readonly (readonly ToolbarToolGroup[])[];
 
 export const availableTools: readonly ToolName[] = [
+  'hand',
+  'zoom',
+  'rotate-view',
   'brush',
   'pencil',
   'color-replacement',
+  'spot-healing',
+  'healing-brush',
   'pen',
   'freeform-pen',
   'curvature-pen',
@@ -196,6 +210,7 @@ export const availableTools: readonly ToolName[] = [
   'eraser',
   'magic-eraser',
   'clone-stamp',
+  'red-eye',
   'paint-bucket',
   'gradient',
   'sharpen',

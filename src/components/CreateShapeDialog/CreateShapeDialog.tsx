@@ -50,6 +50,7 @@ const figureDialogTitle: Record<CreateShapeFigure, string> = {
   oval: 'Create Ellipse',
   triangle: 'Create Triangle',
   polygon: 'Create Polygon',
+  star: 'Create Star',
 };
 
 export interface CreateShapeParams {

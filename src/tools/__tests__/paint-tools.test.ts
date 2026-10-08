@@ -22,7 +22,7 @@ import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/
 const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil'];
 
 /** Every member of the narrowed `FigureType` union, in toolbar order. */
-const figureTypes: readonly FigureType[] = ['rectangle', 'oval', 'line', 'triangle', 'polygon'];
+const figureTypes: readonly FigureType[] = ['rectangle', 'oval', 'line', 'triangle', 'polygon', 'star'];
 
 const mappingFigures: readonly FigureType[] = (toolbarMap.flat() as readonly (readonly ToolbarTool[])[])
   .flat()
@@ -153,7 +153,7 @@ describe('paint tools', () => {
 
   it('preserves non-origin bounds for every shape figure', () => {
     const pos = { x: 42, y: 18, width: 66, height: 32 };
-    const figures = ['rectangle', 'oval', 'line', 'triangle', 'polygon'] as const;
+    const figures = ['rectangle', 'oval', 'line', 'triangle', 'polygon', 'star'] as const;
 
     for (const figure of figures) {
       const layer = createLayerSource({

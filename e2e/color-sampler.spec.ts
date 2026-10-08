@@ -293,10 +293,13 @@ test.describe('the Color Sampler tool', () => {
     await expect(readout(page, 4), "four samplers is Adobe's cap").toBeVisible();
     const fourth = await reportedRgb(page, 4);
 
-    // The refusal is LOUD, so `consolePolice` would fail this test on an unaccepted error — which is
-    // exactly the intent: a fifth click has to say why it did nothing. No `ACCEPTED_CONSOLE_ERRORS`
-    // entry is declared for it, because the refusal is the behaviour under test.
+    // The refusal is the behavior under test: it must explain why the fifth click did nothing.
+    const refusal = page.waitForEvent(
+      'console',
+      (message) => message.type() === 'error' && message.text().includes('color-sampler-cap-reached')
+    );
     await page.mouse.click(box.x + 120, box.y + 300);
+    expect(await (await refusal).text()).toContain('the color sampler holds 4 samples');
 
     await expect(readout(page, 5), 'no fifth sampler may appear').toHaveCount(0);
     await expect(readout(page, 4), 'the fourth survives the refused click').toBeVisible();

@@ -1,7 +1,16 @@
 import type { ToolDescription } from './types.ts';
 
 export const paintDescriptions: Record<
-  'brush' | 'pencil' | 'color-replacement' | 'eraser' | 'magic-eraser' | 'paint-bucket' | 'clone-stamp',
+  | 'brush'
+  | 'pencil'
+  | 'color-replacement'
+  | 'eraser'
+  | 'magic-eraser'
+  | 'paint-bucket'
+  | 'clone-stamp'
+  | 'red-eye'
+  | 'spot-healing'
+  | 'healing-brush',
   ToolDescription
 > = {
   brush: {
@@ -883,6 +892,159 @@ export const paintDescriptions: Record<
       'https://www.psdvault.com/basics/photoshop-clone-stamp-tool/',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
       'https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned',
+    ],
+  },
+  'healing-brush': {
+    photoshopName: 'Healing Brush Tool',
+    summary: 'Blends sampled texture into a brush stroke while preserving destination lighting and tone.',
+    purpose:
+      'Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.',
+    options: [
+      {
+        control: 'Size',
+        detail: 'Tip diameter in pixels.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Hardness',
+        detail: 'Controls the falloff at the tip edge.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Opacity',
+        detail: 'Per-dab healing strength from 0 to 100 percent.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Aligned',
+        detail: 'Keeps the sampled offset continuous across the stroke or resets it per stroke.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+      },
+      {
+        control: 'Source',
+        detail: 'Sampled source via Alt/Option-click; Pattern is deferred.',
+        status: 'partial',
+        appRef: 'src/components/Main/HealingBrushToolArea.tsx:1',
+      },
+      {
+        control: 'Sample',
+        detail: 'Current & Below and All Layers are deferred; the MVP edits the active layer.',
+        status: 'missing',
+      },
+      { control: 'Diffusion', detail: 'Adobe’s 1–7 diffusion control is deferred.', status: 'missing' },
+    ],
+    modifiers: [{ keys: 'Alt/Option-click', action: 'Sets the sampled source point without creating history.' }],
+    shortcuts: [{ keys: 'J', action: 'Selects the healing-tool family; this app selects Healing Brush directly.' }],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/healingBrush.ts:1',
+      'src/components/Main/HealingBrushToolArea.tsx:1',
+      'src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1',
+    ],
+    appNotes:
+      'Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html',
+      'https://helpx.adobe.com/photoshop/using/healing-examples.html',
+      'https://helpx.adobe.com/photoshop/using/nondestructive-editing.html',
+    ],
+  },
+  'spot-healing': {
+    photoshopName: 'Spot Healing Brush Tool',
+    summary: 'Repairs small marks by blending nearby texture into a soft brush stroke.',
+    purpose:
+      'Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.',
+    options: [
+      {
+        control: 'Size',
+        detail: 'Tip diameter in pixels.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Hardness',
+        detail: 'Controls the falloff at the tip edge.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Opacity',
+        detail: 'Per-dab healing strength from 0 to 100 percent.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+      },
+      {
+        control: 'Type',
+        detail:
+          'Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented.',
+        status: 'missing',
+      },
+      {
+        control: 'Sample',
+        detail:
+          'Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.',
+        status: 'missing',
+      },
+      {
+        control: 'Diffusion',
+        detail: 'Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.',
+        status: 'missing',
+      },
+    ],
+    modifiers: [],
+    shortcuts: [{ keys: 'J', action: 'Selects the healing-tool flyout family.' }],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/spotHealing.ts:1',
+      'src/components/Main/SpotHealingToolArea.tsx:1',
+      'src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1',
+    ],
+    appNotes:
+      'The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.',
+    sources: [
+      'https://www.adobe.com/products/photoshop/spot-heal.html',
+      'https://helpx.adobe.com/photoshop/using/healing-examples.html',
+      'https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html',
+    ],
+  },
+  'red-eye': {
+    photoshopName: 'Red Eye Tool',
+    summary: 'Reduces the red flash reflection in an eye with adjustable pupil size and darkening.',
+    purpose:
+      'The Red Eye tool corrects the red appearance caused when flash reflects from the retina. Click the red pupil on the active layer; Pupil Size limits the local region examined, and Darken Amount controls how strongly the red pixels are darkened. Adobe’s current help page explains the cause and prevention of red eye but does not describe the tool’s detection algorithm, slider ranges, defaults, or shortcut. The app therefore uses a bounded connected red-pixel correction as an explicit approximation, not as a claim to Photoshop’s undocumented detector.',
+    options: [
+      {
+        control: 'Pupil Size',
+        detail:
+          'Sets the bounded local region examined around the click. The inventory identifies this as a Photoshop control; its exact range and default are not specified by the current Adobe help page. This app maps 0–100 to a radius proportional to the image dimensions and seeds it at 50.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/RedEye/RedEye.tsx:21',
+      },
+      {
+        control: 'Darken Amount',
+        detail:
+          'Controls how strongly pixels in the detected red region are darkened after the red cast is neutralized. The current Adobe help page does not specify a range or default. This app exposes a 0–100 percent slider seeded at 50.',
+        status: 'present',
+        appRef: 'src/components/ToolbarsRight/RedEye/RedEye.tsx:25',
+      },
+    ],
+    modifiers: [],
+    shortcuts: [],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/redEye.ts:38',
+      'src/components/Main/RedEyeToolArea.tsx:19',
+      'src/tools/toolProcessors.ts:314',
+      'src/tools/toolsMap.ts:115',
+    ],
+    appNotes:
+      'The app corrects a connected region of red-dominant pixels on the active layer and records the edit as a replayable raster operation. It does not implement Photoshop’s proprietary eye/pupil detector, and this bounded threshold-based correction can miss low-red eyes or include connected red detail. The current Adobe HelpX page establishes the flash-reflection cause and prevention advice, not the tool interaction or numerical controls; the exact shortcut, ranges, defaults and detection method remain unverified. The app deliberately does not claim Photoshop fidelity for those details.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-red-eye-in-flash-photos.html',
     ],
   },
 };

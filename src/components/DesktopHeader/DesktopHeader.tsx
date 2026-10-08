@@ -72,6 +72,9 @@ export const MENUS_EXCLUDE: readonly ToolName[] = [
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
+  { toolName: 'hand', label: 'Hand Tool' },
+  { toolName: 'zoom', label: 'Zoom Tool' },
+  { toolName: 'rotate-view', label: 'Rotate View Tool' },
   { toolName: 'blur', label: 'Blur' },
   { toolName: 'crop', label: 'Crop' },
   { toolName: 'draw', label: 'Draw' },
@@ -89,6 +92,9 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'spot-healing', label: 'Spot Healing Brush Tool' },
+  { toolName: 'healing-brush', label: 'Healing Brush Tool' },
+  { toolName: 'red-eye', label: 'Red Eye Correction Tool' },
   { toolName: 'eraser', label: 'Eraser Tool' },
   { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
   { toolName: 'ruler', label: 'Ruler Tool' },
