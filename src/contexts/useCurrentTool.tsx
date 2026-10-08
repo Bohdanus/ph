@@ -7,10 +7,16 @@ import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
 import { setRefValue } from '../util/ref.ts';
 import { SetToolArgsContext } from './set-tool-args.ts';
+import { replayDurableDocument } from './durable-replay.ts';
+import type { DurableDocument } from './history-model.ts';
+import { editableDurableSourceKind } from './history-adapter.ts';
+import { hasPendingText } from '../util/typeGuards.ts';
+import { isDocumentGestureOpen } from '../hooks/document-gesture.ts';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
   setToolArgs: (args: ToolArgs) => void;
+  isDocumentBacked: boolean;
   getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
   patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
 }
@@ -33,17 +39,49 @@ function cloneSavedToolArgs<TName extends ToolName>(toolName: TName): ToolArgsFo
   return normalizeToolArgs(cloneDeep(lastSavedSettings[toolName]) as ToolArgsFor<TName>);
 }
 
+export function durableToolArgsForNavigation(
+  document: DurableDocument | null | undefined,
+  activeLayerId: string | null,
+  toolName: ToolName
+): ToolArgs | null {
+  if (!document || !activeLayerId || !editableDurableSourceKind(toolName)) return null;
+  const source = replayDurableDocument(document).layers[activeLayerId]?.snapshot.source;
+  if (!source || (source.kind !== 'text' && source.kind !== 'vector')) return null;
+  if (source.toolName !== toolName || source.args.toolName !== toolName) return null;
+
+  const args = cloneDeep(source.args) as Record<string, unknown>;
+  if (source.kind === 'text') {
+    const {
+      text: _text,
+      rect: _rect,
+      kind: _kind,
+      placeholderUntouched: _placeholderUntouched,
+      editingLayerId: _editingLayerId,
+      ...persisted
+    } = args;
+    // Keep an empty draft shape so Text.tsx cannot reopen a committed edit. The
+    // committed text and layer-local rect are deliberately never rehydrated.
+    return normalizeToolArgs({ ...persisted, text: '', rect: null } as ToolArgs);
+  }
+
+  const { start: _start, end: _end, ...persisted } = args;
+  return normalizeToolArgs(persisted as ToolArgs);
+}
+
 type ToolState = {
   toolName: ToolName;
   args: ToolArgs;
+  isDocumentBacked: boolean;
 };
 
 /* this provider is meant for fast updates. keep it away from Main component */
 export const CurrentToolProvider = ({ children }: { children: React.ReactNode }) => {
-  const [{ currentArgs: currentArgsRef, toolName }] = useStore();
+  const [{ currentArgs: currentArgsRef, toolName, activeLayerId, durableDocument, durableStatus, previewLayers }] =
+    useStore();
   const [toolState, setToolState] = useState<ToolState>(() => ({
     toolName,
     args: cloneSavedToolArgs(toolName),
+    isDocumentBacked: false,
   }));
 
   const savedArgsForTool = useMemo(() => cloneSavedToolArgs(toolName), [toolName]);
@@ -60,10 +98,28 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
       // the imperative dirty-tool reader in the same state transition.
       setRefValue(currentArgsRef, nextArgs);
       saveLastSettings(nextArgs);
-      setToolState({ toolName: nextArgs.toolName, args: nextArgs });
+      setToolState({ toolName: nextArgs.toolName, args: nextArgs, isDocumentBacked: false });
     },
     [currentArgsRef]
   );
+
+  const hydrateToolArgs = useCallback(
+    (args: ToolArgs, isDocumentBacked: boolean) => {
+      const nextArgs = normalizeToolArgs(args);
+      setRefValue(currentArgsRef, nextArgs);
+      setToolState({ toolName: nextArgs.toolName, args: nextArgs, isDocumentBacked });
+    },
+    [currentArgsRef]
+  );
+
+  useEffect(() => {
+    if (Object.keys(previewLayers.current).length > 0) return;
+    if (hasPendingText(currentArgsRef.current) || isDocumentGestureOpen()) return;
+
+    const hydrated =
+      durableStatus === 'current' ? durableToolArgsForNavigation(durableDocument, activeLayerId, toolName) : null;
+    hydrateToolArgs(hydrated ?? cloneSavedToolArgs(toolName), hydrated !== null);
+  }, [activeLayerId, currentArgsRef, durableDocument, durableStatus, hydrateToolArgs, previewLayers, toolName]);
 
   const getToolArgs = useCallback(
     <TName extends ToolName>(name: TName): ToolArgsFor<TName> | null => {
@@ -84,6 +140,7 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     () => ({
       toolArgs,
       setToolArgs: _setToolArgs,
+      isDocumentBacked: toolState.isDocumentBacked,
       getToolArgs,
       patchToolArgs,
     }),

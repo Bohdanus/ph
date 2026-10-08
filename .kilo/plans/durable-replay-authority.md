@@ -125,11 +125,16 @@ Work:
 
 - Add one helper that reads the durable active-layer source for the active tool
   and returns normalized editable arguments.
+- Mark hydrated values as document-backed without persisting them. Text hydration
+  removes committed content and layer-local geometry but retains `text: ''` and
+  `rect: null` so the text toolbar cannot reopen an edit overlay.
 - Hydrate on a durable cursor/active-layer change, not on every slider update.
 - Skip hydration while `previewLayers` or a pending text/shape edit owns the
   document gesture.
 - Use saved settings only when the source is absent, unsupported or belongs to
   another tool, and do not persist a hydration result as a new setting.
+- Suppress the Shape toolbar's foreground/background mirror while values are
+  document-backed; a user edit clears that provenance before persisting.
 
 Acceptance:
 
