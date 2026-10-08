@@ -8,7 +8,7 @@ import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
-import { DEFAULT_POLYGON_SIDES } from './shape.ts';
+import { DEFAULT_POLYGON_SIDES, DEFAULT_STAR_RATIO } from './shape.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
@@ -36,6 +36,14 @@ import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
 import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
 import { SPONGE_FLOW_DEFAULT, SPONGE_MODE_DEFAULT, type SpongeToolArgs, type SpongeToolSettings } from './sponge.ts';
 import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
+import {
+  RED_EYE_DEFAULT_DARKEN_AMOUNT,
+  RED_EYE_DEFAULT_PUPIL_SIZE,
+  type RedEyeToolArgs,
+  type RedEyeToolSettings,
+} from './redEye.ts';
+import type { SpotHealingToolArgs } from './spotHealing.ts';
+import type { HealingBrushToolArgs } from './healingBrush.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -59,6 +67,15 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
     // the eraser seeds `mode` and its tip width a few hundred lines down: a settings object
     // that arrives without the key is an object the bar has nothing to show.
     sides: DEFAULT_POLYGON_SIDES,
+    toolMode: 'shape',
+  },
+  star: {
+    alpha: 1,
+    lineWidth: 5,
+    // Adobe publishes the Star Ratio control but not its initial value. 50% is an app decision
+    // matching the conventional five-point polygon star used by this shape family.
+    sides: DEFAULT_POLYGON_SIDES,
+    starRatio: DEFAULT_STAR_RATIO,
     toolMode: 'shape',
   },
 };
@@ -89,6 +106,9 @@ export const defaultSettings = {
   } satisfies DrawToolArgs,
   shape: {
     ...savedArgsPerFigure['rectangle'],
+    // Keep the shared shape args safe when the generic shape tool is switched directly to Star.
+    sides: DEFAULT_POLYGON_SIDES,
+    starRatio: DEFAULT_STAR_RATIO,
     figure: 'rectangle',
     color: '#000000',
     backgroundColor: null,
@@ -257,6 +277,9 @@ export const defaultSettings = {
   // else. The measuring line itself is deliberately not here — it is view state, not document state
   // (see `PIXEL_FREE_TOOLS` in toolProcessors.ts).
   ruler: { toolName: 'ruler' } satisfies RulerToolArgs,
+  hand: { toolName: 'hand' },
+  zoom: { toolName: 'zoom' },
+  'rotate-view': { toolName: 'rotate-view' },
   'elliptical-selection': {
     style: 'normal',
     fixedRatio: 1,
@@ -323,6 +346,28 @@ export const defaultSettings = {
     points: [],
     toolName: 'clone-stamp',
   } satisfies CloneStampToolArgs,
+  'red-eye': {
+    pupilSize: RED_EYE_DEFAULT_PUPIL_SIZE,
+    darkenAmount: RED_EYE_DEFAULT_DARKEN_AMOUNT,
+    point: null,
+    toolName: 'red-eye',
+  } satisfies RedEyeToolArgs,
+  'spot-healing': {
+    size: 40,
+    hardness: 100,
+    opacity: 1,
+    points: [],
+    toolName: 'spot-healing',
+  } satisfies SpotHealingToolArgs,
+  'healing-brush': {
+    size: 20,
+    hardness: 0,
+    opacity: 1,
+    source: null,
+    aligned: true,
+    points: [],
+    toolName: 'healing-brush',
+  } satisfies HealingBrushToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },
@@ -393,6 +438,7 @@ export type SavedSettings =
   | SmudgeToolSettings
   | DodgeBurnToolSettings
   | SpongeToolSettings
-  | CloneStampToolSettings;
+  | CloneStampToolSettings
+  | RedEyeToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

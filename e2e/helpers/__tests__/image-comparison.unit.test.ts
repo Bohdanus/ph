@@ -256,17 +256,21 @@ describe('Image Comparison Helpers', () => {
      * `Infinity`, so a caller gating on `channelDelta.r.max` fails here instead of reading a
      * size mismatch as a perfect colour match.
      */
-    const sentinelVerdict = {
+    const sentinelVerdict = (
+      actual: { width: number; height: number },
+      expected: { width: number; height: number }
+    ) => ({
       matches: false,
       diffPixels: Number.MAX_SAFE_INTEGER,
       diffRatio: 1,
+      sizeMismatch: { actual, expected },
       channelDelta: {
         r: { mean: Infinity, max: Infinity },
         g: { mean: Infinity, max: Infinity },
         b: { mean: Infinity, max: Infinity },
         a: { mean: Infinity, max: Infinity },
       },
-    };
+    });
 
     it('does not match when both dimensions differ', async () => {
       const result = await compareScreenshots(
@@ -274,7 +278,9 @@ describe('Image Comparison Helpers', () => {
         await solidPng({ width: SQUARE_100.width * 2, height: SQUARE_100.height * 2 }, OPAQUE_GREEN)
       );
 
-      expect(result).toEqual(sentinelVerdict);
+      expect(result).toEqual(
+        sentinelVerdict(SQUARE_100, { width: SQUARE_100.width * 2, height: SQUARE_100.height * 2 })
+      );
     });
 
     it('does not match when only the width differs', async () => {
@@ -283,7 +289,7 @@ describe('Image Comparison Helpers', () => {
         await redPng100()
       );
 
-      expect(result).toEqual(sentinelVerdict);
+      expect(result).toEqual(sentinelVerdict({ width: SQUARE_100.width * 2, height: SQUARE_100.height }, SQUARE_100));
     });
 
     it('does not match when only the height differs', async () => {
@@ -292,21 +298,30 @@ describe('Image Comparison Helpers', () => {
         await redPng100()
       );
 
-      expect(result).toEqual(sentinelVerdict);
+      expect(result).toEqual(sentinelVerdict({ width: SQUARE_100.width, height: SQUARE_100.height * 2 }, SQUARE_100));
     });
 
-    it('reports the same sentinel regardless of argument order', async () => {
+    it('preserves actual and expected sizes when argument order changes', async () => {
       const tall = await solidPng({ width: SQUARE_100.width, height: SQUARE_100.height * 2 }, OPAQUE_GREEN);
       const short = await redPng100();
 
-      expect(await compareScreenshots(tall, short)).toEqual(await compareScreenshots(short, tall));
+      expect((await compareScreenshots(tall, short)).sizeMismatch).toEqual({
+        actual: { width: SQUARE_100.width, height: SQUARE_100.height * 2 },
+        expected: SQUARE_100,
+      });
+      expect((await compareScreenshots(short, tall)).sizeMismatch).toEqual({
+        actual: SQUARE_100,
+        expected: { width: SQUARE_100.width, height: SQUARE_100.height * 2 },
+      });
     });
 
     it('applies the sentinel even when the size-mismatched images share a single colour', async () => {
       const small = await solidPng(SQUARE_10, OPAQUE_RED);
       const larger = await solidPng({ width: SQUARE_10.width * 2, height: SQUARE_10.height * 2 }, OPAQUE_RED);
 
-      expect(await compareScreenshots(small, larger)).toEqual(sentinelVerdict);
+      expect(await compareScreenshots(small, larger)).toEqual(
+        sentinelVerdict(SQUARE_10, { width: SQUARE_10.width * 2, height: SQUARE_10.height * 2 })
+      );
     });
 
     it('still matches the smallest possible image against itself', async () => {
@@ -716,11 +731,15 @@ describe('Image Comparison Helpers', () => {
       }>();
     });
 
-    it('CompareResult has matches, diffPixels, diffRatio and channelDelta', () => {
+    it('CompareResult includes optional size-mismatch dimensions', () => {
       expectTypeOf<CompareResult>().toEqualTypeOf<{
         matches: boolean;
         diffPixels: number;
         diffRatio: number;
+        sizeMismatch?: {
+          actual: { width: number; height: number };
+          expected: { width: number; height: number };
+        };
         channelDelta: Record<ChannelName, ChannelDelta>;
       }>();
     });

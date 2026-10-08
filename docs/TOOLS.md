@@ -726,6 +726,89 @@ Sources:
 
 ---
 
+### Spot Healing Brush Tool
+
+`spot-healing`
+
+Repairs small marks by blending nearby texture into a soft brush stroke.
+
+Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.
+
+**Options bar**
+
+| Control   | Photoshop                                                                                                                                              | In this app                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Size      | Tip diameter in pixels.                                                                                                                                | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Hardness  | Controls the falloff at the tip edge.                                                                                                                  | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Opacity   | Per-dab healing strength from 0 to 100 percent.                                                                                                        | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Type      | Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented. | `missing`                                                                |
+| Sample    | Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.                                 | `missing`                                                                |
+| Diffusion | Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.                                                        | `missing`                                                                |
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool flyout family.
+
+**In this app:** `partial` — The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.
+
+Implementation:
+
+- `src/tools/spotHealing.ts:1`
+- `src/components/Main/SpotHealingToolArea.tsx:1`
+- `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1`
+
+Sources:
+
+- <https://www.adobe.com/products/photoshop/spot-heal.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
+
+---
+
+### Healing Brush Tool
+
+`healing-brush`
+
+Blends sampled texture into a brush stroke while preserving destination lighting and tone.
+
+Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.
+
+**Options bar**
+
+| Control   | Photoshop                                                                      | In this app                                                                |
+| --------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Size      | Tip diameter in pixels.                                                        | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Hardness  | Controls the falloff at the tip edge.                                          | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Opacity   | Per-dab healing strength from 0 to 100 percent.                                | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Aligned   | Keeps the sampled offset continuous across the stroke or resets it per stroke. | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Source    | Sampled source via Alt/Option-click; Pattern is deferred.                      | `partial` — `src/components/Main/HealingBrushToolArea.tsx:1`               |
+| Sample    | Current & Below and All Layers are deferred; the MVP edits the active layer.   | `missing`                                                                  |
+| Diffusion | Adobe’s 1–7 diffusion control is deferred.                                     | `missing`                                                                  |
+
+**Modifiers**
+
+- **Alt/Option-click** — Sets the sampled source point without creating history.
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool family; this app selects Healing Brush directly.
+
+**In this app:** `partial` — Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.
+
+Implementation:
+
+- `src/tools/healingBrush.ts:1`
+- `src/components/Main/HealingBrushToolArea.tsx:1`
+- `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
+
+---
+
 ### Eraser Tool
 
 `eraser` · **E**
@@ -971,6 +1054,36 @@ Sources:
 - <https://www.psdvault.com/basics/photoshop-clone-stamp-tool/>
 - <https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/>
 - <https://graphicdesign.stackexchange.com/questions/21866/why-does-the-clone-stamp-tool-seem-to-be-misaligned>
+
+---
+
+### Red Eye Tool
+
+`red-eye`
+
+Reduces the red flash reflection in an eye with adjustable pupil size and darkening.
+
+The Red Eye tool corrects the red appearance caused when flash reflects from the retina. Click the red pupil on the active layer; Pupil Size limits the local region examined, and Darken Amount controls how strongly the red pixels are darkened. Adobe’s current help page explains the cause and prevention of red eye but does not describe the tool’s detection algorithm, slider ranges, defaults, or shortcut. The app therefore uses a bounded connected red-pixel correction as an explicit approximation, not as a claim to Photoshop’s undocumented detector.
+
+**Options bar**
+
+| Control       | Photoshop                                                                                                                                                                                                                                                                             | In this app                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Pupil Size    | Sets the bounded local region examined around the click. The inventory identifies this as a Photoshop control; its exact range and default are not specified by the current Adobe help page. This app maps 0–100 to a radius proportional to the image dimensions and seeds it at 50. | `present` — `src/components/ToolbarsRight/RedEye/RedEye.tsx:21` |
+| Darken Amount | Controls how strongly pixels in the detected red region are darkened after the red cast is neutralized. The current Adobe help page does not specify a range or default. This app exposes a 0–100 percent slider seeded at 50.                                                        | `present` — `src/components/ToolbarsRight/RedEye/RedEye.tsx:25` |
+
+**In this app:** `partial` — The app corrects a connected region of red-dominant pixels on the active layer and records the edit as a replayable raster operation. It does not implement Photoshop’s proprietary eye/pupil detector, and this bounded threshold-based correction can miss low-red eyes or include connected red detail. The current Adobe HelpX page establishes the flash-reflection cause and prevention advice, not the tool interaction or numerical controls; the exact shortcut, ranges, defaults and detection method remain unverified. The app deliberately does not claim Photoshop fidelity for those details.
+
+Implementation:
+
+- `src/tools/redEye.ts:38`
+- `src/components/Main/RedEyeToolArea.tsx:19`
+- `src/tools/toolProcessors.ts:314`
+- `src/tools/toolsMap.ts:115`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/remove-red-eye-in-flash-photos.html>
 
 ---
 
@@ -1411,7 +1524,7 @@ The Rectangle tool draws a four-sided figure from two drag corners, and Shift ho
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
 **In this app:** `partial` — The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry on the bar, and only the rectangle gets a radius — the app gates the whole control on this figure. Fill and Stroke are on the bar, then, and `partial` in the table above is the honest reading of them: what the app renders is a single wired `Filled` checkbox over its one shared colour, and it is the separate swatches with their None / Solid / Gradient / Pattern menu that are missing, not the controls. The mode group, the stroke width, the stroke type and the opacity each diverge from Photoshop’s control in the same way, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A bare click is where this figure is at its closest: Adobe’s one documented sentence is this figure’s own, and all four of the fields it names — Width, Height, corner radii and align from centre — are in the app’s Create Rectangle dialog, so nothing is left over on this figure. The corner radius is seeded from the bar’s live slider and applied to the layer being created, so a radius typed in the dialog does not rewrite the slider behind the user’s back. What diverges is the entry point rather than the fields: `Shape W&H` is a control on Photoshop’s bar and this app’s bar has none, so here the exact geometry is reachable only by opening the dialog with a click.
 
@@ -1470,7 +1583,7 @@ The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, 
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
 **In this app:** `partial` — The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode rasterizes onto a new layer exactly as Shape mode does rather than painting into the active one, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. The bar itself is the shared one — the Ellipse gets no control of its own, so the options bar names it and shows the same controls every figure gets: the tool-mode select, the thickness slider, the Filled checkbox, the dashed toggle with its dash and gap sliders, the opacity slider and the live preview. That is the same set the rectangle has minus the radius, so the same reading applies to each: fill and stroke are on the bar as a wired Filled checkbox over one shared colour rather than as Photoshop’s two swatches, the mode group, the stroke type and the opacity each diverge from Photoshop’s control, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A bare click opens the app’s Create Ellipse dialog, titled per figure, with Width, Height and From Center and no corner radius — the same gate as the bar’s, on a figure whose corners are not rounded anywhere on either side. Adobe’s own documentation of a click dialog is the rectangle’s, so this figure’s dialog is the app’s field set rather than a documented one.
 
@@ -1531,7 +1644,7 @@ The Line tool drags a single straight segment between two points, and Shift snap
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
 **In this app:** `partial` — The drag is the tool, and the drag is right: `normalizeShapeGeometry` routes the line figure to `snapLineGeometry`, which quantizes the drag angle to `LINE_ANGLE_STEP` — `Math.PI / 4` — so a Shift-drag snaps to a multiple of 45 degrees exactly as Adobe specifies, and unlike every other figure the line is not squared by Shift. The two things that are missing are the arrowheads and the shape of the bar. Arrowheads are absent outright — `drawShape` strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow, and that is what keeps the verdict at `partial` rather than `implemented`: the tool that draws arrows does not draw them. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path, through the Stroke Options panel rather than a bar-level select. A bare click gets no dialog at all on this figure, and that is the contract rather than a gap: Adobe documents the Line tool as a drag and a release and never names a Create Line dialog, so the click refuses on the console instead of opening a dialog Adobe has not got. A line has no Width and Height on Adobe’s side either, so the drag is the only place either can give it a length.
 
@@ -1591,7 +1704,7 @@ The Triangle tool, added in Photoshop 2021 (v22), draws a three-sided figure who
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
 **In this app:** `partial` — The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 2021 (v22), and later versions add the persistent Equilateral checkbox to the gear menu. A bare click opens the app’s Create Triangle dialog with Width, Height and From Center, so of the five things Adobe documents for this figure’s click dialog — Width, Height, Corner Radius, Equilateral and From Center — three can be typed here and two are gaps. Equilateral is absent outright, and it is the same gap the Shift row above reaches from the other direction. Corner Radius is withheld rather than absent: `drawShape` reads `cornerRadius` in its rectangle branch only, so a triangle field would take a value and round nothing, and this figure’s corners cannot be rounded here either way.
 
@@ -1653,9 +1766,9 @@ The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct, and the side count is a real setting seeded at 5, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Sides is on the bar for this figure, takes the integers 3 through 100 — Adobe's own floor and ceiling — and persists per figure. What is still missing is the Star tool the same group carries, so a star Ratio has nothing here to compare against. The `[` and `]` rows Photoshop gives this tool are still absent from the table above, but the reason has changed and the old one would now be a falsehood: the side count does exist at runtime, and the gap is that the app's bracket keys reach only the eight tools that carry a tip Size, so they have nothing to act on. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it: the dialog commits the bar's current Sides rather than taking one of its own. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and of those the renderer reads only Number of Sides, from the bar rather than from the dialog, because no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.
+**In this app:** `partial` — The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct, and the side count is a real setting seeded at 5, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Sides is on the bar for this figure, takes the integers 3 through 100 — Adobe's own floor and ceiling — and persists per figure. The separate Star figure now owns its points and Star Ratio controls, so Polygon does not claim those controls. The `[` and `]` rows Photoshop gives this tool are still absent from the table above, but the reason has changed and the old one would now be a falsehood: the side count does exist at runtime, and the gap is that the app's bracket keys reach only the eight tools that carry a tip Size, so they have nothing to act on. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it: the dialog commits the bar's current Sides rather than taking one of its own. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and of those the renderer reads only Number of Sides, from the bar rather than from the dialog, because no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.
 
 Implementation:
 
@@ -1674,6 +1787,72 @@ Sources:
 - <https://jkost.com/blog/2021/07/working-with-the-shape-tools-in-photoshop.html>
 - <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html>
 - <https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207>
+
+---
+
+### Star Tool
+
+`shape`
+
+Photoshop's name for it is **Shape Tool (the Tools panel group; no entry by that name)**.
+
+Draws a vector shape, a path, or a filled pixel region, and stamps it onto its own shape layer.
+
+Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photoshop tool behind this one: the panel groups seven separate tools — Rectangle, Ellipse, Triangle, Polygon, Star, Line and Custom Shape — behind a single group icon, and the Star arrived as a tool of its own in 26.10. Whichever of the seven is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.
+
+**Options bar**
+
+| Control                               | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | In this app                                                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Mode                                  | The first of the two controls Adobe names Mode, and the one at the left of the bar: the three-button drawing-mode group, where Shape creates a filled shape layer, Path creates a vector path with no pixels, and Pixels rasterizes the shape straight into the current layer. Shape is the default.                                                                                                                                                                                                                                                                                                                                                                       | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:215` |
+| Fill                                  | The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:329` |
+| Stroke                                | The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:329` |
+| Stroke width                          | Thickness of the stroke in pixels. Photoshop adds a 1 px black stroke by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:239` |
+| Stroke type                           | Opens the Stroke Options panel, which sets the line style (Solid, Dashed or Dotted, plus a custom dash array under More Options), the stroke Align (Inside, Center or Outside), the end Caps (Butt, Round, Square) and the corner joins (Miter, Round, Bevel), which Adobe qualifies as "not applicable to the Line tool" because a line has no corners. Centered alignment, a solid line and a Butt cap are the defaults.                                                                                                                                                                                                                                                 | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:344` |
+| Shape W&H                             | Exact width and height for the next shape, set on the bar before the draw. A click with no drag opens a Create <Shape> dialog, which Adobe documents for two of the figures: the rectangle, where you manually set "the dimensions, corner radii of your rectangle, and choose to align from centre", and the triangle, which adds Corner Radius, Equilateral and From Center — so exact geometry can be typed instead of dragged. The Line tool has no click dialog; Adobe documents the drag and the release only.                                                                                                                                                       | `partial` — `src/components/Main/ShapeToolArea.tsx:205`          |
+| Path Operations                       | How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.                                                                                                                                                                                                                                       | `missing`                                                        |
+| Path Alignment                        | Align and distribute the path components of the selected vector mask against one another.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `missing`                                                        |
+| Path Arrangement                      | Stacking order of the shapes on a vector mask: bring to front, bring forward, send backward, send to back.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missing`                                                        |
+| Operation                             | Path mode only: how a new path interacts with the paths already there — Add, Subtract, Intersect or Exclude. This is the Path-mode setting, not the Path Operations control, which is the separate show/hide for the Shape-mode operation buttons.                                                                                                                                                                                                                                                                                                                                                                                                                         | `missing`                                                        |
+| Weight                                | Thickness of the path, and it means two different things by mode. In Path mode — and in Shape mode for every figure except the Line tool — Adobe documents it as "Set the width of the path in pixels (visual reference only)": a display aid for the on-screen outline, which never prints and never appears in a saved image. In Pixel mode it is the width that actually paints, "Set the width of the line or shape edge in pixels". The Line tool is the exception in Shape mode, where Adobe's own instruction is to "choose Shape mode in the Options bar and then set the Stroke and Weight": a line has no filled area, so there the weight is the stroke itself. | `missing`                                                        |
+| Set additional shape and path options | The gear at the right of the bar, which Adobe describes as setting "additional Path options, Live Shapes Controls, Arrowheads, and more". Holds the on-screen Path Options (path colour and width), the Live Shapes controls, the Arrowheads, the Import Shapes command and the per-tool geometry options such as Unconstrained, Square, Circle, Fixed Size, Proportional, From Center and Equilateral.                                                                                                                                                                                                                                                                    | `missing`                                                        |
+| Mode                                  | The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.                                                                                                                                                                                                                                                                          | `missing`                                                        |
+| Opacity                               | Pixel mode only: transparency of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider, because a shape layer and a path have no opacity of their own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:409` |
+| Anti-alias                            | Pixel mode only: smooths the shape edges when rasterizing. Photoshop applies it automatically, so it has no meaningful unchecked state in practice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missing`                                                        |
+
+**Modifiers**
+
+- **Shift** — Constrains the drag to a square drag box, which is a square for the Rectangle tool and a circle for the Ellipse tool.
+- **Alt** — Draws from the centre outward, so the press point is the middle of the shape rather than one corner.
+- **Space** — Repositions the shape while the drag is still in progress, without changing its size.
+
+**Shortcuts**
+
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `Shift+U` — Cycles to the next tool in the shapes tool group. The rail flyout and keyboard cycle hold seven entries — rectangle, ellipse, line, triangle, polygon, star and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.
+
+**In this app:** `partial` — The Star entry is now present in the app’s seven-entry shapes fly-out (`toolbar-mapping.ts`), and the `shape` registry entry this description hangs off remains the group container rather than a tool the rail displays by itself. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
+
+Implementation:
+
+- `src/tools/toolProcessors.ts:170`
+- `src/tools/shape.ts:251`
+- `src/tools/shape.ts:107`
+- `src/components/ToolbarsRight/Figures/Shape.tsx:225`
+- `src/tools/toolsMap.ts:65`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html>
+- <https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207>
+- <https://helpx.adobe.com/photoshop/using/modify-shapes.html>
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/create-shapes.html>
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html>
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html>
+- <https://community.adobe.com/questions-712/photoshop-v26-10-create-the-perfect-star-shape-for-your-designs-and-multiple-enhancements-1181840>
+- <https://www.cgchannel.com/2025/08/adobe-releases-photoshop-26-10/>
+- <https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/>
+- <https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/>
 
 ---
 
@@ -1714,7 +1893,7 @@ The Custom Shape tool draws any of the vector presets in Photoshop’s shape lib
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
 **In this app:** `placeholder` — Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other five figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. That is also the whole of the app side of the Shape W&H row: a bare click opens a Create <Figure> dialog on the five figures that mount `ShapeToolArea`, and this tool mounts `DummyToolArea` instead, so none of that runs here and a click with no drag does nothing rather than opening a sized dialog. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.
 
@@ -1742,13 +1921,13 @@ Sources:
 
 ---
 
-### Shape Tool (the Tools panel group; no entry by that name)
+### Star Tool
 
-`shape`
+`star`
 
-Draws a vector shape, a path, or a filled pixel region, and stamps it onto its own shape layer.
+Drag-defined star with a configurable number of points and alternating outer and inner radii.
 
-Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photoshop tool behind this one: the panel groups seven separate tools — Rectangle, Ellipse, Triangle, Polygon, Star, Line and Custom Shape — behind a single group icon, and the Star arrived as a tool of its own in 26.10. Whichever of the seven is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.
+The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke; Shift constrains proportions and Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.
 
 **Options bar**
 
@@ -1769,6 +1948,9 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 | Mode                                  | The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.                                                                                                                                                                                                                                                                          | `missing`                                                        |
 | Opacity                               | Pixel mode only: transparency of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider, because a shape layer and a path have no opacity of their own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:409` |
 | Anti-alias                            | Pixel mode only: smooths the shape edges when rasterizing. Photoshop applies it automatically, so it has no meaningful unchecked state in practice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missing`                                                        |
+| Number of Points                      | Number of outer points in the star. This app reuses the Polygon bounds of 3–100 points and defaults to 5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `present` — `src/components/ToolbarsRight/Figures/Shape.tsx:330` |
+| Star Ratio / Indent                   | Percentage of the outer radius used by each inner vertex, controlling the depth of the star indents. Adobe documents Inner Radius and Outer Radius, but not an exact default; this app represents their ratio as 1–99% and chooses 50% as an app-side default.                                                                                                                                                                                                                                                                                                                                                                                                             | `present` — `src/components/ToolbarsRight/Figures/Shape.tsx:357` |
+| Radius                                | Rounds the shape corners in pixels, default 0 px. Adobe documents the control on the Rectangle tool ("Radius of rounded corners: Manually set the radius…") and on the Triangle tool ("specify Width, Height, and Corner Radius"); the Ellipse and Line tools have no rounded corners. The Rectangle tool keeps four independent radii and the Triangle tool a single value that rounds every corner at once. Whether the Polygon tool offers it is third-party only — no Adobe page listing the Polygon tool’s bar was found — so the polygon half of that gap is a judgment, not a match.                                                                                | `missing`                                                        |
 
 **Modifiers**
 
@@ -1778,31 +1960,22 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 
 **Shortcuts**
 
-- `U` — Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
-- `Shift+U` — Cycles to the next tool in the shapes tool group, through all six entries the rail’s flyout holds: rectangle, ellipse, line, triangle, polygon and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.
+- `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
 
-**In this app:** `partial` — The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:128-135`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
+**In this app:** `partial` — The Star is implemented as another figure in the shared shape processor. Its path alternates outer and inner vertices, points default to 5, and the Star Ratio / Indent control reaches the renderer. Shape, Path and Pixels modes, Fill/Stroke behaviour, Shift constraint and Alt-from-center are inherited from the existing family. Adobe does not publish exact inner/outer defaults or all min/max bounds, so the 50% ratio default and 1–99% app range are explicit app decisions, not Adobe defaults. Corner Radius, Photoshop’s separate Inner Radius and Outer Radius fields, and true vector/path-mode commits remain limitations of the shared app architecture.
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:170`
-- `src/tools/shape.ts:251`
+- `src/tools/toolProcessors.ts:191`
+- `src/tools/shape.ts:242`
 - `src/tools/shape.ts:107`
-- `src/components/ToolbarsRight/Figures/Shape.tsx:225`
-- `src/tools/toolsMap.ts:65`
+- `src/components/ToolbarsRight/Figures/Shape.tsx:330`
+- `src/tools/settings.ts:67`
 
 Sources:
 
-- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html>
-- <https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207>
-- <https://helpx.adobe.com/photoshop/using/modify-shapes.html>
-- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/create-shapes.html>
-- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html>
 - <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html>
-- <https://community.adobe.com/questions-712/photoshop-v26-10-create-the-perfect-star-shape-for-your-designs-and-multiple-enhancements-1181840>
-- <https://www.cgchannel.com/2025/08/adobe-releases-photoshop-26-10/>
-- <https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/>
-- <https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/>
+- <https://helpx.adobe.com/photoshop/using/create-star-shape.html>
 
 ---
 
@@ -2789,5 +2962,121 @@ Sources:
 - <https://www.thedigitalprocess.com/selecting-color-in-photoshop/>
 - <https://clippingpathstudio.com/photoshop-toolbar/>
 - <https://offshoreclipping.com/blog/photoshop-cc-toolbar-tools/>
+
+---
+
+## View and navigation
+
+Long-form research, provenance and unverified claims: [`src/tools/descriptions/view.notes.md`](../src/tools/descriptions/view.notes.md).
+
+### Hand Tool
+
+`hand` · **H**
+
+Pans the canvas view without moving or changing the document pixels.
+
+The Hand tool moves the viewport over an image that is larger than the window. It changes only the presentation of the canvas, so panning never creates a History entry or changes exported pixels. Hold Space while another non-Type tool is active for Photoshop’s temporary Hand behavior.
+
+**Options bar**
+
+| Control       | Photoshop                                                                 | In this app                                                |
+| ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Fit On Screen | Restores the default centered view so the whole image fits the workspace. | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| 100%          | Returns the view to a centered 100% scale without rotating the document.  | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+
+**Modifiers**
+
+- **Space** — Temporarily pans with the Hand tool while another non-Type tool is active.
+
+**Shortcuts**
+
+- `H` — Selects the Hand tool.
+
+**In this app:** `implemented` — Panning is transient and is not sent through the processor or history paths. Flick momentum, Pan All Windows, and the Overscroll preference are not implemented.
+
+Implementation:
+
+- `src/components/Main/ViewToolArea.tsx:1`
+- `src/contexts/view-state.ts:1`
+- `src/components/Main/Main.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/hand-tool.html>
+- <https://helpx.adobe.com/photoshop/using/touch-gestures.html>
+
+---
+
+### Rotate View Tool
+
+`rotate-view`
+
+Rotates the canvas presentation around the viewport without transforming the image.
+
+The Rotate View tool turns the displayed canvas so a retoucher can work at a comfortable angle. The image data remains unchanged and the rotation is not recorded in History. Drag horizontally to rotate, press Escape or Reset View to return to zero degrees, and double-click the tool surface to reset.
+
+**Options bar**
+
+| Control        | Photoshop                                                       | In this app                                                |
+| -------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
+| Rotation Angle | Sets the displayed angle from -180 to 180 degrees.              | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Reset View     | Returns the displayed rotation to zero without changing pixels. | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+
+**Shortcuts**
+
+- `R` — Selects the Rotate View tool.
+- `Esc` — Resets the view angle to zero while Rotate View is active.
+
+**In this app:** `implemented` — Rotation is a CSS presentation transform and remains outside document history. Graphics-processor capability checks, compass overlay, Shift snapping, and Rotate All Windows are not implemented.
+
+Implementation:
+
+- `src/components/Main/ViewToolArea.tsx:1`
+- `src/components/ToolbarsRight/View/View.tsx:1`
+- `src/components/Common/AppKeyboardShortcuts.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/rotate-view-tool.html>
+- <https://helpx.adobe.com/photoshop/using/viewing-images.html>
+
+---
+
+### Zoom Tool
+
+`zoom` · **Z**
+
+Magnifies or reduces the canvas around the pointer without changing document pixels.
+
+The Zoom tool changes the displayed scale of the canvas and keeps the clicked point under the pointer. Click to zoom in, hold Alt or Option to zoom out, and drag horizontally for a scrubby zoom. View scale is transient and never becomes a document edit or History entry.
+
+**Options bar**
+
+| Control       | Photoshop                                                               | In this app                                                |
+| ------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Zoom          | Sets the displayed scale from 10% through 1600% in this implementation. | `partial` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| Fit On Screen | Resets the view to the centered contain-fit scale.                      | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+| 100%          | Centers the image at 100% display scale.                                | `present` — `src/components/ToolbarsRight/View/View.tsx:1` |
+
+**Modifiers**
+
+- **Alt/Option** — Reverses a click or scrubby drag from zoom-in to zoom-out.
+
+**Shortcuts**
+
+- `Z` — Selects the Zoom tool.
+
+**In this app:** `implemented` — The pointer anchor, document coordinate inversion, and existing tool gestures follow the transient view transform. Animated zoom, marquee zoom, wheel preferences, and the 25600% desktop maximum are not implemented.
+
+Implementation:
+
+- `src/components/Main/ViewToolArea.tsx:1`
+- `src/components/ToolbarsRight/View/View.tsx:1`
+- `src/hooks/usePointerPosition.ts:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/zoom-tool.html>
+- <https://helpx.adobe.com/photoshop/using/viewing-images.html>
 
 ---

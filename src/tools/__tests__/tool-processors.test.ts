@@ -120,6 +120,9 @@ const replayKinds = {
   burn: 'raster-processor',
   sponge: 'raster-processor',
   'clone-stamp': 'raster-processor',
+  'red-eye': 'raster-processor',
+  'spot-healing': 'raster-processor',
+  'healing-brush': 'raster-processor',
   brush: 'raster-processor',
   pencil: 'raster-processor',
   'color-replacement': 'raster-processor',
@@ -311,11 +314,14 @@ describe('toolProcessors registry', () => {
         'polygonal-lasso',
         'quick-selection',
         'rectangular-selection',
+        'red-eye',
         'sharpen',
         'single-column-marquee',
         'single-row-marquee',
         'smudge',
         'sponge',
+        'spot-healing',
+        'healing-brush',
       ].sort()
     );
   });
@@ -366,9 +372,12 @@ describe('toolProcessors registry', () => {
         'magic-eraser',
         'paint-bucket',
         'pencil',
+        'red-eye',
         'sharpen',
         'smudge',
         'sponge',
+        'spot-healing',
+        'healing-brush',
       ].sort()
     );
     for (const toolName of rasterCommitted) {
@@ -449,6 +458,9 @@ describe('toolProcessors registry', () => {
       burn: 'raster',
       sponge: 'raster',
       'clone-stamp': 'raster',
+      'red-eye': 'raster',
+      'spot-healing': 'raster',
+      'healing-brush': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
       'curvature-pen': 'unimplemented',
@@ -622,6 +634,7 @@ const realBarNames = [
   'quick-selection',
   'eraser',
   'clone-stamp',
+  'red-eye',
   'paint-bucket',
   'gradient',
   'sharpen',
@@ -702,6 +715,7 @@ const realBarControlIds: readonly (readonly [ToolName, readonly string[]])[] = [
   ['quick-selection', ['quick-selection-mode', 'quick-selection-size', 'quick-selection-tolerance']],
   ['eraser', ['eraser-flow', 'eraser-hardness', 'eraser-mode', 'eraser-opacity', 'eraser-size', 'eraser-spacing']],
   ['clone-stamp', ['clone-stamp-aligned', 'clone-stamp-hardness', 'clone-stamp-opacity', 'clone-stamp-size']],
+  ['red-eye', ['red-eye-darken-amount', 'red-eye-pupil-size']],
   [
     'paint-bucket',
     [
@@ -1114,11 +1128,17 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['burn', 'canvas', 40, 24],
     ['sponge', 'canvas', 40, 24],
     ['clone-stamp', 'canvas', 40, 24],
+    ['red-eye', 'source-bitmap', 0, 0],
+    ['spot-healing', 'canvas', 40, 24],
+    ['healing-brush', 'canvas', 40, 24],
     // The eyedropper rasterizes nothing, so it is absent from the registry entirely
     // (`PIXEL_FREE_TOOLS` in toolProcessors.ts) rather than registered with a stub.
     ['eyedropper', 'no-processor', 0, 0],
     ['color-sampler', 'no-processor', 0, 0],
     ['ruler', 'no-processor', 0, 0],
+    ['hand', 'no-processor', 0, 0],
+    ['zoom', 'no-processor', 0, 0],
+    ['rotate-view', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1182,6 +1202,9 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['burn', 'canvas', 40, 24],
     ['sponge', 'canvas', 40, 24],
     ['clone-stamp', 'canvas', 40, 24],
+    ['red-eye', 'bitmap', 0, 0],
+    ['spot-healing', 'canvas', 40, 24],
+    ['healing-brush', 'canvas', 40, 24],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -1397,6 +1420,9 @@ describe('toolProcessors classification invariants', () => {
 describe('toolsMap exhaustiveness', () => {
   const icons: readonly [ToolName, string][] = [
     ['reposition', 'reposition'],
+    ['hand', 'hand'],
+    ['zoom', 'zoom'],
+    ['rotate-view', 'rotate-view'],
     ['blur', 'blur'],
     ['color', 'color'],
     ['levels', 'levels'],
@@ -1417,6 +1443,9 @@ describe('toolsMap exhaustiveness', () => {
     ['brush', 'brush'],
     ['pencil', 'pencil'],
     ['color-replacement', 'color-replacement'],
+    ['red-eye', 'red-eye'],
+    ['spot-healing', 'spot-healing'],
+    ['healing-brush', 'healing-brush'],
     ['eraser', 'eraser'],
     ['clone-stamp', 'clone-stamp'],
     ['magic-eraser', 'magic-eraser'],

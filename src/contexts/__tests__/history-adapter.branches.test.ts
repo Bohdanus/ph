@@ -34,6 +34,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -705,12 +706,9 @@ describe('document frame conversion diagnostics', () => {
 });
 
 /**
- * Where the durable shadow and legacy replay genuinely disagree, or where one of
- * them is silent. These pin CURRENT behaviour, including the behaviour that is
- * wrong: a test here is a tripwire that makes a future fix visible, not an
- * endorsement of the divergence.
+ * Regression cases for the durable baseline's agreement with legacy replay.
  */
-describe('durable shadow divergences from legacy replay', () => {
+describe('durable baseline parity with legacy replay', () => {
   /**
    * NOT a protection for the first test below. Its only entry is a disabled one
    * carrying a `documentSource`, and `replayHistory` skips a disabled item at
@@ -734,17 +732,22 @@ describe('durable shadow divergences from legacy replay', () => {
   it('a disabled first entry replays as the empty state legacy replays', () => {
     const registry = new AssetRegistry();
     const disabledOpen = openingEntry('baseline', true);
+    const emptyInitialSize = { width: 1, height: 1 };
 
     const converted = legacyHistoryToDurable([disabledOpen], { documentId: 'test-doc', registry });
     const replayed = replayDurableDocument(converted.document, -1);
-    const legacy = replayHistory([disabledOpen], 0, initialSize, unreachableDependencies);
+    const legacy = replayHistory([disabledOpen], 0, emptyInitialSize, unreachableDependencies);
+    const emptyInitialFrame = { x: 0, y: 0, ...emptyInitialSize };
 
     // `replayHistory` skips a disabled item outright (`history-replay.ts:75`),
     // so the document the USER sees after disabling the first History row is
-    // empty. The durable baseline now follows the same rule.
+    // empty and retains the replay's initial frame.
     expect(legacy.layers).toEqual({});
     expect(replayed.layers).toEqual({});
     expect(converted.document.baseline.layers).toEqual([]);
+    expect(legacy.documentFrame).toEqual(emptyInitialFrame);
+    expect(replayed.frame).toEqual(legacy.documentFrame);
+    expect(converted.document.baseline.frame).toEqual(legacy.documentFrame);
     expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
     expect(converted.diagnostics).toMatchObject([
       {
@@ -754,6 +757,45 @@ describe('durable shadow divergences from legacy replay', () => {
         code: 'invalid-history-entry',
       },
     ]);
+    registry.shutdown();
+  });
+
+  it('does not use a disabled first bedrock entry to size the durable baseline', () => {
+    const registry = new AssetRegistry();
+    const emptyInitialSize = { width: 1, height: 1 };
+    const disabledBedrock: HistoryItem = {
+      id: 'baseline',
+      actionName: NEW_LAYER_ACTION,
+      layerId: 'layer-1',
+      disabled: true,
+      layerSource: {
+        kind: 'blank',
+        color: '#ffffff',
+        opacity: 1,
+        size: { width: 640, height: 480 },
+        isBedrock: true,
+      },
+    };
+    const initialFrame = { x: 80, y: 270, width: 640, height: 300 };
+
+    const converted = legacyHistoryToDurable([disabledBedrock], { documentId: 'test-doc', registry });
+    const convertedWithFrame = legacyHistoryToDurable([disabledBedrock], {
+      documentId: 'test-doc',
+      registry,
+      initialFrame,
+    });
+    const legacy = replayHistory([disabledBedrock], 0, emptyInitialSize, unreachableDependencies);
+    const legacyWithFrame = replayHistory(
+      [disabledBedrock],
+      0,
+      emptyInitialSize,
+      unreachableDependencies,
+      initialFrame
+    );
+
+    expect(converted.document.baseline.frame).toEqual(legacy.documentFrame);
+    expect(convertedWithFrame.document.baseline.frame).toEqual(legacyWithFrame.documentFrame);
+    expect(convertedWithFrame.document.baseline.frame).toEqual(initialFrame);
     registry.shutdown();
   });
 });
@@ -1384,6 +1426,7 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'show', actionName: SHOW_LAYER_ACTION },
     { label: 'hide', actionName: HIDE_LAYER_ACTION },
     { label: 'rename', actionName: RENAME_LAYER_ACTION },
+    { label: 'set opacity', actionName: SET_LAYER_OPACITY_ACTION },
   ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('accepts $label', ({ actionName }) => {
     expect(isSetLayerPropertiesAction(actionName)).toBe(true);
   });
@@ -1411,6 +1454,12 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'hide', actionName: HIDE_LAYER_ACTION, patch: { visible: false } },
     { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
     { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+    {
+      label: 'an opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.42 },
+      patch: { opacity: 0.42 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1451,6 +1500,20 @@ describe('deriveSetLayerPropertiesEntry', () => {
     expect(derive({ opacity: 1 })).toBeNull();
     expect(derive()).toBeNull();
   });
+
+  it.each([undefined, null, '0.5', Number.NaN, Number.POSITIVE_INFINITY, -0.01, 1.01])(
+    'derives nothing from an invalid opacity value (%s)',
+    (opacity) => {
+      expect(
+        deriveSetLayerPropertiesEntry({
+          id: 'opacity',
+          actionName: SET_LAYER_OPACITY_ACTION,
+          layerId: 'layer-1',
+          args: { opacity },
+        })
+      ).toBeNull();
+    }
+  );
 
   it('carries the disabled state of the legacy item onto the derived entry', () => {
     const derived = deriveSetLayerPropertiesEntry({

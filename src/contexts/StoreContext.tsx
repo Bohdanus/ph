@@ -1,4 +1,13 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useReducer,
+  useState,
+  type Dispatch,
+} from 'react';
 import { isEqual } from 'lodash-es';
 import {
   DEFAULT_TOOL,
@@ -19,6 +28,7 @@ import type {
   SelectionSourceTool,
   Size,
 } from './general-types.ts';
+import { DEFAULT_VIEW_STATE, viewStateRef, type ViewState } from './view-state.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
@@ -184,6 +194,9 @@ export type StoreData = {
   /** A non-current sidecar must never be used as a replay or export input. */
   durableStatus: DurableDocumentStatus;
   durableDiagnostics: readonly MigrationDiagnostic[];
+  viewStateRef: { current: ViewState };
+  viewState: ViewState;
+  setViewState: (partial: Partial<ViewState>) => void;
 
   // colors
   color: string;
@@ -383,6 +396,9 @@ const initialState: StoreData = {
   toolOverlayRef: { current: null },
   rectOverlayRef: { current: null },
   containerRef: { current: null },
+  viewStateRef,
+  viewState: DEFAULT_VIEW_STATE,
+  setViewState: () => undefined,
 
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
@@ -995,6 +1011,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const toolOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const rectOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [, forceViewStateUpdate] = useState(0);
+  const setViewState = (partial: Partial<ViewState>) => {
+    viewStateRef.current = { ...viewStateRef.current, ...partial };
+    forceViewStateUpdate((value) => value + 1);
+  };
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
@@ -1528,6 +1549,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
       };
+      viewStateRef.current = DEFAULT_VIEW_STATE;
       rawDispatch({
         type: 'REPLACE_DOCUMENT',
         payload: committedPayload,
@@ -1600,21 +1622,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     publishRuntimePresentation,
     adoptLayerBitmaps,
     previewLayers: previewLayersRef,
+    viewStateRef,
+    viewState: viewStateRef.current,
+    setViewState,
   };
-  //
-  // function setSizeMemo(width: number, height: number) {
-  //   const { totalSize } = store;
-  //   if (width !== totalSize.width || height !== totalSize.height) {
-  //     dispatch({ type: 'SET_SIZE', payload: { width, height } });
-  //   }
-  // }
-  // zoom data
-  // const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
-  // const [, forceUpdate] = useState(0);
-  // const setZoomData = (data: ZoomData) => {
-  //   zoomDataRef.current = data;
-  //   forceUpdate((v) => v + 1);
-  // };
 
   return <StoreContext.Provider value={[store, dispatch]}>{children}</StoreContext.Provider>;
 }

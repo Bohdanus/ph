@@ -198,6 +198,21 @@ const missingRadiusControl: ToolControl = {
   status: 'missing',
 };
 
+const starPointsControl: ToolControl = {
+  control: 'Number of Points',
+  detail: 'Number of outer points in the star. This app reuses the Polygon bounds of 3–100 points and defaults to 5.',
+  status: 'present',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:330',
+};
+
+const starRatioControl: ToolControl = {
+  control: 'Star Ratio / Indent',
+  detail:
+    'Percentage of the outer radius used by each inner vertex, controlling the depth of the star indents. Adobe documents Inner Radius and Outer Radius, but not an exact default; this app represents their ratio as 1–99% and chooses 50% as an app-side default.',
+  status: 'present',
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:357',
+};
+
 const shiftSquareModifier: ToolModifier = {
   keys: 'Shift',
   action:
@@ -222,23 +237,23 @@ const spaceRepositionModifier: ToolModifier = {
 /**
  * `U` and `Shift+U` are the group's own bindings, and plain `U` is narrower than the group.
  *
- * Plain `U` has a deliberate quirk worth stating rather than smoothing over: the five
+ * Plain `U` has a deliberate quirk worth stating rather than smoothing over: the six
  * geometric figures all resolve to ONE app tool name and differ only by a `figure` field,
  * so U from any of them keeps the figure it is already on. The Custom Shape tool is the
  * exception, because it carries its own tool name, and U from there falls back to the
- * rectangle. `Shift+U` closes the group the same way, over all six entries; the `Shift+U` row
+ * rectangle. `Shift+U` closes the group the same way, over all seven entries; the `Shift+U` row
  * states that, and it is the row that owns it.
  */
 const shapeGroupShortcut: ToolShortcut = {
   keys: 'U',
   action:
-    'Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.',
+    'Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.',
 };
 
 const shapeCycleShortcut: ToolShortcut = {
   keys: 'Shift+U',
   action:
-    'Cycles to the next tool in the shapes tool group, through all six entries the rail’s flyout holds: rectangle, ellipse, line, triangle, polygon and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.',
+    'Cycles to the next tool in the shapes tool group. The rail flyout and keyboard cycle hold seven entries — rectangle, ellipse, line, triangle, polygon, star and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.',
 };
 
 const shapeToolShortcuts: readonly ToolShortcut[] = [shapeGroupShortcut, shapeCycleShortcut];
@@ -264,7 +279,7 @@ const CUSTOM_SHAPE_CHIPS = 'src/components/ToolbarsRight/toolbarPlaceholderConfi
 const withoutAppRef = ({ appRef: _appRef, ...control }: ToolControl): ToolControl => control;
 
 export const shapeDescriptions: Record<
-  'shape' | 'rectangle' | 'ellipse' | 'line' | 'triangle' | 'polygon' | 'custom-shape',
+  'shape' | 'rectangle' | 'ellipse' | 'line' | 'triangle' | 'polygon' | 'star' | 'custom-shape',
   ToolDescription
 > = {
   shape: {
@@ -284,7 +299,7 @@ export const shapeDescriptions: Record<
       'src/tools/toolsMap.ts:65',
     ],
     appNotes:
-      'The largest gap in the group is a tool the app does not have at all: Photoshop’s shapes group is seven entries and this app’s fly-out is six — Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape (`toolbar-mapping.ts:128-135`) — so there is no Star here, and the `shape` registry entry this description hangs off is the group container rather than a tool the rail ever displays. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.',
+      'The Star entry is now present in the app’s seven-entry shapes fly-out (`toolbar-mapping.ts`), and the `shape` registry entry this description hangs off remains the group container rather than a tool the rail displays by itself. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207',
@@ -479,7 +494,7 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:52',
     ],
     appNotes:
-      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct, and the side count is a real setting seeded at 5, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Sides is on the bar for this figure, takes the integers 3 through 100 — Adobe's own floor and ceiling — and persists per figure. What is still missing is the Star tool the same group carries, so a star Ratio has nothing here to compare against. The `[` and `]` rows Photoshop gives this tool are still absent from the table above, but the reason has changed and the old one would now be a falsehood: the side count does exist at runtime, and the gap is that the app's bracket keys reach only the eight tools that carry a tip Size, so they have nothing to act on. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it: the dialog commits the bar's current Sides rather than taking one of its own. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and of those the renderer reads only Number of Sides, from the bar rather than from the dialog, because no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.",
+      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct, and the side count is a real setting seeded at 5, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Sides is on the bar for this figure, takes the integers 3 through 100 — Adobe's own floor and ceiling — and persists per figure. The separate Star figure now owns its points and Star Ratio controls, so Polygon does not claim those controls. The `[` and `]` rows Photoshop gives this tool are still absent from the table above, but the reason has changed and the old one would now be a falsehood: the side count does exist at runtime, and the gap is that the app's bracket keys reach only the eight tools that carry a tip Size, so they have nothing to act on. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing. A bare click opens the app's Create Polygon dialog with Width, Height and From Center, and no field of this figure's own geometry is in it: the dialog commits the bar's current Sides rather than taking one of its own. The polygon is the one figure whose full click-dialog list Adobe published and then stopped publishing: a January 2021 archive of `drawing-shapes.html` names Symmetric, Number of Sides, Corner Radius, Star Ratio and Smooth Star Indents beside Width & Height and From Center, and the current page carries none of them — and of those the renderer reads only Number of Sides, from the bar rather than from the dialog, because no star or indent argument is read at all. Those are gaps rather than withheld fields, and the dialog is not where any of them can be closed.",
     sources: [
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',
@@ -488,6 +503,30 @@ export const shapeDescriptions: Record<
       'https://jkost.com/blog/2021/07/working-with-the-shape-tools-in-photoshop.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207',
+    ],
+  },
+
+  star: {
+    photoshopName: 'Star Tool',
+    summary: 'Drag-defined star with a configurable number of points and alternating outer and inner radii.',
+    purpose:
+      'The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke; Shift constrains proportions and Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.',
+    options: [...sharedFigureOptions, starPointsControl, starRatioControl, missingRadiusControl],
+    modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
+    shortcuts: [shapeGroupShortcut],
+    implementation: 'partial',
+    implementationRefs: [
+      'src/tools/toolProcessors.ts:191',
+      'src/tools/shape.ts:242',
+      'src/tools/shape.ts:107',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:330',
+      'src/tools/settings.ts:67',
+    ],
+    appNotes:
+      'The Star is implemented as another figure in the shared shape processor. Its path alternates outer and inner vertices, points default to 5, and the Star Ratio / Indent control reaches the renderer. Shape, Path and Pixels modes, Fill/Stroke behaviour, Shift constraint and Alt-from-center are inherited from the existing family. Adobe does not publish exact inner/outer defaults or all min/max bounds, so the 50% ratio default and 1–99% app range are explicit app decisions, not Adobe defaults. Corner Radius, Photoshop’s separate Inner Radius and Outer Radius fields, and true vector/path-mode commits remain limitations of the shared app architecture.',
+    sources: [
+      'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html',
+      'https://helpx.adobe.com/photoshop/using/create-star-shape.html',
     ],
   },
 

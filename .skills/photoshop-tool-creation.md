@@ -3961,14 +3961,12 @@ does not become a hedged sentence.
 The rule is not scoped to `HANDOFF.md`. **A change that invalidates a count or a claim in another
 doc fixes it in the same commit.**
 
-- **A passing-test count is a real one that went stale.** `e2e/OPEN_PROBLEMS.md` §"Observed failures" reads "97 pass,
-  2 are skipped by declaration", and `e2e/README.md` — the export-baseline tree listing, which no longer carries the passing-test count
-  still carries the justification the count was drawn from ("2–4 of the 97 tests failed for
-  documented reasons"). Every one moves the moment a test is added — which is why
-  `e2e/README.md` — the `e2e-unit` command block points at the three commands instead of restating the numbers, and why
-  `e2e/OPEN_PROBLEMS.md` — the preamble paragraph beginning "The numbers this file used to open with" now says plainly: "The numbers this file used to open with — tests
-  passed, expected-fail pins, files, mode-specific failure sets — were each a snapshot of one tree,
-  and each has been wrong since it was written while the number beside it stayed silent."
+- **A passing-test count is a real one that went stale.** `e2e/OPEN_PROBLEMS.md` records
+  the latest full headless run as a dated, machine-specific observation. The old pass/skip
+  claim and the README's old failure-count justification have both been removed;
+  `AGENTS.md` and `docs/TESTING.md` point readers to the record without duplicating its
+  totals. A suite change can invalidate a count: rerun before updating the source record,
+  and do not copy totals into another document.
 - **A claim about a gate is a real one.** `e2e/README.md` — the "It is a **blocking** gate" paragraph, which no longer says `continue-on-error: true` still says the `e2e` job "is
   still marked `continue-on-error: true`" and leaves "flipping `continue-on-error` to `false`" as
   the thing left to do. It is not: the job was promoted, and `.github/workflows/ci.yml` — the `e2e` job's "It was `continue-on-error: true`" comment
@@ -4561,11 +4559,11 @@ merge --ff-only main`.
     line and opening it. (No citation-checking script is checked into the repo — the
     sweep is manual, so budget for it.)
 39. **A passing-test count written into a doc goes stale and must be fixed in the same commit.**
-    Verified: `e2e/OPEN_PROBLEMS.md` §"Observed failures" asserts "no e2e test fails: 97 pass, 2 are
-    skipped by declaration", and `e2e/OPEN_PROBLEMS.md` is the only place the pass/skip counts live. `AGENTS.md` used
-    to assert the same count and no longer does, which is this trap biting a real citation. Any
-    change to the suite invalidates the number. Defence: the same commit that changes the count
-    edits the sentence.
+    Verified: `e2e/OPEN_PROBLEMS.md` records the current pass/skip counts as a dated,
+    machine-specific observation; `AGENTS.md` and `docs/TESTING.md` point to that record
+    without restating its totals. The old pass/skip claim is gone. Any suite change can
+    invalidate the observation. Defence: rerun the full suite before updating
+    the source record, in the same commit that changes the tests.
 
 ### Process
 

@@ -23,7 +23,7 @@ const storeState = {
 
 const FIGURE_TYPE_VALUES = Object.keys(savedArgsPerFigure) as FigureType[];
 
-type Figure = 'rectangle' | 'oval' | 'triangle' | 'polygon' | 'line';
+type Figure = 'rectangle' | 'oval' | 'triangle' | 'polygon' | 'star' | 'line';
 
 const PREVIEW_WIDTH = 96;
 const PREVIEW_HEIGHT = 48;
@@ -180,6 +180,7 @@ describe('Shape toolbar', () => {
       line: 'Line Tool',
       triangle: 'Triangle Tool',
       polygon: 'Polygon Tool',
+      star: 'Star Tool',
     };
 
     for (const [figure, label] of Object.entries(figureLabels) as [Figure, string][]) {
@@ -358,7 +359,7 @@ describe('Shape toolbar', () => {
 
   describe('preview geometry', () => {
     it('derives the runtime figure set from the narrowed FigureType union', () => {
-      expect([...FIGURE_TYPE_VALUES].sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle']);
+      expect([...FIGURE_TYPE_VALUES].sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'star', 'triangle']);
       for (const figure of FIGURE_TYPE_VALUES) expect(isFigureType(figure)).toBe(true);
     });
 
@@ -462,6 +463,7 @@ describe('Shape toolbar', () => {
       oval: 'Ellipse Tool',
       triangle: 'Triangle Tool',
       polygon: 'Polygon Tool',
+      star: 'Star Tool',
       line: 'Line Tool',
     };
 

@@ -2,6 +2,9 @@ import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
 import { cloneStamp } from './cloneStamp.ts';
+import { redEye } from './redEye.ts';
+import { spotHealing } from './spotHealing.ts';
+import { healingBrush } from './healingBrush.ts';
 import { colors } from './colors.ts';
 import { colorReplacement } from './colorReplacement.ts';
 import { crop } from './crop.ts';
@@ -107,7 +110,14 @@ export type ToolProcessorDefinition = {
  * neither difference gives it a `commit` kind.
  * <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
  */
-export const PIXEL_FREE_TOOLS = ['eyedropper', 'ruler', 'color-sampler'] as const satisfies readonly ToolName[];
+export const PIXEL_FREE_TOOLS = [
+  'eyedropper',
+  'ruler',
+  'color-sampler',
+  'hand',
+  'zoom',
+  'rotate-view',
+] as const satisfies readonly ToolName[];
 
 /** The tools that do have a processor, which is the registry's key set. */
 export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;
@@ -309,6 +319,24 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     replay: replay('raster-processor', true),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: cloneStamp,
+  },
+  'red-eye': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: redEye,
+  },
+  'spot-healing': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: spotHealing,
+  },
+  'healing-brush': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: healingBrush,
   },
   brush: {
     commit: 'raster',

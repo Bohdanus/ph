@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_POLYGON_SIDES,
+  DEFAULT_STAR_RATIO,
   drawShape,
   isFigureType,
   MAX_POLYGON_SIDES,
   MIN_POLYGON_SIDES,
+  MIN_STAR_RATIO,
+  MAX_STAR_RATIO,
   polygonSides,
+  starRatio,
   normalizeFigure,
   normalizeShapeGeometry,
   setShapeCtx,
@@ -102,7 +106,7 @@ const noModifiers = { shiftKey: false, altKey: false };
 
 describe('normalizeFigure', () => {
   it('passes through every supported figure unchanged', () => {
-    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const) {
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
       expect(normalizeFigure(figure)).toBe(figure);
       expect(isFigureType(figure)).toBe(true);
     }
@@ -302,7 +306,7 @@ describe('normalizeShapeGeometry', () => {
     });
   });
 
-  it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures', (figure) => {
+  it.each(['triangle', 'polygon', 'star'] as const)('keeps %s geometry consistent with the other figures', (figure) => {
     expect(normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 10 }, figure, noModifiers)).toEqual({
       start: { x: 0, y: 0 },
       end: { x: 30, y: 10 },
@@ -630,6 +634,7 @@ describe('drawShape', () => {
   it.each([
     ['triangle', 3],
     ['polygon', 5],
+    ['star', 10],
   ] as const)('closes a %s path with %i vertices', (figure, sides) => {
     const ctx = createCtx();
     drawShape(ctx, { ...baseArgs, figure, start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
@@ -702,6 +707,53 @@ describe('drawShape', () => {
       const ctx = createCtx();
       drawShape(ctx, { ...baseArgs, figure: 'polygon', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
       expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
+    });
+  });
+
+  describe("the Star's points and ratio", () => {
+    it('alternates outer and inner vertices for the requested point count', () => {
+      const { ctx, calls } = createRecordingCtx();
+      drawShape(ctx, {
+        ...baseArgs,
+        figure: 'star',
+        sides: 5,
+        starRatio: 50,
+        start: { x: 0, y: 0 },
+        end: { x: 100, y: 100 },
+      });
+
+      const vertices = pathCalls(calls).filter(({ method }) => method === 'moveTo' || method === 'lineTo');
+      expect(vertices).toHaveLength(10);
+      expect(vertices[0]).toEqual({ method: 'moveTo', args: [50, 0] });
+      expect(vertices[1].args[0]).toBeCloseTo(50 + Math.cos(-Math.PI / 2 + Math.PI / 5) * 25, 8);
+      expect(vertices[1].args[1]).toBeCloseTo(50 + Math.sin(-Math.PI / 2 + Math.PI / 5) * 25, 8);
+    });
+
+    it('reaches the renderer, so changing Star Ratio changes inner vertices', () => {
+      const innerRadius = (ratio: number) => {
+        const { ctx, calls } = createRecordingCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'star',
+          sides: 5,
+          starRatio: ratio,
+          start: { x: 0, y: 0 },
+          end: { x: 100, y: 100 },
+        });
+        const [x, y] = pathCalls(calls)[1].args;
+        return Math.hypot(x - 50, y - 50);
+      };
+
+      expect(innerRadius(25)).toBeCloseTo(12.5, 8);
+      expect(innerRadius(75)).toBeCloseTo(37.5, 8);
+    });
+
+    it('normalizes missing, fractional and out-of-range ratios', () => {
+      expect(starRatio(undefined)).toBe(DEFAULT_STAR_RATIO);
+      expect(starRatio(Number.NaN)).toBe(DEFAULT_STAR_RATIO);
+      expect(starRatio(0)).toBe(MIN_STAR_RATIO);
+      expect(starRatio(100)).toBe(MAX_STAR_RATIO);
+      expect(starRatio(49.6)).toBe(50);
     });
   });
 

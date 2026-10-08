@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -35,6 +35,7 @@ import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../l
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
+  collectWorktrees,
   findMissingWorktrees,
   listWorktrees,
   mergeConflict,
@@ -390,6 +391,47 @@ function liveInventory() {
 }
 
 describe('git.mjs against a real repository', () => {
+  it('keeps tip commit details when the branch has no commits ahead', async () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'modified');
+      const [worktree] = await collectWorktrees(dir, { base: 'main' });
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+
+      expect(worktree.ahead).toBe(0);
+      expect(worktree.tip.sha).toBe(head);
+      expect(worktree.mergedIntoBase).toBe(true);
+      expect(worktree.workingTree.modified).toBe(1);
+      expect(worktree.workingTree.notOnBase).toBe(1);
+
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      const [side] = await collectWorktrees(dir, { base: 'main' });
+      expect(side.ahead).toBe(2);
+      expect(side.mergedIntoBase).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds concurrent tasks while preserving input order', async () => {
+    let active = 0;
+    let peak = 0;
+    const doubled = await __testables.mapConcurrent(
+      [1, 2, 3, 4, 5],
+      async (value) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return value * 2;
+      },
+      2
+    );
+
+    expect(peak).toBe(2);
+    expect(doubled).toEqual([2, 4, 6, 8, 10]);
+  });
+
   it('maps rev-list --left-right --count to behind=left, ahead=right', () => {
     const dir = makeRepo();
     try {
@@ -961,7 +1003,7 @@ describe('blocked-question detection', () => {
       'Pending question requests: questionID "que_0e49a9650001UM8oJl32u9X3ko"',
   });
 
-  it('extracts the question id from the escaped payload', async () => {
+  it('extracts the latest question id without changing the database schema', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-blk-'));
     const dbPath = join(dir, 'kilo.db');
     const db = new DatabaseSync(dbPath);
@@ -985,6 +1027,14 @@ describe('blocked-question detection', () => {
         null
       );
       db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run('p1', 'm1', 'ses_x', NOW - 100, NOW - 100, payload);
+      db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run(
+        'p2',
+        'm2',
+        'ses_x',
+        NOW - 50,
+        NOW - 50,
+        payload.replace('que_0e49a9650001UM8oJl32u9X3ko', 'que_latest0001UM8oJl32u9X3ko')
+      );
       db.close();
 
       const { auditChats } = await_import();
@@ -993,8 +1043,18 @@ describe('blocked-question detection', () => {
       expect(s.state).toBe('blocked');
       // Not the `"/"` placeholder from the input JSON — that occurrence is
       // skipped because it is followed by a quote rather than a space.
-      expect(s.blockedOn).toBe('que_0e49a9650001UM8oJl32u9X3ko');
+      expect(s.blockedOn).toBe('que_latest0001UM8oJl32u9X3ko');
       expect(s.reasons.join(' ')).toContain('waiting for input');
+
+      const verify = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const indexes = verify
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_part_%'")
+          .all();
+        expect(indexes).toEqual([]);
+      } finally {
+        verify.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1657,7 +1717,7 @@ describe('summariseChats', () => {
 });
 
 describe('auditChats against a real session database', () => {
-  it('reads the LAST step-finish per session, not the first', () => {
+  it('reads the LAST step-finish per session from a read-only database', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wtinv-'));
     const dbPath = join(dir, 'kilo.db');
     const db = new DatabaseSync(dbPath);
@@ -1696,6 +1756,7 @@ describe('auditChats against a real session database', () => {
       ins.run('p2', 'm2', 'ses_one', NOW - 800, NOW - 800, JSON.stringify({ type: 'step-finish', reason: 'stop' }));
 
       db.close();
+      chmodSync(dbPath, 0o444);
 
       const { auditChats } = await_import();
       const audit = auditChats({
@@ -3202,6 +3263,25 @@ describe('the call history', () => {
       liveWindowMs: 30 * 60 * 1000,
       ...extra,
     });
+
+  it('reads the session database without write access or query indexes', () => {
+    const fx = makeSessionDb({});
+    try {
+      chmodSync(fx.dbPath, 0o444);
+      expect(run(fx.dbPath).available).toBe(true);
+      const verify = new DatabaseSync(fx.dbPath, { readOnly: true });
+      try {
+        const indexes = verify
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_part_%'")
+          .all();
+        expect(indexes).toEqual([]);
+      } finally {
+        verify.close();
+      }
+    } finally {
+      fx.cleanup();
+    }
+  });
 
   it('reads the worktree name out of a path, and only out of a worktree path', () => {
     // The separator is the whole test. The root arrives with no trailing slash,

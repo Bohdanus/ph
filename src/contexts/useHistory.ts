@@ -6,7 +6,7 @@ import { findToolProcessor } from '../tools/toolProcessors.ts';
 import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
-import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
+import { SET_DOCUMENT_FRAME_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../util/constants.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
@@ -24,6 +24,7 @@ export function getHistoryItemTitle(item: HistoryItem) {
   }
 
   if (actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
+  if (actionName === SET_LAYER_OPACITY_ACTION) return 'Set Opacity';
 
   return actionName;
 }

@@ -197,7 +197,7 @@ describe('materialization cache key stability', () => {
     );
   });
 
-  it('changes the key when the document frame changes and omits the frame entirely without one', () => {
+  it('changes the key when the document or pixel grid frame changes', () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 });
     const frameA: DocumentFrame = { x: 0, y: 0, width: 400, height: 300 };
@@ -205,11 +205,16 @@ describe('materialization cache key stability', () => {
 
     const withA = createMaterializationKey(layer, makeRequest(registry, { frame: frameA }));
     const withB = createMaterializationKey(layer, makeRequest(registry, { frame: frameB }));
+    const pixelGridA = createMaterializationKey(layer, makeRequest(registry, { pixelGridFrame: frameA }));
+    const pixelGridB = createMaterializationKey(layer, makeRequest(registry, { pixelGridFrame: frameB }));
     const without = createMaterializationKey(layer, makeRequest(registry));
 
     expect(withA).not.toBe(withB);
     expect(withA).not.toBe(without);
+    expect(pixelGridA).not.toBe(pixelGridB);
+    expect(pixelGridA).not.toBe(without);
     expect(without).not.toContain('"frame"');
+    expect(without).not.toContain('"pixelGridFrame"');
   });
 
   it('folds the raster source generation into the key and falls back to -1 for an unknown asset', () => {

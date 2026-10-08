@@ -112,6 +112,6 @@ describe('pre-push stale branch detection', () => {
       .split('\n');
 
     expect(hook).toContain('node scripts/stale-branch-files.mjs');
-    expect(hook.at(-1)).toBe('npm run gate:push');
+    expect(hook.at(-1)).toBe('npm run --silent gate:push');
   });
 });

@@ -126,6 +126,9 @@ vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
 vi.mock('../SpongeToolArea.tsx', () => ({ SpongeToolArea: marker('sponge') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
 vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
+vi.mock('../ViewToolArea.tsx', () => ({ ViewToolArea: marker('view') }));
+vi.mock('../SpotHealingToolArea.tsx', () => ({ SpotHealingToolArea: marker('spot-healing') }));
+vi.mock('../HealingBrushToolArea.tsx', () => ({ HealingBrushToolArea: marker('healing-brush') }));
 vi.mock('../TextEditOverlay.tsx', () => ({ TextEditOverlay: overlayMarker }));
 
 /**
@@ -156,6 +159,9 @@ const TOOL_AREA_IDS = [
   'fill',
   'color-replacement',
   'gradient',
+  'view',
+  'spot-healing',
+  'healing-brush',
 ] as const;
 
 const toolAreaTestId = () => {
@@ -209,6 +215,9 @@ afterEach(() => {
 describe('Main tool-area routing', () => {
   it.each([
     ['reposition', 'move'],
+    ['hand', 'view'],
+    ['zoom', 'view'],
+    ['rotate-view', 'view'],
     ['crop', 'crop'],
     ['draw', 'draw'],
     ['brush', 'draw'],
@@ -246,6 +255,8 @@ describe('Main tool-area routing', () => {
     // still resolves: a tool the routing table forgot falls through to the hidden dummy,
     // which renders no marker and would otherwise pass as a working area.
     ['sponge', 'sponge'],
+    ['spot-healing', 'spot-healing'],
+    ['healing-brush', 'healing-brush'],
     ['magic-eraser', 'fill'],
     ['paint-bucket', 'fill'],
     ['gradient', 'gradient'],
@@ -267,6 +278,9 @@ describe('Main tool-area routing', () => {
     // over a single `interactionMode`, so one is the only correct number.
     const routed = [
       'reposition',
+      'hand',
+      'zoom',
+      'rotate-view',
       'crop',
       'draw',
       'brush',
@@ -294,6 +308,8 @@ describe('Main tool-area routing', () => {
       'dodge',
       'burn',
       'sponge',
+      'spot-healing',
+      'healing-brush',
       'paint-bucket',
       'gradient',
     ] as const;
@@ -340,11 +356,10 @@ describe('Main tool-area routing', () => {
   });
 
   it.each([
-    'zoom',
     'custom-shape',
     'transform',
-    // These are the only tools left with no tool area at all: the zoom is a store-driven
-    // viewport control, `custom-shape` is still a placeholder panel, and `transform` is a
+    // These are the only tools left with no tool area at all: `custom-shape` is still a placeholder
+    // panel, and `transform` is a
     // one-shot operation the canvas route drives rather than a gesture surface. The eleven
     // Photoshop tools that used to sit in this list have each left it for a real area, so
     // this table is the deliberate allow-list of what may still fall through to the dummy.

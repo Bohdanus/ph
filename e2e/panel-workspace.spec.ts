@@ -340,10 +340,12 @@ test.describe('Panel workspace (fast)', () => {
 
     await page.mouse.up();
 
-    // The dock is now the left column and the rail the right one, and the canvas is between.
+    // The dock and rail now share the left column, with the rail above the dock. Docking is
+    // additive: moving the dock does not force the independent Tools rail to the opposite edge.
     const dockBox = (await page.locator(DOCK).boundingBox())!;
     const railBox = (await page.locator(RAIL).boundingBox())!;
-    expect(dockBox.x).toBeLessThan(railBox.x);
+    expect(Math.abs(dockBox.x - railBox.x)).toBeLessThanOrEqual(1);
+    expect(railBox.y + railBox.height).toBeLessThanOrEqual(dockBox.y + 1);
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
   });
 

@@ -147,7 +147,7 @@ describe('waitForCanvasPixels', () => {
         pollIntervalMs: 100,
         description: 'red pixels',
       })
-    ).rejects.toThrow('Canvas did not render red pixels within 1000ms');
+    ).rejects.toThrow('Canvas did not render red pixels within 1000ms after 11 polls');
 
     expect(predicate).toHaveBeenCalledTimes(11);
     expect(harness.waitForTimeout).toHaveBeenCalledTimes(10);
@@ -158,7 +158,7 @@ describe('waitForCanvasPixels', () => {
 
     await expect(
       waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(false), { timeoutMs: 300, pollIntervalMs: 100 })
-    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms');
+    ).rejects.toThrow('Canvas did not render the expected pixels within 300ms after 4 polls');
   });
 
   it('defaults to the shared 10000ms timeout and 100ms poll interval', async () => {
@@ -166,7 +166,7 @@ describe('waitForCanvasPixels', () => {
     const predicate = always(false);
 
     await expect(waitForCanvasPixels(harness.page, STANDALONE_CLIP, predicate)).rejects.toThrow(
-      `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms`
+      `Canvas did not render the expected pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
     expect(CANVAS_REDRAW_TIMEOUT_MS).toBe(10_000);
@@ -772,7 +772,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
 
     await expect(waitForCanvasRedraw(harness.page, BOX)).rejects.toThrow(
-      `Canvas did not render dark pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms`
+      `Canvas did not render dark pixels within ${CANVAS_REDRAW_TIMEOUT_MS}ms after ${READS_PER_DEFAULT_TIMEOUT} polls`
     );
 
     expect(harness.waitForTimeout).toHaveBeenCalledTimes(CANVAS_REDRAW_TIMEOUT_MS / CANVAS_REDRAW_POLL_INTERVAL_MS);
@@ -783,7 +783,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(await createTestImage(WHITE, 1, 1));
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 200, pollIntervalMs: 50 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 200ms'
+      'Canvas did not render dark pixels within 200ms after 5 polls'
     );
 
     expect(harness.screenshot).toHaveBeenCalledTimes(5);
@@ -796,7 +796,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(spray);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 0ms'
+      'Canvas did not render dark pixels within 0ms after 1 poll'
     );
 
     expect(harness.screenshot).toHaveBeenCalledTimes(1);
@@ -809,7 +809,7 @@ describe('waitForCanvasRedraw', () => {
     const harness = createPollingPage(transparent);
 
     await expect(waitForCanvasRedraw(harness.page, BOX, { timeoutMs: 0 })).rejects.toThrow(
-      'Canvas did not render dark pixels within 0ms'
+      'Canvas did not render dark pixels within 0ms after 1 poll'
     );
   });
 

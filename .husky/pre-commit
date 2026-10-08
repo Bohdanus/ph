@@ -30,4 +30,4 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   node scripts/merge-takeover-guard.mjs
 fi
 
-npm run gate:commit
+npm run --silent gate:commit

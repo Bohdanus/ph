@@ -121,6 +121,23 @@ describe('isAcceptedConsoleError', () => {
       })
     ).toBe(false);
   });
+
+  it('accepts the sampler-cap refusal at its Vite wrapper or source location only', () => {
+    const text = 'color-sampler-cap-reached the color sampler holds 4 samples';
+    expect(
+      isAcceptedConsoleError({
+        text,
+        location: { url: 'http://localhost:5173/@vite/client', lineNumber: 298 },
+      })
+    ).toBe(true);
+    expect(
+      isAcceptedConsoleError({
+        text,
+        location: { url: 'http://localhost:5173/src/components/Main/ColorSamplerToolArea.tsx', lineNumber: 197 },
+      })
+    ).toBe(true);
+    expect(isAcceptedConsoleError({ text, location: APP_JS })).toBe(false);
+  });
 });
 
 describe('ACCEPTED_CONSOLE_ERRORS', () => {
@@ -134,8 +151,12 @@ describe('ACCEPTED_CONSOLE_ERRORS', () => {
     // A `urlPattern` on either of the other two would be a narrowing nobody asked for,
     // and it is the shape a future edit takes by accident.
     const scoped = ACCEPTED_CONSOLE_ERRORS.filter((entry) => entry.urlPattern);
-    expect(scoped).toHaveLength(1);
-    expect(scoped[0].match).toBe('color-sampler-cap-reached');
+    expect(scoped).toHaveLength(2);
+    const matches = scoped.map((e) => e.match).sort();
+    expect(matches).toEqual([
+      'Failed to load resource: the server responded with a status of 404 (Not Found)',
+      'color-sampler-cap-reached',
+    ]);
   });
 });
 
@@ -188,8 +209,7 @@ describe('ConsolePolice.assertClean', () => {
     // The allowlist is for console output the app logs on purpose. An uncaught
     // exception is a defect whatever it says, and routing page errors through
     // `isAcceptedConsoleError` is the edit this case exists to catch.
-    const { police, emitConsole, emitPageError } = harness();
-    emitConsole('error', NOT_FOUND_TEXT, APP_JS);
+    const { police, emitPageError } = harness();
     emitPageError(new Error(BOUNDARY_TEXT));
 
     expect(() => police.assertClean(testInfo())).toThrow(/uncaught exception/);

@@ -21,6 +21,7 @@ import {
   cloneLayerSnapshot,
   collectDurableAssetIds,
   freezeDurableDocument,
+  refreezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
@@ -39,6 +40,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
@@ -315,7 +317,7 @@ function frameFromLegacy(
 }
 
 /**
- * The frame the FIRST entry establishes when it is a bedrock source rather than a
+ * The frame an ENABLED first entry establishes when it is a bedrock source rather than a
  * document source — the shape `File > New` produces, where `createBlankLayer(params,
  * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
  * `{ isBedrock: true, size }` (`useLayer.ts:245-258`, `history-utils.ts:22-25`).
@@ -327,12 +329,12 @@ function frameFromLegacy(
  * `currentFrame` alone, which is right for every LATER entry and wrong for the one
  * that opened the document.
  *
- * It outranks `options.initialFrame` deliberately, and for the same reason legacy
- * replay does: that option is the store's CURRENT frame, which a later crop has
- * already moved, while legacy replay restores the bedrock size when the cursor walks
- * back to index 0. A converter that preferred it would describe cursor -1 as the
- * cropped document, so the two models would disagree at exactly the cursor where the
- * user can undo into the un-cropped original.
+ * For an enabled first entry it outranks `options.initialFrame` deliberately, and
+ * for the same reason legacy replay does: that option is the store's CURRENT frame,
+ * which a later crop has already moved, while legacy replay restores the bedrock
+ * size when the cursor walks back to index 0. A converter that preferred it would
+ * describe cursor -1 as the cropped document, so the two models would disagree at
+ * exactly the cursor where the user can undo into the un-cropped original.
  */
 function frameFromFirstEntryBedrock(item: HistoryItem | undefined): DocumentFrame | undefined {
   if (!item || item.documentSource) return undefined;
@@ -442,15 +444,16 @@ export function deriveSetSelectionEntry(
  * The value is the closed set of properties an action may own, not every key
  * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
  * derivation and the append validator exhaustively switch on the owned key —
- * widening it to `keyof DurableLayerPropertyPatch` would let a new action own
- * `opacity` and fall into the visibility arm as a silent default.
+ * widening it to `keyof DurableLayerPropertyPatch` would let an action own a
+ * property without adding its explicit derivation branch.
  */
-type LayerPropertyKey = 'visible' | 'name';
+type LayerPropertyKey = 'visible' | 'name' | 'opacity';
 
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
+  [SET_LAYER_OPACITY_ACTION]: 'opacity',
 } as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
@@ -496,6 +499,10 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     const name = (item.args as { name?: unknown } | undefined)?.name;
     if (typeof name !== 'string') return null;
     patch = { name };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'opacity') {
+    const opacity = (item.args as { opacity?: unknown } | undefined)?.opacity;
+    if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
+    patch = { opacity };
   } else {
     // Visibility comes from the action, never from `args.visible`: that is the
     // rule legacy replay applies, and a hand-built args object must not be able
@@ -745,7 +752,9 @@ export function legacyHistoryToDurable(
   const documentId = options.documentId ?? uuidv4();
   const registry = options.registry ?? getAssetRegistry();
   const first = legacyHistory[0];
-  const initialSize = options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 };
+  const firstIsEnabled = !!first && isEntryEnabled(first);
+  const initialSize = options.initialSize ??
+    (firstIsEnabled ? first.documentSource?.size : undefined) ?? { width: 1, height: 1 };
   // Both branches must seed identically, so the durable baseline reads the same
   // unbounded rule legacy replay uses. It cannot be narrowed to the pre-first-entry
   // state while a selection is created outside history: the tool-switch clear's
@@ -756,7 +765,10 @@ export function legacyHistoryToDurable(
   // at history index 0; the durable path's only frame writer is the
   // `set-document-frame` operation.
   const initial = (first && isEntryEnabled(first) ? snapshotFromDocumentSource(first, documentId, registry) : null) ?? {
-    frame: frameFromFirstEntryBedrock(first) ?? options.initialFrame ?? documentFrameFromSize(initialSize),
+    frame:
+      (firstIsEnabled ? frameFromFirstEntryBedrock(first) : undefined) ??
+      options.initialFrame ??
+      documentFrameFromSize(initialSize),
     layers: [],
     activeLayerId: null,
   };
@@ -1197,8 +1209,7 @@ export function createDurableDocument(
 
 export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
   const history = [...document.history.slice(0, document.cursor + 1), next];
-  return freezeDurableDocument({
-    ...cloneDurableDocument(document),
+  return refreezeDurableDocument(document, {
     history,
     cursor: history.length - 1,
     branchRevision: document.branchRevision + 1,
@@ -1212,8 +1223,7 @@ export function toggleDurableEntry(document: DurableDocument, entryId: string): 
   const history = document.history.map((historyEntry, historyIndex) =>
     historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
   );
-  return freezeDurableDocument({
-    ...document,
+  return refreezeDurableDocument(document, {
     history,
     branchRevision: document.branchRevision + 1,
     durableRevision: document.durableRevision + 1,
@@ -1224,5 +1234,5 @@ export function setDurableCursor(document: DurableDocument, cursor: number): Dur
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
   return cursor === document.cursor
     ? document
-    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
+    : refreezeDurableDocument(document, { cursor, durableRevision: document.durableRevision + 1 });
 }

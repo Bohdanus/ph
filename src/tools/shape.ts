@@ -2,7 +2,7 @@ import type { CreatorToolParams, ToolResult } from './toolProcessors.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 
-export type FigureType = 'line' | 'rectangle' | 'oval' | 'triangle' | 'polygon';
+export type FigureType = 'line' | 'rectangle' | 'oval' | 'triangle' | 'polygon' | 'star';
 
 export type LegacyFigureType = FigureType | 'circle' | 'square';
 
@@ -12,7 +12,12 @@ const legacyFigureMap: Record<'circle' | 'square', FigureType> = {
 };
 
 export const isFigureType = (figure: unknown): figure is FigureType =>
-  figure === 'line' || figure === 'rectangle' || figure === 'oval' || figure === 'triangle' || figure === 'polygon';
+  figure === 'line' ||
+  figure === 'rectangle' ||
+  figure === 'oval' ||
+  figure === 'triangle' ||
+  figure === 'polygon' ||
+  figure === 'star';
 
 /**
  * Photoshop exposes Circle and Square as Shift-constrained outcomes of the
@@ -42,6 +47,12 @@ export const DEFAULT_POLYGON_SIDES = 5;
  */
 export const MAX_POLYGON_SIDES = 100;
 
+/** Adobe documents the Star Ratio control as a percentage, but not its default. */
+export const MIN_STAR_RATIO = 1;
+export const MAX_STAR_RATIO = 99;
+/** App decision: 50% gives the conventional five-point star used by polygon tools. */
+export const DEFAULT_STAR_RATIO = 50;
+
 export type ShapeToolArgs = {
   alpha: number;
   color: string;
@@ -53,6 +64,7 @@ export type ShapeToolArgs = {
   lineCap?: ShapeLineCap;
   cornerRadius?: number;
   sides?: number;
+  starRatio?: number;
   toolMode?: ShapeToolMode;
   start?: Point;
   end?: Point;
@@ -223,6 +235,15 @@ export const polygonSides = (sides: number | undefined): number => {
   return rounded;
 };
 
+/** Normalize the percentage of the outer radius used by a star's inner vertices. */
+export const starRatio = (ratio: number | undefined): number => {
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return DEFAULT_STAR_RATIO;
+  const rounded = Math.round(ratio);
+  if (rounded < MIN_STAR_RATIO) return MIN_STAR_RATIO;
+  if (rounded > MAX_STAR_RATIO) return MAX_STAR_RATIO;
+  return rounded;
+};
+
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { figure, start, end } = args;
   // `backgroundColor` is half the condition, not a detail: `setShapeCtx` only assigns `fillStyle`
@@ -239,19 +260,23 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
     ctx.stroke();
-  } else if (figure === 'triangle' || figure === 'polygon') {
+  } else if (figure === 'triangle' || figure === 'polygon' || figure === 'star') {
     const centerX = (start.x + end.x) / 2;
     const centerY = (start.y + end.y) / 2;
     const radiusX = Math.abs(end.x - start.x) / 2;
     const radiusY = Math.abs(end.y - start.y) / 2;
     const sides = figure === 'triangle' ? 3 : polygonSides(args.sides);
+    const vertexCount = figure === 'star' ? sides * 2 : sides;
+    const innerRatio = figure === 'star' ? starRatio(args.starRatio) / 100 : 1;
+    const angleStep = figure === 'star' ? Math.PI / sides : (Math.PI * 2) / sides;
 
     ctx.beginPath();
-    for (let index = 0; index < sides; index += 1) {
-      const angle = -Math.PI / 2 + (index * Math.PI * 2) / sides;
+    for (let index = 0; index < vertexCount; index += 1) {
+      const angle = -Math.PI / 2 + index * angleStep;
+      const radius = index % 2 === 0 ? 1 : innerRatio;
       const point = {
-        x: centerX + Math.cos(angle) * radiusX,
-        y: centerY + Math.sin(angle) * radiusY,
+        x: centerX + Math.cos(angle) * radiusX * radius,
+        y: centerY + Math.sin(angle) * radiusY * radius,
       };
       if (index === 0) ctx.moveTo(point.x, point.y);
       else ctx.lineTo(point.x, point.y);

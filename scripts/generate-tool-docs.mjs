@@ -13,6 +13,7 @@ import { selectionDescriptions } from '../src/tools/descriptions/selection.ts';
 import { shapeDescriptions } from '../src/tools/descriptions/shape.ts';
 import { transformDescriptions } from '../src/tools/descriptions/transform.ts';
 import { typeCropDescriptions } from '../src/tools/descriptions/type-crop.ts';
+import { viewDescriptions } from '../src/tools/descriptions/view.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(REPO_ROOT, 'docs/TOOLS.md');
@@ -42,6 +43,7 @@ const FAMILIES = [
   { title: 'Type and crop', record: typeCropDescriptions, notes: 'type-crop.notes.md' },
   { title: 'Move, transform and adjustments', record: transformDescriptions, notes: 'transform.notes.md' },
   { title: 'Eyedropper and draw', record: eyedropperDrawDescriptions, notes: 'eyedropper-draw.notes.md' },
+  { title: 'View and navigation', record: viewDescriptions, notes: 'view.notes.md' },
 ];
 
 const toolDescriptions = Object.assign({}, ...FAMILIES.map(({ record }) => record));
@@ -57,6 +59,7 @@ const FIGURE_TOOL_NAMES = {
   line: 'line',
   triangle: 'triangle',
   polygon: 'polygon',
+  star: 'shape',
 };
 
 const descriptionKeyFor = (name, figure) => (figure === undefined ? name : FIGURE_TOOL_NAMES[figure]);
@@ -217,6 +220,8 @@ export const renderToolDocs = async () => {
  */
 export const renderTooltips = async () => {
   const entries = Object.entries(toolDescriptions)
+    // Star is a FigureType carried by the shared shape ToolName, not a separate registry name.
+    .filter(([key]) => key !== 'star')
     .map(
       ([key, tool]) =>
         `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)} },`
@@ -255,13 +260,14 @@ ${entries}
  * separately, so a figure added there with no entry here resolves to \`undefined\` at runtime
  * and renders a tooltip with no description; this turns that into a compile error instead.
  */
-const FIGURE_TOOL_NAMES = {
-  rectangle: 'rectangle',
-  oval: 'ellipse',
-  line: 'line',
-  triangle: 'triangle',
-  polygon: 'polygon',
-} satisfies Record<FigureType, ToolName>;
+ const FIGURE_TOOL_NAMES = {
+   rectangle: 'rectangle',
+   oval: 'ellipse',
+   line: 'line',
+   triangle: 'triangle',
+   polygon: 'polygon',
+   star: 'shape',
+ } satisfies Record<FigureType, ToolName>;
 
 /**
  * Which description a toolbar entry shows.

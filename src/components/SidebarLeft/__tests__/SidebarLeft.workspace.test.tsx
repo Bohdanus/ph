@@ -47,6 +47,9 @@ vi.mock('../toolIcons.tsx', () => {
   const Icon = () => <svg aria-hidden="true" />;
   const names = [
     'reposition',
+    'hand',
+    'zoom',
+    'rotate-view',
     'rectangular-selection',
     'elliptical-selection',
     'freehand-lasso',
@@ -57,6 +60,9 @@ vi.mock('../toolIcons.tsx', () => {
     'eyedropper',
     'eraser',
     'clone-stamp',
+    'red-eye',
+    'spot-healing',
+    'healing-brush',
     'paint-bucket',
     'gradient',
     'sharpen',
@@ -181,7 +187,8 @@ describe('SidebarLeft workspace placement', () => {
 
       const rail = screen.getByTestId('left-sidebar');
       expect(rail).toHaveClass('[grid-column-start:3]');
-      expect(rail).toHaveClass('[grid-row:3/5]');
+      // The dock is also on the right, so the rail occupies the top half of that column.
+      expect(rail).toHaveClass('[grid-row:3/4]');
       // The border follows: on the right edge, the canvas-facing side is the LEFT one.
       expect(rail).toHaveClass('border-l');
       expect(rail).not.toHaveClass('border-r');
