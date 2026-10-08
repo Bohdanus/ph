@@ -177,10 +177,14 @@ test.describe('Export visual regression', () => {
         threshold: 0.01,
         maxDiffPixels: 100,
       });
+      const sizeDetails = result.sizeMismatch
+        ? `; actual ${result.sizeMismatch.actual.width}x${result.sizeMismatch.actual.height}, ` +
+          `expected ${result.sizeMismatch.expected.width}x${result.sizeMismatch.expected.height}`
+        : '';
       expect(
         result.matches,
         `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels ` +
-          `(ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
+          `${sizeDetails} (ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
           'Do not widen the budget - see the argument above this call.'
       ).toBe(true);
 
