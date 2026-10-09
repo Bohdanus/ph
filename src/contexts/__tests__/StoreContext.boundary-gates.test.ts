@@ -7,7 +7,7 @@ import type { Action, PublicAction, StoreDispatch } from '../StoreContext.tsx';
 
 const srcDir = resolve(import.meta.dirname, '../..');
 const repoRoot = resolve(srcDir, '..');
-const forbiddenModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
+const forbiddenModules = ['replay-coordinator', 'replay-checkpoints'] as const;
 const materializationModule = 'materialization';
 
 /**
@@ -19,7 +19,7 @@ const materializationModule = 'materialization';
  * `it('keeps the deleted coordination modules deleted')` is what makes the retirement
  * verifiable rather than assumed.
  */
-const deletedModules = ['replay-coordinator', 'replay-checkpoints'] as const;
+const deletedModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
 
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 
@@ -380,10 +380,11 @@ describe('StoreContext boundary gates', () => {
     expect(walkedProductionModules()).toEqual(trackedProductionModules());
   });
 
-  // The forbidden set contains retired coordination and budget modules — `replay-budget`,
-  // `replay-coordinator`, and `replay-checkpoints`. The last two no longer exist as files;
-  // they are kept in the set so the gate still reports a reintroduction, which is what the
-  // synthetic specifiers in `it('reports a forbidden module from any module…')` exercise.
+  // The forbidden set contains retired coordination modules — `replay-coordinator` and
+  // `replay-checkpoints`. They no longer exist as files; they are kept in the set so the gate
+  // still reports a reintroduction, which is what the synthetic specifiers in
+  // `it('reports a forbidden module from any module…')` exercise. The dormant replay budget is
+  // covered by `deletedModules` below.
   // `materialization.ts` is intentionally excluded: the durable compositor is its one allowed
   // production boundary. `presentation-evaluator.ts` is imported by production on purpose
   // (`layer-renderer.ts` and `useLayer.ts` — `operationsRetainedAfterBake()`, and
