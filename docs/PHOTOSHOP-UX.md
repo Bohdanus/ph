@@ -36,14 +36,14 @@ violations on `main`.
   `draw` itself is a freehand-annotation layer tool; Photoshop's nearest is the
   Brush, and the app already has a Brush. **It is to be deleted**, not relabelled —
   except that `draw` is the one tool this requirement does not reach, under the
-  operator's override in [`OVERRIDES.md`](OVERRIDES.md).
+  operator's override recorded below.
 
 - **The operator has decided: the three come out of the rail.** 2026-10-01, in
   their words, "I decide to remove them." The **rail entries** go — Photoshop's
   Tools panel has no such entries, and they have **no replacement tool** because
   Photoshop puts nothing in their place. The **processors are not deleted**; the
   capability is to be restructured, not dropped. **DONE** — the flyout is gone from
-  `toolbar-mapping.ts`, the rail is fifteen groups, and `extraTools` is the list of
+  `toolbar-mapping.ts`, the rail has **four** top-level bands, and `extraTools` is the list of
   registered tool ids that carry no rail entry.
   - **The destination already existed, mislabelled, and two surfaces had to change
     together.** The app's menus were File, Tools, **Edit**, Window. `Edit` already
@@ -105,14 +105,13 @@ violations on `main`.
   never displays" points at the wrong target. `shape` is the only id the flyout
   routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
   Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**;
-  the flyout has **six** today (the shape flyout in `toolbarMap`) and `Star` is the
-  missing one.
+  the flyout has **seven** today (the shape flyout in `toolbarMap`), all present.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
   "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
   for the Move tool is acceptable — but the **rendered label** is not and must end
-  in `" Tool"`. Scanning all **40** `label:` entries in `toolbarMap` (the five
+  in `" Tool"`. Scanning all **50** `label:` entries in `toolbarMap` (the seven
   `shape` figures and the six Pen-family entries each carry their own label, so the
-  entry count is 40 and not the tile count): **none lack the suffix**. It used to be
+  entry count is 50 and not the tile count): **none lack the suffix**. It used to be
   exactly three — `Colors`, `Levels` and `Transform` — and those three left the rail
   entirely, because they are `Image ▸ Adjustments` and `Edit ▸ Transform` commands
   rather than tools; `extraTools` (`toolbar-mapping.ts`) is the list that now records

@@ -159,7 +159,8 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'elliptical-selection' ||
     toolName === 'quick-selection' ||
     toolName === 'gradient' ||
-    toolName === 'sharpen'
+    toolName === 'sharpen' ||
+    toolName === 'patch'
   ) {
     // None of these carry stroke geometry, so the whole args object is the
     // settings — the same treatment the magic wand gets above.

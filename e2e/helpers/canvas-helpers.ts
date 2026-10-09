@@ -964,7 +964,7 @@ export type CanvasPixelPredicate = (screenshot: Buffer) => Promise<boolean>;
 export interface WaitForCanvasPixelsOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
-  /** Named in the timeout error, e.g. 'red pixels' -> "Canvas did not render red pixels within 10000ms". */
+  /** Named in the timeout error, e.g. "Canvas did not render red pixels within 10000ms after 101 polls". */
   description?: string;
 }
 
@@ -989,8 +989,10 @@ export async function waitForCanvasPixels(
   const timeoutMs = options.timeoutMs ?? CANVAS_REDRAW_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
 
   for (;;) {
+    pollCount += 1;
     // What is re-derived every poll is the WINDOW, not the box. `clip` is a by-value
     // argument, so the loop reads the same PAGE rect on every attempt for the whole timeout —
     // `canvas-redraw.unit.test.ts` pins that the identical object reaches `page.screenshot`
@@ -1011,7 +1013,10 @@ export async function waitForCanvasPixels(
       await onScreen.restore();
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+      const pollLabel = pollCount === 1 ? 'poll' : 'polls';
+      throw new Error(
+        `Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms after ${pollCount} ${pollLabel}`
+      );
     }
     await page.waitForTimeout(pollIntervalMs);
   }

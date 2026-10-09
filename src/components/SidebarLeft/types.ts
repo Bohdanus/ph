@@ -22,6 +22,7 @@ export type ToolIconName =
   | 'red-eye'
   | 'spot-healing'
   | 'healing-brush'
+  | 'patch'
   | 'paint-bucket'
   | 'gradient'
   | 'sharpen'

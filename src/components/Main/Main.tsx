@@ -21,6 +21,7 @@ import { ColorSamplerToolArea } from './ColorSamplerToolArea.tsx';
 import { RedEyeToolArea } from './RedEyeToolArea.tsx';
 import { SpotHealingToolArea } from './SpotHealingToolArea.tsx';
 import { HealingBrushToolArea } from './HealingBrushToolArea.tsx';
+import { PatchToolArea } from './PatchToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
 import { SharpenToolArea } from './SharpenToolArea.tsx';
@@ -208,6 +209,8 @@ const Main = () => {
     interactionMode = 'spot-healing';
   } else if (toolName === 'healing-brush') {
     interactionMode = 'healing-brush';
+  } else if (toolName === 'patch') {
+    interactionMode = 'patch';
   } else if (toolName === 'sharpen') {
     interactionMode = 'sharpen';
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
@@ -334,7 +337,8 @@ const Main = () => {
       | typeof ColorReplacementToolArea
       | typeof RedEyeToolArea
       | typeof SpotHealingToolArea
-      | typeof HealingBrushToolArea;
+      | typeof HealingBrushToolArea
+      | typeof PatchToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -363,6 +367,7 @@ const Main = () => {
       else if (interactionMode === 'red-eye') EventHandler = RedEyeToolArea;
       else if (interactionMode === 'spot-healing') EventHandler = SpotHealingToolArea;
       else if (interactionMode === 'healing-brush') EventHandler = HealingBrushToolArea;
+      else if (interactionMode === 'patch') EventHandler = PatchToolArea;
       else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
       else if (interactionMode === 'gradient') EventHandler = GradientToolArea;
@@ -428,6 +433,7 @@ const Main = () => {
               'color-sampler',
               'spot-healing',
               'healing-brush',
+              'patch',
             ].includes(interactionMode)
               ? 'block'
               : 'none',

@@ -119,6 +119,7 @@ describe('MobileToolSheet', () => {
       'color-replacement',
       'spot-healing',
       'healing-brush',
+      'patch',
       'eraser',
       'magic-eraser',
       'paint-bucket',
@@ -139,7 +140,7 @@ describe('MobileToolSheet', () => {
     //
     // `color`/`levels`/`transform` carry no rail entry any more — they are `Image ▸
     // Adjustments` and `Edit ▸ Transform` commands, so `mobileToolGroups` has no group for
-    // them and the sheet has no picker to mark. The Brush group is a live six-member group.
+    // them and the sheet has no picker to mark. The Brush group is a live seven-member group.
     setTool('eraser');
     render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
 
@@ -153,6 +154,7 @@ describe('MobileToolSheet', () => {
       'color-replacement',
       'spot-healing',
       'healing-brush',
+      'patch',
       'eraser',
       'magic-eraser',
       'paint-bucket',

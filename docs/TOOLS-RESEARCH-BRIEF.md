@@ -63,10 +63,14 @@ That column is the part a pure-docs research pass cannot produce, and it is wher
 - Check **both** `src/tools/settings.ts` and `src/components/ToolbarsRight/<Tool>/` before
   declaring anything `missing`. A control can exist in one and not the other.
 
-`implementationRefs` must be `file:line` into the working tree, re-derived against the tree in
-this worktree, not copied from the research corpus below (which was written against an older
-revision) and not from `.skills/photoshop-tool-creation.md` (whose line-numbered citations have
-moved). **A citation you did not re-derive is a citation that is wrong.**
+`implementationRefs` must cite declared identifiers in the working tree — a function or
+method in call form (`materializeDocument()`), a dispatched string literal (`'legacy-tool'`),
+a test title (`it('...')`), or the file alone when the claim covers the whole file —
+re-derived against the tree in this worktree, not copied from the research corpus below
+(which was written against an older revision) and not from `.skills/photoshop-tool-creation.md`
+(whose line-numbered citations have moved). **A citation you did not re-derive is a citation
+that is wrong.** Line-number citations are banned in tracked documents per
+`docs/DOCUMENTATION.md` §Citations.
 
 ## What already exists — read before re-researching
 
@@ -100,7 +104,7 @@ And one boundary, from §10 of `01-photoshop-reference.md` — "No browser was e
 support claim in that corpus derives from caniuse / MDN BCD / the WebKit bug tracker, not from
 runtime measurement.
 
-`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,686-line playbook whose
+`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,690-line playbook whose
 `## Photoshop shape tools` section is a fully worked research digest and the canonical example of
 the expected density. Its `## The tool backlog` and `## Appendix A — the trap list` sections are
 worth reading before writing prose.

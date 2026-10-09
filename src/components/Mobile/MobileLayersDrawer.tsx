@@ -8,7 +8,7 @@ import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
-import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
+import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { useModalA11y } from './useModalA11y.ts';
 
 export interface MobileLayersDrawerProps {
@@ -198,12 +198,6 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
               )}
             </div>
 
-            {/* There is deliberately no layer-opacity control here. It dispatched
-                `updateLayer(id, { opacity }, TOOL_ACTION)`, and `TOOL_ACTION`
-                history entries carry no `toolName` in their args, so
-                `history-replay.ts` skips them and `getHistoryItemTitle` returns
-                `undefined`: every drag step became an untitled, unreplayable
-                entry. Desktop has no equivalent control either. */}
             <ul className="flex-1 overflow-y-auto p-3 space-y-1.5 max-h-[45vh]" aria-label="Layers">
               {sortedLayers.map((layer, index) => {
                 const isActive = activeLayerId === layer.id;
@@ -292,7 +286,31 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                         )}
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-0.5">
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <label
+                          className="flex items-center gap-1.5 rounded-lg bg-gray-50 dark:bg-gray-800/60 px-1.5 py-1"
+                          htmlFor={`layer-opacity-${layer.id}`}
+                        >
+                          <input
+                            id={`layer-opacity-${layer.id}`}
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={layer.opacity ?? 1}
+                            aria-label={`Opacity for ${layer.name}`}
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              updateLayer(layer.id, { opacity: Number(event.target.value) }, SET_LAYER_OPACITY_ACTION);
+                            }}
+                            className="h-2 w-16 accent-blue-600"
+                          />
+                          <span className="min-w-9 text-right text-[10px] font-medium text-gray-600 dark:text-gray-300">
+                            {Math.round((layer.opacity ?? 1) * 100)}%
+                          </span>
+                        </label>
                         <button
                           type="button"
                           onClick={(event) => {

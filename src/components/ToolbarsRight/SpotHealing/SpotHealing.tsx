@@ -25,7 +25,7 @@ const SpotHealing: React.FC<{}> = () => {
   if (!args) return null;
 
   const publishSlider = (patch: ToolPatch<'spot-healing'>) => {
-    pendingPatchRef.current = patch;
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
     if (rafIdRef.current !== null) return;
     rafIdRef.current = requestAnimationFrame(() => {
       if (pendingPatchRef.current) patchToolArgs('spot-healing', pendingPatchRef.current);

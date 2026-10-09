@@ -3080,3 +3080,48 @@ Sources:
 - <https://helpx.adobe.com/photoshop/using/viewing-images.html>
 
 ---
+
+## Patch
+
+Long-form research, provenance and unverified claims: [`src/tools/descriptions/patch.notes.md`](../src/tools/descriptions/patch.notes.md).
+
+### Patch Tool
+
+`patch`
+
+Moves an active selection over a donor area and blends the donor texture into the selected target.
+
+Photoshop’s Patch Tool uses a selection as the repair target in Source mode, then samples a donor area while the selection is dragged. This deterministic MVP supports an existing active selection, Source mode, a donor drag, and a replayable raster action. Content-Aware, Destination, Pattern and Transparent modes are deferred.
+
+**Options bar**
+
+| Control                        | Photoshop                                                                   | In this app                                                  |
+| ------------------------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Patch                          | Source mode is implemented; Destination mode is deferred.                   | `partial` — `src/components/ToolbarsRight/Patch/Patch.tsx:1` |
+| Diffusion                      | Controls the deterministic edge feather approximation from 1 to 7.          | `present` — `src/components/ToolbarsRight/Patch/Patch.tsx:1` |
+| Structure / Color / Adaptation | Content-Aware controls are deferred because their synthesis is proprietary. | `missing`                                                    |
+| Sample All Layers              | The MVP samples and writes the active raster layer only.                    | `missing`                                                    |
+
+**Modifiers**
+
+- **Alt/Option** — Polygonal selection modifiers remain owned by the active selection tool.
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool flyout family; this app selects Healing Brush directly and exposes Patch from its flyout.
+
+**In this app:** `partial` — The selected target rectangle is preserved when switching into Patch and is cleared normally when leaving the tool. The processor stores rectangle and donor coordinates directly so replay does not depend on live selection state.
+
+Implementation:
+
+- `src/tools/patch.ts:1`
+- `src/components/Main/PatchToolArea.tsx:1`
+- `src/components/ToolbarsRight/Patch/Patch.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/patch-tool.html>
+- <https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/repair-a-selected-area-with-the-patch-tool.html>
+- <https://helpx.adobe.com/photoshop/using/content-aware-patch-move.html>
+
+---

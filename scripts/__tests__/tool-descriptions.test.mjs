@@ -11,7 +11,18 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 const readRepoFile = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8');
 
-const FAMILIES = ['selection', 'paint', 'focus', 'shape', 'pen', 'type-crop', 'transform', 'eyedropper-draw', 'view'];
+const FAMILIES = [
+  'selection',
+  'paint',
+  'focus',
+  'shape',
+  'pen',
+  'type-crop',
+  'transform',
+  'eyedropper-draw',
+  'view',
+  'patch',
+];
 
 // Module scope, not inside a `describe`: the dynamic imports need top-level `await`, and
 // vitest's `describe` body is synchronous. Each family module exports exactly one record and

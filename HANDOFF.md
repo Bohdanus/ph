@@ -4,7 +4,21 @@ Open defects in this code. [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) is t
 verified DELETES the entry**, a tombstone is not a record, and this file is scoped to `history` by
 `SCOPE_BY_FILE`. Where a finding belongs in another document, that document is named in the entry.
 
-### Items 127 — deleted
+Numbering is stable and gaps are expected — a deleted entry's number is not reused.
+
+For imports, retire numbered entries with an explicit list heading such as `### Items 3, 8 — deleted`.
+A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
+refuse the batch; remove the status word for a live entry.
+
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+
+Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
+board from re-filing a number as new work
+(`scripts/lib/agent-board/handoff-import.mjs` `deadNumbers`), so the numbers have to outlive the
+entries. What must not outlive them is prose — a "fixed in `abc123`" line per entry is the
+tombstone the lifecycle rule forbids, because it invites a reader to trust a claim instead of
+re-deriving the code. So this is a list and nothing else; each number was deleted on verification,
+and the verification is `git log`, not this file.
 
 ## 1. P0 — the durable replay path is only mounted as a navigation presentation cache
 
@@ -942,12 +956,11 @@ is what makes the suite green. It is the marker the repo already uses in ~20 pla
 (`image-processors.test.ts` — the `it.fails('clamps a negative or non-finite radius into a valid CSS
 filter …')` inside `describe('tool image processors')`, whose title carries its own stale
 `src/tools/blur.ts` citation; and `StoreContext.durable-boundary.test.tsx` — the `it('uses the
-replacement document baseline when updates omit totalSize and documentFrame')` title) and the one
-`AGENTS.md` describes. **Delete the `it.fails` in the same change that fixes `DEAD_HEADING`** — the
-moment the body goes green, the `fails` goes red, which is the intended signal and not a
-regression to chase. The live side of the same rule, and the visible false row it contrasts with,
-are held in an ordinary green test beside it, so a pin that starts failing for an unrelated reason
-cannot hide behind `it.fails` passing.
+replacement document baseline when updates omit totalSize and documentFrame')` title). **Delete the
+`it.fails` in the same change that fixes `DEAD_HEADING`** — the moment the body goes green, the
+`fails` goes red, which is the intended signal and not a regression to chase. The live side of the
+same rule, and the visible false row it contrasts with, are held in an ordinary green test beside
+it, so a pin that starts failing for an unrelated reason cannot hide behind the `it.fails` passing.
 
 ## 83. The panel workspace: seven documented Photoshop behaviours are NOT built, and the list matters more than the feature
 
@@ -4677,38 +4690,6 @@ path outside a per-test temp directory, and the machine-shared paths get an expl
 reads. `scripts/__tests__/suite-budgets.test.mjs` already derives every spawning suite from the tree
 and asserts the derived set against a hard-coded list, so the mechanism for a derived inventory
 exists here already.
-
-## 220. The merge guard cannot see a branch that committed a stale file, and no merge-time check can
-
-**Problem.** `merge-takeover-guard.mjs` compares a merge result against one whole side's content, and
-it is now good at that — the seven shapes an adversarial review measured as silent passes are closed,
-and it reports correctly on all 407 merges on `main` with no verdict changed. What it still cannot
-see is the defect **upstream** of it: a branch that _committed_ a stale copy of a tracked file, from
-a checkout sitting at another HEAD. The merge inherits it. That is the shape `git add -A` in a
-worktree at another HEAD produces, and it is the one that cost this repository 17 files and 1,835
-lines with no conflict anywhere in it.
-
-No check at merge time can distinguish that from a deliberate edit, because the information does not
-exist in the trees — whether the branch's author knew lives in the commit message. Two shapes are
-reachable today:
-
-- **`git add -A` in a worktree that is not at `main`**, committing the stale content. The guard sees
-  only that the result is one whole side's blob, which it now reports as shape 1 — but by then the
-  stale commit is already on the branch and the loss happened when it was written.
-- **`git merge --squash -X ours`**, which produces a staged tree identical to HEAD's, so `git commit`
-  answers "nothing to commit", there is no commit, no `MERGE_HEAD`, and neither hook fires. The
-  branch's payload disappears with no event to hang a check on. Plain `--squash` is fine and stages
-  the real merge result.
-
-**Affected.** `scripts/merge-takeover-guard.mjs`; `docs/ORCHESTRATION.md` — the
-`merge-takeover-guard` limits, which now names this.
-
-**What would close it.** A check in the **branch's own** hook, where a diff against `main` has two
-sides to compare: for each path the branch changed whose result equals some ancestor's content and
-is not the merge-base content, report it — and make it discriminating rather than universal by
-requiring that the branch's first-parent line contains no merge commit. `.husky/pre-push` already
-runs in the branch and already has `main...HEAD`. Do **not** solve this by making the merge guard
-refuse more; it is already refusing correctly, and widening it fires on ordinary landings.
 
 ## 221. The unit suite still has brittle assertion and fixture gaps
 

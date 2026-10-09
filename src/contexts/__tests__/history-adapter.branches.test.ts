@@ -1460,6 +1460,12 @@ describe('deriveSetLayerPropertiesEntry', () => {
       args: { opacity: 0.42 },
       patch: { opacity: 0.42 },
     },
+    {
+      label: 'a lower opacity update',
+      actionName: SET_LAYER_OPACITY_ACTION,
+      args: { opacity: 0.25 },
+      patch: { opacity: 0.25 },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
