@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230, 66b1132 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2588,52 +2588,6 @@ scheduling changes, or it is a tripwire for a defect that cannot occur.
 runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
-
-## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
-
-**Problem.** `SingleRowColumnMarqueeToolArea.tsx` wires both `onPointerLeave` and
-`onPointerCancel` to `abortDrag`, so a drag that leaves the tool element ends as a cancelled
-gesture that commits nothing. The geometry module documents the opposite behaviour three files
-away: `singleRowMarqueeRect`'s doc comment in `singleRowColumnMarquee.ts` advertises that an
-out-of-document pointer clamps to the first or last row, and cites Adobe's scripting API as the
-reason. Both statements cannot stand. Only the PRESS clamps. A drag past the canvas edge is
-discarded.
-
-`EllipticalSelectionToolArea.tsx` wires the same pair, so this is house convention rather than
-something these two tools introduced — but `RectangularSelectionToolArea.tsx` wires
-`onPointerCancel` ALONE, to its own `handlePointerCancel`, so the rectangular marquee keeps
-tracking a drag off the edge. Three selection tools, two behaviours, and one of the two is
-undocumented.
-
-**Why it is reachable and not theoretical.** The tool element is the canvas area, so the abort
-fires as soon as the pointer crosses it. At zoom 1 with letterboxing that is the document edge;
-zoomed in past the fit, the document edge _is_ the container edge, so dragging toward a document
-boundary — which is exactly how a user aims at the last row — is dragging toward the abort.
-
-**What Photoshop does.** It keeps tracking. There is no published Adobe page for the GUI case,
-which is why this is filed as a defect in this repository's own consistency rather than as a
-deviation from Adobe: `docs/FEATURES.md` should record that the app drops the gesture.
-
-**What would close it.** Narrow the abort to `onPointerCancel` in
-`SingleRowColumnMarqueeToolArea.tsx` and `EllipticalSelectionToolArea.tsx`, so a leave ends the
-gesture only if the pointer capture has already been lost. That is one wiring change in each
-file, and it is deliberately NOT done here: `usePointerPosition`'s capture is what keeps `pointermove`
-delivered outside the element, so the abort is currently the only thing stopping an unbounded
-stream of moves from a pointer the user has visually left the tool. Decide it for the selection
-family at once, and add the case that pins whichever way it goes — press, move outside the
-element, move back, release — asserting the band lands where the release was.
-
-**Do not fix it by clearing the drag on `pointerleave` without also releasing the capture.**
-That was the wedge fixed in `usePointerPosition.ts` (the `releasePointer` export): a surviving
-`activePointerId` refuses every later press, so the tool stops responding until it unmounts.
-`abortDrag` calls `releasePointer()` for that reason and must keep doing so.
-
-**Files.** `src/components/Main/SingleRowColumnMarqueeToolArea.tsx` — `handlePointerDown` and
-`abortDrag` with its two JSX wirings,
-`src/components/Main/EllipticalSelectionToolArea.tsx` — `handlePointerDown` and `abortDrag` with
-its two JSX wirings,
-`src/components/Main/RectangularSelectionToolArea.tsx` — `handlePointerCancel`,
-`src/tools/singleRowColumnMarquee.ts` — `singleRowMarqueeRect`'s doc comment.
 
 ## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
 
