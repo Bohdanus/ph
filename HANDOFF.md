@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-106, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1374,38 +1374,6 @@ The append-boundary test citations were a separate drift cluster, not part of th
 outstanding.
 
 ---
-
-## 106. `docs/TOOLS-RESEARCH-BRIEF.md` cites four numbers for one file, and all four are stale
-
-```bash
-wc -l .skills/photoshop-tool-creation.md       # 4,455
-grep -n '^## Photoshop shape tools\|^## The tool backlog\|^## Appendix A' \
-  .skills/photoshop-tool-creation.md
-```
-
-which prints `373:## Photoshop shape tools`, `3879:## The tool backlog — what to build next` and
-`4094:## Appendix A — the trap list`.
-
-`docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching" said "a 4,371-line
-playbook", and gave each of the three sections it names as a line range:
-
-```
-its `## Photoshop shape tools` section is `:357-846`
-its `## The tool backlog` is `:3797`
-its `## Appendix A` is `:4012`
-```
-
-Every one of those points at content that has since moved. This is the citation-staleness
-defect `.skills/photoshop-tool-creation.md` phase 9 exists to catch, in the one document that tells
-an agent what to read before writing a tool — and the drift is in the count as well as the anchors,
-which is the case a `grep` cannot see.
-
-**Fix.** Re-derive all four from `wc -l` and `grep -n` at the moment of writing, and consider naming
-the sections by heading rather than by line, since a heading survives a merge and a line number
-does not.
-
-**Files.** `docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching",
-`.skills/photoshop-tool-creation.md`
 
 ## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
 
