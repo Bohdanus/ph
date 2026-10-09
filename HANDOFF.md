@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 145, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2261,55 +2261,6 @@ tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
 
-## 129. The worktree-inventory suite's per-test timeout scales with the number of worktrees, so it fails under load and is indistinguishable from a real break
-
-**Problem.** `scripts/__tests__/worktree-inventory.test.mjs > the curated table > never asks the table
-to protect a worktree whose protection is derived` runs the inventory generator over every worktree,
-and the generator runs git per worktree, so the test's cost grows with the fleet. Measured on `main`
-with 56 worktrees:
-
-```
-full suite under concurrent load : 76957ms  -> Error: Test timed out in 60000ms
-the same test alone, unloaded     : 53180ms  -> passes (1 passed, 149 skipped)
-```
-
-So it sits at ~53s against a 60s wall clock. It is a knife edge, and the failure it produces is a
-bare `Test timed out` with no assertion — the same output a genuine break produces.
-
-**Why this is worth an entry rather than a re-run.** A sweep that leaves more worktrees than it
-started with makes this test cross the line, and CI cannot tell the difference. A green local run at
-99 worktrees and a red CI run at 56 would be the same defect with a different cause.
-
-**Fix.** Make the enumeration cheaper, not slower-tolerant. The test wants to know whether a
-worktree whose protection is _derived_ is ever asked to be protected by the curated table, which is
-answerable from a handful of synthetic worktrees in a temporary repository — the same technique the
-fixture-based tests in this suite already use. Do **not** raise the timeout: that is a gate change,
-and it moves the knife edge rather than removing it.
-
-**The second worktree-count sensitivity this entry used to name has been removed from the tree, and
-the removal is documented in place.** The old sibling `it('gives every non-primary worktree a curated
-entry, so none is undocumented')` — the one that asserted on the size of the operator's fleet — no
-longer exists. What replaced it is a 28-line comment in `scripts/__tests__/worktree-inventory.test.mjs`
-— `describe('the curated table')`, headed "WHY THERE IS NO 'EVERY WORKTREE HAS
-AN ENTRY' RULE HERE", which records that the rule was the recurring red, why no agent can make a
-committed table agree with a moving fleet, and that the risk is now asserted where the risk is
-derived. The knife edge above therefore no longer has a second test on the same axis; the entry keeps
-only what is still live. `git log --oneline -S'gives every non-primary worktree' -- scripts/__tests__/worktree-inventory.test.mjs`
-names the commit that did it.
-
-**This is a `TEST-FLAKES.md` finding by the routing table, not a defect record.** `docs/DOCUMENTATION.md`
-routes an intermittent test there, and `TEST-FLAKES.md` §14 already covers this family ("The lock and
-queue suites ran inside a budget smaller than their own work"), including the `60_000` declaration
-this test carries. What `TEST-FLAKES.md` does **not** record is the part unique to this entry: the
-cost scales with the **operator's** fleet rather than with the repository's content, so the knife
-edge moves when a sweep grows the fleet and not when a commit does. That is the sentence to add
-there — it belongs in this file only as its routed home while it is being written, and this entry
-should go when the addition lands.
-
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs` — the `describe('the curated table')`
-comment headed "WHY THERE IS NO 'EVERY WORKTREE HAS AN ENTRY' RULE HERE", and the
-`it('re-checks a read-derived no-ref claim against the live tree')` title; `TEST-FLAKES.md` §14
-
 ## 132. The shape's three document-frame conversions are correct, and no test pins that
 
 **This entry is a guard against a future "simplification", plus a missing tripwire.** An earlier
@@ -2661,52 +2612,25 @@ download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `waitUn
 
 ## 144. The uncommitted-work guard misses the main worktree, and only the main worktree
 
-`scripts/__tests__/worktree-inventory.test.mjs` asserts that any worktree holding work git
-cannot see is classified `at-risk`. Run with a dirty main checkout it fails, and it names the main
-worktree:
+The previous finding came from a live-worktree test that joined inventory rows to raw facts by
+display name. The suite now uses `protectionWorktreeFacts()` synthetic records, so that observed
+failure no longer depends on the operator's dirty main checkout. The fixture still includes a dirty
+primary worktree, but `it('never offers a worktree that holds uncommitted work on no ref for
+disposal')` only checks that it is not offered for disposal; the test requiring `action: at-risk`
+filters primary worktrees out. A green run therefore does not currently pin the dirty-primary
+classification.
 
-```
-ph (curated: NONE): ahead=0 onMain=true dirty=7 untracked=1 -> status=landed
-   recommendation=keep action=keep prunable=false — readable, so this must be
-   reported as at-risk, not as anything else
-```
+**Why it matters.** `scripts/dispose-worktree.mjs` relies on the inventory never treating the only
+copy of uncommitted work as disposable. A dirty main checkout is an important case because agents
+work there, even though disposal separately refuses the primary worktree.
 
-`status=landed` and `recommendation=keep` are the answers for a worktree with **nothing
-uncommitted in it**. The guard read `dirty=7 untracked=1` correctly, on the line above, and then
-classified a different shape. Verified by isolating `classify` with the shape the test hands it:
-`workingTree.modified: 7` returns `status=uncommitted-only recommendation=salvage action=at-risk`,
-which is what the test demands. So `classify` is right and **the facts object the guard passes it
-is not the one whose `workingTree` was counted**.
+**Fix.** Assert the dirty primary fixture's inventory verdict is `uncommitted-only` and
+`at-risk`. In any test that maps an inventory row back to raw fixture facts, match by absolute path
+and assert the match exists; display names are not unique identifiers.
 
-The likely cause is the name join in the
-`it('protects that shape in a worktree NOBODY has written anything down about')` case —
-`worktrees.find((x) => x.name === r.name)` — against the shape `liveWorktreeFacts()` builds,
-which sets `mergedIntoBase` and `commitsAhead` rather than the `mergedIntoMain` the
-`holdsWorkGitCannotSee()` predicate reads. A join that misses returns `undefined` and throws; one
-that matches a
-_different_ worktree with the same display name returns a clean shape and reads `landed`, which is
-the failure above.
-
-**Why it matters beyond the red.** This is the property `scripts/dispose-worktree.mjs` leans on: it is
-`git worktree remove --force` after git has already refused, and it is that a clean tree is not
-evidence a worktree is abandoned. The guard exists so uncommitted work is never classified as
-safe. A miss on the main checkout is the one place uncommitted work is guaranteed to exist,
-because that is where agents work.
-
-Reproducible and deterministic: it passes on a clean tree and fails on any dirty one, so it is
-**not** flaky and not a pool artifact — it is red for every session with uncommitted work, which is
-every session until it commits.
-
-**Fix.** Compare the two shapes field by field at the join and assert they are the same object, so
-the failure names which field is missing rather than reporting a verdict. Then classify `r` itself
-rather than a name-matched lookup, since `buildInventory` already produced `r`. Add a case that
-constructs a dirty-mainworktree shape directly, so the guard does not depend on the developer's
-working tree to have anything to assert.
-
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs` — `holdsWorkGitCannotSee()`,
-`liveWorktreeFacts()` and the
-`it('protects that shape in a worktree NOBODY has written anything down about')` case;
-`scripts/lib/worktree-inventory/classify.mjs` — `RECENT_IO_WINDOW_MS` and `hasLiveSession()`
+**Files.** `scripts/__tests__/worktree-inventory.test.mjs` — `protectionWorktreeFacts()`,
+`it('never offers a worktree that holds uncommitted work on no ref for disposal')`, and
+`it('protects that shape in a worktree NOBODY has written anything down about')`.
 
 ## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
 
