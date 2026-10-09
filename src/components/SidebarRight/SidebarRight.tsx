@@ -360,6 +360,7 @@ const SidebarRight = () => {
         className={index === 0 ? 'border-b border-gray-300 dark:border-gray-600' : ''}
         id={id}
         isDragging={draggingPanel === id}
+        isDraggable={false}
         isRolledUp={isRolledUp}
         key={id}
         onDrag={onPanelDrag(id)}

@@ -175,6 +175,11 @@ describe('HistoryTab', () => {
     expect(items[2]).toHaveTextContent(renameTitle);
   });
 
+  it('keeps regular history rows text-only', () => {
+    render(<HistoryTab />);
+    expect(screen.queryByTestId('layer-thumbnail')).toBeNull();
+  });
+
   it('gives opacity changes a meaningful history title', () => {
     const item = createMockHistoryItem({
       actionName: SET_LAYER_OPACITY_ACTION,

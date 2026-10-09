@@ -25,23 +25,44 @@ restating it.
 
 ---
 
+## Operator Requirements (2026-10-09)
+
+These requirements override the earlier workspace-docking direction and are the product contract
+for the desktop shell:
+
+- `HAVE` — Layers and History share a movable horizontal separator. Dragging it up or down changes
+  both panels' heights, with minimum usable heights on both sides.
+- `HAVE` — The right dock width is adjustable from its canvas-facing edge and is persisted with the
+  workspace. Both panels inherit that width.
+- `HAVE` — The Tools rail remains pinned to the left window edge and the History/Layers dock remains
+  pinned to the right window edge. Rail and panel headers do not re-dock, float, or reorder by drag.
+- `HAVE` — Layer rows render a thumbnail preview using the same layer presentation renderer as the
+  document. History rows remain text-only; history previews are not invented.
+
+Adobe's official documentation confirms that Photoshop normally supports movable panels, but the
+operator has explicitly retired that interaction for this clone. The authoritative source summary is
+[`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md). Panel width and the shared vertical divider are
+still retained because Adobe documents resizing panel edges and dividers.
+
+---
+
 ## 1. Current state
 
-| Area                      | File                                                                               | Notes                                                                                                                |
-| ------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | One component, no sub-components                                                                                     |
-| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Dock, tabs, collapse, resize, drag. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx`              |
-| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                             |
-| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray()`, `reorderLayers()`                                                                          |
-| Mutations                 | `src/contexts/useLayer.ts`                                                         | `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`                       |
-| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                  |
-| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked only from `updateLayerByTool()` and `tempUpdateLayer()`; the **only** source of `locked: true` is PSD import |
-| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                          |
-| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                            |
-| Mobile panel              | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | A separate, richer surface: new-layer, delete, rename, move up/down                                                  |
-| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                      |
+| Area                      | File                                                                               | Notes                                                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Panel body                | `src/components/SidebarRight/LayersTab.tsx`                                        | Layer rows plus `LayerThumbnail`, using the existing presentation renderer                                                            |
+| Panel chrome              | `src/components/SidebarRight/SidebarRight.tsx`, `PanelGroup.tsx`                   | Pinned dock, tabs, collapse, width resize, shared vertical split. `PanelId = 'history' \| 'layers'` in `src/contexts/PanelLayout.tsx` |
+| Layer model               | `src/contexts/layer-types.ts` — `Layer`, `LayerSource`, `LayerOperation`           | `Layer` is a flat record; `LayerSource` is a 3-way union; `LayerOperation` a 2-way union                                              |
+| Layer creation / ordering | `src/contexts/layer-utils.ts`                                                      | `getSortedLayersArray()`, `reorderLayers()`                                                                                           |
+| Mutations                 | `src/contexts/useLayer.ts`                                                         | `updateLayer()`, `removeLayer()`, `setActiveLayer()`, `toggleVisibility()`, `moveLayerAfter()`                                        |
+| Property application      | `src/contexts/layer-renderer.ts` — `drawLayer()`                                   | `ctx.globalAlpha = layer.opacity`, `ctx.globalCompositeOperation = layer.blendMode`                                                   |
+| Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked only from `updateLayerByTool()` and `tempUpdateLayer()`; the **only** source of `locked: true` is PSD import                  |
+| History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                                           |
+| Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                                             |
+| Mobile panel              | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | A separate, richer surface: new-layer, delete, rename, move up/down                                                                   |
+| Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                                       |
 
-The panel today is **a list of names with an eye and a bin**. Everything else in this document is a
+The panel today is **a list of names with an eye, thumbnail, and bin**. Everything else in this document is a
 requirement on top of that list. Two facts drive most of what follows:
 
 <!-- `docs/TOOLS.md` is GENERATED by `npm run docs:tools`, and a test fails on drift, so
@@ -79,8 +100,8 @@ version-sensitive if a source disagrees with it.
 
 ### 2.1 The tab group — Layers, Channels, Paths
 
-- `HAVE` (partially) — Two tabs, `History` and `Layers`, each a `PanelGroup` with its own roll-up,
-  drag handle and split ratio.
+- `HAVE` (partially) — Two tabs, `History` and `Layers`, each a `PanelGroup` with its own roll-up
+  and split ratio. Relocation drag is intentionally disabled by the operator requirement.
 - `GAP` — **Channels and Paths do not exist.** `PanelId` is the closed union
   `'history' | 'layers'` (`src/contexts/PanelLayout.tsx`). The omission is a recorded decision,
   not an oversight: the same file's `## Deliberately NOT modelled` note on **Panel tab GROUPS**

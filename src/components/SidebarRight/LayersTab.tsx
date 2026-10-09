@@ -18,6 +18,7 @@ import {
   DELETE_BUTTON_ICON,
 } from '../ToolbarsRight/buttonStyles.ts';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+import LayerThumbnail from './LayerThumbnail.tsx';
 
 type LayerOpacityControlProps = {
   layer: Layer;
@@ -71,7 +72,7 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
 }
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
+  const [{ layers, activeLayerId, documentFrame, totalSize, previewLayers }] = useStore();
   const {
     toggleVisibility,
     removeLayer,
@@ -235,6 +236,7 @@ export default function LayersTab() {
               prevLayerId !== draggedLayerId;
             const isEditable = editingLayerId === layer.id;
             const isAnimating = animatingLayerId === layer.id;
+            const previewLayer = previewLayers?.current[layer.id]?.layer ?? layer;
 
             return (
               <li
@@ -325,6 +327,8 @@ export default function LayersTab() {
                   >
                     <EyeIcon open={layer.visible} />
                   </button>
+
+                  <LayerThumbnail layer={previewLayer} />
 
                   <DragHandleIcon disabled={isPickedLayer || layer.isBedrock} />
 

@@ -207,6 +207,13 @@ describe('LayersTab', () => {
     expect(layerDivs[2]).toHaveTextContent('Background');
   });
 
+  it('renders one preview thumbnail for every layer row', () => {
+    render(<LayersTab />);
+
+    expect(screen.getAllByTestId('layer-thumbnail')).toHaveLength(3);
+    expect(screen.getByTestId('layers-list')).toContainElement(screen.getAllByTestId('layer-thumbnail')[0]);
+  });
+
   it('highlights active layer', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
