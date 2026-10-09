@@ -120,7 +120,7 @@ export type EllipticalMarqueeDrag = {
  * A drag that moved on neither axis has no ratio to apply, so it comes back untouched
  * and the caller turns it into the defined no-op every zero-size drag is.
  */
-function applyRatio(size: { width: number; height: number }, ratio: number | null) {
+export function applyMarqueeRatio(size: { width: number; height: number }, ratio: number | null) {
   if (ratio === null) return size;
   const { width, height } = size;
   if (width > 0 && height > 0) {
@@ -180,7 +180,7 @@ export function resolveEllipseRect({
   const ratio = marqueeRatio({ start, end, style, fixedRatio, fixedWidth, fixedHeight, constrainToCircle, fromCentre });
   const draggedX = end.x - start.x;
   const draggedY = end.y - start.y;
-  const constrained = applyRatio({ width: Math.abs(draggedX), height: Math.abs(draggedY) }, ratio);
+  const constrained = applyMarqueeRatio({ width: Math.abs(draggedX), height: Math.abs(draggedY) }, ratio);
   if (!(constrained.width > 0) || !(constrained.height > 0)) return null;
 
   if (fromCentre) {
