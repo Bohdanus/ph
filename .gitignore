@@ -66,3 +66,4 @@ playwright/.auth
 *.sln
 *.sw?
 /tsconfig.tsbuildinfo
+!.kilo/plans/test-hardening-plan.md
