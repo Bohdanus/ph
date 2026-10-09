@@ -255,6 +255,10 @@ gates pass. Retain a narrowly named compatibility fallback while unsupported
 durable sources remain reachable; do not delete `history-replay.ts` merely
 because the normal path no longer calls it.
 
+The first bounded retirement is complete when the dormant `replay-budget.ts`
+scaffolding and its isolated test are deleted. It has no production importer and
+must not be confused with the live legacy replay compatibility path.
+
 ## Gates
 
 - `npm run tsc` passes after every production slice.
