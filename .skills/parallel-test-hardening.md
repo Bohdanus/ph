@@ -1,10 +1,10 @@
 name: parallel-test-hardening
 description: >-
-  Harden and write tests in the `ph` photo editor using wave-based parallel
-  subagents designed for free models. Launch 3 subagents per wave, persist all
-  findings to `.kilo/plans/` for crash survival, cycle exploration → writing →
-  review → fixes → loop-back. Subagents NEVER edit source, commit, merge, or push
-  — only coordinator-level writes are allowed.
+Harden and write tests in the `ph` photo editor using wave-based parallel
+subagents designed for free models. Launch 3 subagents per wave, persist all
+findings to `.kilo/plans/` for crash survival, cycle exploration → writing →
+review → fixes → loop-back. Subagents NEVER edit source, commit, merge, or push
+— only coordinator-level writes are allowed.
 ---
 
 # Parallel Test Hardening for Free Models
@@ -40,14 +40,14 @@ complex multi-file tasks. Subagents died with no output written.
 
 ## Architecture
 
-| Phase | Wave | Subagents | Output |
-|-------|------|-----------|--------|
-| **1. Exploration** | W1a | 3 | `.kilo/plans/wave-1a-exploration.json` — per-file: imports, helpers, fixtures, test gaps, stale assertions, crash points |
-| | W1b | 3 (different files) | `.kilo/plans/wave-1b-exploration.json` |
-| **2. Writing** | W2a | 3 | `.kilo/plans/wave-2a-writing.json` — per-file: complete file content, import list, helper signatures |
-| | W2b | 3 (different files) | `.kilo/plans/wave-2b-writing.json` |
-| **3. Review** | W3 | 1 (aggregator) | `.kilo/plans/wave-3-review.json` — pass/fail, typecheck, lint, coverage delta |
-| **4. Fixes** | W4 | 1-3 | `.kilo/plans/wave-4-fixes.json` — per-file: failure + fix |
+| Phase              | Wave | Subagents           | Output                                                                                                                   |
+| ------------------ | ---- | ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **1. Exploration** | W1a  | 3                   | `.kilo/plans/wave-1a-exploration.json` — per-file: imports, helpers, fixtures, test gaps, stale assertions, crash points |
+|                    | W1b  | 3 (different files) | `.kilo/plans/wave-1b-exploration.json`                                                                                   |
+| **2. Writing**     | W2a  | 3                   | `.kilo/plans/wave-2a-writing.json` — per-file: complete file content, import list, helper signatures                     |
+|                    | W2b  | 3 (different files) | `.kilo/plans/wave-2b-writing.json`                                                                                       |
+| **3. Review**      | W3   | 1 (aggregator)      | `.kilo/plans/wave-3-review.json` — pass/fail, typecheck, lint, coverage delta                                            |
+| **4. Fixes**       | W4   | 1-3                 | `.kilo/plans/wave-4-fixes.json` — per-file: failure + fix                                                                |
 
 Each wave writes its JSON **before** launching the next. If a subagent dies,
 re-read the plan and relaunch only that file.
@@ -55,6 +55,7 @@ re-read the plan and relaunch only that file.
 ## Safety Constraints (READ BEFORE LAUNCHING)
 
 ### Subagents MUST NOT:
+
 - Edit production/source files (`src/` non-test files)
 - Run `git` commands (commit, merge, push, branch, worktree, stash, reset)
 - Modify `package.json`, `tsconfig.json`, `vitest.config.*`, or other config
@@ -64,6 +65,7 @@ re-read the plan and relaunch only that file.
 - Run from the main checkout (must be in a worktree)
 
 ### Only the coordinator MAY:
+
 - Commit test changes (`git add <specific test files>` + commit)
 - Merge to main (with `Branch:` trailer)
 - Push to origin
@@ -93,14 +95,17 @@ re-read the plan and relaunch only that file.
 ```
 
 ### Wave 1a — First 3 test files
+
 Launch 3 `task` subagents in parallel with the template above, each targeting a
 different test file.
 
 ### Wave 1b — Next 3 test files
+
 After Wave 1a completes, read `wave-1a-exploration.json`, then launch Wave 1b
 for the next 3 files.
 
 **Persist after each wave:**
+
 ```bash
 cat wave-1a-*.json | jq -s . > .kilo/plans/wave-1a-exploration.json
 ```
@@ -120,12 +125,15 @@ cat wave-1a-*.json | jq -s . > .kilo/plans/wave-1a-exploration.json
 ```
 
 ### Wave 2a — First 3 files
+
 Launch 3 subagents with their per-file exploration data.
 
 ### Wave 2b — Next 3 files
+
 After Wave 2a, read its plan, launch Wave 2b.
 
 **Persist after each wave:**
+
 ```bash
 cat wave-2a-*.json | jq -s . > .kilo/plans/wave-2a-writing.json
 ```
@@ -174,6 +182,7 @@ After Phase 3 Review, read `wave-3-review.json`:
    HANDOFF.md if still not green.
 
 **Loop counter persisted in `.kilo/plans/loop-count.json`:**
+
 ```json
 { "loop": 1, "maxLoops": 3, "lastWave": "wave-3-review" }
 ```
@@ -188,6 +197,7 @@ If ANY subagent dies (output limit, timeout, crash):
 4. **Never re-do completed files** — their JSON is already in the plan
 
 Example recovery:
+
 ```bash
 # Check what's in the plan
 cat .kilo/plans/wave-2a-writing.json | jq '.[] | .file'
@@ -198,12 +208,12 @@ cat .kilo/plans/wave-2a-writing.json | jq '.[] | .file'
 
 ## Model Selection Guide
 
-| Model | Provider | Variant | Best For | Why |
-|-------|----------|---------|----------|-----|
-| Nemotron 3 Ultra | kilo | high | Exploration | Thorough, no output limits |
-| Nemotron 3 Ultra | kilo | high | Writing | Careful, verbose, reliable output |
-| Dots3-Note Preview | kilo | thinking | Review | Fast, structured JSON output |
-| Step 3.7 Flash | kilo | high | Writing | Fast, accurate, good for simple edits |
+| Model              | Provider | Variant  | Best For    | Why                                   |
+| ------------------ | -------- | -------- | ----------- | ------------------------------------- |
+| Nemotron 3 Ultra   | kilo     | high     | Exploration | Thorough, no output limits            |
+| Nemotron 3 Ultra   | kilo     | high     | Writing     | Careful, verbose, reliable output     |
+| Dots3-Note Preview | kilo     | thinking | Review      | Fast, structured JSON output          |
+| Step 3.7 Flash     | kilo     | high     | Writing     | Fast, accurate, good for simple edits |
 
 **Never use Poolside Laguna S 2.1** — rate-limited to 2 concurrent, output limits cause deaths on complex tasks.
 
@@ -219,6 +229,7 @@ cat .kilo/plans/wave-2a-writing.json | jq '.[] | .file'
 ## Example Plan Structure
 
 `.kilo/plans/wave-1a-exploration.json`:
+
 ```json
 [
   {
@@ -226,7 +237,7 @@ cat .kilo/plans/wave-2a-writing.json | jq '.[] | .file'
     "imports": ["useHistory", "selectHistoryPanelProjection", "HistoryItem"],
     "helpers": ["seedHistory", "openHistoryTab", "historyRow", "rewindControl", "eyeControl"],
     "fixtures": ["storeStateMock", "freshLayers"],
-    "testCounts": {"pass": 0, "fail": 33, "skip": 0},
+    "testCounts": { "pass": 0, "fail": 33, "skip": 0 },
     "crashPoint": "TypeError: Cannot read properties of undefined (reading 'rows') at MobileLayersDrawer.tsx:34",
     "staleAssertions": [],
     "missingCoverage": ["historyPanelProjection mock fixture"],
