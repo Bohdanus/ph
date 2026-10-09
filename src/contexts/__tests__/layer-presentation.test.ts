@@ -88,6 +88,21 @@ describe('layersDifferOnlyByPresentation', () => {
     expect(layersDifferOnlyByPresentation(current, next)).toBe(true);
   });
 
+  it('accepts a durable baked presentation without changing logical layer state', () => {
+    const bitmap = createMockImageBitmap();
+    const current = {
+      a: createMockLayer({ id: 'a', operations: [{ id: 'op', args: { toolName: 'blur', radius: 2 }, enabled: true }] }),
+    };
+    const next = {
+      a: {
+        ...current.a,
+        durablePresentation: { bitmap, bounds: { x: 2, y: 3, width: 20, height: 10 } },
+      },
+    };
+
+    expect(layersDifferOnlyByPresentation(current, next)).toBe(true);
+  });
+
   it('accepts an untouched layer that was republished by reference', () => {
     const current = createMockLayers(3);
 

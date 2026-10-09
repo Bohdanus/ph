@@ -154,6 +154,7 @@ Production files:
 - `src/contexts/materialization.ts`
 - `src/contexts/durable-presentation.ts`
 - `src/contexts/durable-compositor.ts`
+- `src/contexts/layer-types.ts`
 - `src/contexts/presentation-evaluator.ts`
 - `src/contexts/layer-renderer.ts`
 - `src/contexts/StoreContext.tsx`
@@ -170,6 +171,10 @@ Work:
   lease; visible-layer coverage remains all-or-nothing before publication.
 - Stage the complete projection before publication, verify document identity,
   cursor, branch revision and layer coverage, then publish once.
+- Carry baked pixels through an explicit disposable layer presentation field;
+  preserve logical source and operations, and make the renderer bypass those
+  operations only while that field is present. Never replace an editable source
+  with an image merely to avoid double application.
 - Track every published bitmap through the existing document presentation scope
   and release declined, stale and departed leases after publication decisions.
 

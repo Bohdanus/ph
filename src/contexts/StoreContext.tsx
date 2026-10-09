@@ -1025,6 +1025,7 @@ function collectLivePresentationBitmaps(next: LayersRecord, history: readonly Hi
   const addLayerAliases = (layer: Layer) => {
     add(layer.bitmap);
     add(layer.tmpCanvas);
+    add(layer.durablePresentation?.bitmap);
     add(imageSourceBitmap(layer.source));
   };
   for (const layer of Object.values(next)) addLayerAliases(layer);
@@ -1203,7 +1204,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       for (const layerId of visibleLayerIds) {
         const materialized = projection.layers[layerId];
-        if (!materialized) {
+        if (!materialized || !materialized.bitmap) {
           failureReason = 'layer-coverage';
           throw new DurableCompositionRefusal('layer-coverage', `Durable navigation layer ${layerId} is missing`);
         }
@@ -1224,7 +1225,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             `Durable navigation layer ${layerId} is not renderer-identical`
           );
         }
-        nextLayers[layerId] = { ...existing, tmpCanvas: materialized.bitmap };
+        nextLayers[layerId] = {
+          ...existing,
+          tmpCanvas: null,
+          durablePresentation: { bitmap: materialized.bitmap, bounds: materialized.bounds },
+        };
       }
       assertFresh();
       if (!layersDifferOnlyByPresentation(latest.layers, nextLayers)) {

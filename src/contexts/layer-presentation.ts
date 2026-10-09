@@ -67,7 +67,7 @@ export function materializePresentationBitmap(canvas: BitmapSource): Promise<Bit
  * field in scope automatically, so a newly added durable field is compared
  * instead of silently excluded from the guard.
  */
-const PRESENTATION_FIELDS: (keyof Layer)[] = ['bitmap', 'tmpCanvas'];
+const PRESENTATION_FIELDS: (keyof Layer)[] = ['bitmap', 'tmpCanvas', 'durablePresentation'];
 
 /**
  * Everything a layer owns except the two presentation caches. Reading the keys
