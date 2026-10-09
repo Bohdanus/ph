@@ -4433,17 +4433,11 @@ exists here already.
 ## 221. The unit suite still has brittle assertion and fixture gaps
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
-assertions that pass on any non-null value, but five classes of test defects remain, each with the
+assertions that pass on any non-null value, but three classes of test defects remain, each with the
 evidence and concrete fix below.
 
 The remaining test defects, each with the fix that was proven to work:
 
-- `src/components/SidebarLeft/__tests__/SidebarLeft.flyout-hardening.test.tsx` addresses flyout rows by
-  position — `screen.getAllByRole('menuitemradio')[0].focus()` and an `items[0]` → `items[1]` pair.
-  Insert a tool at the top of the brush group and both assertions silently check a different element
-  and still pass. The sibling `SidebarLeft.keyboard.test.tsx` now addresses the same rows by their
-  `aria-label`, which is the tool's own label from `toolbar-mapping.ts`, so the replacement is copied
-  from there; the source also renders `data-testid="tool-flyout-item-<name>-<slug>"` already.
 - Over a hundred layout assertions in eight files assert a Tailwind class string through
   `toHaveClass`, concentrated in `HistoryTab.test.tsx`, `LayersTab.test.tsx`,
   `ToolbarHorizontal.test.tsx`, `SidebarLeft.tablet.test.tsx`, `SidebarRight.test.tsx`,
@@ -4470,22 +4464,13 @@ The remaining test defects, each with the fix that was proven to work:
   would misalign every stroke under a crop — is therefore pinned only by
   `src/hooks/__tests__/usePointerPosition.test.ts` and by e2e. Whoever wants a component suite to
   reach it has to give the store a measured rect, not another mock.
-- A hand-copied literal table drifts, and one already did. `src/tools/__tests__/tool-processors.test.ts`
-  copied a seven-chip list into every pen-family card; `main` then re-pointed two of those cards at
-  their own groups and the table went stale silently, in the same shape four other hand-copied tables
-  in the same change still have. The surviving shape is a `configKey` column carrying the test's own
-  claim, resolved through `placeholderToolGroups` — the form
-  `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` already uses. Copying the
-  chips instead is the defect, and a comment arguing against importing them is the tell.
 
 **Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
 file. The authors mutated their own new assertions to show they could fail, and two independent
 reviewers who had read neither the triage nor the authors' reasoning then found more: a
 cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
-no independent derivation, an arithmetic restatement of a sibling assertion, and the stale chip table
-above, which is the only one of them that was a merge artefact rather than a defect present from the
-start. The fixture divergence was left unfixed because the mandate was
-test files only.
+no independent derivation, and an arithmetic restatement of a sibling assertion. The fixture
+divergence was left unfixed because the mandate was test files only.
 
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 

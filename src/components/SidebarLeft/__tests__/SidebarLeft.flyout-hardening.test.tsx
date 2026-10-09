@@ -1,7 +1,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { toolbarMap } from '../../../../toolbar-mapping.ts';
 import { setViewportWidth } from '../../../test/setup.ts';
 import SidebarLeft from '../SidebarLeft.tsx';
+
+const brushGroup = toolbarMap.flat().find((group) => group.some((tool) => tool.name === 'brush'));
+if (!brushGroup) throw new Error('Brush tool group is missing from toolbarMap');
+
+const brushRow = (index: number): HTMLElement => screen.getByRole('menuitemradio', { name: brushGroup[index].label });
 
 const goToTool = vi.fn();
 const patchToolArgsMock = vi.fn();
@@ -265,17 +271,17 @@ describe('SidebarLeft flyout hardening', () => {
     expect(items.length).toBeGreaterThanOrEqual(2);
     const menu = screen.getByRole('menu');
 
-    items[0].focus();
+    brushRow(0).focus();
     act(() => {
       fireEvent.keyDown(menu, { key: 'ArrowDown' });
     });
-    expect(items[1]).toHaveFocus();
+    expect(brushRow(1)).toHaveFocus();
     expect(screen.getByRole('menu')).toBe(menu);
 
     act(() => {
       fireEvent.keyDown(menu, { key: 'ArrowUp' });
     });
-    expect(items[0]).toHaveFocus();
+    expect(brushRow(0)).toHaveFocus();
     expect(screen.getByRole('menu')).toBe(menu);
   });
 
@@ -553,7 +559,7 @@ describe('SidebarLeft flyout hardening', () => {
     openFlyout(tile);
 
     const menu = screen.getByRole('menu');
-    screen.getAllByRole('menuitemradio')[0].focus();
+    brushRow(0).focus();
     act(() => {
       // Escape is bound on the window; Tab is the menu's own keydown, because that is the
       // element holding focus when the user presses it.
