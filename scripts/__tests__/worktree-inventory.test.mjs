@@ -8,17 +8,15 @@
  *   1. A worktree reporting 0 commits ahead of main and being an ancestor of
  *      main is NOT prunable while its working tree holds changes. This is the
  *      "0 ahead is not a safety test" case, and it is the shape of every
- *      worktree here that looks disposable and is not. The set is DERIVED from
- *      the live worktrees on every run rather than listed by name: the list was
- *      the recurring red, and it was re-derived by hand three times in one
- *      session because an agent had committed, disposed a worktree, or created
- *      one.
+ *      worktree here that looks disposable and is not. Synthetic facts cover
+ *      dirty primary and merged worktrees, so the guard does not depend on which
+ *      worktrees happen to exist on this machine.
  *   2. A paid-model launch that died at zero tokens is classified as a
  *      failure, not as a finished session that happened to be quiet.
  *
- * Everything runs under the root jsdom project per AGENTS.md, so these are
- * environment-agnostic: no git repository is created, no clock is read, and
- * `node:sqlite` is only exercised where a real temporary database is cheap.
+ * The suite runs under the root jsdom project per AGENTS.md. Tests of git helpers
+ * use throwaway repositories; inventory-protection tests do not enumerate the
+ * operator's live worktree fleet.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,48 +57,9 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
 import { Board } from '../lib/agent-board/db.mjs';
 
 /**
- * This file's budget, and the reason it is not Vitest's default 5s.
- *
- * The "against a real repository" blocks build a throwaway git repository per
- * test and then run real `git` against it, so a test here is bounded by process
- * spawns and git's own startup rather than by anything being computed. The
- * `curated table` block is worse: it reads git in every worktree in the
- * repository, so its cost is a function of how many worktrees exist on the
- * machine — 70-odd when these numbers were first taken, 93 when they were last
- * checked, and it grows with the fleet.
- *
- * The default is not merely tight for that, it is at or above the measured cost
- * of this file's own slowest test. Spawns and git cost whatever the machine is
- * doing, so the figure is an OBSERVATION OF ONE RUN and not a property of the
- * file: 3.0s across three isolated runs on an idle machine, and 2.9s for the same
- * test when the file was measured again on a busier day with 93 worktrees live.
- * `reports whether the commit list was cut off at the cap` has been reported
- * failing at the 5s default with no code change, and at the pre-fix commit on a
- * loaded machine the failure that appeared instead was a DIFFERENT test in this
- * file — which is what a population of marginal tests looks like, not five
- * specific ones.
- *
- * What is deliberately NOT claimed here: any contention factor. A full 266-file
- * run was measured against these same tests and came out FASTER per test than the
- * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is
- * not a thing this suite can currently support. The headroom below is stated for
- * what it is: 15s against the worst span this file has been seen to take is 5x,
- * and is deliberately tighter than the two sibling suites because they spawn a CLI
- * per assertion and this one does not.
- *
- * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
- * only decides how long a test may run before the harness reports it, and no
- * assertion below is changed by it.
- *
- * A per-test `it(name, fn, timeout)` argument still wins over this. The THREE
- * tests that read every worktree keep their declared `60_000`, which is what they
- * actually need: the live worktree read measured 21.5s on a machine with 70
- * worktrees and 12.3s on a busier day with 93, and that is a function of how many
- * worktrees exist rather than of this test. `liveWorktreeFacts` memoises, so the
- * three pay for the read once, and which of them asks first is not something the
- * budget may depend on. 60s is the one budget here that is sized against a cost
- * that GROWS, so re-measure it if the worktree count changes by an order of
- * magnitude.
+ * Git integration tests use temporary repositories; inventory classification
+ * uses synthetic worktree records and never enumerates the operator's fleet.
+ * The 15s timeout accommodates process-spawning cases without changing assertions.
  */
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -302,6 +261,46 @@ function wt(overrides = {}) {
 const noChats = { count: 0, lastActivity: null };
 const noSessions = [];
 
+function protectionWorktreeFacts() {
+  return {
+    mainPath: '/repo',
+    worktrees: [
+      wt({
+        name: 'ph',
+        path: '/repo',
+        branch: 'main',
+        isPrimary: true,
+        ahead: 0,
+        behind: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 0, untracked: 1, paths: ['untracked.txt'] },
+      }),
+      wt({
+        name: 'inventory-fixture-dirty-merged',
+        path: '/repo/.kilo/worktrees/inventory-fixture-dirty-merged',
+        branch: 'fix/dirty-merged',
+        ahead: 0,
+        behind: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 1, untracked: 0, paths: ['src/change.ts'] },
+      }),
+    ],
+  };
+}
+
+function protectionInventory() {
+  const { mainPath, worktrees } = protectionWorktreeFacts();
+  return buildInventory({
+    worktrees,
+    root: mainPath,
+    base: 'main',
+    mainHead: 'fixture-main-head',
+    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
+    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+    nowMs: NOW,
+  });
+}
+
 /**
  * The shape the curated table used to have to be told about by hand, read off a
  * GENERATED record rather than a fixture: a branch git already calls disposable
@@ -313,82 +312,6 @@ const noSessions = [];
  * can see (so it is protected by being a branch) or prose.
  */
 const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
-
-/**
- * Every worktree of this repository, with the git facts the rule above reads.
- *
- * `collectWorktrees` is not used because it also runs `git merge-tree` on every
- * unmerged branch: that is the right cost for a generator which has to print all
- * of them, and the wrong cost for a guard that only needs three facts per
- * worktree. The merge answer is deliberately absent below, and it cannot change
- * any verdict here — `STATUS.UNCOMMITTED_ONLY` is decided before the merge is
- * consulted, so a worktree of this shape is `salvage` whether or not anyone
- * asked git whether it would merge.
- *
- * `tip` is read for real rather than left out: `classify` reads a MISSING tip as
- * `STATUS.UNREADABLE`, which reports `unknown` and `prunable: false` for
- * everything, and a guard written that way is green no matter what the generator
- * does with a dirty merged branch.
- *
- * Memoised: two tests below need the same few seconds of git, and a second read
- * of a repository other agents are actively writing to could see a different
- * shape than the first.
- */
-let _liveFacts = null;
-function liveWorktreeFacts() {
-  if (_liveFacts) return _liveFacts;
-  const cwd = process.cwd();
-  const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
-  // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
-  // this suite is run from a task worktree as often as from the root checkout,
-  // and "the main worktree" has to be the same worktree in both, or the guard
-  // asserts a different repository depending on where it was invoked.
-  const mainPath = listWorktrees(cwd)[0].path;
-  // A registration whose directory is gone is reported by the generator under
-  // `dataSources.git.missingWorktrees`; git cannot be asked about a tree that is
-  // not there, and an `ahead` of `null` would read as "not derived" for a
-  // worktree that is simply not there.
-  const worktrees = listWorktrees(cwd)
-    .filter((w) => !missing.has(w.path))
-    .map((w) => {
-      const { ahead, behind } = __testables.aheadBehind(w.path, 'main');
-      return {
-        ...w,
-        isPrimary: w.path === mainPath,
-        tip: __testables.tipCommit(w.path),
-        ahead,
-        behind,
-        mergedIntoBase: __testables.isMergedInto(w.path, 'main'),
-        workingTree: __testables.workingTreeState(w.path),
-        commitsAhead: [],
-      };
-    });
-  _liveFacts = { mainPath, worktrees };
-  return _liveFacts;
-}
-
-/**
- * The real inventory, built from the real worktrees, with every LIVENESS signal
- * deliberately empty.
- *
- * `in-use` is a protection of its own, so leaving the board and the chats in
- * would let this guard pass for the wrong reason: a worktree nobody happens to
- * be in is protected by the rule under test, and one somebody is in is protected
- * by liveness. With them out, the only thing standing between a dirty merged
- * branch and `disposalCandidates` is the derivation.
- */
-function liveInventory() {
-  const { mainPath, worktrees } = liveWorktreeFacts();
-  return buildInventory({
-    worktrees,
-    root: mainPath,
-    base: 'main',
-    mainHead: execFileSync('git', ['rev-parse', 'main'], { cwd: mainPath, encoding: 'utf8' }).trim(),
-    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
-    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
-    nowMs: NOW,
-  });
-}
 
 describe('git.mjs against a real repository', () => {
   it('keeps tip commit details when the branch has no commits ahead', async () => {
@@ -2585,9 +2508,11 @@ describe('the curated table', () => {
     // worktree of this shape protected nothing while asserting a claim that went
     // out of date on its own. The rule itself is the describe block below; this
     // test is the tripwire against the flag coming back for it.
-    const derived = liveInventory()
+    const derived = protectionInventory()
       .worktrees.filter((r) => r.inRepo && holdsWorkGitCannotSee(r))
-      .map((r) => r.name);
+      .map((r) => r.name)
+      .sort();
+    expect(derived).toEqual(['inventory-fixture-dirty-merged', 'ph']);
     const flagged = derived.filter((name) => CURATED[name]?.mustNotPrune);
     expect(
       flagged,
@@ -2595,12 +2520,7 @@ describe('the curated table', () => {
         'The generator derives that protection, so the flag is a claim that goes stale the moment the ' +
         'owner commits — delete the field and keep the note.'
     ).toEqual([]);
-    // A derived set cannot be cheaper than the facts it is derived from: this
-    // reads git in every worktree in the repository, which is precisely what the
-    // hand-written list was pretending not to have to do. `liveWorktreeFacts`
-    // memoises, so the suite pays for the read once, and which of the two tests
-    // asking first is not something the budget may depend on.
-  }, 60_000);
+  });
 
   it('declares no key twice, because a duplicate key silently discards a curation change', () => {
     // Five keys were declared twice: a rich entry written deliberately near the
@@ -2807,26 +2727,23 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
   });
 
-  it('never offers a live worktree that holds uncommitted work on no ref for disposal', () => {
-    // This is the whole rule, and it is asserted over the repository as it is
-    // rather than over a list of names in this file. There is no name here to go
-    // stale: the set is recomputed from `git` on every run, so an agent that
-    // commits, an agent that disposes a worktree and an agent that creates one
-    // all change the set without changing a line of this suite. That is the point
-    // — the hand-written list was re-derived three times in one session, and each
-    // pass cost ten minutes and a hold.
-    const inv = liveInventory();
+  it('never offers a worktree that holds uncommitted work on no ref for disposal', () => {
+    // These synthetic facts cover the dirty primary and merged-worktree shapes.
+    // Keeping the cases explicit makes the safety assertion independent of the
+    // operator's current worktree fleet.
+    const inv = protectionInventory();
     const inRepo = inv.worktrees.filter((r) => r.inRepo);
+    const holdingWork = inRepo.filter((r) => holdsWorkGitCannotSee(r));
+    expect(holdingWork.map((r) => r.name).sort()).toEqual(['inventory-fixture-dirty-merged', 'ph']);
 
-    // The facts must have been read at all. An `ahead` that is `null` means git
-    // could not be asked, and a derived set built from unread facts is not
-    // evidence that nothing is at risk — it is evidence that nothing was looked
-    // at, and the assertion below would pass on it.
+    // The fixture must provide the facts needed to derive the set. An `ahead`
+    // that is `null` means the fact is unreadable, and an empty result would not
+    // establish that no work is at risk.
     const unread = inRepo.filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean');
     expect(
       unread.map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
-      'git could not be read in these worktrees, so the derived set below would be empty for a ' +
-        'reason that has nothing to do with whether any work is at risk'
+      'the fixture did not provide readable git facts for these worktrees, so the derived set below ' +
+        'would be empty for a reason that has nothing to do with whether any work is at risk'
     ).toEqual([]);
 
     // Three ways to lose, not one. `prunable` and the disposal list are what an
@@ -2834,13 +2751,11 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     // generator that stopped reading the working tree at all still refuses to
     // prune a dirty tree, because the clean-tree clause is inside `prunable`
     // itself — and it would do that while printing `status: landed` and
-    // `recommendation: prune` for the one copy of the work. So the verdict is
-    // asserted too, and the message says which of the three gave.
-    const exposed = inRepo
-      .filter((r) => holdsWorkGitCannotSee(r))
-      .filter(
-        (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
-      );
+    // `recommendation: prune` for the one copy of the work. The disposal verdict
+    // is asserted through all three signals, and the message says which failed.
+    const exposed = holdingWork.filter(
+      (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
+    );
     expect(
       exposed.map(
         (r) =>
@@ -2851,44 +2766,42 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         'commit on the branch — so the only copy of it is the working tree, and the generator is ' +
         'calling it disposable'
     ).toEqual([]);
-    // See the timeout note on the curated-table test that shares this read.
-  }, 60_000);
+  });
 
   it('protects that shape in a worktree NOBODY has written anything down about', () => {
     // The guard above builds the document WITH the curated table, so a curated
     // entry is standing behind every verdict it checks. This one takes the entry
     // away, which is the state the deleted coverage rule used to make impossible
-    // to reach: of the ten live worktrees holding work on no ref when this was
-    // written, eight had no entry at all. If the protection came from the table,
-    // those eight would be disposable and nothing here would be able to say so.
+    // to reach: the fixture includes unlisted worktrees holding work on no ref.
+    // If protection came from the table, those fixtures would be disposable.
     //
     // So this is the coverage rule's actual subject — "a preservation branch gets
     // mistaken for a disposable one" — asserted as the invariant it needed,
-    // against `classify` on git's facts and nothing else. The primary checkout is
+    // against `classify` on worktree facts and nothing else. The primary checkout is
     // never a disposal candidate: `dispose` refuses it outright, so its dirty
     // state must not affect this check for disposable preservation branches.
-    const inv = liveInventory();
-    const { worktrees } = liveWorktreeFacts();
+    const inv = protectionInventory();
+    const { worktrees } = protectionWorktreeFacts();
     const inRepo = inv.worktrees.filter((r) => r.inRepo && !r.isPrimary);
+    const holdingWork = inRepo.filter((r) => holdsWorkGitCannotSee(r));
+    expect(holdingWork.map((r) => r.name)).toEqual(['inventory-fixture-dirty-merged']);
 
-    // Non-vacuity, and it comes first so a green run cannot mean "git refused to
-    // answer, so the set below was empty for a reason unrelated to risk".
+    // Non-vacuity, and it comes first so a green run cannot mean the fixture
+    // failed to provide readable facts for a reason unrelated to risk.
     expect(
       inRepo
         .filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean')
         .map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
-      'git could not be read in these worktrees, so the set below would be empty for a reason that has ' +
-        'nothing to do with whether any work is at risk'
+      'the fixture did not provide readable git facts for these worktrees, so the set below would be ' +
+        'empty for a reason that has nothing to do with whether any work is at risk'
     ).toEqual([]);
 
     // The same three signals `buildInventory` would pass here, with the curated
-    // entry removed. `liveInventory()` builds with liveness deliberately empty,
-    // so `noChats`/`noSessions` reproduce it exactly and the only difference
+    // entry removed. Liveness is deliberately empty, so the only difference
     // between this call and the record it is compared against is the curation.
     const exposed = [];
     const silent = [];
-    for (const r of inRepo) {
-      if (!holdsWorkGitCannotSee(r)) continue;
+    for (const r of holdingWork) {
       const facts = worktrees.find((x) => x.name === r.name);
       const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
       const where =
@@ -2901,7 +2814,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
       if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
         exposed.push(where);
       } else if (facts.tip === null || facts.detached) {
-        // git could not name a tip, so the shape is not classifiable and
+        // The fixture cannot name a tip, so the shape is not classifiable and
         // `undecided` is the honest answer. Reported rather than skipped, because
         // "the guard had nothing to check" and "the guard checked nothing" look
         // identical in a green run otherwise.
@@ -2913,6 +2826,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         exposed.push(`${where} — readable, so this must be reported as at-risk, not as anything else`);
       }
     }
+    expect(silent, 'every synthetic target must have a readable tip and branch identity').toEqual([]);
     expect(
       exposed,
       'these worktrees hold work that is in no commit on any branch, so the working tree is the only ' +
@@ -2922,7 +2836,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
         // checked everything" when it could not classify something.
         (silent.length ? ` (skipped as unclassifiable: ${silent.join('; ')})` : '')
     ).toEqual([]);
-  }, 60_000);
+  });
 
   it('lets the curated table move a verdict only by vetoing a disposal or marking a branch legacy', () => {
     // The reason the coverage rule could not simply be dropped: a curated entry

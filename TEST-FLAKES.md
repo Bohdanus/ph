@@ -675,8 +675,9 @@ default it is guarding. Two properties were checked rather than assumed and are
 worth keeping: the budget is scoped to the file that declares it (a body several
 times the default in an undeclared sibling still died at the 5s default in the same
 run), and a per-test `it(name, fn, timeout)` argument still wins over the file
-budget, which is how the two tests that read git in every worktree keep their
-declared `60_000`.
+budget. The worktree-inventory suite no longer overrides its timeout for
+fleet-wide git reads: its protection assertions use a small synthetic worktree
+fixture, so their cost does not grow with the operator's live worktree count.
 
 **Remaining verification:** the code review this change was merged without. Every
 review subagent on 2026-09-29 died on `free-models-per-day-stealth`, a paid model
