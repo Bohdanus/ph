@@ -1587,7 +1587,7 @@ describe('classify: the 0-ahead trap', () => {
     expect(v.prunable).toBe(false);
   });
 
-  it('reports a main worktree with uncommitted work as holding it, not as landed', () => {
+  it('reports uncommitted main-worktree content as at-risk, not merely kept', () => {
     const v = classify(
       wt({
         name: 'ph',
@@ -1599,7 +1599,8 @@ describe('classify: the 0-ahead trap', () => {
       { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
     );
     expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
-    expect(v.recommendation).toBe(RECOMMENDATION.KEEP);
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(v.action).toBe(ACTION.AT_RISK);
     expect(v.prunable).toBe(false);
     expect(v.uncommitted).toBe(true);
   });
