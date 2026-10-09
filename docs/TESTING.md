@@ -251,13 +251,20 @@ unquoted `$(...)` word-splits and globs into a silent pass.
 
 ### CI
 
+CI in `.github/workflows/ci.yml` is read-only by design: the workflow sets
+`permissions: contents: read`, and every checkout step passes
+`persist-credentials: false`, so no job can write to the repository or exfiltrate
+a usable token.
+
 - `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion,
-  coverage tests, build.
+  unit tests, build.
 - `e2e-unit`: e2e helper tests and coverage.
-- `e2e`: headless Playwright. CI retries each failed test up to twice (three total
-  attempts); local runs use zero retries. `failOnFlakyTests` makes a test that passes
-  only after a retry fail the job, so investigate it as a defect rather than treating
-  it as a pass.
+- `e2e`: headless Playwright on Linux, Windows, and macOS — a matrix with
+  `fail-fast: false` and `retries: 2` (three total attempts). `failOnFlakyTests`
+  makes a test that passes only after a retry fail the job, so investigate it as a
+  defect rather than treating it as a pass. Only `darwin/` visual-regression
+  baselines are committed; the Linux and Windows legs fail-as-missing until their
+  baselines are recorded (see `.github/workflows/ci.yml` "MISSING BASELINES").
 - **Dependency licences are not checked by CI.** `npm audit --audit-level=high`
   checks vulnerability advisories, not licence terms. The README records this
   limitation and the expectation to review dependency licences.

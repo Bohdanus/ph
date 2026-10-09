@@ -48,6 +48,9 @@ const layoutInvarianceFormat: ExportFormat = { label: 'PNG', extension: '.png', 
 /** Sub-directory of the committed snapshot directory that holds the baseline PNGs. */
 const BASELINE_DIR = 'export-baselines';
 
+/** Platform-specific subdirectory for baselines (win32, darwin, linux). */
+const PLATFORM_DIR = process.platform;
+
 /**
  * The one `updateSnapshots` value that re-records a baseline.
  *
@@ -73,9 +76,15 @@ const BASELINE_RECORD_MODE = 'all';
  * `drawing.png-Google-Chrome-darwin.png` — a file that is not committed, and one that
  * would differ per operating system, leaving a baseline committed on one OS to read as
  * "missing" on every other one.
+ *
+ * The baseline is now stored under a platform-specific subdirectory so that each OS
+ * has its own committed oracle. The platform is derived from `process.platform`
+ * (win32, darwin, linux) rather than from the Playwright project name, because the
+ * test runs on the native OS in CI and the rasterisation is a property of the OS,
+ * not the browser project.
  */
 function baselineFile(testInfo: TestInfo, fileName: string): string {
-  return path.join(testInfo.snapshotDir, BASELINE_DIR, fileName);
+  return path.join(testInfo.snapshotDir, BASELINE_DIR, PLATFORM_DIR, fileName);
 }
 
 test.describe('Export visual regression', () => {
@@ -133,7 +142,7 @@ test.describe('Export visual regression', () => {
         // `--update-snapshots` this used to print resolves to 'changed' and cannot
         // reach this branch, so telling a reader to run it named a dead end.
         throw new Error(
-          `Baseline missing for ${format.label}. Record it with \`npm run test:e2e:update-baselines\`, ` +
+          `Baseline missing for ${format.label} on ${PLATFORM_DIR}. Record it with \`npm run test:e2e:update-baselines\`, ` +
             `which runs \`playwright test e2e/export/visual-regression.spec.ts --update-snapshots=${BASELINE_RECORD_MODE}\`. ` +
             'Re-recording replaces a committed oracle, so it is an operator decision - review the diff it produces.'
         );
@@ -241,8 +250,13 @@ test.describe('Export visual regression', () => {
    * `@jsquash/avif`. A byte comparison against a third-party codec would be a test of the
    * codec, not of the geometry. The canvas comparison is kept as well, because it is already
    * computed and it localises a failure to the drawing rather than the encoder.
+   *
+   * OS-AGNOSTIC: This test verifies geometric/layout independence by comparing exported
+   * PNG bytes and canvas.toDataURL() across viewport configurations. It does NOT compare
+   * against committed pixel baselines. A failure on ANY platform indicates a real logic
+   * regression in the export geometry, not an OS rendering difference.
    */
-  test('the export is independent of the shell layout', async ({ page }, testInfo) => {
+  test('the export is independent of the shell layout @os-agnostic', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
     const configurations: { label: string; width: number; height: number; toolbarLayout: 'default' | 'toggled' }[] = [];
@@ -363,8 +377,12 @@ test.describe('Export visual regression', () => {
    * One pixel is the whole claim. A 1280-wide window and a 1281-wide window differ in the
    * sidebar's share of nothing at all; if the export changes across that, the export is a
    * function of the frame.
+   *
+   * OS-AGNOSTIC: This test verifies that a 1px viewport width change does not alter the
+   * exported canvas content (sourceDataUrl). It compares in-browser canvas output, not
+   * committed pixel baselines. A failure on ANY platform indicates a real geometry bug.
    */
-  test('the export is independent of the canvas width', async ({ page }, testInfo) => {
+  test('the export is independent of the canvas width @os-agnostic', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
     const dataUrlAtWidth = async (width: number) => {
@@ -399,8 +417,12 @@ test.describe('Export visual regression', () => {
    * `data-fit-*`, and this is that comparison. It runs at two widths as well as two heights,
    * because at a width-limited box `offsetX` is 0 exactly and a width-only change is the one
    * that would expose an asymmetry in the rule.
+   *
+   * OS-AGNOSTIC: This test compares the app's published fit values against the helper's
+   * independent `containFit` calculation. It validates geometric computation logic, not
+   * pixel rendering. A failure on ANY platform indicates a math/logic drift.
    */
-  test('the document mapping agrees with the fit the app itself computed', async ({ page }) => {
+  test('the document mapping agrees with the fit the app itself computed @os-agnostic', async ({ page }) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
     const agreementAt = async (width: number, height: number) => {
