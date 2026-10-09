@@ -757,6 +757,29 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     expect(store().durableStatus).toBe(before.durableStatus);
   });
 
+  it('publishes a baked durable presentation without changing logical layer fields', () => {
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+    const before = store();
+    const bitmap = createMockImageBitmap();
+    const published = {
+      ...before.layers[layerId],
+      bitmap: null,
+      tmpCanvas: null,
+      durablePresentation: { bitmap, bounds: before.layers[layerId].pos },
+    };
+
+    act(() => {
+      store().publishRuntimePresentation({ [layerId]: published });
+    });
+
+    expect(store().layers[layerId]).toBe(published);
+    expect(store().layers[layerId].source).toBe(before.layers[layerId].source);
+    expect(store().layers[layerId].operations).toBe(before.layers[layerId].operations);
+    expect(store().history).toBe(before.history);
+    expect(bitmap.close).not.toHaveBeenCalled();
+  });
+
   /**
    * The refused publication is logged as an error only when the payload is not
    * reference-identical to the stored record, and that half of the guard is not

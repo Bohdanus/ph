@@ -86,6 +86,34 @@ describe('drawLayerSource', () => {
     expect(drawLayerSource(ctx, layer, layer.pos, { x: 40, y: 30, width: 80, height: 60 })).toBe(true);
     expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 5, 8, 20, 10);
   });
+
+  it('uses a durable baked presentation without rematerializing or reapplying operations', () => {
+    const bitmap = { width: 30, height: 40 } as ImageBitmap;
+    const ctx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      drawImage: vi.fn(),
+      filter: 'none',
+    } as unknown as CanvasRenderingContext2D;
+    const layer = {
+      id: 'baked',
+      name: 'Baked',
+      isBedrock: false,
+      bitmap: null,
+      tmpCanvas: null,
+      durablePresentation: { bitmap, bounds: { x: 10, y: 20, width: 30, height: 40 } },
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over' as const,
+      order: 0,
+      pos: { x: 0, y: 0, width: 10, height: 10 },
+      operations: [{ id: 'filter', args: { toolName: 'blur', radius: 2 }, enabled: true }],
+    } satisfies Layer;
+
+    expect(drawLayerSource(ctx, layer)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 10, 20, 30, 40);
+  });
 });
 
 describe('drawLayersToCanvas vector staging', () => {

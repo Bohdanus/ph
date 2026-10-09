@@ -58,6 +58,7 @@ function isVectorSource(source: Layer['source']): source is ToolLayerSource {
 }
 
 function getLayerBitmap(layer: Layer, position: Pos) {
+  if (layer.durablePresentation) return layer.durablePresentation.bitmap;
   if (layer.tmpCanvas) return layer.tmpCanvas;
   if (!isVectorSource(layer.source)) return layer.bitmap;
 
@@ -79,12 +80,19 @@ export function drawLayerSource(
   position: Pos = layer.pos,
   documentFrame?: DocumentFrame
 ): boolean {
-  const bitmap = getLayerBitmap(layer, position);
-  if (!bitmap || bitmap.width === 0 || bitmap.height === 0 || position.width === 0 || position.height === 0)
+  const effectivePosition = layer.durablePresentation?.bounds ?? position;
+  const bitmap = getLayerBitmap(layer, effectivePosition);
+  if (
+    !bitmap ||
+    bitmap.width === 0 ||
+    bitmap.height === 0 ||
+    effectivePosition.width === 0 ||
+    effectivePosition.height === 0
+  )
     return false;
 
   const operations: PresentationOperation[] = [];
-  for (const operation of layer.operations) {
+  for (const operation of layer.durablePresentation ? [] : layer.operations) {
     if (!operation.enabled) continue;
     if (operation.kind === 'affine-transform') {
       operations.push({ kind: 'affine-transform', transform: operation.transform });
@@ -99,8 +107,8 @@ export function drawLayerSource(
   const target: PresentationDrawTarget = { kind: 'document', frame: documentFrame };
   const evaluation = evaluatePresentationForDraw(
     {
-      position,
-      sourceSize: { width: position.width, height: position.height },
+      position: effectivePosition,
+      sourceSize: { width: effectivePosition.width, height: effectivePosition.height },
       operations,
       mode: 'layer-bounds',
     },
