@@ -314,7 +314,6 @@ export const EllipticalSelectionToolArea = ({ className, overlayCtxRef }: Ellipt
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={abortDrag}
       onPointerCancel={abortDrag}
       style={{ userSelect: 'none' }}
     />

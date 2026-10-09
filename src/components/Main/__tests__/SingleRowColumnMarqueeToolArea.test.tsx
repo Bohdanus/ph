@@ -956,28 +956,22 @@ describe('SingleRowColumnMarqueeToolArea', () => {
   });
 
   describe('abort routes', () => {
-    it('cancels the draft and commits nothing when the pointer leaves mid-draw', () => {
+    it('tracks a captured drag through leave and re-entry, then commits at the release row', () => {
       const toolArea = renderArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, ...canvas(5, 20) });
       fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 60) });
       fireEvent.pointerLeave(toolArea, { button: 0, pointerId: 1, ...canvas(5, 60) });
+      expect(isDocumentGestureOpen()).toBe(true);
 
-      expect(selectionEdits()).toEqual([]);
-      expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 150) });
+      fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, ...canvas(5, 90) });
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, ...canvas(5, 90) });
 
-      // The hook's captured pointer goes with the gesture. While it is held the browser
-      // delivers `pointerup` to the capture target even when the pointer was released
-      // elsewhere — and `handlePointerUp` returns before `isPointerUpValid` once the drag
-      // ref is empty — so without `releasePointer` the ref survived and every later press
-      // was refused by `isPointerDownValid`'s first-pointer-wins check. The observable half
-      // is a second press on the SAME mounted element committing a band.
+      const selection = committedSelection(singleSelectionEdit());
+      expect(selection.pos).toEqual({ x: 0, y: 90, width: 200, height: MARQUEE_THICKNESS_PX });
       expect(pointerState.activePointer).toBe(null);
-
-      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
-      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 2, ...canvas(5, 90) });
-
-      expect(selectionEdits()).toHaveLength(1);
+      expect(isDocumentGestureOpen()).toBe(false);
     });
 
     it('cancels the draft on a pointer cancel, which surfaces no release either', () => {
@@ -1130,16 +1124,19 @@ describe('SingleRowColumnMarqueeToolArea', () => {
       expect(isDocumentGestureOpen()).toBe(false);
     });
 
-    it('releases the claim on pointer leave and on pointer cancel', () => {
+    it('keeps the claim through pointer leave and releases it on pointer cancel', () => {
       const toolArea = renderArea();
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 8, ...canvas(5, 20) });
       fireEvent.pointerLeave(toolArea, { button: 0, pointerId: 8, ...canvas(5, 20) });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 8, ...canvas(5, 20) });
       expect(isDocumentGestureOpen()).toBe(false);
 
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
-      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
-      expect(isDocumentGestureOpen()).toBe(false);
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 9, ...canvas(5, 20) });
+      expect(selectionEdits()).toHaveLength(1);
     });
 
     it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {

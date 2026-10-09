@@ -185,6 +185,10 @@ mask does exist, but only as a derived copy for clipboard and copy-to-layer
 nowhere else. Feather is a parameter on that copy, not a modification of the
 selection.
 
+Rectangular, elliptical, and single-row/column marquee drags stay captured when
+the pointer leaves the canvas and commit on a valid release; `pointercancel`
+aborts the gesture.
+
 **Status:** `divergent`
 
 **Gap:** No Combine (Add / Subtract / Intersect), no Invert, no Modify (Feather /

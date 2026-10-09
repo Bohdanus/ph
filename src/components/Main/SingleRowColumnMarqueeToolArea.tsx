@@ -461,7 +461,6 @@ export const SingleRowColumnMarqueeToolArea = ({ className, overlayCtxRef }: Sin
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={abortDrag}
       onPointerCancel={abortDrag}
       style={{ userSelect: 'none' }}
     />
