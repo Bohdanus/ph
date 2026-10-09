@@ -60,6 +60,52 @@ describe('drawLayerSource', () => {
     expect(ctx.drawImage).toHaveBeenCalledWith(sourceCanvas, 4, 6, 200, 100);
   });
 
+  it('renders a committed shape at its preview bounds through a non-zero frame', () => {
+    const sourceCanvas = { width: 64, height: 64 } as OffscreenCanvas;
+    const apply = vi.fn((): [OffscreenCanvas] => [sourceCanvas]);
+    vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(apply);
+    const ctx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      drawImage: vi.fn(),
+      filter: 'none',
+    } as unknown as CanvasRenderingContext2D;
+    const documentPosition = { x: 58, y: 78, width: 64, height: 64 };
+    const documentFrame = { x: 30, y: 40, width: 800, height: 600 };
+    const layer: Layer = {
+      id: 'shape',
+      name: 'Shape',
+      isBedrock: false,
+      bitmap: null,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: documentPosition,
+      presentationBounds: null,
+      operations: [],
+      source: {
+        kind: 'tool',
+        pos: documentPosition,
+        args: {
+          toolName: 'shape',
+          figure: 'rectangle',
+          alpha: 1,
+          color: '#000000',
+          backgroundColor: null,
+          lineWidth: 2,
+          start: { x: 2, y: 2 },
+          end: { x: 62, y: 62 },
+        },
+      },
+    };
+
+    expect(drawLayerSource(ctx, layer, documentPosition, documentFrame)).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledWith(sourceCanvas, 28, 38, 64, 64);
+  });
+
   it('maps world layer positions into a non-zero document frame', () => {
     const bitmap = { width: 20, height: 10 } as ImageBitmap;
     const ctx = {
