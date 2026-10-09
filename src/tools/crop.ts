@@ -2,6 +2,10 @@ import { trimRect } from '../util/rect.ts';
 import type { ProcessorToolParams } from './toolProcessors.ts';
 import type { RectXYSorted } from '../contexts/general-types.ts';
 
+export const CROP_OVERLAYS = ['ruleOfThirds', 'grid', 'diagonal', 'triangle', 'goldenRatio', 'goldenSpiral'] as const;
+export type CropOverlayType = (typeof CROP_OVERLAYS)[number];
+export type CropOverlayOrientation = 'normal' | 'flipped';
+
 export type CropToolArgs = {
   rect?: RectXYSorted | null;
   /**
@@ -19,6 +23,8 @@ export type CropToolArgs = {
    */
   preRatioRect?: RectXYSorted | null;
   aspectRatio?: number | null;
+  overlayType?: CropOverlayType;
+  overlayOrientation?: CropOverlayOrientation;
 
   toolName: 'crop';
 };
