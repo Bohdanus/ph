@@ -42,8 +42,9 @@ vi.setConfig({ testTimeout: 15_000 });
  * the sentence holding it is making a claim about code that is not there.
  *
  * SCOPE, and it is deliberately uneven across the three legs below. The retired-symbol leg reads
- * every MAINTAINED document in the repository; the call-form and handoff-section legs read
- * `AGENTS.md` alone. That is a measurement, not an oversight:
+ * every MAINTAINED document in the repository; the call-form leg checks `AGENTS.md` against app
+ * source and `HANDOFF.md` against app source plus the specific script and E2E files it cites. The
+ * handoff-section leg reads `AGENTS.md` alone. That is a measurement, not an oversight:
  *
  * - The retired-symbol leg is a list of names the program does not contain, so a document
  *   mentions one only by asserting it exists. Widening it costs 2 exclusions and catches the
@@ -58,7 +59,8 @@ vi.setConfig({ testTimeout: 15_000 });
  *   or a corpus widened past `src/` — and widening the corpus is worse than useless here:
  *   `scripts/lib/worktree-inventory/curated.mjs` names `saveLayerCanvas` in a historical string,
  *   so adding `scripts/` makes `declaredInSource('saveLayerCanvas')` true and switches the guard
- *   off by accident. The corpus stays `src/` and this leg stays scoped.
+ *   off by accident. `AGENTS.md` stays scoped to `src/`; `HANDOFF.md` adds only its specifically
+ *   cited source files, so non-app calls can be checked without importing historical strings.
  * - The handoff-section leg widened reports 96 `§N` references that are not citations into
  *   `HANDOFF.md` at all: `TEXT_TOOL_REQUIREMENTS.md` and `docs/LAYERS-PANEL.md` use `§` for a
  *   numbered clause of their own prose. Its own doc comment already records that the rule cannot
@@ -89,6 +91,24 @@ const SOURCE_CORPUS = sourceFilesUnder(resolve(REPO_ROOT, 'src'))
   .map((file) => readFileSync(file, 'utf8'))
   .join('\n');
 
+const HANDOFF_CALL_SOURCES = [
+  'scripts/lib/agent-board/db.mjs',
+  'scripts/lib/worktree-inventory/git.mjs',
+  'e2e/helpers/canvas-helpers.ts',
+  'e2e/global-setup.ts',
+  'e2e/export/helpers.ts',
+  'e2e/crop-history.spec.ts',
+  'e2e/accessibility.spec.ts',
+  'scripts/dispose-worktree.mjs',
+  'scripts/resolve-citations.mjs',
+  'scripts/lib/agent-board/identity.mjs',
+  'scripts/lib/worktree-inventory/writes.mjs',
+];
+const HANDOFF_SOURCE_CORPUS = [
+  SOURCE_CORPUS,
+  ...HANDOFF_CALL_SOURCES.map((path) => readFileSync(resolve(REPO_ROOT, path), 'utf8')),
+].join('\n');
+
 /**
  * A backticked call form: `` `name()` ``. That is the shape an architecture gate uses to name
  * the thing whose behaviour it conditions on, which is why it is the shape worth checking. A
@@ -98,7 +118,8 @@ const SOURCE_CORPUS = sourceFilesUnder(resolve(REPO_ROOT, 'src'))
  */
 const CALL_FORM = /`([A-Za-z_$][A-Za-z0-9_$]*)\(\)`/g;
 
-const declaredInSource = (name) => new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`).test(SOURCE_CORPUS);
+const declaredInSource = (name, sourceCorpus = SOURCE_CORPUS) =>
+  new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`).test(sourceCorpus);
 
 /**
  * Escape hatch, empty on purpose. Each entry needs a reason in its own words, because an entry
@@ -108,10 +129,10 @@ const declaredInSource = (name) => new RegExp(`\\b${name.replace(/\$/g, '\\$')}\
  */
 const ALLOWED_WITHOUT_SOURCE = new Set([]);
 
-const staleCallForms = (markdown) =>
+const staleCallForms = (markdown, sourceCorpus = SOURCE_CORPUS) =>
   [...markdown.matchAll(CALL_FORM)]
     .map((match) => match[1])
-    .filter((name) => !ALLOWED_WITHOUT_SOURCE.has(name) && !declaredInSource(name));
+    .filter((name) => !ALLOWED_WITHOUT_SOURCE.has(name) && !declaredInSource(name, sourceCorpus));
 
 const readAgentsMd = () => readFileSync(resolve(REPO_ROOT, 'AGENTS.md'), 'utf8');
 
@@ -497,7 +518,7 @@ const bannedNumbersIn = (text) => [
  * map that still carries a numbered citation is reported, so the remainder cannot go unrecorded,
  * and no document can be dropped from the map to make the count smaller.
  */
-const LINE_NUMBER_GATED = new Set(['AGENTS.md', 'docs/DOCUMENTATION.md', 'docs/README.md']);
+const LINE_NUMBER_GATED = new Set(['AGENTS.md', 'docs/DOCUMENTATION.md', 'docs/README.md', 'HANDOFF.md']);
 
 /**
  * Every numbered citation in the gated documents, prefixed by the document that made it.
@@ -523,9 +544,10 @@ const ungatedDocumentsWithLineNumbers = (documents) =>
     .filter(({ text }) => bannedNumbersIn(text).length > 0)
     .map(({ path }) => path);
 
-describe("AGENTS.md's architecture claims resolve against the program", () => {
-  it('cites no backticked call that the program does not contain', () => {
+describe("maintained guidance's code claims resolve against the program", () => {
+  it('cites no backticked call that the program does not contain in AGENTS.md or HANDOFF.md', () => {
     expect(staleCallForms(readAgentsMd())).toEqual([]);
+    expect(staleCallForms(readFileSync(resolve(REPO_ROOT, 'HANDOFF.md'), 'utf8'), HANDOFF_SOURCE_CORPUS)).toEqual([]);
   });
 
   it('detects a call form the program does not contain', () => {
@@ -761,6 +783,7 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     expect(gated.filter((path) => !tracked.has(path))).toEqual([]);
     expect(gated).toContain('AGENTS.md');
     expect(gated).toContain('docs/DOCUMENTATION.md');
+    expect(gated).toContain('HANDOFF.md');
     // The spec is gated, which is the property that makes the rule's own table an enforcement
     // problem instead of a special case: `docs/DOCUMENTATION.md` writes the banned form with a
     // placeholder for exactly this reason.
@@ -768,7 +791,7 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     // And the leg reads the gated set, not the whole corpus: a document outside it is reported by
     // the migration test above instead, which is the difference between "not migrated yet" and
     // "clean".
-    expect(lineNumberCitationsByDocument([{ path: 'HANDOFF.md', text: '`useHistory.ts:141`' }])).toEqual([]);
+    expect(lineNumberCitationsByDocument([{ path: 'docs/FEATURES.md', text: '`useHistory.ts:141`' }])).toEqual([]);
     expect(lineNumberCitationsByDocument([{ path: 'AGENTS.md', text: '`useHistory.ts:141`' }])).toEqual([
       'AGENTS.md: useHistory.ts:141',
     ]);

@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3896,29 +3896,6 @@ silently destroy the stack.
 `FillToolArea.tsx`; `src/hooks/usePaintStroke.ts`; `src/components/SidebarRight/LayersTab.tsx`;
 `src/contexts/useLayer.ts` — `mergeAllLayers()`; `src/contexts/history-model.ts` —
 `DurableOperation`; `src/contexts/history-adapter.ts` — `legacyHistoryToDurable()`.
-
-## 198. The citation gate checks `AGENTS.md` for everything except line numbers, so this file's citations are ungated
-
-**Problem.** `scripts/__tests__/agents-citations.test.mjs` enforces the citation rule, and its coverage
-is narrower than the rule. `LINE_NUMBER_GATED` holds `AGENTS.md`, `docs/DOCUMENTATION.md` and
-`docs/README.md`, so the line-number leg skips every other tracked document — this one included.
-`staleCallForms()` is invoked only against `readAgentsMd()`, and `staleHandoffRefs()` takes this file as
-its _target_ while validating the references in `AGENTS.md` alone. So no backticked call and no `§N` in
-this file is checked by anything.
-
-Two further limits are structural rather than a missing path. `CALL_FORM` requires a trailing `()`, so
-a bare constant, a type, a union member or an `it('...')` title is invisible to the call-form leg by
-construction — and those are the forms most of this file uses. And no leg of the test reads a sentence
-for meaning, so even full coverage could not catch a claim that is confidently false.
-
-**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `LINE_NUMBER_GATED`, and the two
-assertions that pass `readAgentsMd()`.
-
-**What would close it.** Two steps, in order. Run `scripts/resolve-citations.mjs` over this file and
-repair what it reports, then add this file to `LINE_NUMBER_GATED` and invoke `staleCallForms()`
-against it. Widening `CALL_FORM` to accept a
-constant, a type and a test title is a separate change and needs its own migration, because it will
-flag every bare identifier in every gated document.
 
 ## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
 
