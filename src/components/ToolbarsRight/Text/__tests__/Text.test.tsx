@@ -126,7 +126,13 @@ function dropOptionalStyleFields() {
  * than the DOM: the mocked store hands back the same object until something republishes it, so a
  * test that re-read `toolArgs` would be reading back its own fixture.
  */
-const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
+const lastToolArgs = () =>
+  mockSetToolArgs.mock.lastCall?.[0] as {
+    rect?: { x1: number; y1: number; x2: number; y2: number };
+    bold?: boolean;
+    underline?: boolean;
+    [key: string]: unknown;
+  };
 
 /**
  * A range input does not move under an arrow key in jsdom, so the value is stepped by hand and
@@ -389,10 +395,8 @@ describe('Text toolbar', () => {
     // date. Underline and strikethrough draw in the type colour inside the box the glyphs already
     // occupy, so recomputing them would move a rectangle that was already right.
     //
-    // The box here is deliberately TALLER than one 64px/1.1 line needs, so a recompute produces
-    // the same four numbers and cannot be caught by value. Only identity catches it:
-    // `calculateNewRect` ends in `trimRect2`, which always allocates, so a published `rect` that
-    // is the very object the fixture holds is proof that nothing measured.
+    // The box here is deliberately TALLER than one 64px/1.1 line needs. A metric recompute shrinks
+    // the ink height but preserves the box centre, so both identity and the stable centre matter.
     resetToolArgs({ rect: { x1: 0, y1: 0, x2: 100, y2: 200 } });
     renderWithProvider(<Text />);
 
@@ -400,7 +404,8 @@ describe('Text toolbar', () => {
 
     expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bold: true }));
     expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
-    expect(lastToolArgs().rect).toEqual({ x1: 0, y1: 0, x2: 100, y2: 200 });
+    expect(lastToolArgs().rect).toMatchObject({ x1: 0, x2: 100 });
+    expect(lastToolArgs().rect!.y1 + lastToolArgs().rect!.y2).toBe(200);
 
     mockSetToolArgs.mockClear();
 

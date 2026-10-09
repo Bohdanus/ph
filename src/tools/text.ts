@@ -154,6 +154,8 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
+  /** Rotation of the text box in degrees, around its centre. */
+  angle?: number;
   /** True only for a newly placed placeholder that has not received user input yet. */
   placeholderUntouched?: boolean;
   /** Present only while re-entering this committed layer; never persisted in source settings. */
@@ -778,6 +780,12 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOp
   // the only context-touching function left open, and it is the one that runs most often.
   ctx.save();
   try {
+    if (args.angle) {
+      const center = { x: (rect.x1 + rect.x2) / 2, y: (rect.y1 + rect.y2) / 2 };
+      ctx.translate(center.x, center.y);
+      ctx.rotate((args.angle * Math.PI) / 180);
+      ctx.translate(-center.x, -center.y);
+    }
     renderTextInto(ctx, style, kind, text, rect, options);
   } finally {
     ctx.restore();

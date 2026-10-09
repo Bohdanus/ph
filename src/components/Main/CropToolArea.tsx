@@ -255,6 +255,9 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     // Crop is the one consumer whose box may run off the frame, so it keeps the overhang instead
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,
+    rotationEnabled: true,
+    rotation: args.angle ?? 0,
+    onRotationChange: (angle: number) => setToolArgs({ ...args, angle }),
 
     onRepaint: (sortedRect: RectXYSorted) => {
       // Read after this render has bound `pointerState`. The closure runs from inside `drawMask`,
@@ -293,7 +296,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const dash = painted ? OUTLINE_DASH / painted.fit.scale : 0;
 
   return (
-    <div className={`${className} cursor-crop`} {...pointerHandlers}>
+    <div className={`${className} cursor-crop`} data-rotation={args.angle ?? 0} {...pointerHandlers}>
       {overhangPieces.length > 0 && painted && (
         /**
          * `pointer-events: none` is inherited, so this one declaration takes the whole subtree out
