@@ -40,6 +40,10 @@ import { collectWorktrees, findMissingWorktrees, resolveBaseRef } from './lib/wo
 import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { auditWrites } from './lib/worktree-inventory/writes.mjs';
+import {
+  MAX_SESSION_DB_WINDOW_HOURS,
+  MAX_SESSION_DB_WINDOW_MS,
+} from './lib/worktree-inventory/session-audit-limits.mjs';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
@@ -50,7 +54,7 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   --check             exit 1 if WORKTREES.json is missing or stale, write nothing
   --stdout            print the inventory instead of writing it
   --base <branch>     compare against <branch> (default: main)
-  --window-hours <n>  chat window in hours (default: 24)
+  --window-hours <n>  chat window in hours (default: 24, maximum: 72; the session database is never read older than 3 days)
   --now <ms>          pin recency evaluation; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
   --no-live-writers   declare that NO chat is writing to any worktree right now,
@@ -108,6 +112,11 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(opts.windowHours) || opts.windowHours <= 0) {
     throw new Error('--window-hours must be a positive number');
+  }
+  if (opts.windowHours > MAX_SESSION_DB_WINDOW_HOURS) {
+    throw new Error(
+      `--window-hours cannot exceed ${MAX_SESSION_DB_WINDOW_HOURS} (the session database safety limit is 3 days)`
+    );
   }
   return opts;
 }
@@ -371,18 +380,17 @@ async function runAsyncMain(opts) {
   }).trim();
 
   const chatAudit = auditChats({ sinceMs: nowMs - windowMs, nowMs, existingPaths });
-  // The write audit is a SECOND pass over the same database and costs ~14s on
-  // this machine's 428k-row `part` table. It is not windowed, so it cannot be
-  // folded into `auditChats`' query, and it answers a different question: not
-  // who is here now but who ever was. Skipped entirely for `--check` is
-  // deliberately NOT done — a stale write history is exactly the drift
-  // `--check` exists to catch.
+  // The write audit is a SECOND pass over the same database. It is deliberately
+  // bounded to the same three-day safety window: no worktree can be live beyond
+  // that window, and scanning older calls only creates lock and I/O pressure on
+  // the live Kilo database without changing a disposal decision.
   const writeAudit = auditWrites({
     dbPath: resolveSessionDb(),
     root,
     worktreePaths: worktrees.map((w) => w.path),
     nowMs,
     liveWindowMs: LIVE_WINDOW_MS,
+    sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
   });
   const board = readBoard(root, { nowMs });
   // The read audit is a human pass over transcripts, so it is NOT filtered by

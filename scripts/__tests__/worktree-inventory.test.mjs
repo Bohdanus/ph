@@ -52,6 +52,7 @@ import {
   summariseWrites,
   worktreeNameFromPath,
 } from '../lib/worktree-inventory/writes.mjs';
+import { MAX_SESSION_DB_WINDOW_MS } from '../lib/worktree-inventory/session-audit-limits.mjs';
 import { resolveReadsReleasedBefore } from '../worktree-inventory.mjs';
 import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
 import { Board } from '../lib/agent-board/db.mjs';
@@ -1703,6 +1704,42 @@ describe('auditChats against a real session database', () => {
     }
   });
 
+  it('caps an over-wide chat window at three days', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-window-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    try {
+      db.exec(`CREATE TABLE session (id TEXT, directory TEXT, title TEXT, parent_id TEXT, agent TEXT,
+                 slug TEXT, tokens_output INTEGER, tokens_input INTEGER, time_created INTEGER,
+                 time_updated INTEGER, time_archived INTEGER);
+               CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT);`);
+      db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+        'old',
+        '/wt',
+        'old session',
+        null,
+        'code',
+        's',
+        100,
+        10,
+        old,
+        old,
+        null
+      );
+      db.close();
+
+      const { auditChats } = await_import();
+      const audit = auditChats({ dbPath, sinceMs: 0, nowMs: NOW, existingPaths: new Set(['/wt']) });
+      expect(audit.available).toBe(true);
+      expect(audit.total).toBe(0);
+      expect(audit.byDirectory.size).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('degrades to an empty audit when the database is absent', () => {
     const { auditChats } = await_import();
     const audit = auditChats({ dbPath: '/nonexistent/kilo.db', sinceMs: 0, nowMs: NOW });
@@ -3116,8 +3153,8 @@ describe('the generated inventory is untracked, and stays that way', () => {
 });
 
 /**
- * Call history: who wrote in each worktree, who read it, who ran commands in it,
- * ever, and which of those may be released.
+ * Call history: who wrote in each worktree, who read it, who ran commands in it
+ * during the database safety window, and which of those may be released.
  *
  * The property under test is ATTRIBUTION plus COMPLETENESS, and they pull against
  * each other. `chats.mjs` attributes a chat to a worktree by the directory the
@@ -3326,6 +3363,79 @@ describe('the call history', () => {
       expect(rec.write.subagentCalls).toBe(1);
     } finally {
       fx.cleanup();
+    }
+  });
+
+  it('limits call history to three days while retaining an older parent for attribution', () => {
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    const fx = makeSessionDb({
+      sessions: [
+        { id: 'parent', projectId: 'p2', directory: ROOT, at: old },
+        { id: 'child', projectId: 'p1', parentId: 'parent', directory: `${ROOT}/.kilo/worktrees/x`, at: NOW - 10_000 },
+      ],
+      calls: [
+        { sessionId: 'parent', at: old, data: tool('edit', { filePath: `${ROOT}/src/old.ts` }) },
+        {
+          sessionId: 'child',
+          at: NOW - 10_000,
+          data: tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/current.ts` }),
+        },
+      ],
+    });
+    try {
+      const audit = run(fx.dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`], sinceMs: 0 });
+      const record = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      expect(record.write.calls).toBe(1);
+      expect([...record.write.chats.keys()]).toEqual(['parent']);
+      expect(record.write.subagentCalls).toBe(1);
+      expect(audit.byWorktree.has(ROOT)).toBe(false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('covers a session with recent `part.time_updated` but old `time_created`', () => {
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    const recent = NOW - 10_000;
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-part-updated-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+               INSERT INTO project_directory VALUES ('p2', '${ROOT.replace(/'/g, "''")}', 'primary');
+               CREATE TABLE session (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+                 agent TEXT, time_created INTEGER, time_updated INTEGER);
+               CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT);`);
+      db.prepare(
+        'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+      ).run('parent', 'p2', null, ROOT, 'parent', 'code', old, old);
+      db.prepare(
+        'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+      ).run('child', 'p1', 'parent', `${ROOT}/.kilo/worktrees/x`, 'child', 'code', old, old);
+      db.prepare(
+        'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+      ).run('p1', 'm1', 'parent', old, old, JSON.stringify({ type: 'message', role: 'assistant', content: 'x' }));
+      // A child call created before the window but edited since. The session is
+      // retained because part.time_updated is recent, and the call is attributed.
+      db.prepare(
+        'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+      ).run(
+        'p2',
+        'm2',
+        'child',
+        old,
+        recent,
+        JSON.stringify(tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/a.ts` }))
+      );
+      db.close();
+
+      const audit = run(dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`], sinceMs: 0 });
+      const record = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      expect(record.write.calls).toBe(1);
+      expect([...record.write.chats.keys()]).toEqual(['parent']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
