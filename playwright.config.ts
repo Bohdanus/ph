@@ -69,15 +69,15 @@ export default defineConfig({
   // Stating it costs a developer nothing, and it stops a value this file does not
   // declare from being what decides the question.
   failOnFlakyTests: true,
-  // The WHOLE-RUN clock, and deliberately BELOW the `e2e` job's
-  // `timeout-minutes: 30` in .github/workflows/ci.yml. Playwright's default is `0`,
-  // which is unbounded, so today a hung suite is stopped by GitHub killing the job
-  // — and a job killed for exceeding `timeout-minutes` runs NONE of its remaining
-  // steps: no HTML report, no `test-results/results.json`, no trace, no diff image.
-  // The timeout and the evidence it was meant to preserve cancel out, and that is
-  // the whole reason this number is not 1800 or more.
+  // The WHOLE-RUN clock, and deliberately BELOW the `e2e` matrix legs'
+  // `timeout-minutes` (30 on Linux, 35 on Windows/macOS) in .github/workflows/ci.yml.
+  // Playwright's default is `0`, which is unbounded, so today a hung suite is stopped
+  // by GitHub killing the job — and a job killed for exceeding `timeout-minutes` runs
+  // NONE of its remaining steps: no HTML report, no `test-results/results.json`, no
+  // trace, no diff image. The timeout and the evidence it was meant to preserve cancel
+  // out, and that is the whole reason this number is not 1800 or more.
   //
-  // The arithmetic, with the job's 1800 s split three ways:
+  // The arithmetic, with the Linux leg's 1800 s split three ways:
   //   SETUP  <= 480 s  checkout, setup-node, `npm ci` (431 packages, 347 MB of
   //                   node_modules, and `cache: 'npm'` misses on every
   //                   package-lock.json change) and `npx playwright install

@@ -5,8 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Re-run a gate on demand without pushing an empty commit. The `e2e` job in
-  # particular is the one whose result a reviewer may want to confirm.
+  # Re-run a gate on demand without pushing an empty commit. The `e2e` matrix is
+  # the one whose result a reviewer may want to confirm, especially on a platform
+  # whose baselines were just recorded.
   workflow_dispatch:
 
 # Superseded runs are pointless work, and this workflow is triggered on every push
@@ -177,40 +178,74 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # ---------------------------------------------------------------------------
+  # Cross-platform e2e
+  #
+  # A GATE, and the only one for the e2e specs themselves. A matrix runs the
+  # same headless suite on Linux (macOS baselines), Windows and macOS.
+  #
+  # It was `continue-on-error: true` on the stated grounds that "5 of the 97 tests
+  # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
+  # sidebar keyboard flyout race. All three of those groups are fixed in this
+  # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
+  # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
+  # `test.fixme` and no `describe.skip`; the only three skips are unconditional
+  # `test.skip` declarations in `e2e/export/photopea.spec.ts`,
+  # `e2e/sidebar-flyout.spec.ts` and `e2e/viewport-drawing.spec.ts`. Nothing in
+  # the tree marks a test as failing, so the stated justification had stopped
+  # describing the suite, and the job went on reporting a state the suite no
+  # longer had. The comment kept its number alive long after the failures behind
+  # it were gone.
+  #
+  # It does not replace the `e2e-unit` job, which stays the gate for the helpers:
+  # this one proves the specs pass, that one proves the helpers the specs call are
+  # tested.
+  #
+  # This is the job's first run as a gate, and its first run on a Linux runner at
+  # all, so a red first run is a real finding to investigate rather than a reason
+  # to put `continue-on-error` back. What the job no longer rests on: the CDP
+  # capture assertions are mode- and host-independent by construction -- they no
+  # longer name a scale -- so the disjoint per-mode failing sets the old comment
+  # described are empty by design rather than by observation. See
+  # `e2e/OPEN_PROBLEMS.md`, "Verified and still unverified".
+  #
+  # The suite runs headless here, and that is not incidental: `playwright.config.ts`
+  # defaults to headless so that no operator's mouse, keyboard or focus can reach
+  # the page mid-run. A CI runner has no such input, but keeping the same default
+  # locally is what stops that class of failure from being misread as flakiness.
+  #
+  # MISSING BASELINES. `visual-regression.spec.ts` reads its oracle from
+  # `export-baselines/<platform>/`. Only `darwin/` baselines are committed; the
+  # Linux and Windows directories will be empty on the first CI run, so those legs
+  # hit the fail-as-missing contract (`Baseline missing for <format> on linux`)
+  # until an operator records them. That is a RED first run by design: the test
+  # would rather fail than silently fall back to another OS's rasteriser. Record
+  # each platform's set from a green CI run with:
+  #   npm run test:e2e:update-baselines
+  # and commit the result after reviewing the diff. The macOS leg should be
+  # green from the start — those baselines are already recorded.
   e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # A GATE, and the only one for the e2e specs themselves.
-    #
-    # It was `continue-on-error: true` on the stated grounds that "5 of the 97 tests
-    # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
-    # sidebar keyboard flyout race. All three of those groups are fixed in this
-    # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
-    # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
-    # `test.fixme` and no `describe.skip`; the only three skips are unconditional
-    # `test.skip` declarations in `e2e/export/photopea.spec.ts`,
-    # `e2e/sidebar-flyout.spec.ts` and `e2e/viewport-drawing.spec.ts`. Nothing in
-    # the tree marks a test as failing, so the stated justification had stopped
-    # describing the suite, and the job went on reporting a state the suite no
-    # longer had. The comment kept its number alive long after the failures behind
-    # it were gone.
-    #
-    # It does not replace the `e2e-unit` job, which stays the gate for the helpers:
-    # this one proves the specs pass, that one proves the helpers the specs call are
-    # tested.
-    #
-    # This is the job's first run as a gate, and its first run on a Linux runner at
-    # all, so a red first run is a real finding to investigate rather than a reason
-    # to put `continue-on-error` back. What the job no longer rests on: the CDP
-    # capture assertions are mode- and host-independent by construction -- they no
-    # longer name a scale -- so the disjoint per-mode failing sets the old comment
-    # described are empty by design rather than by observation. See
-    # `e2e/OPEN_PROBLEMS.md`, "Verified and still unverified".
-    #
-    # The suite runs headless here, and that is not incidental: `playwright.config.ts`
-    # defaults to headless so that no operator's mouse, keyboard or focus can reach
-    # the page mid-run. A CI runner has no such input, but keeping the same default
-    # locally is what stops that class of failure from being misread as flakiness.
+    strategy:
+      # One platform failing must not cancel the others; a Windows-specific
+      # rasteriser regression is a finding even alongside an expected Linux
+      # baseline-missing red.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            timeout: 30
+            install-command: npx playwright install --with-deps chrome
+          - platform: windows
+            os: windows-latest
+            timeout: 35
+            install-command: npx playwright install chrome
+          - platform: macos
+            os: macos-latest
+            timeout: 35
+            install-command: npx playwright install chrome
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -227,16 +262,20 @@ jobs:
         run: npm ci
 
       - name: Install Chrome
-        # playwright.config.ts defaults to `channel: 'chrome'` (the system browser),
-        # so install that rather than Playwright's bundled Chromium.
+        # `playwright.config.ts` sets `channel: 'chrome'` — the Chrome stable
+        # channel that Playwright installs, NOT the system browser. On Linux
+        # `--with-deps` pulls the apt packages Chrome needs; on Windows and
+        # macOS it is a bare `npx playwright install chrome` (the `--with-deps`
+        # flag is Linux-only; the matrix carries an explicit command for each
+        # runner so macOS and Windows never rely on shell semantics).
         #
         # No `actions/cache` step on purpose. That directory is where Playwright
         # unpacks the browsers IT downloads, and this job installs none: the
-        # `chrome` channel goes through the OS package manager. A cache keyed on
-        # `~/.cache/ms-playwright` here would carry an absent directory, hit on
-        # every run, and save nothing. The install below is apt, which is not
-        # cacheable.
-        run: npx playwright install --with-deps chrome
+        # `chrome` channel goes through the OS package manager on Linux. A cache
+        # keyed on `~/.cache/ms-playwright` here would carry an absent directory,
+        # hit on every run, and save nothing. The install below is apt on Linux,
+        # which is not cacheable.
+        run: ${{ matrix.install-command }}
 
       - name: Run Playwright specs
         # `npx playwright test` directly, NOT `npm run test:e2e`. That script is
@@ -273,7 +312,7 @@ jobs:
         # It does NOT rescue a job GitHub killed for exceeding `timeout-minutes`:
         # the remaining steps do not run at all, whatever their `if:` says. That is
         # why `playwright.config.ts` carries a `globalTimeout` STRICTLY BELOW this
-        # job's `timeout-minutes: 30` — Playwright trips its own deadline first,
+        # job's `timeout-minutes` — Playwright trips its own deadline first,
         # writes the report, and exits 1, so a hang arrives here as an ordinary
         # failed step with its artifacts already on disk. The two settings are ONE
         # mechanism and neither is sufficient alone.
@@ -290,7 +329,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.platform }}
           path: |
             playwright-report/
             test-results/
@@ -298,6 +337,6 @@ jobs:
           # `error`, NOT `ignore`. `ignore` makes a run that wrote NO report at all a
           # GREEN upload step, which is the same hole `failOnFlakyTests` closes on the
           # exit code: the evidence is missing and nothing says so. The report is the
-          # only record of what the suite actually did, and the two other uploads in
+          # only record of what the suite actually did, and the other uploads in
           # this workflow already treat a missing report as an error.
           if-no-files-found: error

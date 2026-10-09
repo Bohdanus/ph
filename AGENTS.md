@@ -120,7 +120,12 @@ The local hook table and CI sequence live in [`docs/TESTING.md#gates`](docs/TEST
 | `npm run gate:push`   | `.husky/pre-push`   | stale-branch check, then full app suite                        |
 
 - The commit hook runs no app test; `test:staged` is manual, and the full app suite runs at `gate:push`. Whole-repository lint and formatting are CI-only.
-- CI has independent `ci`, `e2e-unit`, and headless `e2e` jobs. It audits high-severity vulnerabilities but does not enforce dependency licences.
+- CI has independent `ci`, `e2e-unit`, and a cross-platform `e2e` matrix (Linux,
+  Windows, macOS) jobs. The `e2e` matrix runs with `fail-fast: false` and `retries: 2`;
+  `failOnFlakyTests` turns a pass-after-retry into a failure. CI audits high-severity
+  vulnerabilities but does not enforce dependency licences. CI is read-only: the
+  workflow sets `permissions: contents: read`, and every checkout uses
+  `persist-credentials: false`.
 - Never weaken a gate with a skip, raised threshold, deleted assertion, or re-recorded baseline. A baseline is re-recorded only with `--update-snapshots=all`.
 - Hooks dispatch from `<common-dir>/.git/hooks-gate/`, not each worktree's `.husky/_`; `HUSKY=0` bypasses them. A blocked commit may leave `.git/lint-staged_unstaged.patch`.
 - Reference timings: `build` 1.7s, `test:e2e:unit` 1.1s, `tsc -b` 5s, `gate:commit` about 9s, `test:staged` 2.8s, and the full test about 7-14s.
