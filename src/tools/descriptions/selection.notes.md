@@ -182,10 +182,9 @@ from the center.
 | Width and Height                              | decimal pair for Fixed Ratio, whole pixels for Fixed Size, units accepted | `missing`  | —       |
 | Select and Mask                               | on every selection tool's bar                                             | `missing`  | —       |
 
-**App fidelity: partial.** `RectangularSelectionToolArgs` is `{ rect?, toolName }` and
-`defaultSettings['rectangular-selection']` is `{ toolName: 'rectangular-selection' }` — the
-tool declares no settings at all, so there is nothing that could be `inert`. Its bar renders a
-sentence and three buttons.
+**App fidelity: partial.** `RectangularSelectionToolArgs` now carries the marquee `Style`, ratio,
+and fixed pixel dimensions, and its bar renders those controls alongside Copy / Paste / Deselect.
+Combination modes, Feather, Select and Mask, and document-unit input remain absent.
 
 **The modifier finding, and its correction.** This section previously read that the marquee's
 Shift/Alt were not implemented, on the strength of a whole-file grep for
@@ -271,7 +270,7 @@ gives that phrase an operational meaning twice, in its own text. The Quick Selec
 Photoshop's stops at an image _edge_ (see the Quick Selection section below); the magnetic lasso's
 inverted `Frequency` is the same kind of finding. Both compute a different thing from the one
 Photoshop documents, and both are `partial` on that basis. The elliptical marquee does not:
-`applyRatio()` in `src/tools/ellipticalSelection.ts` is the width-to-height ratio Adobe's
+`applyMarqueeRatio()` in `src/tools/ellipticalSelection.ts` is the width-to-height ratio Adobe's
 own worked example states, `resolveEllipseRect()` beside it makes `fixed-size` ignore the drag
 with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx` — the drag
 record `handlePointerDown()` starts — passes `event.shiftKey` and `event.altKey` as
@@ -349,7 +348,7 @@ wrong on Adobe's own wording: Fixed Ratio "Sets a height-to-width ratio. Enter v
 values are valid) for the aspect ratio. For example, to draw a marquee twice as wide as it is
 high, enter **2 for the width and 1 for the height**"
 (`https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`) — which is a
-width-to-height ratio, which is exactly what `applyRatio()` in `src/tools/ellipticalSelection.ts`
+width-to-height ratio, which is exactly what `applyMarqueeRatio()` in `src/tools/ellipticalSelection.ts`
 computes and exactly what the bar's hint tells the user, `Drag at ${args.fixedRatio}:1` (the
 `hint` in `EllipticalSelection.tsx`). What the app loses is expressiveness
 in the field, not fidelity in the geometry: the ratio must be entered as one number with a floor of

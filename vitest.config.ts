@@ -33,6 +33,12 @@ export default defineConfig({
         'src/**/fixtures/**',
         'e2e/**',
       ],
+      thresholds: {
+        lines: 30,
+        functions: 30,
+        branches: 30,
+        statements: 30,
+      },
     },
   },
   resolve: {
