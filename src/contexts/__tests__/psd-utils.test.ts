@@ -399,6 +399,20 @@ describe('PSD codec binary roundtrip', () => {
     await expect(savePsd({}, size)).rejects.toThrow('dimensions');
   });
 
+  it('uses the valid document-frame extent for the PSD composite', async () => {
+    const saved = await savePsd({}, { width: 800, height: 600 }, { x: 40, y: 25, width: 640, height: 480 });
+    const result = readPsd(saved);
+
+    expect({ width: result.width, height: result.height }).toEqual({ width: 640, height: 480 });
+  });
+
+  it('falls back to the size-derived frame when the supplied document frame is invalid', async () => {
+    const saved = await savePsd({}, { width: 320, height: 240 }, { x: 0, y: 0, width: 0, height: 240 });
+    const result = readPsd(saved);
+
+    expect({ width: result.width, height: result.height }).toEqual({ width: 320, height: 240 });
+  });
+
   it('rejects unsupported headers and bit depths before decoding', async () => {
     await expect(loadPsd(new ArrayBuffer(1))).rejects.toThrow('header');
     for (const [offset, value, message] of [

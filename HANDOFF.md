@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -247,26 +247,26 @@ and a page nowhere near this figure can still exceed it.
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
-as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one, and
-that reconciliation is the reason the BMP ceiling below is filed rather than fixed: choosing a number
-is cheap, and choosing it in one place is the decision nobody has taken.
+as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one. That
+consolidation remains an open decision; the BMP encoder now uses the existing 100 MP document cap
+without changing any other codec ceiling.
 
-**Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
+**Two codecs have no loader budget, and SVG has no encoder budget.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds?         |
-| ----- | ------------- | -------------- | ---------------------------------------------- |
-| avif  | yes           | yes            | yes                                            |
-| tiff  | yes           | yes            | yes                                            |
-| bmp   | 100 MP        | **none**       | yes — before payload validation and allocation |
-| gif   | **none**      | 65535/axis     | yes, on the encoder                            |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                                   |
-| svg   | **none**      | **none**       | n/a                                            |
-| psd   | yes           | yes            | yes — the reference implementation             |
+| codec | loader budget | encoder budget | check before the allocation it bounds?     |
+| ----- | ------------- | -------------- | ------------------------------------------ |
+| avif  | yes           | yes            | yes                                        |
+| tiff  | yes           | yes            | yes                                        |
+| bmp   | 100 MP        | 100 MP         | yes — before pixel readback and allocation |
+| gif   | **none**      | 65535/axis     | yes, on the encoder                        |
+| ico   | 256/axis      | 1..256/axis    | yes, on both                               |
+| svg   | **none**      | **none**       | n/a                                        |
+| psd   | yes           | yes            | yes — the reference implementation         |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
 rather than an exception to it. What the table leaves open is the loader column for `gif` and `svg`,
-and the encoder column for `bmp` and `svg`.
+and the encoder column for `svg`.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -277,12 +277,13 @@ selected entry decodes above 256 on either axis — a 512×512 PNG entry, which 
 it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
 loosening the load side reintroduces documents this build then cannot write.
 
-**The BMP decoder's amplification is now bounded.** `decodeBmp()` rejects a raster above
-`MAX_CREATABLE_DOCUMENT_PIXELS` (100 MP) before validating the pixel payload or allocating its
+**The BMP decoder's amplification and encoder readback are bounded.** `decodeBmp()` rejects a raster
+above `MAX_CREATABLE_DOCUMENT_PIXELS` (100 MP) before validating the pixel payload or allocating its
 RGBA output. This is the largest document the app can create, so BMP can still open every canvas
 size this build supports without introducing a sixth raster ceiling. A 20000×40000 1-bpp BMP that
-previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header. The BMP
-encoder remains unbudgeted.
+previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header.
+`encodeBmp()` rejects canvases above the same limit before reading back pixels or allocating its
+output buffer.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
@@ -304,38 +305,6 @@ finding recorded there dies with the machine. This file ships with the code. Eve
 item below is a control that is rendered and cannot work, or a Photoshop slot that is
 selectable and inert - the two shapes a silent no-op takes here - and each one names
 the fix rather than the wish.
-
-## 46. The `SidebarLeft` suites each carry their own copy of the icon mock
-
-`src/components/SidebarLeft/__tests__/harness.tsx` is a shared render harness, and its
-docstring says a suite must import it before `../SidebarLeft.tsx` so its hoisted `vi.mock` calls
-apply. **Exactly one suite does** — `SidebarLeft.tablet.test.tsx`, whose `useSidebarLeftHarness`
-import does it the required way. The other ten — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
-`SidebarLeft.context-menu`, `SidebarLeft.flyout`, `SidebarLeft.flyout-hardening`,
-`SidebarLeft.icon-state`, `SidebarLeft.keyboard`,
-`SidebarLeft.layout`, `SidebarLeft.primary-selection`, `SidebarLeft.rendering` — re-declare the
-whole `storeState` / `toolArgs` / `useApp` / `useCurrentTool` / `toolIcons` fixture inline, so one
-suite in eleven uses the harness and the mock it holds is duplicated in all ten of the others while
-still having to be kept compiling.
-
-The cost is a defect that only appears on the next tool. `toolIcons` is a hand-written object
-literal listing every icon name, and `SidebarLeft` renders
-`getToolIcon(tool.name)`. Add a tool and the literal is out of date, so `Icon` is `undefined` and
-React throws `Element type is invalid` from `createFiberFromTypeAndProps` — in **every** file in the
-directory, with a message that names neither the missing icon nor the stale literal. Adding the
-four eraser-family icons meant editing the same list eleven times.
-
-**Fix.** Delete the inline `vi.mock`/`vi.hoisted` blocks from the ten suites, import
-`storeState` / `toolArgs` / `goToTool` / `patchToolArgs` / `toolbarButtonByName` from
-`./harness` in each (the import must precede `../SidebarLeft.tsx`, which the harness docstring
-already states, and `SidebarLeft.tablet` is the worked example), and then delete the harness's
-duplicated exports. While in there, replace the
-`toolIcons` literal with `import { toolIcons } from '../toolIcons.tsx'` so the list cannot go stale
-again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it needs a
-`vi.mock` that maps over the real keys rather than a hard-coded array.
-
-**Files.** `src/components/SidebarLeft/__tests__/harness.tsx` and the ten
-`SidebarLeft.*.test.tsx` files listed above.
 
 ---
 
@@ -3198,41 +3167,6 @@ slider's `step`), `e2e/export/visual-regression.spec.ts`
 ---
 
 ---
-
-## 166. The raster and PSD export branches size from different fields, and nothing reconciles them
-
-`src/contexts/export-canvas.ts` — `renderExportCanvas()`'s extent comparison,
-`src/contexts/psd-utils.ts` — `savePsd()`'s composite allocation
-
-`renderExportCanvas` derives its extent from `documentFrame` and ignores its `size` argument
-whenever the frame is valid. `savePsd` does the opposite: it sizes the composite from `size`
-(`canvas2d(size.width, size.height)`) and uses the frame only for layer offsets. A second
-asymmetry in the same path: the PSD branch of `handleImageSave()` in
-`src/contexts/useFile.tsx` gates the frame on truthiness
-alone, so an invalid-but-truthy frame reaches `savePsd` unvalidated, while the raster branch
-validates it with `isValidDocumentFrame`.
-
-**Unreachable today, and that is the whole risk.** Every store writer that sets a frame re-derives
-`totalSize` from it (the five `documentFrameSize(nextFrame)` call sites in
-`src/contexts/StoreContext.tsx`), and
-the one reducer arm that could set `size` alone — the `SET_SIZE` arm of `reducer()` — has
-no dispatcher anywhere; the only non-test reference is the commented-out `SET_SIZE` dispatch inside
-`StoreProvider`. A future
-dispatcher is what turns a comment defect into a silent one-document-two-sizes bug.
-
-**Fix.** Reconcile them at the boundary rather than documenting the gap: have the raster branch
-size from `size` and take only the origin from the frame, or make both branches read one field.
-Whatever is chosen, the `isValidDocumentFrame` check should move to the shared boundary so the
-two branches cannot disagree about what a valid frame is. Both halves are now
-pinned: the extent at `src/contexts/__tests__/export-canvas.test.ts`, and the origin — through
-the call site, which is where a frame can be dropped — at `src/contexts/__tests__/useFile.test.tsx`
-("renders the export surface from the staged documentFrame, not from size alone"), which gives
-the frame a non-zero origin and an extent that disagrees with `size`.
-
-**Files.** `src/contexts/export-canvas.ts` (`renderExportCanvas()`), `src/contexts/psd-utils.ts`
-(`savePsd()`), `src/contexts/useFile.tsx` (`handleImageSave()`'s PSD branch),
-`src/contexts/StoreContext.tsx` (the `documentFrameSize()` call sites, `reducer()`'s `SET_SIZE`
-arm, and the commented-out `SET_SIZE` dispatch)
 
 ## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
 

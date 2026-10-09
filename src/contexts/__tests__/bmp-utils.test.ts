@@ -198,6 +198,20 @@ describe('BMP encoding and decoding', () => {
     expect([...decoded.data]).toEqual([...pixels]);
   });
 
+  it('rejects an over-budget canvas before reading pixels', async () => {
+    const canvas = document.createElement('canvas');
+    const getContext = vi.spyOn(canvas, 'getContext');
+    Object.defineProperties(canvas, {
+      width: { configurable: true, value: 10_001 },
+      height: { configurable: true, value: 10_000 },
+    });
+
+    await expect(encodeBmp(canvas)).rejects.toThrow(
+      'BMP image is too large to save (10001×10000). Maximum is 100000000 pixels.'
+    );
+    expect(getContext).not.toHaveBeenCalled();
+  });
+
   it('writes a BITMAPV4HEADER with 2835 pixels-per-metre and the four channel masks', async () => {
     const blob = await encodeBmp(canvasOf(1, 1, new Uint8ClampedArray([1, 2, 3, 4])));
     const view = new DataView(await blob.arrayBuffer());

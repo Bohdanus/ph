@@ -80,65 +80,20 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   }),
 }));
 
-vi.mock('../toolIcons.tsx', () => {
-  const Icon = ({ title }: { title: string }) => <svg aria-hidden="true">{title}</svg>;
+vi.mock('../toolIcons.tsx', async (importOriginal) => {
+  const { toolIcons } = await importOriginal<typeof import('../toolIcons.tsx')>();
 
   return {
-    toolIcons: {
-      reposition: Icon,
-      'red-eye': Icon,
-      'spot-healing': Icon,
-      'healing-brush': Icon,
-      patch: Icon,
-      hand: Icon,
-      zoom: Icon,
-      'rotate-view': Icon,
-      'rectangular-selection': Icon,
-      'elliptical-selection': Icon,
-      'single-row-marquee': Icon,
-      'single-column-marquee': Icon,
-      'freehand-lasso': Icon,
-      'polygonal-lasso': Icon,
-      'feather-magnetic-lasso': Icon,
-      'magic-wand': Icon,
-      'quick-selection': Icon,
-      eyedropper: Icon,
-      'color-sampler': Icon,
-      ruler: Icon,
-      eraser: Icon,
-      'clone-stamp': Icon,
-      'paint-bucket': Icon,
-      gradient: Icon,
-      sharpen: Icon,
-      smudge: Icon,
-      dodge: Icon,
-      burn: Icon,
-      sponge: Icon,
-      crop: Icon,
-      draw: Icon,
-      shape: Icon,
-      text: Icon,
-      color: Icon,
-      blur: Icon,
-      levels: Icon,
-      transform: Icon,
-      brush: Icon,
-      pencil: Icon,
-      'color-replacement': Icon,
-      'magic-eraser': Icon,
-      pen: Icon,
-      'freeform-pen': Icon,
-      'curvature-pen': Icon,
-      'add-anchor-point': Icon,
-      'delete-anchor-point': Icon,
-      'convert-point': Icon,
-      rectangle: Icon,
-      ellipse: Icon,
-      triangle: Icon,
-      polygon: Icon,
-      line: Icon,
-      'custom-shape': Icon,
-    },
+    toolIcons: Object.fromEntries(
+      Object.keys(toolIcons).map((name) => {
+        const Icon = ({ title }: { title: string }) => (
+          <svg aria-hidden="true" data-icon={name}>
+            {title}
+          </svg>
+        );
+        return [name, Icon];
+      })
+    ),
   };
 });
 
