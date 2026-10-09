@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1374,61 +1374,6 @@ The append-boundary test citations were a separate drift cluster, not part of th
 outstanding.
 
 ---
-
-## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
-
-**Problem.** The dispatcher's `REPLACE_DOCUMENT` arm in `StoreContext.tsx` intercepts `REPLACE_DOCUMENT`
-before it
-reaches the reducer. It recomputes seven fields the reducer's own `REPLACE_DOCUMENT` arm
-also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
-`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` in
-that arm's own pre-write, and then calls `rawDispatch`, so the reducer runs anyway and React state is
-recomputed
-from the reducer chain. The two copies are related by nothing but a comment.
-
-**Measured 2026-09-30, one field at a time, against the real provider** with
-`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green). Each row mutates one of the
-seven assignments in the fast path's pre-write — named by its field below, since they all live in that
-one arm — plus the disposal guard beside it:
-
-| fast-path site     | field              | mutated to                      | result                                                                           |
-| ------------------ | ------------------ | ------------------------------- | -------------------------------------------------------------------------------- |
-| the seed           | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                     |
-| the seed           | `totalSize`        | `currentState.totalSize`        | **survives**                                                                     |
-| the seed           | `documentId`       | `currentState.documentId`       | **survives**                                                                     |
-| the seed           | `documentRevision` | `currentState.documentRevision` | **survives**                                                                     |
-| the seed           | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                     |
-| the seed           | `history`          | appended instead of replaced    | **survives**                                                                     |
-| the seed           | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                     |
-| the disposal guard | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx`, not by any other suite |
-
-Seven of eight survive, and the reason is structural rather than incidental: the pre-write lands in
-`latestStateRef`, which the next dispatch reads as its `currentState`, and that value is used only to
-(a) decide document disposal and (b) seed the _next_ fast path. It never reaches `useReducer`, so no
-React state and no exported value can observe it. The one append that reads a cursor —
-`updateHistoryTimeline` — clamps it, so even a stale `historyIndex` yields the same timeline.
-
-**Why it matters.** The duplication is a real correctness surface, not dead code: `currentState` is
-read by the disposal guard, so a wrong `documentId` in the fast path's seed would dispose the wrong
-document's
-assets — and that is precisely the one field whose divergence is currently caught by a different
-suite, which is luck rather than design. Nothing binds the two copies together, so an edit to the
-reducer arm that is not mirrored in the fast path's pre-write is invisible, and an edit to the fast
-path that is
-not mirrored in the reducer is invisible too.
-
-**Fix.** Two options, and the second is the real one. Either expose the fast path's pre-write to a
-test — `latestStateRef` is already in the provider's value, so a store test can assert the seven
-fields directly and pin the two copies against each other. Or delete the fast path and let the
-reducer be the only writer; the pre-write exists to make same-batch dispatches see the new document,
-which `useSetSelectionFromHistory` and the append path need, so deletion is not free and the first
-option is the cheaper correct move. Whichever is chosen, the seven seeds in the table above are the
-list.
-
-**Files.** `src/contexts/StoreContext.tsx` — the dispatcher's `REPLACE_DOCUMENT` arm and the reducer
-case of the same name,
-`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx` — the `it('keeps unavailable rather
-than downgrading to stale when a selection commits after a failure')` title
 
 ## 106. `docs/TOOLS-RESEARCH-BRIEF.md` cites four numbers for one file, and all four are stale
 
