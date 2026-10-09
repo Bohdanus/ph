@@ -10,6 +10,7 @@ import { MAX_AFFINE_PIXELS } from './affine-transform.ts';
 import {
   drawEvaluatedPresentation,
   evaluatePresentation,
+  scaleTextArgs,
   scaleVectorArgs,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
@@ -149,7 +150,7 @@ async function sourceBitmap(
     const toolName = source.toolName;
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
     if (!processor?.creator) throw new Error(`Source tool ${toolName} is not a deterministic creator`);
-    const sourceRenderSize = source.kind === 'vector' ? renderSize : source.size;
+    const sourceRenderSize = source.kind === 'vector' || source.kind === 'text' ? renderSize : source.size;
     const args =
       source.kind === 'vector' && source.sourcePos.width > 0 && source.sourcePos.height > 0
         ? (scaleVectorArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
@@ -157,7 +158,13 @@ async function sourceBitmap(
             y: 0,
             ...renderSize,
           }) as unknown as ToolArgs)
-        : (source.args as ToolArgs);
+        : source.kind === 'text' && source.sourcePos.width > 0 && source.sourcePos.height > 0
+          ? (scaleTextArgs(source.args as unknown as Record<string, unknown>, source.sourcePos, {
+              x: 0,
+              y: 0,
+              ...renderSize,
+            }) as unknown as ToolArgs)
+          : (source.args as ToolArgs);
     const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
     if (!created) throw new Error(`Source tool ${toolName} produced no raster`);
     return {

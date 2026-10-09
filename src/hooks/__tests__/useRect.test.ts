@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useRect, type UseRectProps } from '../useRect.ts';
+import { drawCropOverlay, useRect, type UseRectProps } from '../useRect.ts';
 import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
 import { createMockCanvas, createMockCanvasContext } from '@/__tests__/fixtures/canvas.ts';
 import { refitRectWidthToAspect } from '@/util/rect-aspect.ts';
@@ -95,6 +95,37 @@ const createTestContext = () => {
 };
 
 describe('useRect', () => {
+  it.each([
+    ['ruleOfThirds', 4],
+    ['grid', 18],
+    ['diagonal', 2],
+    ['triangle', 3],
+    ['goldenRatio', 4],
+  ] as const)('draws the %s crop overlay guide', (overlayType, lineCount) => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, { x: 10, y: 20, width: 300, height: 200 }, overlayType);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(lineCount);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(lineCount);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws both orientations of the golden spiral', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      { x: 0, y: 0, width: 300, height: 200 },
+      'goldenSpiral'
+    );
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      { x: 0, y: 0, width: 300, height: 200 },
+      'goldenSpiral',
+      'flipped'
+    );
+    expect(ctx.arc).toHaveBeenCalledTimes(6);
+    expect(ctx.stroke).toHaveBeenCalledTimes(2);
+  });
+
   let testContext: ReturnType<typeof createTestContext>;
 
   beforeEach(() => {
