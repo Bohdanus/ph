@@ -1634,36 +1634,6 @@ unreachable-config list changes and that test moves with it.
 `src/tools/settings.ts` — the five figure settings buckets, `docs/PHOTOSHOP-UX.md` §"Open violations",
 `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
-## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
-
-`src/tools/settings.ts` — its `'rectangular-selection'` default — declares
-`'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
-while the same file's `'elliptical-selection'` default gives it `style`, `fixedRatio`, `fixedWidth`
-and `fixedHeight`, implemented in full in `ellipticalSelection.ts` — its `MarqueeStyle` type, its
-`MARQUEE_STYLES` and `isMarqueeStyle()` exports and the `MARQUEE_RATIO_MIN`/`MAX` and
-`MARQUEE_SIZE_MIN`/`MAX` bounds.
-
-`RectangularSelection.tsx` is, in full, the literal string
-`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
-
-Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
-`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
-already records them
-as absent. Since `docs/PHOTOSHOP-UX.md` §"Open violations" makes the rendered bar the contract, this
-is debt
-on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
-(its entry in `toolbar-mapping.ts`'s marquee group) with the `M` shortcut.
-
-**Fix.** Give `RectangularSelectionToolArgs` the same `MarqueeStyle` field the ellipse uses,
-extract `ellipticalSelection.ts`'s `applyRatio` as a shared ratio helper, and render
-the four controls.
-
-**Files.** `src/tools/settings.ts` — the `'rectangular-selection'` and `'elliptical-selection'`
-defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`,
-`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx` — the whole component's
-rendered body, `src/tools/ellipticalSelection.ts` — `applyRatio()`,
-`src/tools/descriptions/selection.notes.md` §"What is true of all seven"
-
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
 `AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so

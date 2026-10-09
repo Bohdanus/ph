@@ -19,6 +19,13 @@ const useRectPointerDownMock = vi.hoisted(() => vi.fn(() => false));
  * refuses (a non-primary button, or a second pointer while one is already down).
  */
 const useRectIsMouseDown = vi.hoisted(() => ({ current: false }));
+const rectangularToolArgs = vi.hoisted(() => ({
+  toolName: 'rectangular-selection' as const,
+  style: 'normal' as const,
+  fixedRatio: 1,
+  fixedWidth: 100,
+  fixedHeight: 100,
+}));
 
 /**
  * The rectangle commit is routed through `useSelectionHistory`, which reads the
@@ -67,6 +74,10 @@ vi.mock('../../../hooks/useRect.ts', () => ({
       },
     };
   },
+}));
+
+vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => ({ getToolArgs: () => rectangularToolArgs }),
 }));
 
 /**
