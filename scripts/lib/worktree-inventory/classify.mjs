@@ -346,7 +346,10 @@ export function classify(
     : null;
   const mergeState = mergeVerdict(wt);
   let recommendation;
-  if (wt.isPrimary || wt.branch === base) {
+  if ((wt.isPrimary || wt.branch === base) && uncommitted && !live) {
+    recommendation = RECOMMENDATION.SALVAGE;
+    reasons.push('the base worktree holds uncommitted changes that are in no commit on this branch');
+  } else if (wt.isPrimary || wt.branch === base) {
     // The main checkout is never a prune candidate, whatever git says about
     // it. It is the landing site, it is where the operator works, and every
     // other session in the repository resolves paths through it.
