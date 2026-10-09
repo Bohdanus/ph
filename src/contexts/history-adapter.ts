@@ -1204,6 +1204,7 @@ export function sourceToRuntimeLayer(
     pos,
     source,
     operations: [],
+    presentationBounds: null,
     bitmap: source.kind === 'image' ? source.bitmap : null,
     tmpCanvas: null,
   };

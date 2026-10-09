@@ -74,6 +74,7 @@ function setup(warnings: string[] = []) {
       blendMode: 'multiply' as const,
       order,
       pos: { x: -3, y: 7, width: 20, height: 30 },
+      presentationBounds: null,
       operations: [],
     };
   };

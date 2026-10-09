@@ -154,6 +154,7 @@ describe('presentation evaluator parity', () => {
       blendMode: 'source-over' as GlobalCompositeOperation,
       order: 0,
       pos: { x: 0, y: 0, width: 20, height: 10 },
+      presentationBounds: null,
       operations: [],
     };
 

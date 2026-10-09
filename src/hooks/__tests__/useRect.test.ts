@@ -76,6 +76,7 @@ function createMockLayer(pos = { x: 100, y: 100, width: 200, height: 150 }) {
     order: 0,
     bitmap: null,
     tmpCanvas: null,
+    presentationBounds: null,
     operations: [],
   };
 }

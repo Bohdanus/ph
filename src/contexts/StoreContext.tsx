@@ -65,7 +65,6 @@ import {
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
-import { buildDurablePresentationProjection, DurablePresentationProjectionRefusal } from './durable-presentation.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -133,7 +132,6 @@ export type DurablePresentationReason =
 export type DurablePresentationRecord = Readonly<{
   status: DurablePresentationStatus;
   cursor: number | null;
-  layerIds: readonly LayerId[];
   reason: DurablePresentationReason | null;
 }>;
 
@@ -145,7 +143,6 @@ export type DurableNavigationPresentationOutcome =
 const EMPTY_DURABLE_PRESENTATION: DurablePresentationRecord = Object.freeze({
   status: 'unpublished',
   cursor: null,
-  layerIds: Object.freeze([]),
   reason: null,
 });
 
@@ -778,10 +775,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       }
       return {
         ...state,
-        durablePresentation: Object.freeze({
-          ...publication.record,
-          layerIds: Object.freeze([...publication.record.layerIds]),
-        }),
+        durablePresentation: Object.freeze({ ...publication.record }),
       };
     }
     case 'PROMOTE_LAYER_PRESENTATIONS': {
@@ -1032,7 +1026,6 @@ function collectLivePresentationBitmaps(next: LayersRecord, history: readonly Hi
   const addLayerAliases = (layer: Layer) => {
     add(layer.bitmap);
     add(layer.tmpCanvas);
-    add(layer.durablePresentation?.bitmap);
     add(imageSourceBitmap(layer.source));
   };
   for (const layer of Object.values(next)) addLayerAliases(layer);
@@ -1143,7 +1136,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const accepted = publishRecord({
         status: 'legacy-fallback',
         cursor: durableCursor,
-        layerIds: [],
         reason: 'unsupported-source',
       });
       return accepted
@@ -1179,27 +1171,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         assetRegistry: registry,
       });
       assertFresh();
-      const latestBeforeDetach = latestStateRef.current;
-      const durableVisibleLayerIds = Object.values(replay.layers)
-        .filter(({ snapshot }) => snapshot.visible)
-        .map(({ snapshot }) => snapshot.id)
-        .sort();
-      const legacyVisibleLayerIds = Object.values(latestBeforeDetach.layers)
-        .filter((layer) => layer.visible)
-        .map((layer) => layer.id)
-        .sort();
-      if (
-        durableVisibleLayerIds.length !== legacyVisibleLayerIds.length ||
-        durableVisibleLayerIds.some((layerId, index) => layerId !== legacyVisibleLayerIds[index])
-      ) {
-        failureReason = 'layer-coverage';
-        throw new DurableCompositionRefusal(
-          'layer-coverage',
-          'Durable navigation presentation does not cover the same visible layer ids as legacy replay'
-        );
-      }
       detached = composite.takeLayers();
-      const projection = buildDurablePresentationProjection(replay, detached.layers);
       const latest = latestStateRef.current;
       const nextLayers = { ...latest.layers };
       const visibleLayerIds = Object.values(replay.layers)
@@ -1218,7 +1190,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
       }
       for (const layerId of visibleLayerIds) {
-        const materialized = projection.layers[layerId];
+        const materialized = detached.layers[layerId];
         if (!materialized || !materialized.bitmap) {
           failureReason = 'layer-coverage';
           throw new DurableCompositionRefusal('layer-coverage', `Durable navigation layer ${layerId} is missing`);
@@ -1242,8 +1214,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         nextLayers[layerId] = {
           ...existing,
-          tmpCanvas: null,
-          durablePresentation: { bitmap: materialized.bitmap, bounds: materialized.bounds },
+          tmpCanvas: materialized.bitmap,
+          presentationBounds: materialized.bounds,
         };
       }
       assertFresh();
@@ -1255,8 +1227,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
       }
 
-      for (const layerId of projection.visibleLayerIds) {
-        const materialized = projection.layers[layerId];
+      for (const layerId of visibleLayerIds) {
+        const materialized = detached.layers[layerId];
         if (!materialized.bitmap || !materialized.lease) continue;
         presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
       }
@@ -1269,7 +1241,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       publishRecord({
         status: 'durable',
         cursor: durableCursor,
-        layerIds: Object.freeze([...visibleLayerIds].sort()),
         reason: null,
       });
       retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
@@ -1277,13 +1248,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return { status: 'durable', layers: nextLayers, frame: replay.frame, cursor: durableCursor };
     } catch (error) {
       detached?.release();
-      const reason: DurablePresentationReason =
-        error instanceof DurableCompositionRefusal
-          ? error.code
-          : error instanceof DurablePresentationProjectionRefusal
-            ? 'layer-coverage'
-            : failureReason;
-      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason });
+      const reason: DurablePresentationReason = error instanceof DurableCompositionRefusal ? error.code : failureReason;
+      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, reason });
       if (!accepted || String(reason) === 'stale') return { status: 'stale', reason: 'stale', cursor: durableCursor };
       return { status: 'legacy-fallback', reason, cursor: durableCursor };
     } finally {

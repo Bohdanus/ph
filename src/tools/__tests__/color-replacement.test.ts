@@ -638,6 +638,7 @@ describe('the durable/replay boundary', () => {
     blendMode: 'source-over',
     order: 0,
     pos: { ...layerPos },
+    presentationBounds: null,
     source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos: { ...layerPos } },
     operations: [],
   });

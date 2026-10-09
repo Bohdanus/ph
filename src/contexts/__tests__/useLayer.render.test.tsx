@@ -37,6 +37,7 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
     ...overrides,
   };

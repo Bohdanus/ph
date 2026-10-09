@@ -50,6 +50,7 @@ function createTestLayer(id: string, overrides: Partial<Layer> = {}): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { x: 0, y: 0, width: 40, height: 30 },
+    presentationBounds: null,
     operations: [],
     ...overrides,
   };

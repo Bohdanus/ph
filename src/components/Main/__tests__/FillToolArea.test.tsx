@@ -157,6 +157,7 @@ const makeLayer = (id: string, pos: Layer['pos'], hasBitmap = true): Layer => ({
   blendMode: 'source-over',
   order: 0,
   pos,
+  presentationBounds: null,
   operations: [],
 });
 

@@ -50,6 +50,7 @@ function createBaselineLayer(id = layerId, pos = { ...layerPos }): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source: {
       kind: 'blank',
       color: '#ffffff',

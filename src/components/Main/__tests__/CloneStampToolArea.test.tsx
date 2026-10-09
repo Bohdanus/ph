@@ -169,6 +169,7 @@ const makeLayer = (id: string, overrides: Partial<Layer> = {}): Layer => ({
   blendMode: 'source-over',
   order: 0,
   pos: { x: 0, y: 0, width: 200, height: 120 },
+  presentationBounds: null,
   operations: [],
   ...overrides,
 });

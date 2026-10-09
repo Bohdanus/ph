@@ -101,6 +101,7 @@ const makeLayer = (id: string, pos: Layer['pos']): Layer => ({
   blendMode: 'source-over',
   order: 0,
   pos,
+  presentationBounds: null,
   operations: [],
 });
 

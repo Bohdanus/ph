@@ -58,7 +58,6 @@ function isVectorSource(source: Layer['source']): source is ToolLayerSource {
 }
 
 function getLayerBitmap(layer: Layer, position: Pos) {
-  if (layer.durablePresentation) return layer.durablePresentation.bitmap;
   if (layer.tmpCanvas) return layer.tmpCanvas;
   if (!isVectorSource(layer.source)) return layer.bitmap;
 
@@ -80,8 +79,8 @@ export function drawLayerSource(
   position: Pos = layer.pos,
   documentFrame?: DocumentFrame
 ): boolean {
-  const effectivePosition = layer.durablePresentation?.bounds ?? position;
-  const bitmap = getLayerBitmap(layer, effectivePosition);
+  const effectivePosition = layer.presentationBounds ?? position;
+  const bitmap = layer.tmpCanvas ?? getLayerBitmap(layer, position);
   if (
     !bitmap ||
     bitmap.width === 0 ||
@@ -91,8 +90,9 @@ export function drawLayerSource(
   )
     return false;
 
+  const hasBakedPresentation = layer.tmpCanvas !== null && layer.presentationBounds !== null;
   const operations: PresentationOperation[] = [];
-  for (const operation of layer.durablePresentation ? [] : layer.operations) {
+  for (const operation of hasBakedPresentation ? [] : layer.operations) {
     if (!operation.enabled) continue;
     if (operation.kind === 'affine-transform') {
       operations.push({ kind: 'affine-transform', transform: operation.transform });

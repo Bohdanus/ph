@@ -36,6 +36,7 @@ function makeLayer(id: string): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { ...layerPos },
+    presentationBounds: null,
     // A durable source, so the very same timeline converts without the layer
     // itself becoming the reason the conversion is unsupported.
     source: { ...blankSource },

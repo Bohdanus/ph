@@ -34,6 +34,7 @@ function makeLayer(id = layerId): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: true, size: { width: 100, height: 80 } },
     operations: [],
   } satisfies Layer;

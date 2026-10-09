@@ -143,6 +143,7 @@ function createImageLayer(id: string, pos: Pos, overrides: Partial<Layer> = {}):
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     operations: [],
     ...overrides,
   };

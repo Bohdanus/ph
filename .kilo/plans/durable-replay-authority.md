@@ -259,6 +259,13 @@ The first bounded retirement is complete when the dormant `replay-budget.ts`
 scaffolding and its isolated test are deleted. It has no production importer and
 must not be confused with the live legacy replay compatibility path.
 
+The second bounded retirement removes the duplicate durable presentation cache:
+`Layer.tmpCanvas` is the single baked bitmap slot, while `Layer.presentationBounds`
+retains materialized bounds when they differ from `Layer.pos`. The retired
+`durable-presentation.ts` projection module and its isolated test are deleted;
+the navigation publication and renderer keep the same atomic coverage, freshness,
+and lease-release gates.
+
 ## Gates
 
 - `npm run tsc` passes after every production slice.

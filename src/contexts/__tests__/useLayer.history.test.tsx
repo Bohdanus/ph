@@ -61,6 +61,7 @@ const layer: Layer = {
   blendMode: 'source-over',
   order: 0,
   pos: { x: 0, y: 0, width: 40, height: 20 },
+  presentationBounds: null,
   operations: [],
 };
 

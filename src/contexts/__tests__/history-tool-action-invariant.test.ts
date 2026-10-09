@@ -32,6 +32,7 @@ function layer(): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source,
     operations: [],
   };
@@ -63,6 +64,7 @@ function dependencies(applyRasterTool: HistoryReplayDependencies['applyRasterToo
       blendMode: 'source-over',
       order: Object.values(layers).length,
       pos: 'pos' in source ? { ...source.pos } : { x: 0, y: 0, width: source.size.width, height: source.size.height },
+      presentationBounds: null,
       source,
       operations: [],
     }),

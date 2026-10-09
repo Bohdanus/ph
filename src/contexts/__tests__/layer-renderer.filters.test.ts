@@ -121,6 +121,7 @@ describe('drawLayerSource vector argument scaling', () => {
       blendMode: 'source-over',
       order: 0,
       pos,
+      presentationBounds: null,
       operations: [],
       source,
     } as Layer;

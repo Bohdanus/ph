@@ -96,7 +96,8 @@ describe('layersDifferOnlyByPresentation', () => {
     const next = {
       a: {
         ...current.a,
-        durablePresentation: { bitmap, bounds: { x: 2, y: 3, width: 20, height: 10 } },
+        tmpCanvas: bitmap,
+        presentationBounds: { x: 2, y: 3, width: 20, height: 10 },
       },
     };
 

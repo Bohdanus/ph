@@ -165,6 +165,7 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         blendMode: blendMode ?? 'source-over',
         order: Object.keys(layers).length,
         pos: { x: source.left ?? 0, y: source.top ?? 0, width: canvas.width, height: canvas.height },
+        presentationBounds: null,
         source: {
           kind: 'image',
           bitmap: canvas,
@@ -197,6 +198,7 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         blendMode: 'source-over',
         order: 0,
         pos: { x: 0, y: 0, ...size },
+        presentationBounds: null,
         source: { kind: 'image', bitmap: canvas, name: 'Composite', isBedrock: true, size: { ...size } },
         operations: [],
       };

@@ -220,6 +220,7 @@ export function replayHistory(
           // away and left a layer no renderer would draw: `getLayerBitmap` re-runs a creator only for
           // the vector tools, and a `text` source is excluded, so a redo emptied the layer.
           tmpCanvas: replacement.tmpCanvas,
+          presentationBounds: null,
           operations: [...layer.operations],
           lastHistoryId: item.id,
         },

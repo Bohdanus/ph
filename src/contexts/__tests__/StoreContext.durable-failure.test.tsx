@@ -38,6 +38,7 @@ function createBlankLayer(id = layerId): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     operations: [],
   };

@@ -35,6 +35,7 @@ function layer(): Layer {
     blendMode: 'source-over',
     order: 1,
     pos: { x: 0, y: 0, width: 100, height: 80 },
+    presentationBounds: null,
     operations: [],
     source: { kind: 'blank', color: '#ffffff', opacity: 1, size: { width: 100, height: 80 }, isBedrock: true },
   };
