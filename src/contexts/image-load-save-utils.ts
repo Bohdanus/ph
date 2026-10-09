@@ -1,13 +1,31 @@
 import type { ImageUploadResponse } from './useFile.tsx';
 import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
+import { MAX_CREATABLE_DOCUMENT_PIXELS } from './raster-utils.ts';
 
 const TIFF_MIME_TYPES = new Set(['image/tif', 'image/tiff', 'image/x-tiff']);
 const BMP_MIME_TYPES = new Set(['image/bmp', 'image/x-bmp', 'image/x-ms-bmp']);
 const ICO_MIME_TYPES = new Set(['image/ico', 'image/x-icon', 'image/vnd.microsoft.icon']);
 const BROWSER_IMAGE_EXTENSIONS = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
+const GIF_HEADER_BYTES = 13;
 
 function asciiAt(signature: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...signature.subarray(offset, offset + length));
+}
+
+async function rejectOversizedGif(file: File): Promise<void> {
+  const header = new Uint8Array(await file.slice(0, GIF_HEADER_BYTES).arrayBuffer());
+  if (header.length < GIF_HEADER_BYTES) return;
+
+  const signature = asciiAt(header, 0, 6);
+  if (signature !== 'GIF87a' && signature !== 'GIF89a') return;
+
+  const width = header[6] | (header[7] << 8);
+  const height = header[8] | (header[9] << 8);
+  if (width * height > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `GIF image is too large to open (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
 }
 
 function hasTiffSignature(signature: Uint8Array): boolean {
@@ -110,13 +128,18 @@ export function downloadBlob(blob: Blob, fileName: string, extension: string) {
   }
 }
 
-export const loadImageFile = (file: File, detectedMimeType?: string): Promise<HTMLImageElement> => {
-  return new Promise((resolve, reject) => {
-    if (!file || (!detectedMimeType && !file.type.startsWith('image/') && !BROWSER_IMAGE_EXTENSIONS.test(file.name))) {
-      reject(new Error('Not an image file'));
-      return;
-    }
+export const loadImageFile = async (file: File, detectedMimeType?: string): Promise<HTMLImageElement> => {
+  if (!file || (!detectedMimeType && !file.type.startsWith('image/') && !BROWSER_IMAGE_EXTENSIONS.test(file.name))) {
+    throw new Error('Not an image file');
+  }
 
+  const isGif =
+    detectedMimeType?.toLowerCase() === 'image/gif' ||
+    file.type.toLowerCase() === 'image/gif' ||
+    /\.gif$/i.test(file.name);
+  if (isGif) await rejectOversizedGif(file);
+
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
