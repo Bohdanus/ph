@@ -251,7 +251,7 @@ as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** cons
 consolidation remains an open decision; the BMP encoder now uses the existing 100 MP document cap
 without changing any other codec ceiling.
 
-**Two codecs have no loader budget, and SVG has no encoder budget.**
+**Two codecs have no loader budget; the SVG encoder now uses the document ceiling.**
 
 | codec | loader budget | encoder budget | check before the allocation it bounds?     |
 | ----- | ------------- | -------------- | ------------------------------------------ |
@@ -260,13 +260,12 @@ without changing any other codec ceiling.
 | bmp   | 100 MP        | 100 MP         | yes — before pixel readback and allocation |
 | gif   | **none**      | 65535/axis     | yes, on the encoder                        |
 | ico   | 256/axis      | 1..256/axis    | yes, on both                               |
-| svg   | **none**      | **none**       | n/a                                        |
+| svg   | **none**      | 100 MP         | yes — before PNG readback                  |
 | psd   | yes           | yes            | yes — the reference implementation         |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `gif` and `svg`,
-and the encoder column for `svg`.
+rather than an exception to it. What the table leaves open is the loader column for `gif` and `svg`.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -283,7 +282,8 @@ RGBA output. This is the largest document the app can create, so BMP can still o
 size this build supports without introducing a sixth raster ceiling. A 20000×40000 1-bpp BMP that
 previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header.
 `encodeBmp()` rejects canvases above the same limit before reading back pixels or allocating its
-output buffer.
+output buffer. `encodeSvg()` applies the same cap before `canvas.toDataURL('image/png')` reads back
+and base64-encodes the raster embedded in the SVG.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to
@@ -291,7 +291,7 @@ GIF and SVG and bounds nothing — the whole file is base64-encoded into a data 
 
 **Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
 `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,
-`src/contexts/affine-transform.ts`, `src/contexts/psd-utils.ts`
+`src/contexts/affine-transform.ts`, `src/contexts/psd-utils.ts`, `src/contexts/svg-utils.ts`
 
 ---
 

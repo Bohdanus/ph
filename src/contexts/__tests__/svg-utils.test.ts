@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_CREATABLE_DOCUMENT_PIXELS } from '../raster-utils.ts';
 import { encodeSvg } from '../svg-utils.ts';
 
 function canvasOf(width: number, height: number, dataUrl = 'data:image/png;base64,pixels') {
@@ -40,6 +41,22 @@ describe('SVG encoding', () => {
     encodeSvg(canvas);
 
     expect(toDataURL).toHaveBeenCalledExactlyOnceWith('image/png');
+  });
+
+  it('allows canvases at the 100 MP document ceiling', () => {
+    const { canvas, toDataURL } = canvasOf(10_000, 10_000);
+
+    expect(encodeSvg(canvas).type).toBe('image/svg+xml');
+    expect(toDataURL).toHaveBeenCalledExactlyOnceWith('image/png');
+  });
+
+  it('rejects oversized canvases before reading back pixels', () => {
+    const { canvas, toDataURL } = canvasOf(MAX_CREATABLE_DOCUMENT_PIXELS + 1, 1);
+
+    expect(() => encodeSvg(canvas)).toThrow(
+      `SVG image is too large to save (${MAX_CREATABLE_DOCUMENT_PIXELS + 1}×1). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+    expect(toDataURL).not.toHaveBeenCalled();
   });
 
   it.each([
