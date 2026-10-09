@@ -1,5 +1,5 @@
 import type { DocumentFrame } from './document-frame.ts';
-import { documentFrameFromSize, documentFrameSize, isValidDocumentFrame } from './document-frame.ts';
+import { documentFrameSize, resolveDocumentFrame } from './document-frame.ts';
 import type { LayersRecord } from './layer-types.ts';
 import type { Size } from './general-types.ts';
 import type { DurableComposite } from './durable-compositor.ts';
@@ -63,26 +63,13 @@ export function durableExportRecords(replay: DurableReplayResult, composite: Dur
  * `drawLayerSource` into its own canvases. Neither branch reads the display surface any
  * more, so raising the display resolution is a display-only change.
  *
- * THE TWO BRANCHES SIZE DIFFERENTLY, AND THAT IS NOT SETTLED. This one takes its extent
- * from `documentFrame` and ignores `size`; `savePsd` takes its extent from `size` and uses
- * the frame only for layer offsets (`psd-utils.ts:243`). They agree on every reachable
- * input because every store writer that sets a frame re-derives `totalSize` from it, and
- * the one reducer arm that could set `size` alone (`SET_SIZE`) has no dispatcher. If that
- * ever changes, one document would raster-export at the frame's extent and PSD-export at
- * `size`'s — two pixel dimensions for one document, silently. Reconciling them is the
- * fix; a comment is not.
- *
- * THE FRAME IS NOT OPTIONAL IN EFFECT. `documentFrame` supplies both the output extent
- * (`documentFrameSize`) and the coordinate origin (every layer is stamped at
- * `position.x - documentFrame.x`, `presentation-evaluator.ts:163-164`), so passing the
- * wrong one crops or offsets the export.
- * It is therefore validated here rather than trusted, and a caller that omitted it is
- * given the frame its own `size` implies — the fallback `savePsd` applies when its frame
- * argument is absent, though not when one is passed invalid, which is why the asymmetry
- * exists at all.
+ * Both export formats resolve the same document frame: a valid frame owns the output extent
+ * and coordinate origin, while a missing or invalid frame falls back to the frame implied
+ * by `size`. `resolveDocumentFrame()` is the shared boundary so raster and PSD exports cannot
+ * disagree about frame validity or document dimensions.
  */
 export function renderExportCanvas(layers: LayersRecord, size: Size, frame?: DocumentFrame): HTMLCanvasElement {
-  const documentFrame = frame && isValidDocumentFrame(frame) ? frame : documentFrameFromSize(size);
+  const documentFrame = resolveDocumentFrame(size, frame);
   const canvas = document.createElement('canvas');
   const published = drawLayersToCanvas(canvas, getSortedLayersArray(layers), documentFrame);
   // `drawLayersToCanvas` reports false when a source or the 2d context fails. Its staging

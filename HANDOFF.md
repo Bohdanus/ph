@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3198,41 +3198,6 @@ slider's `step`), `e2e/export/visual-regression.spec.ts`
 ---
 
 ---
-
-## 166. The raster and PSD export branches size from different fields, and nothing reconciles them
-
-`src/contexts/export-canvas.ts` — `renderExportCanvas()`'s extent comparison,
-`src/contexts/psd-utils.ts` — `savePsd()`'s composite allocation
-
-`renderExportCanvas` derives its extent from `documentFrame` and ignores its `size` argument
-whenever the frame is valid. `savePsd` does the opposite: it sizes the composite from `size`
-(`canvas2d(size.width, size.height)`) and uses the frame only for layer offsets. A second
-asymmetry in the same path: the PSD branch of `handleImageSave()` in
-`src/contexts/useFile.tsx` gates the frame on truthiness
-alone, so an invalid-but-truthy frame reaches `savePsd` unvalidated, while the raster branch
-validates it with `isValidDocumentFrame`.
-
-**Unreachable today, and that is the whole risk.** Every store writer that sets a frame re-derives
-`totalSize` from it (the five `documentFrameSize(nextFrame)` call sites in
-`src/contexts/StoreContext.tsx`), and
-the one reducer arm that could set `size` alone — the `SET_SIZE` arm of `reducer()` — has
-no dispatcher anywhere; the only non-test reference is the commented-out `SET_SIZE` dispatch inside
-`StoreProvider`. A future
-dispatcher is what turns a comment defect into a silent one-document-two-sizes bug.
-
-**Fix.** Reconcile them at the boundary rather than documenting the gap: have the raster branch
-size from `size` and take only the origin from the frame, or make both branches read one field.
-Whatever is chosen, the `isValidDocumentFrame` check should move to the shared boundary so the
-two branches cannot disagree about what a valid frame is. Both halves are now
-pinned: the extent at `src/contexts/__tests__/export-canvas.test.ts`, and the origin — through
-the call site, which is where a frame can be dropped — at `src/contexts/__tests__/useFile.test.tsx`
-("renders the export surface from the staged documentFrame, not from size alone"), which gives
-the frame a non-zero origin and an extent that disagrees with `size`.
-
-**Files.** `src/contexts/export-canvas.ts` (`renderExportCanvas()`), `src/contexts/psd-utils.ts`
-(`savePsd()`), `src/contexts/useFile.tsx` (`handleImageSave()`'s PSD branch),
-`src/contexts/StoreContext.tsx` (the `documentFrameSize()` call sites, `reducer()`'s `SET_SIZE`
-arm, and the commented-out `SET_SIZE` dispatch)
 
 ## 167. `Edit ▸ Transform` is one item where Adobe has a submenu, and every item in it is blocked on the same two constraints
 
