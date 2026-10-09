@@ -493,6 +493,7 @@ describe('durable navigation presentation freshness', () => {
     const { store, dispatch } = renderWithProbe();
     replaceDocument(dispatch(), { [layerId]: existingLayer });
     replayTo(dispatch(), { [layerId]: existingLayer }, {});
+    const publication = store().publishDurableNavigationPresentation();
     expect(compose).toHaveBeenCalledTimes(1);
 
     const changedFrame = { x: 12, y: 8, width: 200, height: 150 };
@@ -528,6 +529,7 @@ describe('durable navigation presentation freshness', () => {
     await act(async () => {
       finishComposition();
       await composition;
+      await publication;
       await Promise.resolve();
     });
 
@@ -598,6 +600,7 @@ describe('durable navigation presentation freshness', () => {
     const { store, dispatch } = renderWithProbe();
     replaceDocument(dispatch(), { [layerId]: existingLayer });
     replayTo(dispatch(), { [layerId]: existingLayer }, {});
+    const publication = store().publishDurableNavigationPresentation();
     expect(compose).toHaveBeenCalledTimes(1);
 
     // SET_SIZE moves a durable input (totalSize) and downgrades the shadow to
@@ -617,6 +620,7 @@ describe('durable navigation presentation freshness', () => {
     await act(async () => {
       finishComposition();
       await composition;
+      await publication;
       await Promise.resolve();
     });
 
@@ -710,11 +714,13 @@ describe('durable navigation presentation freshness', () => {
         },
       });
     });
+    const publication = store().publishDurableNavigationPresentation();
     expect(compose).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       finishComposition();
       await composition;
+      await publication;
       await Promise.resolve();
     });
 

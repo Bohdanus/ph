@@ -140,6 +140,7 @@ export const useHistory = () => {
       documentId,
       documentRevision,
       clearPreviewLayers,
+      publishDurableNavigationPresentation,
     },
     dispatch,
   ] = useStore();
@@ -171,11 +172,15 @@ export const useHistory = () => {
     return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame);
   }
 
-  function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
+  async function resetHistoryTo(
+    targetIndex: number,
+    _history: HistoryItem[] = history,
+    _branchRevision = branchRevision
+  ) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return Promise.resolve();
-    // Durable replay remains a diagnostic shadow until every pixel consumer
-    // uses the same materialization contract. Navigation therefore replays the
-    // legacy runtime representation and lets StoreContext rebuild the sidecar.
+    // Legacy replay remains the structural substrate and complete fallback. The
+    // durable publication paints the normal path when every identity, coverage,
+    // and materialization gate succeeds.
     try {
       const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
       const replay = replayHistory(
@@ -222,10 +227,6 @@ export const useHistory = () => {
         activeLayerId && replay.layers[activeLayerId]
           ? activeLayerId
           : (sortedLayers[sortedLayers.length - 1]?.id ?? null);
-      if (!drawReplay(replay.layers, replay.documentFrame)) {
-        throw new Error('Unable to publish replayed history presentation');
-      }
-
       dispatch({
         type: 'APPLY_HISTORY_REPLAY',
         payload: {
@@ -241,6 +242,18 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      const outcome = publishDurableNavigationPresentation
+        ? await publishDurableNavigationPresentation()
+        : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
+      if (outcome.status === 'stale') return;
+      const painted =
+        outcome.status === 'durable'
+          ? (() => {
+              const canvas = canvasRef.current;
+              return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame);
+            })()
+          : drawReplay(replay.layers, replay.documentFrame);
+      if (!painted) throw new Error('Unable to publish replayed history presentation');
       // Dropped HERE, after the replay has been published and applied, and not
       // ahead of it. A navigation that throws — a converter refusal, a tool
       // processor, a refused publication — leaves the visible canvas and the
