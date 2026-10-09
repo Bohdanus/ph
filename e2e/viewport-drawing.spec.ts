@@ -232,7 +232,7 @@ test.describe('Viewport Drawing', () => {
    *
    * KNOWN, and measured in this file 40 lines above: `captureCanvasScreenshot`
    * intermittently returns a page that is 87 CSS px SHORTER than the one measured, and
-   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+   * that drift is a filed defect (`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2). The
    * `expect` before the stroke assertion exists to catch it and it is a HARD
    * assertion, so a drift failure names itself and prints both bounding boxes.
    *

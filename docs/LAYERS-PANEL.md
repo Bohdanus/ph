@@ -880,23 +880,6 @@ A requirement is not done until a test fails without the change. For this panel 
 5. **Is the drag handle staying?** Photoshop's row is the drag handle
    ([§3](#3-layer-row-anatomy)). Keeping `DragHandleIcon` is a defensible affordance for a row that is
    also a rename target; removing it is more faithful. Nobody has decided.
-6. **The `e2e/OPEN_PROBLEMS.md` filename mismatch — two live lines, and now a routed home.** The
-   file on disk is `e2e/OPEN_PROBLEMS.md` (underscore); a hyphen and an underscore are different
-   characters, so the hyphen path does not resolve on a case-insensitive volume either — it is
-   broken on every platform. `AGENTS.md` no longer contains the hyphen form at all — its
-   §"Known failures and how to read one" and §"Handoff documents" both use the underscore
-   form — and neither does `docs/TESTING.md` (§"E2E failures"). Re-derive the
-   census before editing: `git grep -n 'e2e/OPEN-PROBLEMS' -- .` prints it. What is left is **two**
-   tracked lines — the `captureCanvasScreenshot` drift note in `TEST-FLAKES.md` §12, and the
-   SKIPPED-BY-DECISION comment above the
-   `test('line stays under cursor after window resize (normal, wide and narrow)')` case in
-   `e2e/viewport-drawing.spec.ts` — and the earlier
-   record, `HANDOFF.md` §96, has gone stale on its own citations, so it is a second place to check
-   rather than a shortcut. The route-by-scope rule is the "Where a finding goes" table under
-   `docs/DOCUMENTATION.md` §"The single-home rule", and it settles
-   the "no routed home" question this item used to leave open: the spec line is a defect in the e2e
-   suite's own code, so it is filed in `e2e/OPEN_PROBLEMS.md`. Fix both lines, file that one there,
-   then delete this item.
 
 ---
 
