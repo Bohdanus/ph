@@ -1797,3 +1797,5 @@ export const useStore = (): [StoreData, StoreDispatch] => {
   if (!ctx) throw new Error('useStore must be used within StoreProvider');
   return ctx;
 };
+
+export const useOptionalStore = (): [StoreData, StoreDispatch] | null => useContext(StoreContext) ?? null;

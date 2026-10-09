@@ -231,6 +231,9 @@ Work:
 
 - Move the durable-side record construction currently represented by
   `durableExportRecords()` into a production adapter shared by both formats.
+- Select the durable adapter only when the live durable identity is current and
+  complete; on any refusal or stale identity, select the complete legacy input
+  for the whole export rather than mixing records.
 - Source position from materialized bounds and all layer metadata from the
   durable replay snapshot; do not read those fields from legacy layers.
 - Keep PSD flattened at export, preserving current layer order, visibility,
