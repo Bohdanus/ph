@@ -231,10 +231,13 @@ returns exactly **one** line, and it is the guard's comment, not the guard —
 
 ### The presentation cache
 
-`src/contexts/layer-presentation.ts`. Two caches per layer: `tmpCanvas` for a
-pending preview, `bitmap` for a promoted one. Promotion replaces the mutable
-canvas with an immutable `ImageBitmap` — `materializePresentationBitmap()`, applied
-by the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm in `StoreContext.tsx`.
+`src/contexts/layer-presentation.ts`. `bitmap` is the layer's source or promoted
+raster, while `tmpCanvas` is the shared disposable presentation slot: it carries
+pending previews and the baked bitmap published by durable navigation. A non-null
+`presentationBounds` identifies materialized bounds that differ from `pos`.
+Promotion replaces the mutable canvas with an immutable `ImageBitmap` —
+`materializePresentationBitmap()`, applied by the reducer's
+`PROMOTE_LAYER_PRESENTATIONS` arm in `StoreContext.tsx`.
 
 `DocumentPresentationScope` owns them, and is **provider-scoped rather than
 document-scoped** — the rationale is the comment above the `useMemo` that builds
