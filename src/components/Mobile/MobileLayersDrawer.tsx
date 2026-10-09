@@ -1,15 +1,16 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
-import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
+import { claimDocumentGesture, isDocumentGestureOpen, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import type { Layer, LayerId } from '../../contexts/layer-types.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { useModalA11y } from './useModalA11y.ts';
+import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
 
 export interface MobileLayersDrawerProps {
   isOpen: boolean;
@@ -35,7 +36,18 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
   const [editingName, setEditingName] = useState('');
   const [draftOpacity, setDraftOpacity] = useState<{ layerId: LayerId; percent: number } | null>(null);
+  const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<LayerId | null>(null);
+  const [announcement, setAnnouncement] = useState('');
   const panelRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const dragRef = useRef<{ layerId: LayerId; pointerId: number; startY: number; active: boolean } | null>(null);
+  const dropTargetRef = useRef<LayerId | null>(null);
+  const layersRef = useRef(layers);
+
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
 
   useModalA11y(isOpen, onClose, panelRef);
 
@@ -43,6 +55,42 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   // shows the stack the way Photoshop does.
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
   const sortedHistory = useMemo(() => [...historyPanelProjection.rows].reverse(), [historyPanelProjection.rows]);
+
+  const clearLayerDrag = useCallback(
+    (cancelled: boolean) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const targetId = dropTargetRef.current;
+      const currentLayers = layersRef.current;
+      if (drag.active && !cancelled && targetId && targetId !== drag.layerId) {
+        const target = currentLayers[targetId];
+        if (target) {
+          moveLayerAfter(drag.layerId, target.id);
+          setAnnouncement(`Moved ${currentLayers[drag.layerId]?.name ?? 'layer'} above ${target.name}`);
+        }
+      }
+      releaseDocumentGesture('mobile-layer-reorder', drag.pointerId);
+      dragRef.current = null;
+      dropTargetRef.current = null;
+      setDraggedLayerId(null);
+      setDropTargetId(null);
+    },
+    [moveLayerAfter]
+  );
+
+  useEffect(() => {
+    if (!draggedLayerId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        clearLayerDrag(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [clearLayerDrag, draggedLayerId]);
+
+  useEffect(() => () => clearLayerDrag(true), [clearLayerDrag]);
 
   if (!isOpen) return null;
 
@@ -227,7 +275,13 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                   draftOpacity?.layerId === layer.id ? draftOpacity.percent : Math.round((layer.opacity ?? 1) * 100);
 
                 return (
-                  <li key={layer.id}>
+                  <li
+                    key={layer.id}
+                    ref={(element) => {
+                      rowRefs.current[layer.id] = element;
+                    }}
+                    data-testid="mobile-layer-row"
+                  >
                     {/*
                       A plain `div`, NOT `role="button"`.
 
@@ -312,6 +366,58 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                       <div className="flex shrink-0 items-center gap-1.5">
                         <button
                           type="button"
+                          disabled={layer.locked || layer.isBedrock}
+                          aria-label={`Drag to reorder ${layer.name}`}
+                          className="flex min-h-11 min-w-11 touch-none items-center justify-center rounded-lg text-gray-500 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-gray-700"
+                          onPointerDown={(event) => {
+                            event.stopPropagation();
+                            if (layer.locked || layer.isBedrock || dragRef.current) return;
+                            if (!claimDocumentGesture('mobile-layer-reorder', event.pointerId)) return;
+                            dragRef.current = {
+                              layerId: layer.id,
+                              pointerId: event.pointerId,
+                              startY: event.clientY,
+                              active: false,
+                            };
+                            event.currentTarget.setPointerCapture?.(event.pointerId);
+                          }}
+                          onPointerMove={(event) => {
+                            const drag = dragRef.current;
+                            if (!drag || drag.pointerId !== event.pointerId) return;
+                            if (!drag.active && Math.abs(event.clientY - drag.startY) < 8) return;
+                            if (!drag.active) {
+                              drag.active = true;
+                              setDraggedLayerId(drag.layerId);
+                            }
+                            const target = sortedLayers.find((candidate) => {
+                              if (candidate.id === drag.layerId) return false;
+                              const row = rowRefs.current[candidate.id];
+                              if (!row) return false;
+                              const bounds = row.getBoundingClientRect();
+                              return event.clientY < bounds.top + bounds.height / 2;
+                            });
+                            const draggedIndex = sortedLayers.findIndex((candidate) => candidate.id === drag.layerId);
+                            const targetIndex = target
+                              ? sortedLayers.findIndex((candidate) => candidate.id === target.id)
+                              : -1;
+                            const nextTargetId =
+                              target && targetIndex !== draggedIndex - 1 && targetIndex !== draggedIndex
+                                ? target.id
+                                : null;
+                            dropTargetRef.current = nextTargetId;
+                            setDropTargetId(nextTargetId);
+                          }}
+                          onPointerUp={(event) => {
+                            if (dragRef.current?.pointerId === event.pointerId) clearLayerDrag(false);
+                          }}
+                          onPointerCancel={(event) => {
+                            if (dragRef.current?.pointerId === event.pointerId) clearLayerDrag(true);
+                          }}
+                        >
+                          <DragHandleIcon disabled={layer.locked || layer.isBedrock} />
+                        </button>
+                        <button
+                          type="button"
                           onClick={(event) => {
                             event.stopPropagation();
                             setEditingLayerId(layer.id);
@@ -377,11 +483,17 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                           {opacityPercent}%
                         </output>
                       </label>
+                      {dropTargetId === layer.id && draggedLayerId !== layer.id && (
+                        <div className="basis-full h-1 rounded bg-blue-500" data-testid="mobile-layer-drop-indicator" />
+                      )}
                     </div>
                   </li>
                 );
               })}
             </ul>
+            <div aria-live="polite" role="status" className="sr-only">
+              {announcement}
+            </div>
           </div>
         )}
 
