@@ -273,7 +273,7 @@ function protectionWorktreeFacts() {
         ahead: 0,
         behind: 0,
         mergedIntoBase: true,
-        workingTree: { modified: 0, untracked: 1, paths: ['untracked.txt'] },
+        workingTree: { modified: 1, untracked: 1, paths: ['modified.txt', 'untracked.txt'] },
       }),
       wt({
         name: 'inventory-fixture-dirty-merged',
@@ -288,8 +288,8 @@ function protectionWorktreeFacts() {
   };
 }
 
-function protectionInventory() {
-  const { mainPath, worktrees } = protectionWorktreeFacts();
+function protectionInventory(facts = protectionWorktreeFacts()) {
+  const { mainPath, worktrees } = facts;
   return buildInventory({
     worktrees,
     root: mainPath,
@@ -2735,6 +2735,14 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     const inRepo = inv.worktrees.filter((r) => r.inRepo);
     const holdingWork = inRepo.filter((r) => holdsWorkGitCannotSee(r));
     expect(holdingWork.map((r) => r.name).sort()).toEqual(['inventory-fixture-dirty-merged', 'ph']);
+    const primary = inv.worktrees.find((r) => r.isPrimary);
+    expect(primary).toBeDefined();
+    expect(primary).toMatchObject({
+      status: STATUS.UNCOMMITTED_ONLY,
+      recommendation: RECOMMENDATION.SALVAGE,
+      action: ACTION.AT_RISK,
+      prunable: false,
+    });
 
     // The fixture must provide the facts needed to derive the set. An `ahead`
     // that is `null` means the fact is unreadable, and an empty result would not
@@ -2780,8 +2788,9 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     // against `classify` on worktree facts and nothing else. The primary checkout is
     // never a disposal candidate: `dispose` refuses it outright, so its dirty
     // state must not affect this check for disposable preservation branches.
-    const inv = protectionInventory();
-    const { worktrees } = protectionWorktreeFacts();
+    const facts = protectionWorktreeFacts();
+    const inv = protectionInventory(facts);
+    const { worktrees } = facts;
     const inRepo = inv.worktrees.filter((r) => r.inRepo && !r.isPrimary);
     const holdingWork = inRepo.filter((r) => holdsWorkGitCannotSee(r));
     expect(holdingWork.map((r) => r.name)).toEqual(['inventory-fixture-dirty-merged']);
@@ -2802,8 +2811,14 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     const exposed = [];
     const silent = [];
     for (const r of holdingWork) {
-      const facts = worktrees.find((x) => x.name === r.name);
-      const bare = classify(facts, { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW });
+      const worktreeFacts = worktrees.find((x) => x.path === r.absolutePath);
+      expect(worktreeFacts, `raw worktree facts missing for ${r.absolutePath}`).toBeDefined();
+      const bare = classify(worktreeFacts, {
+        chatSummary: noChats,
+        chatSessions: noSessions,
+        curated: null,
+        nowMs: NOW,
+      });
       const where =
         `${r.name} (curated: ${CURATED[r.name] ? 'yes' : 'NONE'}): ahead=${r.ahead} onMain=${r.mergedIntoMain} ` +
         `dirty=${r.dirty} untracked=${r.untracked} -> status=${bare.status} recommendation=${bare.recommendation} ` +
@@ -2813,7 +2828,7 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
       // `classify` reaches it precisely so the worktree is not removed.
       if (bare.prunable || bare.recommendation === RECOMMENDATION.PRUNE || bare.action === ACTION.DISPOSE) {
         exposed.push(where);
-      } else if (facts.tip === null || facts.detached) {
+      } else if (worktreeFacts.tip === null || worktreeFacts.detached) {
         // The fixture cannot name a tip, so the shape is not classifiable and
         // `undecided` is the honest answer. Reported rather than skipped, because
         // "the guard had nothing to check" and "the guard checked nothing" look

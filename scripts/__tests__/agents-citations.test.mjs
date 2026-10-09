@@ -640,11 +640,11 @@ describe("AGENTS.md's architecture claims resolve against the program", () => {
     const live = [...liveHandoffNumbers(handoff)];
     expect(live).not.toContain('127');
 
-    // A live section resolves and is not reported. `132` and `144` are live, with
-    // `127-131` retired between them, so a retired number is still flanked by live
-    // neighbours — which is what makes the assertion worth having: a parser that
-    // stopped matching `## N.` headings at all would report the neighbours too.
-    expect(staleHandoffRefs('see §132 and §144', handoff)).toEqual([]);
+    // A live section resolves and is not reported. `132` and `146` are live, with
+    // `127-131` and `144-145` retired between them, so a retired number is still
+    // flanked by live neighbours — which is what makes the assertion worth
+    // having: a parser that stopped matching `## N.` headings would report them too.
+    expect(staleHandoffRefs('see §132 and §146', handoff)).toEqual([]);
     // The retired one, and one that never existed, are both reported and named differently,
     // because only the second can be fixed by repointing.
     const retired = staleHandoffRefs('see §127', handoff);

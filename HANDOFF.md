@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 145, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2609,28 +2609,6 @@ download timeout, and only AVIF exceeds it"; `e2e/export/helpers.ts` — `waitUn
 `node_modules/@jsquash/avif/codec/enc/avif_enc.wasm`
 
 ---
-
-## 144. The uncommitted-work guard misses the main worktree, and only the main worktree
-
-The previous finding came from a live-worktree test that joined inventory rows to raw facts by
-display name. The suite now uses `protectionWorktreeFacts()` synthetic records, so that observed
-failure no longer depends on the operator's dirty main checkout. The fixture still includes a dirty
-primary worktree, but `it('never offers a worktree that holds uncommitted work on no ref for
-disposal')` only checks that it is not offered for disposal; the test requiring `action: at-risk`
-filters primary worktrees out. A green run therefore does not currently pin the dirty-primary
-classification.
-
-**Why it matters.** `scripts/dispose-worktree.mjs` relies on the inventory never treating the only
-copy of uncommitted work as disposable. A dirty main checkout is an important case because agents
-work there, even though disposal separately refuses the primary worktree.
-
-**Fix.** Assert the dirty primary fixture's inventory verdict is `uncommitted-only` and
-`at-risk`. In any test that maps an inventory row back to raw fixture facts, match by absolute path
-and assert the match exists; display names are not unique identifiers.
-
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs` — `protectionWorktreeFacts()`,
-`it('never offers a worktree that holds uncommitted work on no ref for disposal')`, and
-`it('protects that shape in a worktree NOBODY has written anything down about')`.
 
 ## 146. Two of the Sponge's seeded defaults are choices Adobe never documents, and one is destructive if wrong
 
