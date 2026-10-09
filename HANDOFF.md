@@ -247,26 +247,26 @@ and a page nowhere near this figure can still exceed it.
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
-as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one, and
-that reconciliation is the reason the BMP ceiling below is filed rather than fixed: choosing a number
-is cheap, and choosing it in one place is the decision nobody has taken.
+as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** constants, not one. That
+consolidation remains an open decision; the BMP encoder now uses the existing 100 MP document cap
+without changing any other codec ceiling.
 
-**Two codecs have no raster budget in either direction, and three bound nothing on the way in.**
+**Two codecs have no loader budget, and SVG has no encoder budget.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds?         |
-| ----- | ------------- | -------------- | ---------------------------------------------- |
-| avif  | yes           | yes            | yes                                            |
-| tiff  | yes           | yes            | yes                                            |
-| bmp   | 100 MP        | **none**       | yes — before payload validation and allocation |
-| gif   | **none**      | 65535/axis     | yes, on the encoder                            |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                                   |
-| svg   | **none**      | **none**       | n/a                                            |
-| psd   | yes           | yes            | yes — the reference implementation             |
+| codec | loader budget | encoder budget | check before the allocation it bounds?     |
+| ----- | ------------- | -------------- | ------------------------------------------ |
+| avif  | yes           | yes            | yes                                        |
+| tiff  | yes           | yes            | yes                                        |
+| bmp   | 100 MP        | 100 MP         | yes — before pixel readback and allocation |
+| gif   | **none**      | 65535/axis     | yes, on the encoder                        |
+| ico   | 256/axis      | 1..256/axis    | yes, on both                               |
+| svg   | **none**      | **none**       | n/a                                        |
+| psd   | yes           | yes            | yes — the reference implementation         |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
 rather than an exception to it. What the table leaves open is the loader column for `gif` and `svg`,
-and the encoder column for `bmp` and `svg`.
+and the encoder column for `svg`.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -277,12 +277,13 @@ selected entry decodes above 256 on either axis — a 512×512 PNG entry, which 
 it takes that geometry from `IHDR` too — is refused here. Round-trip coherence is the reason, and
 loosening the load side reintroduces documents this build then cannot write.
 
-**The BMP decoder's amplification is now bounded.** `decodeBmp()` rejects a raster above
-`MAX_CREATABLE_DOCUMENT_PIXELS` (100 MP) before validating the pixel payload or allocating its
+**The BMP decoder's amplification and encoder readback are bounded.** `decodeBmp()` rejects a raster
+above `MAX_CREATABLE_DOCUMENT_PIXELS` (100 MP) before validating the pixel payload or allocating its
 RGBA output. This is the largest document the app can create, so BMP can still open every canvas
 size this build supports without introducing a sixth raster ceiling. A 20000×40000 1-bpp BMP that
-previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header. The BMP
-encoder remains unbudgeted.
+previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from its header.
+`encodeBmp()` rejects canvases above the same limit before reading back pixels or allocating its
+output buffer.
 
 **Owned, so recorded not fixed:** `image-load-save-utils.ts` — `loadImageFile()` is the load path for
 GIF and SVG and bounds nothing — the whole file is base64-encoded into a data URL and handed to

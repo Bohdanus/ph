@@ -149,8 +149,13 @@ export async function loadBmpFile(file: Blob): Promise<HTMLImageElement> {
 }
 
 export async function encodeBmp(canvas: HTMLCanvasElement): Promise<Blob> {
-  const imageData = getCanvasImageData(canvas);
-  const { width, height, data } = imageData;
+  const { width, height } = canvas;
+  if (width * height > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `BMP image is too large to save (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
+  const { data } = getCanvasImageData(canvas);
   const rowStride = width * 4;
   const dibSize = 56;
   const pixelOffset = 14 + dibSize;
