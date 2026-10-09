@@ -52,6 +52,11 @@ const ALLOWED_UNLISTED = new Map([
       '<branch>-<topic>.md naming convention. One row per merged branch would make the ' +
       'index unbounded, and the set grows by exactly one line in HANDOFF.md at a time.',
   ],
+  [
+    '.kilo/plans/test-hardening-plan.md',
+    'internal hardening plan tracked in .kilo/plans/; not a public document and not ' +
+      'linked from docs/README.md. The .kilo/plans/ directory row covers the directory as a whole.',
+  ],
 ]);
 
 const trackedMarkdown = () =>

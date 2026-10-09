@@ -251,6 +251,12 @@ const DOCUMENTS_NOT_CHECKED = new Map([
     'A point-in-time report, excluded because `docs/README.md` lists it as not maintained rather ' +
       'than as a document in the hierarchy.',
   ]),
+  [
+    '.kilo/plans/test-hardening-plan.md',
+    'Internal hardening plan in .kilo/plans/; not a maintained document and contains ' +
+      'line-number citations to existing tests for reference. The .kilo/plans/ directory ' +
+      'is excluded from docs/README.md index.',
+  ],
 ]);
 
 /**
