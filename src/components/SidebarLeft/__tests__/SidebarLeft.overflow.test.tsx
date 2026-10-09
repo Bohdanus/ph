@@ -20,6 +20,8 @@ import SidebarLeft from '../SidebarLeft.tsx';
  * own measurement — which needs real boxes — is untouched.
  */
 const TILE_HEIGHT = 44;
+const ROW_GAP = 6;
+const SECTION_BREAK_HEIGHT = 7;
 const SLOT_WIDTH = 56;
 
 type Geometry = { slotHeight: number };
@@ -102,6 +104,17 @@ const setSlotHeight = (slotHeight: number): void => {
     geometry.slotHeight = slotHeight;
     flushObservers();
   });
+};
+
+/** Fit height derived from the rail's row and section costs. */
+const fullRailSlotHeight = (): number => {
+  const groupCount = toolbarMap.flat().length;
+  const sectionCount = toolbarMap.filter((section) => section.length > 0).length;
+  return (
+    groupCount * TILE_HEIGHT +
+    Math.max(0, groupCount - 1) * ROW_GAP +
+    Math.max(0, sectionCount - 1) * SECTION_BREAK_HEIGHT
+  );
 };
 
 /** The tool tiles currently on the rail, in the order the rail renders them. */
@@ -551,5 +564,20 @@ describe('SidebarLeft the three-dots tile', () => {
     expect(screen.getByTestId('foreground-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('background-color-input')).toBeInTheDocument();
     expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
+  });
+
+  it('closes the overflow flyout when the whole rail fits and does not reopen it when it returns', () => {
+    render(<SidebarLeft />);
+    setSlotHeight(TILE_HEIGHT);
+    openOverflowFlyout();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    setSlotHeight(fullRailSlotHeight());
+    expect(overflowTile()).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    setSlotHeight(TILE_HEIGHT);
+    expect(overflowTile()).not.toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

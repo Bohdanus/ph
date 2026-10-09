@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2735,58 +2735,6 @@ scheduling changes, or it is a tripwire for a defect that cannot occur.
 runs on a concurrent render that yielded — neither is a pre-paint refit).
 
 ---
-
-## 149. The three-dots flyout reopens itself after the window crosses the edge where nothing collapses
-
-**Problem.** `openGroup` is reset when its tile is swallowed by a collapse, but only against
-`collapsedGroups` — the `if (openGroup !== null && collapsedGroups.has(openGroup))` render-time
-reset in `SidebarLeft.tsx` — and that set can only ever contain GROUP keys — `0-0`,
-`two-column-N`. The three-dots tile is keyed `OVERFLOW_GROUP_KEY`, the string `'overflow'` (the
-`OVERFLOW_GROUP_KEY` declaration in `SidebarLeft.tsx`), which no group key can equal. So `collapsedGroups.has('overflow')` is
-always false, the reset never fires for that tile, and `openGroup` outlives the unmount.
-
-**Reproduced.** Open the three-dots menu at 1280x700, grow the window to 1400 — the tile unmounts,
-because at 1400 all fifteen groups fit and nothing collapses — then shrink back to 700. The tile
-remounts with the flyout **already open**, and nothing was clicked in between:
-
-```
-AFTER GROW:   overflow tile count = 0
-AFTER SHRINK: the flyout is in the DOM with nothing clicked = 1
-```
-
-The user is shown a tool menu they did not open, over the tool they were reaching for.
-
-**Why the `lg`-crossing fix — the `lastRailLayout !== railLayout` reset in `SidebarLeft.tsx` — does
-not cover it**, and is worth reading as the same class
-rather than the same bug: the two crossings both unmount tiles, and both leave `openGroup` naming a
-tile that is no longer rendered. The desktop↔tablet crossing is handled by deriving the adjustment
-from the layout; a COLLAPSE is handled by the `collapsedGroups` membership test; and the
-collapse↔no-collapse crossing belongs to a third condition that nothing checks — the fit going
-from `showOverflowTile: true` to `false` while `openGroup` is `'overflow'`.
-
-**Reachability moved with the fit's budget, which is why it is filed now.** Nothing collapses from a
-1037px window up, where before the budget change nothing collapsed from about 1300. The window has to
-be dragged 263px less far to reach the state, and the drag is the natural gesture a user performs
-while looking at an open flyout — to give the rail more room.
-
-**What would close it.** Reset `openGroup` when `overflowPlan.showOverflowTile` goes false, the same
-way the `lg` crossing does: derived from the state that changed, adjusted during render rather than
-in an effect. A test belongs with it — open the menu, resize past the edge, resize back, and assert
-the menu is not there — and **the height has to come from the rail's own arithmetic** (or from the
-edge `e2e/toolbar-fit.spec.ts` already pins at 1037/1036), not from a hardcoded window, or the next
-tile to be added moves it.
-
-**Do not fix it by clearing `openGroup` on every `ResizeObserver` publication.** The store publishes
-on plan changes only, and that is the point of the throttle; a subscriber that reset state on every
-version bump would re-open the same class of problem as the one the throttle closed.
-
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx` — the `RailGripIcon` doc comment, the
-`openGroup` state, the `overflowTools` memo with the render-time collapse reset beside it, and the
-two `renderToolGroup` call sites that render the overflow tile,
-`src/components/SidebarLeft/toolbar-fit-store.ts` (the fit whose `showOverflowTile` edge moved),
-`e2e/toolbar-fit.spec.ts` — the
-`test('the count follows the window, and only the count that fits is ever shown')` case (the
-1094/1093 edge).
 
 ## 150. A marquee drag that leaves the canvas is dropped rather than clamped, and the two families disagree about it
 

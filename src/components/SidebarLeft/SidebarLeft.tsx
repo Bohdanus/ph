@@ -441,7 +441,10 @@ const SidebarLeft = () => {
   // reopening itself with nothing the user did to open it. The same defect the `lg`
   // crossing above has, reached a third way, and fixed the same way: derived from the state
   // that changed, adjusted during render.
-  if (openGroup !== null && collapsedGroups.has(openGroup)) {
+  if (
+    (openGroup !== null && collapsedGroups.has(openGroup)) ||
+    (openGroup === OVERFLOW_GROUP_KEY && !overflowPlan.showOverflowTile)
+  ) {
     setOpenGroup(null);
     setFlyoutAnchor(null);
   }
