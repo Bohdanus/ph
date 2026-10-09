@@ -1,103 +1,14 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { toolbarMap } from '../../../../toolbar-mapping.ts';
 import { setViewportWidth } from '../../../test/setup.ts';
+import { goToTool, patchToolArgs, toolbarButtonByName, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
 
 const brushGroup = toolbarMap.flat().find((group) => group.some((tool) => tool.name === 'brush'));
 if (!brushGroup) throw new Error('Brush tool group is missing from toolbarMap');
 
 const brushRow = (index: number): HTMLElement => screen.getByRole('menuitemradio', { name: brushGroup[index].label });
-
-const goToTool = vi.fn();
-const patchToolArgsMock = vi.fn();
-
-const storeStateRef = vi.hoisted(() => ({
-  toolName: 'draw',
-  color: '#000000',
-  backgroundColor: '#ffffff',
-  hasImage: true,
-  dispatch: vi.fn(),
-}));
-
-const toolArgsRef = vi.hoisted(() => ({
-  toolName: 'draw' as string,
-  figure: undefined as string | undefined,
-}));
-
-vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeStateRef, storeStateRef.dispatch],
-}));
-
-vi.mock('../../../hooks/useApp.ts', () => ({
-  useApp: () => ({ goToTool }),
-}));
-
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({
-    toolArgs: toolArgsRef,
-    patchToolArgs: patchToolArgsMock,
-  }),
-}));
-
-vi.mock('../toolIcons.tsx', () => {
-  const Icon = ({ title }: { title: string }) => <svg aria-hidden="true">{title}</svg>;
-
-  return {
-    toolIcons: {
-      reposition: Icon,
-      'red-eye': Icon,
-      'spot-healing': Icon,
-      'healing-brush': Icon,
-      patch: Icon,
-      hand: Icon,
-      zoom: Icon,
-      'rotate-view': Icon,
-      'rectangular-selection': Icon,
-      'elliptical-selection': Icon,
-      'single-row-marquee': Icon,
-      'single-column-marquee': Icon,
-      'freehand-lasso': Icon,
-      'polygonal-lasso': Icon,
-      'feather-magnetic-lasso': Icon,
-      'magic-wand': Icon,
-      'quick-selection': Icon,
-      eyedropper: Icon,
-      eraser: Icon,
-      'clone-stamp': Icon,
-      'paint-bucket': Icon,
-      gradient: Icon,
-      sharpen: Icon,
-      smudge: Icon,
-      dodge: Icon,
-      burn: Icon,
-      crop: Icon,
-      draw: Icon,
-      shape: Icon,
-      text: Icon,
-      color: Icon,
-      blur: Icon,
-      levels: Icon,
-      transform: Icon,
-      brush: Icon,
-      pencil: Icon,
-      'color-replacement': Icon,
-      'magic-eraser': Icon,
-      pen: Icon,
-      'freeform-pen': Icon,
-      'curvature-pen': Icon,
-      'add-anchor-point': Icon,
-      'delete-anchor-point': Icon,
-      'convert-point': Icon,
-      rectangle: Icon,
-      ellipse: Icon,
-      triangle: Icon,
-      polygon: Icon,
-      line: Icon,
-      'custom-shape': Icon,
-    },
-  };
-});
 
 const DESKTOP_WIDTH = 1280;
 const DESKTOP_HEIGHT = 800;
@@ -128,8 +39,6 @@ const TILE_ROW_STEP = TILE_HEIGHT;
 
 /** The rail's own width, which is the horizontal anchor a flyout now hangs from. */
 const RAIL_WIDTH = 108;
-
-const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
 /** The flyout for a tool group, by the `aria-label` the group renders it with. */
 const menuByName = (name: string) => screen.queryByRole('menu', { name });
@@ -218,33 +127,14 @@ const setLayoutViewport = (width: number, height: number): void => {
   Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: height });
 };
 
-const resetMocks = () => {
-  goToTool.mockReset();
-  Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });
-  Object.assign(storeStateRef, {
-    hasImage: true,
-    toolName: 'draw',
-    color: '#000000',
-    backgroundColor: '#ffffff',
-  });
-  storeStateRef.dispatch.mockClear();
-  patchToolArgsMock.mockClear();
-};
-
-const cleanupTimers = () => {
-  vi.clearAllTimers();
-  vi.useRealTimers();
-};
-
 describe('SidebarLeft flyout hardening', () => {
+  useSidebarLeftHarness();
   beforeEach(() => {
-    resetMocks();
     setViewportWidth(DESKTOP_WIDTH, DESKTOP_HEIGHT);
     setLayoutViewport(DESKTOP_WIDTH, 720);
   });
 
   afterEach(() => {
-    cleanupTimers();
     setViewportWidth(DESKTOP_WIDTH, DESKTOP_HEIGHT);
   });
 
@@ -327,7 +217,7 @@ describe('SidebarLeft flyout hardening', () => {
 
     expect(screen.getByRole('menu')).toBe(menu);
     expect(goToTool).not.toHaveBeenCalled();
-    expect(patchToolArgsMock).not.toHaveBeenCalled();
+    expect(patchToolArgs).not.toHaveBeenCalled();
   });
 
   it('anchors the next group flyout to its own tile after the previous one closed', () => {

@@ -1,107 +1,17 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  goToTool,
+  patchToolArgs,
+  storeState,
+  toolArgs,
+  toolbarButtonByName,
+  longPress,
+  useSidebarLeftHarness,
+} from './harness.tsx';
 import SidebarLeft, { FLYOUT_LONG_PRESS_MS } from '../SidebarLeft.tsx';
 
-const goToTool = vi.fn();
-const patchToolArgsMock = vi.fn();
-
-const storeStateRef = vi.hoisted(() => ({
-  toolName: 'draw',
-  color: '#000000',
-  backgroundColor: '#ffffff',
-  hasImage: true,
-  dispatch: vi.fn(),
-}));
-
-const toolArgsRef = vi.hoisted(() => ({
-  toolName: 'draw' as string,
-  figure: undefined as string | undefined,
-}));
-
-vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeStateRef, storeStateRef.dispatch],
-}));
-
-vi.mock('../../../hooks/useApp.ts', () => ({
-  useApp: () => ({ goToTool }),
-}));
-
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({
-    toolArgs: toolArgsRef,
-    patchToolArgs: patchToolArgsMock,
-  }),
-}));
-
-vi.mock('../toolIcons.tsx', () => {
-  const Icon = ({ title }: { title: string }) => <svg aria-hidden="true">{title}</svg>;
-
-  return {
-    toolIcons: {
-      reposition: Icon,
-      'red-eye': Icon,
-      'spot-healing': Icon,
-      'healing-brush': Icon,
-      patch: Icon,
-      hand: Icon,
-      zoom: Icon,
-      'rotate-view': Icon,
-      'rectangular-selection': Icon,
-      'elliptical-selection': Icon,
-      'freehand-lasso': Icon,
-      'polygonal-lasso': Icon,
-      'feather-magnetic-lasso': Icon,
-      'magic-wand': Icon,
-      'quick-selection': Icon,
-      eyedropper: Icon,
-      eraser: Icon,
-      'clone-stamp': Icon,
-      'paint-bucket': Icon,
-      gradient: Icon,
-      sharpen: Icon,
-      smudge: Icon,
-      dodge: Icon,
-      burn: Icon,
-      crop: Icon,
-      draw: Icon,
-      shape: Icon,
-      text: Icon,
-      color: Icon,
-      blur: Icon,
-      levels: Icon,
-      transform: Icon,
-      brush: Icon,
-      pencil: Icon,
-      'color-replacement': Icon,
-      'magic-eraser': Icon,
-      pen: Icon,
-      'freeform-pen': Icon,
-      'curvature-pen': Icon,
-      'add-anchor-point': Icon,
-      'delete-anchor-point': Icon,
-      'convert-point': Icon,
-      rectangle: Icon,
-      ellipse: Icon,
-      triangle: Icon,
-      polygon: Icon,
-      line: Icon,
-      'custom-shape': Icon,
-    },
-  };
-});
-
 const LONG_PRESS_DELAY = FLYOUT_LONG_PRESS_MS;
-
-const longPress = (button: HTMLElement) => {
-  fireEvent.pointerDown(button, { button: 0 });
-  act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY);
-  });
-  fireEvent.pointerUp(button, { button: 0 });
-  fireEvent.click(button);
-};
-
-const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
 /**
  * The "a flyout tile is named and captioned by its first entry" rule, over every flyout that
@@ -129,33 +39,8 @@ const nonPrimaryCases: ReadonlyArray<[string, string, string]> = [
   ['ellipse', 'shape', 'shape'],
 ];
 
-const resetMocks = () => {
-  goToTool.mockReset();
-  Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });
-  Object.assign(storeStateRef, {
-    hasImage: true,
-    toolName: 'draw',
-    color: '#000000',
-    backgroundColor: '#ffffff',
-  });
-  storeStateRef.dispatch.mockClear();
-  patchToolArgsMock.mockClear();
-};
-
-const cleanupTimers = () => {
-  vi.clearAllTimers();
-  vi.useRealTimers();
-};
-
 describe('SidebarLeft primary tool selection', () => {
-  beforeEach(() => {
-    resetMocks();
-  });
-
-  afterEach(() => {
-    cleanupTimers();
-  });
-
+  useSidebarLeftHarness();
   it.each(groupedToolCases)(
     'uses the first submenu item "$item" as the primary for the grouped tile',
     ({ name, item }) => {
@@ -306,7 +191,7 @@ describe('SidebarLeft primary tool selection', () => {
     });
 
     expect(goToTool).toHaveBeenCalledWith('pencil');
-    expect(patchToolArgsMock).not.toHaveBeenCalled();
+    expect(patchToolArgs).not.toHaveBeenCalled();
     expect(screen.queryByRole('menu')).toBeNull();
 
     const rootButton = toolbarButtonByName('pencil');
@@ -328,9 +213,9 @@ describe('SidebarLeft primary tool selection', () => {
       fireEvent.click(screen.getByRole('menuitemradio', { name: 'Ellipse Tool' }));
     });
 
-    expect(patchToolArgsMock).toHaveBeenCalledWith('shape', { figure: 'oval' });
+    expect(patchToolArgs).toHaveBeenCalledWith('shape', { figure: 'oval' });
     expect(goToTool).toHaveBeenCalledWith('shape');
-    expect(goToTool.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgsMock.mock.invocationCallOrder[0]);
+    expect(goToTool.mock.invocationCallOrder[0]).toBeLessThan(patchToolArgs.mock.invocationCallOrder[0]);
     expect(screen.queryByRole('menu')).toBeNull();
 
     const rootButton = toolbarButtonByName('shape');
@@ -340,7 +225,7 @@ describe('SidebarLeft primary tool selection', () => {
       fireEvent.click(rootButton);
     });
     expect(goToTool).toHaveBeenCalledWith('shape');
-    expect(patchToolArgsMock).toHaveBeenLastCalledWith('shape', { figure: 'oval' });
+    expect(patchToolArgs).toHaveBeenLastCalledWith('shape', { figure: 'oval' });
   });
 
   it('keeps the Photoshop shape flyout: Rectangle then Ellipse, and no Circle or Square tools', () => {
@@ -380,15 +265,15 @@ describe('SidebarLeft primary tool selection', () => {
       fireEvent.click(rootButton);
     });
     expect(goToTool).toHaveBeenCalledWith('shape');
-    expect(patchToolArgsMock).not.toHaveBeenCalledWith('shape', { figure: 'circle' });
-    expect(patchToolArgsMock).not.toHaveBeenCalledWith('shape', { figure: 'square' });
+    expect(patchToolArgs).not.toHaveBeenCalledWith('shape', { figure: 'circle' });
+    expect(patchToolArgs).not.toHaveBeenCalledWith('shape', { figure: 'square' });
   });
 
   it.each(nonPrimaryCases)(
     'defaults to the first item (%s) as primary even when another group member is active',
     (activeTool, name, expectedPrimary) => {
-      Object.assign(storeStateRef, { toolName: activeTool });
-      Object.assign(toolArgsRef, { toolName: activeTool, figure: undefined });
+      Object.assign(storeState, { toolName: activeTool });
+      Object.assign(toolArgs, { toolName: activeTool, figure: undefined });
       render(<SidebarLeft />);
 
       const rootButton = toolbarButtonByName(name);

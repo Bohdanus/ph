@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -305,38 +305,6 @@ finding recorded there dies with the machine. This file ships with the code. Eve
 item below is a control that is rendered and cannot work, or a Photoshop slot that is
 selectable and inert - the two shapes a silent no-op takes here - and each one names
 the fix rather than the wish.
-
-## 46. The `SidebarLeft` suites each carry their own copy of the icon mock
-
-`src/components/SidebarLeft/__tests__/harness.tsx` is a shared render harness, and its
-docstring says a suite must import it before `../SidebarLeft.tsx` so its hoisted `vi.mock` calls
-apply. **Exactly one suite does** — `SidebarLeft.tablet.test.tsx`, whose `useSidebarLeftHarness`
-import does it the required way. The other ten — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
-`SidebarLeft.context-menu`, `SidebarLeft.flyout`, `SidebarLeft.flyout-hardening`,
-`SidebarLeft.icon-state`, `SidebarLeft.keyboard`,
-`SidebarLeft.layout`, `SidebarLeft.primary-selection`, `SidebarLeft.rendering` — re-declare the
-whole `storeState` / `toolArgs` / `useApp` / `useCurrentTool` / `toolIcons` fixture inline, so one
-suite in eleven uses the harness and the mock it holds is duplicated in all ten of the others while
-still having to be kept compiling.
-
-The cost is a defect that only appears on the next tool. `toolIcons` is a hand-written object
-literal listing every icon name, and `SidebarLeft` renders
-`getToolIcon(tool.name)`. Add a tool and the literal is out of date, so `Icon` is `undefined` and
-React throws `Element type is invalid` from `createFiberFromTypeAndProps` — in **every** file in the
-directory, with a message that names neither the missing icon nor the stale literal. Adding the
-four eraser-family icons meant editing the same list eleven times.
-
-**Fix.** Delete the inline `vi.mock`/`vi.hoisted` blocks from the ten suites, import
-`storeState` / `toolArgs` / `goToTool` / `patchToolArgs` / `toolbarButtonByName` from
-`./harness` in each (the import must precede `../SidebarLeft.tsx`, which the harness docstring
-already states, and `SidebarLeft.tablet` is the worked example), and then delete the harness's
-duplicated exports. While in there, replace the
-`toolIcons` literal with `import { toolIcons } from '../toolIcons.tsx'` so the list cannot go stale
-again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it needs a
-`vi.mock` that maps over the real keys rather than a hard-coded array.
-
-**Files.** `src/components/SidebarLeft/__tests__/harness.tsx` and the ten
-`SidebarLeft.*.test.tsx` files listed above.
 
 ---
 

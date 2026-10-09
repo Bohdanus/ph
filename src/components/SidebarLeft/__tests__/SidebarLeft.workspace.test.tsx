@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
 import { PanelLayoutProvider } from '../../../contexts/PanelLayout.tsx';
 
@@ -20,85 +21,6 @@ import { PanelLayoutProvider } from '../../../contexts/PanelLayout.tsx';
  * tiles, and that a cancelled drag does none of it.
  */
 
-const goToTool = vi.fn();
-const patchToolArgsMock = vi.fn();
-
-const storeStateRef = vi.hoisted(() => ({
-  toolName: 'draw',
-  color: '#000000',
-  backgroundColor: '#ffffff',
-  hasImage: true,
-  dispatch: vi.fn(),
-}));
-
-const toolArgsRef = vi.hoisted(() => ({ toolName: 'draw' as string, figure: undefined as string | undefined }));
-
-vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeStateRef, storeStateRef.dispatch],
-}));
-
-vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool }) }));
-
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({ toolArgs: toolArgsRef, patchToolArgs: patchToolArgsMock }),
-}));
-
-vi.mock('../toolIcons.tsx', () => {
-  const Icon = () => <svg aria-hidden="true" />;
-  const names = [
-    'reposition',
-    'hand',
-    'zoom',
-    'rotate-view',
-    'rectangular-selection',
-    'elliptical-selection',
-    'freehand-lasso',
-    'polygonal-lasso',
-    'feather-magnetic-lasso',
-    'magic-wand',
-    'quick-selection',
-    'eyedropper',
-    'eraser',
-    'clone-stamp',
-    'red-eye',
-    'spot-healing',
-    'healing-brush',
-    'patch',
-    'paint-bucket',
-    'gradient',
-    'sharpen',
-    'smudge',
-    'dodge',
-    'burn',
-    'sponge',
-    'crop',
-    'draw',
-    'shape',
-    'text',
-    'color',
-    'blur',
-    'levels',
-    'transform',
-    'brush',
-    'pencil',
-    'color-replacement',
-    'magic-eraser',
-    'pen',
-    'freehand-pen',
-    'curvature-pen',
-    'add-anchor-point',
-    'delete-anchor-point',
-    'convert-point',
-    'rectangle',
-    'ellipse',
-    'triangle',
-    'polygon',
-    'line',
-    'custom-shape',
-  ];
-  return { toolIcons: Object.fromEntries(names.map((name) => [name, Icon])) };
-});
-
 const renderRail = (children: ReactNode = <SidebarLeft />) =>
   render(<PanelLayoutProvider>{children}</PanelLayoutProvider>);
 
@@ -111,10 +33,9 @@ const stubViewportWidth = (width: number) =>
   vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
 
 describe('SidebarLeft workspace placement', () => {
+  useSidebarLeftHarness();
   beforeEach(() => {
-    vi.clearAllMocks();
     localStorage.clear();
-    Object.assign(storeStateRef, { hasImage: true, toolName: 'draw' });
   });
 
   afterEach(() => {
