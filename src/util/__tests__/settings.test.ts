@@ -958,7 +958,13 @@ describe('defaultSettings and lastSavedSettings', () => {
     });
     expect(defaultSettings.crop).toMatchObject({ aspectRatio: null, rect: null, toolName: 'crop' });
     expect(defaultSettings['magic-wand']).toMatchObject({ tolerance: 28, smoothing: 1.5, toolName: 'magic-wand' });
-    expect(defaultSettings['rectangular-selection']).toEqual({ toolName: 'rectangular-selection' });
+    expect(defaultSettings['rectangular-selection']).toEqual({
+      style: 'normal',
+      fixedRatio: 1,
+      fixedWidth: 100,
+      fixedHeight: 100,
+      toolName: 'rectangular-selection',
+    });
     expect(defaultSettings['feather-magnetic-lasso']).toMatchObject({
       featherRadius: 12,
       magneticWidth: 18,

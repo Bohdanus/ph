@@ -12,6 +12,8 @@ import type { CropOverlayOrientation, CropOverlayType } from '../tools/crop.ts';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
+  /** A fixed-size fresh drag, centred on the press point. */
+  fixedSize?: Size | null;
   /** The frame's size in CANVAS px, so the frame rect here is `[0, 0, imageSize]`. */
   imageSize: Size;
   initialRect?: RectXYSorted | null; // can be set using props, in canvas px like everything else
@@ -188,6 +190,7 @@ export function drawCropOverlay(
  */
 export function useRect({
   aspectRatio = null,
+  fixedSize = null,
   imageSize,
   initialRect,
 
@@ -631,6 +634,17 @@ export function useRect({
    * neither prop.
    */
   function adjustFreshPoint(point: Point, modifiers: FreshDragModifiers, _aspectRatio: number | null) {
+    if (fixedSize && fixedSize.width > 0 && fixedSize.height > 0) {
+      const halfWidth = fixedSize.width / 2;
+      const halfHeight = fixedSize.height / 2;
+      return {
+        x1: startPointRef.current!.x - halfWidth,
+        y1: startPointRef.current!.y - halfHeight,
+        x2: startPointRef.current!.x + halfWidth,
+        y2: startPointRef.current!.y + halfHeight,
+      };
+    }
+
     if (!modifiers.constrainToSquare && !modifiers.fromCentre) return adjustFreePoint(point, _aspectRatio);
 
     const x1 = startPointRef.current!.x;
