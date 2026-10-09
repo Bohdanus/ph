@@ -235,12 +235,15 @@ jobs:
           - platform: linux
             os: ubuntu-latest
             timeout: 30
+            install-command: npx playwright install --with-deps chrome
           - platform: windows
             os: windows-latest
             timeout: 35
+            install-command: npx playwright install chrome
           - platform: macos
             os: macos-latest
             timeout: 35
+            install-command: npx playwright install chrome
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -263,7 +266,8 @@ jobs:
         # channel that Playwright installs, NOT the system browser. On Linux
         # `--with-deps` pulls the apt packages Chrome needs; on Windows and
         # macOS it is a bare `npx playwright install chrome` (the `--with-deps`
-        # flag is a no-op outside Linux's package manager).
+        # flag is Linux-only; the matrix carries an explicit command for each
+        # runner so macOS and Windows never rely on shell semantics).
         #
         # No `actions/cache` step on purpose. That directory is where Playwright
         # unpacks the browsers IT downloads, and this job installs none: the
@@ -271,7 +275,7 @@ jobs:
         # keyed on `~/.cache/ms-playwright` here would carry an absent directory,
         # hit on every run, and save nothing. The install below is apt on Linux,
         # which is not cacheable.
-        run: ${{ matrix.platform == 'windows' && 'npx playwright install chrome' || 'npx playwright install --with-deps chrome' }}
+        run: ${{ matrix.install-command }}
 
       - name: Run Playwright specs
         # `npx playwright test` directly, NOT `npm run test:e2e`. That script is
