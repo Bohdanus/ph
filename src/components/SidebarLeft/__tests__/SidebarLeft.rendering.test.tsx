@@ -1,124 +1,10 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { storeState, toolbarButtonByName, useSidebarLeftHarness } from './harness.tsx';
 import SidebarLeft from '../SidebarLeft.tsx';
 
-const goToTool = vi.fn();
-const patchToolArgsMock = vi.fn();
-
-const storeStateRef = vi.hoisted(() => ({
-  toolName: 'draw',
-  color: '#000000',
-  backgroundColor: '#ffffff',
-  hasImage: true,
-  dispatch: vi.fn(),
-}));
-
-const toolArgsRef = vi.hoisted(() => ({
-  toolName: 'draw' as string,
-  figure: undefined as string | undefined,
-}));
-
-vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeStateRef, storeStateRef.dispatch],
-}));
-
-vi.mock('../../../hooks/useApp.ts', () => ({
-  useApp: () => ({ goToTool }),
-}));
-
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({
-    toolArgs: toolArgsRef,
-    patchToolArgs: patchToolArgsMock,
-  }),
-}));
-
-vi.mock('../toolIcons.tsx', () => {
-  const Icon = ({ title }: { title: string }) => <svg aria-hidden="true">{title}</svg>;
-
-  return {
-    toolIcons: {
-      reposition: Icon,
-      'red-eye': Icon,
-      'spot-healing': Icon,
-      'healing-brush': Icon,
-      patch: Icon,
-      hand: Icon,
-      zoom: Icon,
-      'rotate-view': Icon,
-      'rectangular-selection': Icon,
-      'elliptical-selection': Icon,
-      'freehand-lasso': Icon,
-      'polygonal-lasso': Icon,
-      'feather-magnetic-lasso': Icon,
-      'magic-wand': Icon,
-      'quick-selection': Icon,
-      eyedropper: Icon,
-      eraser: Icon,
-      'clone-stamp': Icon,
-      'paint-bucket': Icon,
-      gradient: Icon,
-      sharpen: Icon,
-      smudge: Icon,
-      dodge: Icon,
-      burn: Icon,
-      crop: Icon,
-      draw: Icon,
-      shape: Icon,
-      text: Icon,
-      color: Icon,
-      blur: Icon,
-      levels: Icon,
-      transform: Icon,
-      brush: Icon,
-      pencil: Icon,
-      'color-replacement': Icon,
-      'magic-eraser': Icon,
-      pen: Icon,
-      'freeform-pen': Icon,
-      'curvature-pen': Icon,
-      'add-anchor-point': Icon,
-      'delete-anchor-point': Icon,
-      'convert-point': Icon,
-      rectangle: Icon,
-      ellipse: Icon,
-      triangle: Icon,
-      polygon: Icon,
-      line: Icon,
-      'custom-shape': Icon,
-    },
-  };
-});
-
-const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
-
-const resetMocks = () => {
-  goToTool.mockReset();
-  Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });
-  Object.assign(storeStateRef, {
-    hasImage: true,
-    toolName: 'draw',
-    color: '#000000',
-    backgroundColor: '#ffffff',
-  });
-  storeStateRef.dispatch.mockClear();
-  patchToolArgsMock.mockClear();
-};
-
-const cleanupTimers = () => {
-  vi.clearAllTimers();
-  vi.useRealTimers();
-};
-
 describe('SidebarLeft rendering', () => {
-  beforeEach(() => {
-    resetMocks();
-  });
-
-  afterEach(() => {
-    cleanupTimers();
-  });
-
+  useSidebarLeftHarness();
   it('renders the available tools in Photoshop-inspired order', () => {
     render(<SidebarLeft />);
 
@@ -159,7 +45,7 @@ describe('SidebarLeft rendering', () => {
   });
 
   it('does not render anything when there is no image', () => {
-    Object.assign(storeStateRef, { hasImage: false });
+    Object.assign(storeState, { hasImage: false });
     const { container } = render(<SidebarLeft />);
     expect(container.firstChild).toBeNull();
   });
