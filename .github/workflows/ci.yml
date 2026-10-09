@@ -53,9 +53,6 @@ jobs:
         continue-on-error: true
         run: npx prettier --check $(git ls-files '*.js' '*.jsx' '*.mjs' '*.cjs' '*.scss' '*.css' '*.json' '*.jsonc' '*.md' '*.yml' '*.yaml' '*.ts' '*.tsx')
 
-      - name: Audit
-        run: npm audit --audit-level=high
-
       - name: Type-check
         # `tsc -b` builds tsconfig.app.json, tsconfig.node.json and tsconfig.e2e.json,
         # so this also type-checks the Playwright specs and their helper unit tests.
@@ -181,6 +178,32 @@ jobs:
             coverage-e2e/
           retention-days: 7
           if-no-files-found: error
+
+  # Dependency licence terms are not checked by CI. The `npm audit` job below
+  # checks vulnerability advisories only; see the README's dependency licensing note.
+  # It runs as a separate non-blocking job so external advisories cannot block the
+  # main pipeline.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit
+        run: npm audit --audit-level=high
 
   # ---------------------------------------------------------------------------
   # Cross-platform e2e
