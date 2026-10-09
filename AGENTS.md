@@ -58,6 +58,15 @@ Every merge into `main` must carry `Branch: <source-branch>`.
 Resolve the session ID before the first commit. `ses_…` is the Kilo format; it is accepted by
 the Kilo swarm command when needed, but swarm identity otherwise defaults to the branch.
 
+## Device support boundary
+
+**This product supports desktop and tablet-sized touch devices, including high-DPI/Retina tablets.
+It does not support handheld phone layouts such as iPhone-sized screens.**
+
+Use “tablet/touch” for responsive work and tests. Do not create handheld-mobile features, phone
+breakpoints, or phone-specific interaction models. Tablet touch input must preserve desktop-quality
+tools, panels, and canvas fidelity; Retina/high-DPI rendering is a first-class requirement.
+
 ## Subagents
 
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.

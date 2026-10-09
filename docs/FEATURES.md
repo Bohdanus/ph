@@ -46,22 +46,22 @@ platform limit.
 
 ## Summary
 
-| Area              | Status      | The gap in one line                                                                 |
-| ----------------- | ----------- | ----------------------------------------------------------------------------------- |
-| Document model    | `partial`   | One document, no colour mode, no Image Size                                         |
-| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                          |
-| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                            |
-| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels      |
-| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity           |
-| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush |
-| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                 |
-| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                               |
-| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                             |
-| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                |
-| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                      |
-| Export options    | `partial`   | JPEG quality is the only user-controllable option                                   |
-| Mobile            | `partial`   | A full mobile shell, minus pinch-zoom — because there is no zoom at all             |
-| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                             |
+| Area              | Status      | The gap in one line                                                                        |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------ |
+| Document model    | `partial`   | One document, no colour mode, no Image Size                                                |
+| Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                                 |
+| Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                                   |
+| Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels             |
+| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity                  |
+| History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush        |
+| Panels            | `partial`   | Two panels. Photoshop has seventeen                                                        |
+| Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                                      |
+| View / navigation | `partial`   | The Ruler measures; no pan, no canvas rulers, no guides                                    |
+| Keyboard          | `partial`   | 45 bindings against Photoshop's ~200                                                       |
+| Colour management | `platform`  | 8-bit sRGB only; no ICC, no CMYK, no 16/32-bit                                             |
+| Export options    | `partial`   | JPEG quality is the only user-controllable option                                          |
+| Tablet touch      | `partial`   | Tablet-sized touch shell; Retina/high-DPI matters; handheld phone layouts are out of scope |
+| Non-destructive   | `divergent` | A retained per-layer operation stack, not smart objects                                    |
 
 ## Documents
 
@@ -402,12 +402,16 @@ encoder (`avif-utils.ts` — `encodeAvif()`).
 **Gap:** No PNG compression, subsampling, progressive, interlacing, bit-depth or
 metadata option; no WebP, AVIF, GIF or TIFF encoder settings.
 
-## Mobile
+## Tablet Touch (Not Handheld Phone)
+
+**Hard boundary:** this product supports desktop and tablet-sized touch devices, including Retina/high-DPI
+tablets. It does **not** support handheld phone layouts such as iPhone-sized screens. “Mobile” component
+names are historical and mean the tablet touch surface here; they are not a phone product.
 
 **Photoshop:** a touch-optimised workspace with one-finger draw, two-finger pan and
 pinch-zoom.
 
-**This app:** a full mobile shell (`App.tsx` — the `MobileShell` it mounts) —
+**This app:** a tablet touch shell (`App.tsx` — the `MobileShell` it mounts) —
 header with menu, undo,
 redo, layers drawer and Export (`MobileHeader.tsx` — its `mobile-header`
 region),
@@ -426,7 +430,8 @@ through Pointer Events with single-pointer capture, so drawing works on touch
 **Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
 and pan entirely, not a mobile-specific omission.
 
-**MOBILE AND TABLET ARE VERY LOW PRIORITY, SKIP ALL MOBILE ISSUES UNLESS ASKED EXPLICITLY BY OPERATOR**
+**Priority:** tablet touch and Retina/high-DPI behavior are supported product surfaces. Handheld phone
+layouts and phone-only gestures remain explicitly out of scope.
 
 ## Non-destructive editing
 

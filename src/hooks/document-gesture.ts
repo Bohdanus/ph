@@ -44,8 +44,7 @@ export type DocumentGestureKind =
   | 'layer-transform'
   | 'brush-stroke'
   | 'shape-draw'
-  | 'eraser-stroke'
-  | 'mobile-layer-reorder';
+  | 'eraser-stroke';
 
 export type DocumentGesture = {
   kind: DocumentGestureKind;

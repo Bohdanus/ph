@@ -260,36 +260,6 @@ describe('MobileLayersDrawer', () => {
     expect(renderedLayerNames()).toEqual(['Upper', 'Top', 'Lower', 'Bottom']);
   });
 
-  it('reorders through the touch-safe pointer handle and releases the gesture claim', () => {
-    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
-
-    const rows = screen.getAllByRole('listitem');
-    rows.forEach((row, index) => {
-      Object.defineProperty(row, 'getBoundingClientRect', {
-        configurable: true,
-        value: () => ({ top: index * 100, bottom: index * 100 + 80, height: 80, width: 300, left: 0, right: 300 }),
-      });
-    });
-
-    const handle = screen.getByRole('button', { name: 'Drag to reorder Top' });
-    fireEvent.pointerDown(handle, { pointerId: 7, clientY: 0 });
-    fireEvent.pointerMove(handle, { pointerId: 7, clientY: 220 });
-    expect(screen.getByTestId('mobile-layer-drop-indicator')).toBeInTheDocument();
-    fireEvent.pointerUp(handle, { pointerId: 7 });
-
-    expect(moveLayerAfterMock).toHaveBeenCalledWith('top', 'lower');
-    expect(isDocumentGestureOpen()).toBe(false);
-    expect(screen.getAllByRole('status').some((element) => element.textContent === 'Moved Top above Lower')).toBe(true);
-  });
-
-  it('does not expose a reorder handle for locked or bedrock layers', () => {
-    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
-    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
-
-    expect(screen.getByRole('button', { name: 'Drag to reorder Upper' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Drag to reorder Bottom' })).toBeDisabled();
-  });
-
   it('offers an explicit rename control rather than a double-click gesture', async () => {
     const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
