@@ -123,6 +123,25 @@ afterEach(() => {
 });
 
 describe('a locked layer refuses the raster commit path', () => {
+  it('refuses in-place source replacement for locked text layers', () => {
+    const source = {
+      kind: 'tool' as const,
+      args: { toolName: 'text', text: 'Original' } as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    };
+    const locked = setup({ text: makeLayer('text', 0, { locked: true, source }) });
+
+    const replaced = locked.result.current.layers.replaceLayerSource('text', {
+      kind: 'tool',
+      args: { toolName: 'text', text: 'Replacement' } as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    });
+
+    expect(replaced).toBeNull();
+    expect(locked.result.current.store.layers.text?.source).toEqual(source);
+    expect(historyLength(locked.result)).toBe(0);
+  });
+
   it('writes no live pixels for it, where the same stroke on an unlocked layer does', () => {
     const locked = setup({ photo: makeLayer('photo', 0, { locked: true }) });
     act(() => locked.result.current.layers.tempUpdateLayer({ id: 'photo', toolArgs: eraserArgs() }));
