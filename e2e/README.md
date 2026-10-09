@@ -401,6 +401,12 @@ Paths come from `testInfo.snapshotDir`, not `snapshotPath()` — the latter appe
 the project name and the OS, which would make a baseline committed on one machine
 read as missing on another.
 
+The path now includes a platform component (`process.platform`) so that each operating
+system has its own baseline set. A platform with no committed set fails as missing,
+which is the state the spec already handles with `Baseline missing for <format>`, rather
+than falling back to another platform's file. A silent fallback would put one
+rasteriser's oracle under another's name.
+
 Of the files in the directory, the ones `visual-regression.spec.ts` actually reads are
 one per format in `browserVerifiedFormats` (`e2e/export/helpers.ts`) — the filter the spec
 iterates, and the only place that selection is made:
@@ -408,13 +414,30 @@ iterates, and the only place that selection is made:
 ```
 e2e/export/visual-regression.spec.ts-snapshots/
 └── export-baselines/
-    ├── drawing.png.png            # PNG export baseline
-    ├── drawing.jpeg.png           # JPEG export baseline
-    ├── drawing.webp.png           # WebP export baseline
-    ├── drawing.svg.png            # SVG (flattened) baseline
-    ├── drawing.bmp.png            # BMP export baseline
-    ├── drawing.gif.png            # GIF (static) baseline
-    └── drawing.avif.png           # AVIF export baseline
+    ├── darwin/
+    │   ├── drawing.png.png            # PNG export baseline
+    │   ├── drawing.jpeg.png           # JPEG export baseline
+    │   ├── drawing.webp.png           # WebP export baseline
+    │   ├── drawing.svg.png            # SVG (flattened) baseline
+    │   ├── drawing.bmp.png            # BMP export baseline
+    │   ├── drawing.gif.png            # GIF (static) baseline
+    │   └── drawing.avif.png           # AVIF export baseline
+    ├── linux/
+    │   ├── drawing.png.png            # PNG export baseline
+    │   ├── drawing.jpeg.png           # JPEG export baseline
+    │   ├── drawing.webp.png           # WebP export baseline
+    │   ├── drawing.svg.png            # SVG (flattened) baseline
+    │   ├── drawing.bmp.png            # BMP export baseline
+    │   ├── drawing.gif.png            # GIF (static) baseline
+    │   └── drawing.avif.png           # AVIF export baseline
+    └── win32/
+        ├── drawing.png.png            # PNG export baseline
+        ├── drawing.jpeg.png           # JPEG export baseline
+        ├── drawing.webp.png           # WebP export baseline
+        ├── drawing.svg.png            # SVG (flattened) baseline
+        ├── drawing.bmp.png            # BMP export baseline
+        ├── drawing.gif.png            # GIF (static) baseline
+        └── drawing.avif.png           # AVIF export baseline
 ```
 
 The remaining committed files are orphans — the raw `drawing.<ext>` exports

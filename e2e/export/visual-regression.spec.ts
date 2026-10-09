@@ -73,9 +73,15 @@ const BASELINE_RECORD_MODE = 'all';
  * `drawing.png-Google-Chrome-darwin.png` — a file that is not committed, and one that
  * would differ per operating system, leaving a baseline committed on one OS to read as
  * "missing" on every other one.
+ *
+ * The path now includes a platform component (`process.platform`) so that each operating
+ * system has its own baseline set. A platform with no committed set fails as missing,
+ * which is the state the spec already handles with `Baseline missing for <format>`, rather
+ * than falling back to another platform's file. A silent fallback would put one
+ * rasteriser's oracle under another's name.
  */
 function baselineFile(testInfo: TestInfo, fileName: string): string {
-  return path.join(testInfo.snapshotDir, BASELINE_DIR, fileName);
+  return path.join(testInfo.snapshotDir, BASELINE_DIR, process.platform, fileName);
 }
 
 test.describe('Export visual regression', () => {
