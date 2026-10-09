@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -400,28 +400,6 @@ is a **clone of this same repository** (identical `origin`, and this HEAD is a d
 
 **Files.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` (not
 tracked; gitignored under `.kilo/`), and the `Files` line of every entry named in the table above.
-
-## 60. The gesture gate still has one claim site that can strand the keyboard
-
-`PolygonClickToolArea.captureSelectionPointer` writes `selectionPointerIdRef.current` **before** it
-calls `claimDocumentGesture(...)` and discards the claim's return value — the same shape the
-freehand branch had until the review behind this branch proved it exploitable there: a second
-pointer took the ref, so the first pointer's claim could never be released, and every
-document-mutating shortcut stayed dead until a page reload.
-
-It is **not** exploitable today, and the reason is not the code. Every press runs
-`abortSelectionDrag()` first, which always closes this component's own claim, and
-`polygon-selection` has no second claimant. It is recorded because the protection is an accident of
-the current press routing rather than a property of the function, and the freehand twin was one line
-away from the same failure.
-
-**A leak is now more expensive than when this was written (2026-09-28).** The gate used to cover the
-keyboard only, so a stranded claim cost the keyboard. It now also covers the Undo and Redo buttons,
-the history-list row clicks, and the history entries' enabled-state toggles — five `useHistory()`
-call sites in all. One leaked claim therefore disables undo, redo, rewind and step-toggling at
-once, and the only recovery is a remount. **`claimDocumentGesture` returning `false` must be honoured at every
-call site**: take the ref, and any state flag, only when the claim succeeds — as `DrawToolArea`,
-`ShapeToolArea`, `EraserToolArea`, `MoveToolArea` and the freehand branch now all do.
 
 ## 63. The presentation scope's liveness set assumes an invariant it does not enforce
 
