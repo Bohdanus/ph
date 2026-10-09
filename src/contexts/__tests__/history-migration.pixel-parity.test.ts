@@ -84,14 +84,12 @@ import {
  * scenarios carry an `it.fails` whose assertion is the thing jsdom cannot do. Every OTHER
  * mismatch — anything not named in one of those pins — is a hard failure.
  *
- * ## THE HISTORY-PANEL AXIS IS ABSENT ON PURPOSE
+ * ## THE HISTORY-PANEL AXIS HAS AN EXPLICIT FALLBACK
  *
- * RQ-4 names history-panel state, and there is no differential for it here. `HistoryTab.tsx`
- * reads `history` and `historyIndex` from the store and labels each row with
- * `getHistoryItemTitle()` — a function over a LEGACY `HistoryItem`, with no durable counterpart
- * anywhere in the tree. Deriving one would mean inventing the product's title for each durable
- * operation kind, which is a product decision, not a harness. The axis is therefore absent
- * because there is only one authority for it today, and adding it needs that ruling first.
+ * RQ-4 names history-panel state, so `selectHistoryPanelProjection()` compares the durable
+ * provenance title and enabled state with the complete legacy projection. Durable rows are admitted
+ * only for a one-to-one title/state match; timelines with a baseline row or any mismatch stay on the
+ * complete legacy projection rather than mixing authorities.
  */
 
 // --- the store `useHistory()` reads -------------------------------------------------------------------

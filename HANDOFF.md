@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -71,10 +71,10 @@ are mounted.
 the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
 reconciling these changes pixel-tool results.
 
-**Fix.** Close the remaining differential limitations (§206), add the history-panel state axis
-(§207), then make the presentation authority explicit and rehydrate the options bar from durable
-sources. Keep legacy logical state as the authority until those projections are staged, lease-safe,
-and failure-contained; do not mount all remaining consumers at once.
+**Fix.** Keep the runtime, export and history-panel projections independently gated, then make the
+remaining presentation authority explicit across editor surfaces. Keep legacy logical state as the
+authority until each projection is staged, lease-safe and failure-contained; do not mount all
+remaining consumers at once.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
@@ -4054,25 +4054,6 @@ against it. Widening `CALL_FORM` to accept a
 constant, a type and a test title is a separate change and needs its own migration, because it will
 flag every bare identifier in every gated document.
 
-## 199. Replay budget runner is dormant until a durable production surface owns it
-
-**Problem.** `defineReplayBudget()` and `runReplayUnderBudget()` now provide a pure cooperative
-runner with active-time, step-count, deadline, abort, stale-revision, and explicit over-budget
-outcomes. No production replay path constructs a budget or calls it. Wiring it before the durable
-materialization boundary is safe only if it stages a result and never publishes partial work.
-The runner now contains cleanup failures as failed outcomes and falls back from a suspended
-`requestAnimationFrame`.
-
-**What is needed.** Choose the first durable production surface and give it an explicit materialization
-caller, revision token, user setting, and publication policy. On an over-budget result, prompt for
-explicit raster-baseline acceptance; never rasterize automatically. Close the empty-history baseline
-failure and asset publication transaction before exposing that prompt. Keep this runner out of
-production until that surface is staged and failure-safe.
-
-**Files.** `src/contexts/replay-budget.ts` — `runReplayUnderBudget()`;
-`src/contexts/materialization.ts` — `materializeDocument()`; `src/contexts/useHistory.ts`;
-and the empty-history/baseline tests.
-
 ## 201. Brightness/Contrast is proportionate but LINEAR, where Adobe's normal mode is nonlinear
 
 **Problem.** `buildLevelsFilter()` (`src/tools/functions.ts`) now drives Adobe's Brightness and Contrast
@@ -4172,76 +4153,6 @@ fallback. Assert the seam values, not pixel colours — the pixel claim belongs 
 ---
 
 ---
-
-## 206. Export parity was never proven for any layer, and the first export axis could not fail
-
-**Problem.** The pixel differential's export axis mounted durable compositions into the legacy
-records and then called `renderExportCanvas()` on both sides. That comparison was structurally
-incapable of failing. The mount keeps the LEGACY record's `pos`, `visible`, `opacity`, `blendMode`
-and `operations`, and `renderExportCanvas()` is handed the legacy frame and size on both sides; the
-only durable input was a `tmpCanvas` swap. And because `durablePresentationIsRendererIdentical()`
-(`StoreContext.tsx`) accepts a layer only when it has no retained operations and
-`isEqual(bounds, existing.pos)`, the bitmap it accepted was a byte-identical copy of the legacy
-record's own — 30 accepted mounts, zero differing bytes, on every cursor.
-
-**Measured, not inferred.** Stamping the durable compositor's layer 7px off turns the RUNTIME axis
-red and leaves the OLD export axis at zero differing bytes: `renderExportCanvas()` places by
-`layer.pos` and never reads `materialized.bounds`, and the accept predicate required those two to be
-equal, so the one value worth comparing was equal by precondition. The blindness was **every
-cursor**, not the six declines the mount records.
-
-**Consequence.** Export parity is unproven for every layer kind, including plain raster and blank —
-not merely for the transformed, filtered and text layers the six declines name. A reader of the green
-suite would reasonably conclude the opposite. This is the "simultaneously live and uninformative"
-shape §1 records about the mount itself, one level down.
-
-**Fixed here.** The export axis now derives the durable side entirely from the durable composition:
-`pos` from `materialized.bounds`, `visible`/`opacity`/`blendMode`/`order`/`name` from the durable
-replay layer's own snapshot, `operations` empty because the retained presentation is already baked in,
-and size and frame from the durable replay rather than the legacy one. Nothing on that side is read
-off legacy replay. The same 7px mutation now turns the export axis red on 30 cursors, so it is a
-gate. Run in `src/contexts/__tests__/history-migration.pixel-parity.test.ts` —
-`durableExportRecords()`.
-
-**What is still owed.** Export parity is now _enforced_, but two of the scenarios remain unproven in
-BOTH directions for jsdom reasons rather than compared-and-agreed: `filter chain`, because
-`PixelContext` records `ctx.filter` without applying it, and `text source`, because `fillText`
-rasterizes nothing. Those are the two `it.fails` titles naming the limitation. Widening
-`durablePresentationIsRendererIdentical()` remains the production question, and it is now separable
-from the harness: the harness no longer depends on the mount.
-
-**Files.** `src/contexts/StoreContext.tsx` — `durablePresentationIsRendererIdentical()`,
-`src/contexts/export-canvas.ts` — `renderExportCanvas()`,
-`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — `durableExportRecords()`
-
----
-
-## 207. The history-panel differential cannot be built without a durable title mapping, and none exists
-
-**Problem.** RQ-4 names history-panel state as one of the surfaces that must agree. `HistoryTab.tsx`
-labels each row with `getHistoryItemTitle()` (`useHistory.ts`) — a pure function of a **legacy**
-`HistoryItem`, dispatching on `layerSource.kind`, `actionName` and `TOOL_ACTION`. The durable document
-carries `operation.kind` and has no title field anywhere in the tree; no `durableEntryTitle` exists.
-Only `item.disabled` and `entry.enabled` correspond field-for-field, so a title differential has
-nothing to compare today.
-
-**Why this is filed and not built.** The `operation.kind` to title mapping is a **product decision**,
-not a derivation — `apply-raster-processor` to a processor id, `apply-affine-transform` to
-"transform", `set-document-frame` to "crop", and a tool source to its tool name are all choices about
-what the panel should say. Inventing one inside a test would make every assertion about the invention
-rather than about the two models. Pinned as a fact in
-`history-migration.pixel-parity.test.ts` — the `it('has one authority today: the durable document
-carries no title to difference')` title — so the limitation is visible in the suite rather than only
-here.
-
-**Fix.** Derive `durableEntryTitle()` from `operation.kind` in production, mirroring
-`getHistoryItemTitle()`'s existing vocabulary so the panel's wording does not change at cutover, and
-add the panel-state axis beside the pixel axes. The wording itself is the operator's call if any
-durable kind has no legacy counterpart; every kind in the union has one today.
-
-**Files.** `src/contexts/useHistory.ts` — `getHistoryItemTitle()`,
-`src/components/SidebarRight/HistoryTab.tsx`, `src/contexts/history-model.ts` — `DurableOperation`,
-`src/contexts/__tests__/history-migration.pixel-parity.test.ts` — the `history-panel state` describe
 
 ## 213. `type-crop.ts`'s `appRef` line numbers are 60–110 lines off and reach a generated document
 
