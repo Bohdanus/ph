@@ -2864,12 +2864,12 @@ describe('work git cannot see: derived from the worktrees, never curated', () =>
     //
     // So this is the coverage rule's actual subject — "a preservation branch gets
     // mistaken for a disposable one" — asserted as the invariant it needed,
-    // against `classify` on git's facts and nothing else. It cannot be made green
-    // by adding curated entries, which is the point: creating a worktree, and
-    // this agent's own worktree, change nothing here.
+    // against `classify` on git's facts and nothing else. The primary checkout is
+    // never a disposal candidate: `dispose` refuses it outright, so its dirty
+    // state must not affect this check for disposable preservation branches.
     const inv = liveInventory();
     const { worktrees } = liveWorktreeFacts();
-    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+    const inRepo = inv.worktrees.filter((r) => r.inRepo && !r.isPrimary);
 
     // Non-vacuity, and it comes first so a green run cannot mean "git refused to
     // answer, so the set below was empty for a reason unrelated to risk".
