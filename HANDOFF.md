@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 157, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3183,51 +3183,6 @@ operator's hand — an agent records the finding and stops, which is what this e
 `scripts/__tests__/worktree-inventory.test.mjs` (`describe('the curated table')`),
 `e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
 overrides)
-
-## 158. The worktree-inventory suite reads the shared main checkout, so its verdict depends on whether main happens to be clean
-
-**Problem.** `worktree-inventory.test.mjs` calls `liveWorktreeFacts()`, which reads every
-worktree git reports — including the MAIN checkout, located by `listWorktrees(cwd)[0].path`
-precisely so the answer does not depend on which worktree the suite was invoked from. Two
-consequences, and the second is the defect.
-
-`classify()` marks the primary worktree `STATUS.LANDED` **unconditionally** — the `wt.isPrimary` arm
-of the status ladder — before any
-look at its working tree: `isPrimary` short-circuits ahead of the `uncommitted && ahead === 0`
-arm that would otherwise report `UNCOMMITTED_ONLY`. So the main checkout holding uncommitted
-work is still classified `landed`.
-
-The test `protects that shape in a worktree NOBODY has written anything down about`
-in `worktree-inventory.test.mjs` filters to `r.inRepo` and asserts nothing there is
-unreported. The main checkout is in that set. Its own comment claims "creating a worktree,
-and this agent's own worktree, change nothing here" — true of worktrees this agent creates,
-and false of the one worktree every agent shares.
-
-Measured on 2026-10-01: with two untracked files in the main checkout, the suite failed with
-`ph (curated: NONE): ahead=0 onMain=true dirty=0 untracked=2 -> status=landed ... expected [Array(1)]
-to deeply equal []`. Move those two files aside and it passes, with no code change. The suite
-is green or red depending on whether a concurrent session left a file in `main`.
-
-This is not a regression and it is not caused by any branch in flight; it reproduces on
-pristine `main` whenever main is dirty. It is reported here because the next session to hit
-it will read it as its own.
-
-**Fix.** Two separable decisions, and the second is a judgement call rather than a repair.
-
-1. Make the test hermetic. Either exclude the primary worktree from the derived set with a
-   stated reason — it is never a disposal candidate, and `dispose-worktree.mjs` refuses
-   `main-worktree` outright — or give the test its own fixture repository, which
-   `makeRepo()` in this same file already provides for the `git.mjs` cases.
-2. Decide whether `isPrimary` should short-circuit ahead of the working-tree facts. If the
-   main checkout is genuinely never a candidate, the current order is right and only the test
-   needs changing. If it should still report uncommitted work, the `isPrimary` arm has to
-   move below the `uncommitted` arm, which changes the inventory's output for every run and
-   belongs to whoever owns `WORKTREES.json`'s meaning.
-
-**Files.** `scripts/__tests__/worktree-inventory.test.mjs` (the
-`it('protects that shape in a worktree NOBODY has written anything down about')` case),
-`scripts/lib/worktree-inventory/classify.mjs` (`classify()`, its `wt.isPrimary` status arm)
----
 
 ## 159. The reported post-crop stroke offset has no matching current-code diagnosis
 
