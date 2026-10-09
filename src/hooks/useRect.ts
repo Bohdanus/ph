@@ -1,5 +1,5 @@
 import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
-import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
+import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
 import { getCanvasSize, posToSortedRect, sortRect, sortRoundRect, trimRect } from '../util/rect.ts';
@@ -8,6 +8,7 @@ import { resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import type { Layer } from '../contexts/layer-types.ts';
+import type { CropOverlayOrientation, CropOverlayType } from '../tools/crop.ts';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
@@ -79,6 +80,9 @@ export type UseRectProps = {
    * hit area.
    */
   handlesOutside?: boolean;
+  /** Optional composition guide for the crop consumer. Other rectangle tools leave this absent. */
+  overlayType?: CropOverlayType;
+  overlayOrientation?: CropOverlayOrientation;
 
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
@@ -97,6 +101,81 @@ type FreshDragModifiers = {
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
 const RECT_BORDER_DASH_LENGTH = 5;
 const RECT_BORDER_DASH_SPEED = 0.4;
+
+/** Paints Photoshop's crop composition guide in canvas pixels. */
+export function drawCropOverlay(
+  ctx: CanvasRenderingContext2D,
+  rect: Pos,
+  overlayType: CropOverlayType = 'ruleOfThirds',
+  orientation: CropOverlayOrientation = 'normal',
+  scale = 1
+) {
+  const { x, y, width, height } = rect;
+  const vertical = (ratio: number) => x + width * ratio;
+  const horizontal = (ratio: number) => y + height * ratio;
+  const line = (x1: number, y1: number, x2: number, y2: number) => {
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+  };
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.lineWidth = 1 / scale;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  switch (overlayType) {
+    case 'ruleOfThirds':
+      line(vertical(1 / 3), y, vertical(1 / 3), y + height);
+      line(vertical(2 / 3), y, vertical(2 / 3), y + height);
+      line(x, horizontal(1 / 3), x + width, horizontal(1 / 3));
+      line(x, horizontal(2 / 3), x + width, horizontal(2 / 3));
+      break;
+    case 'grid':
+      for (let index = 1; index < 10; index += 1) {
+        const ratio = index / 10;
+        line(vertical(ratio), y, vertical(ratio), y + height);
+        line(x, horizontal(ratio), x + width, horizontal(ratio));
+      }
+      break;
+    case 'diagonal':
+      line(x, y, x + width, y + height);
+      line(x + width, y, x, y + height);
+      break;
+    case 'triangle': {
+      const flip = orientation === 'flipped';
+      const left = flip ? x + width : x;
+      const right = flip ? x : x + width;
+      line(left, y, right, y + height);
+      line(right, y, left, y + height);
+      line(x + width / 2, y, x + width / 2, y + height);
+      break;
+    }
+    case 'goldenRatio':
+      line(vertical(0.382), y, vertical(0.382), y + height);
+      line(vertical(0.618), y, vertical(0.618), y + height);
+      line(x, horizontal(0.382), x + width, horizontal(0.382));
+      line(x, horizontal(0.618), x + width, horizontal(0.618));
+      break;
+    case 'goldenSpiral': {
+      const direction = orientation === 'flipped' ? -1 : 1;
+      const cx = x + width / 2;
+      const cy = y + height / 2;
+      const radius = Math.min(width, height) / 2;
+      ctx.arc(cx, cy, radius, direction > 0 ? 0 : Math.PI, direction > 0 ? Math.PI * 1.5 : Math.PI * 2.5);
+      ctx.arc(
+        cx,
+        cy,
+        radius * 0.618,
+        direction > 0 ? Math.PI * 1.5 : Math.PI / 2,
+        direction > 0 ? Math.PI * 2 : Math.PI * 2.5
+      );
+      ctx.arc(cx, cy, radius * 0.382, direction > 0 ? 0 : Math.PI, direction > 0 ? Math.PI / 2 : Math.PI * 1.5);
+      break;
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
 
 /**
  * CANVAS px throughout: every point, size and rect read or computed below — and every rect handed
@@ -119,6 +198,8 @@ export function useRect({
   borderMode = 'always',
   allowOutsideCanvas = false,
   handlesOutside = false,
+  overlayType,
+  overlayOrientation = 'normal',
 
   containerRef,
   overlayRef,
@@ -441,6 +522,8 @@ export function useRect({
       // the true rect that overlaps the frame, which is the cut-out wanted.
       ctx.clearRect(x, y, width, height);
     }
+
+    if (overlayType) drawCropOverlay(ctx, { x, y, width, height }, overlayType, overlayOrientation, scale);
 
     // The one thing on this overlay that another canvas can also draw, and so the reason
     // `borderMode` exists: for a selection, the ants canvas strokes the same rectangle one layer

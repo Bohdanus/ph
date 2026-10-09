@@ -780,6 +780,7 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
+    if (isLayerLocked(layers[layerToMoveId])) return;
     dispatch({
       type: 'REORDER_LAYERS',
       payload: { layerToMoveId, afterWhichLayerId },
