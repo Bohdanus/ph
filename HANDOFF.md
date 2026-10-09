@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 82, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 82, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 157, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3089,39 +3089,6 @@ operator's hand — an agent records the finding and stops, which is what this e
 `scripts/__tests__/worktree-inventory.test.mjs` (`describe('the curated table')`),
 `e2e/OPEN_PROBLEMS.md` (the GROUP-level collapsed-tool assertion entry), `AGENTS.md` (model policy,
 overrides)
-
-## 157. A worktree directory git no longer tracks is unreachable by the disposal path, because disposal only accepts registered worktrees
-
-`.kilo/worktrees/stale-citations` was a 28K directory holding no source, no `.git` and no
-branch: `node_modules/.vite/vitest` (empty scratch) and `.kilo/e2e-last-run.json`, a run
-record naming `runId 2026-09-30T22-44-59-212Z-70299`, pid 70299, port 53969 — a dev server
-that died about a day before it was found. The directory's birth time was 2026-10-01T00:44,
-matching the run record, so it was a real worktree that was pruned out of
-`git worktree list` while the directory itself stayed.
-
-`npm run dispose -- stale-citations` answers `no worktree "stale-citations"`, because it
-resolves its argument against the registered set. So the one class of leftover the sweep
-exists to remove is the one class it cannot name: the tool refused the only directory it
-could not prove was junk, and the directory stayed forever holding a port number from a dead
-server. This is now the WHOLE of the defect — the instance was removed by hand after both
-its files were checked against `isRegenerableIgnored()` and returned `REGENERABLE` for both
-(`.vite` and `.kilo` are both on the list), but **the path that let it accumulate is
-unfixed and will produce another one.**
-
-**Fix.** Give disposal a second resolution path: when the argument is not a registered
-worktree, fall back to `lstat` on the literal path and refuse only if it is missing, is not
-a directory, or is not under `.kilo/worktrees/`. Report what it found before removing it —
-a directory with tracked-looking content and no `.git` is a finding, not an obstacle, and
-the refusal message should say which of the three conditions matched. `protectedContentOnDisk`
-and `isRegenerableIgnored` are already exported from the module and answer the
-"is there anything here worth keeping" half of the question, so the fallback can reuse them
-rather than re-deriving the judgement. The `e2e-last-run.json` writer is the `RUN_RECORD`
-constant in `scripts/e2e-run.mjs`, keyed on `REPO_ROOT`, which is why a pruned worktree leaves
-one behind: nothing in the e2e runner cleans its own record.
-
-**Files.** `scripts/dispose-worktree.mjs` (argument resolution, `locateInventory`),
-`scripts/dispose-worktree.mjs` (`isRegenerableIgnored`, `protectedContentOnDisk`),
-`scripts/e2e-run.mjs` (`RUN_RECORD`)
 
 ## 158. The worktree-inventory suite reads the shared main checkout, so its verdict depends on whether main happens to be clean
 

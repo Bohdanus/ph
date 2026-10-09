@@ -23,7 +23,7 @@
  */
 
 import { describe, expect, it, afterEach, beforeEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -33,6 +33,8 @@ import {
   dispose,
   isRegenerableIgnored,
   locateInventory,
+  inspectOrphanContent,
+  orphanPreflight,
   preflight,
   protectedContentOnDisk,
   readInventory,
@@ -40,6 +42,7 @@ import {
   readGitState,
   readOperationState,
   rebuildCommand,
+  resolveOrphanDirectory,
   resolveAvailability,
 } from '../dispose-worktree.mjs';
 import { SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
@@ -1141,6 +1144,10 @@ describe('the regenerable-ignored rule', () => {
     expect(isRegenerableIgnored('.serena/memories/plan.md')).toBe(false);
     expect(rebuildCommand('.serena/memories/plan.md')).toBeNull();
   });
+
+  it('does not treat nested worktrees as regenerable just because their parent is .kilo', () => {
+    expect(isRegenerableIgnored('.kilo/worktrees/active/main.ts')).toBe(false);
+  });
 });
 
 /**
@@ -1192,6 +1199,96 @@ describe('a protected subtree inside a collapsed allowlisted directory', () => {
   });
 });
 
+describe('unregistered worktree directories', () => {
+  let root;
+  let worktreesRoot;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dispose-orphan-'));
+    worktreesRoot = join(root, '.kilo', 'worktrees');
+    mkdirSync(worktreesRoot, { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const resolveOrphan = (cwd, target) =>
+    resolveOrphanDirectory(cwd, target, {
+      inventoryPath: join(root, 'WORKTREES.json'),
+      run: () => ({ stdout: `${join(root, '.git')}\n` }),
+    });
+
+  it('resolves a bare name and an explicit path to one real direct child', () => {
+    const target = join(worktreesRoot, 'stale-citations');
+    mkdirSync(target);
+
+    expect(resolveOrphan(root, 'stale-citations')).toMatchObject({ found: true, name: 'stale-citations' });
+    expect(resolveOrphan(root, 'stale-citations').absolutePath).toBe(realpathSync(target));
+    expect(resolveOrphan(root, target)).toMatchObject({ found: true, absolutePath: realpathSync(target) });
+  });
+
+  it('refuses missing, non-directory, outside, nested and symlink targets distinctly', () => {
+    const file = join(worktreesRoot, 'not-a-directory');
+    const outside = join(root, 'outside');
+    const nested = join(worktreesRoot, 'parent', 'nested');
+    const link = join(worktreesRoot, 'directory-link');
+    writeFileSync(file, 'not a directory');
+    mkdirSync(outside);
+    mkdirSync(nested, { recursive: true });
+    symlinkSync(outside, link);
+
+    expect(resolveOrphan(root, 'missing')).toMatchObject({ found: false, reason: 'missing' });
+    expect(resolveOrphan(root, file)).toMatchObject({ found: false, reason: 'not-directory' });
+    expect(resolveOrphan(root, outside)).toMatchObject({ found: false, reason: 'outside-worktrees' });
+    expect(resolveOrphan(root, nested)).toMatchObject({ found: false, reason: 'not-direct-child' });
+    expect(resolveOrphan(root, link)).toMatchObject({ found: false, reason: 'not-directory' });
+  });
+
+  it('reports regenerable output and refuses source, protected notes, or nested worktrees', () => {
+    const orphan = join(worktreesRoot, 'stale-citations');
+    mkdirSync(join(orphan, '.vite', 'vitest'), { recursive: true });
+    mkdirSync(join(orphan, '.kilo', 'worktrees', 'nested'), { recursive: true });
+    mkdirSync(join(orphan, '.serena', 'memories'), { recursive: true });
+    mkdirSync(join(orphan, 'src'), { recursive: true });
+    writeFileSync(join(orphan, '.kilo', 'e2e-last-run.json'), '{}\n');
+    writeFileSync(join(orphan, '.serena', 'memories', 'plan.md'), 'keep\n');
+    writeFileSync(join(orphan, 'src', 'keep.ts'), 'keep\n');
+
+    const content = inspectOrphanContent(orphan);
+    expect(content.regenerablePaths).toEqual(['.kilo/', '.serena/', '.vite/']);
+    expect(content.protectedPaths).toEqual(['.kilo/worktrees/', '.serena/memories/', 'src/']);
+    expect(
+      orphanPreflight({
+        ownership: {
+          board: { available: true, claims: [], fileLocks: [], liveAgents: [] },
+          sessions: { available: true, live: [] },
+        },
+        content,
+      }).ok
+    ).toBe(false);
+  });
+
+  it('refuses unreadable ownership sources and live owners even when contents are regenerable', () => {
+    const content = { errors: [], protectedPaths: [], regenerablePaths: ['.vite/'] };
+    const unreadable = orphanPreflight({
+      ownership: {
+        board: { available: false, error: 'board read failed' },
+        sessions: { available: false, error: 'session read failed' },
+      },
+      content,
+    });
+    expect(unreadable.failures.map((failure) => failure.code)).toEqual(['board-unavailable', 'sessions-unavailable']);
+
+    const live = orphanPreflight({
+      ownership: {
+        board: { available: true, claims: [], fileLocks: [], liveAgents: [{ agentId: 'active' }] },
+        sessions: { available: true, live: [] },
+      },
+      content,
+    });
+    expect(live.failures.map((failure) => failure.code)).toEqual(['board-agent-live']);
+  });
+});
+
 describe('a bare name that identifies two worktrees identifies neither', () => {
   it('refuses rather than disposing the first match', () => {
     // Git refuses two worktrees at the same PATH, so a path is unique; it says
@@ -1219,6 +1316,19 @@ describe('a bare name that identifies two worktrees identifies neither', () => {
     });
     expect(state.found).toBe(true);
     expect(state.absolutePath).toBe('/repo/.kilo/worktrees/task');
+  });
+
+  it('does not treat a failed worktree listing as proof that a directory is orphaned', () => {
+    const state = readGitState('/repo', 'orphan', {
+      list: () => {
+        throw new Error('git worktree list failed');
+      },
+    });
+    expect(state).toMatchObject({ found: false, listError: 'git worktree list failed' });
+    expect(readGitState('/repo', 'orphan', { list: () => [] })).toMatchObject({
+      found: false,
+      listError: 'git worktree list returned no worktrees',
+    });
   });
 });
 
