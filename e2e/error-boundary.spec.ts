@@ -286,16 +286,11 @@ test.describe('ErrorBoundary: a throw from the canvas region', () => {
     // The fallback survived its own throw, which is the only way to know the store reader above
     // did not throw a second time: `useStore()` is called inside the fallback, and a fallback
     // that crashed would take the whole grid cell with it. The footer's independent reader of the
-    // same two fields (`src/components/DevStatusStrip/DevStatusStrip.tsx:18`) is mounted in the
-    // footer, outside the boundary, and renders nothing here — which is what "current with no
-    // diagnostics" looks like from the store's own point of view, and is an independent
-    // confirmation of the status asserted in the previous test rather than a restatement of it.
+    // durable presentation is mounted outside the boundary, so it remains observable while the
+    // canvas region is showing its fallback.
     await expect(page.locator('footer')).toBeVisible();
-    await expect(
-      page.getByTestId('dev-status-strip'),
-      'the footer reader returns null for `current` with no diagnostics (DevStatusStrip.tsx:26), so its ' +
-        'absence corroborates the fallback status without being computed from it'
-    ).toHaveCount(0);
+    await expect(page.getByTestId('dev-status-strip')).toBeVisible();
+    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-status', 'current');
   });
 
   test('leaves the rest of the editor mounted, interactive, and inside its own boundaries', async ({ page }) => {

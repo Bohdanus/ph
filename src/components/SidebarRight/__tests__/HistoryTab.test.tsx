@@ -180,7 +180,7 @@ describe('HistoryTab', () => {
       actionName: SET_LAYER_OPACITY_ACTION,
       args: { opacity: 0.42 },
     });
-    expect(getHistoryItemTitle(item)).toBe('Set Opacity');
+    expect(getHistoryItemTitle(item)).toBe('set layer opacity');
   });
 
   it('highlights current history item', () => {

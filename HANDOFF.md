@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -4008,34 +4008,6 @@ rather than the shape: the rule is that a publication must be refused unless
 judgement and belongs to the operator.
 
 ---
-
-## 203. No Playwright assertion distinguishes the durable authorities, and no seam exposes the cursor or the published layers
-
-**Problem.** Durable status IS already reachable from Playwright — `ErrorBoundary.tsx` renders
-`error-boundary-durable-status`, and `DevStatusStrip.tsx` renders `dev-status-strip` with
-`data-status={durableStatus}`. The strip is DEV-gated, and `playwright.config.ts` runs
-`npm run dev` as its `webServer`, so it is reachable in every e2e run. What does not exist is any
-exposure of the durable CURSOR or of WHICH LAYERS were published from a durable composition: no
-`window` hook in `src/`, nothing in `e2e/helpers/` or `e2e/fixtures/`.
-
-The only durable assertions in `e2e/` are the status string and two absence checks —
-`error-boundary.spec.ts` reads `error-boundary-durable-status`, and also asserts
-`dev-status-strip` and `error-boundary-durable-status` are absent outside an error. None of them
-reads a cursor or a published-layer set, so the history specs pass identically whether a navigation
-published durable pixels or the mount declined it.
-
-**Consequence.** Browser evidence cannot prove that navigation published durable composition, nor
-that a declined composition left the legacy presentation in place. The pixel differential proves the
-compositions agree; nothing proves the browser ever shows them.
-
-**Fix.** Extend the existing seam rather than inventing one: put the durable cursor and the published
-layer ids beside `data-status` on `DevStatusStrip`, which already reaches Playwright. Add one
-history-navigation spec asserting a published durable composition and one asserting the declined
-fallback. Assert the seam values, not pixel colours — the pixel claim belongs to
-`history-migration.pixel-parity.test.ts` and is duplicated nowhere.
-
-**Files.** `src/components/DevStatusStrip/DevStatusStrip.tsx`, `src/contexts/StoreContext.tsx`,
-`e2e/error-boundary.spec.ts`, and the history navigation specs
 
 ---
 

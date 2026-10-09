@@ -123,6 +123,26 @@ test.describe('Undo and redo', () => {
 
   const capture = (page: Page, clip: Required<ClipOptions>): Promise<Buffer> => page.screenshot({ clip });
 
+  const expectPresentationDecision = async (page: Page) => {
+    const strip = page.getByTestId('dev-status-strip');
+    await expect
+      .poll(() => strip.getAttribute('data-presentation-status'), {
+        message: 'history navigation must publish a durable composition or an explicit legacy fallback',
+      })
+      .toMatch(/^(durable|legacy-fallback)$/);
+    const status = await strip.getAttribute('data-presentation-status');
+    if (status === 'durable') {
+      await expect(strip).toHaveAttribute('data-durable-cursor', /^-?\d+$/);
+      await expect(strip).toHaveAttribute('data-durable-publication', /.+/);
+      await expect(strip).toHaveAttribute('data-durable-layer-ids', /.+/);
+      await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
+      return;
+    }
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', /.+/);
+    await expect(strip).toHaveAttribute('data-durable-publication', '');
+    await expect(strip).toHaveAttribute('data-durable-layer-ids', '');
+  };
+
   const strokeInto = async (
     page: Page,
     box: BoundingBox,
@@ -147,6 +167,11 @@ test.describe('Undo and redo', () => {
   }) => {
     const box = await canvasBox(page);
     const bands = canvasBands(box, BAND_COUNT);
+
+    const initialStrip = page.getByTestId('dev-status-strip');
+    await expect(initialStrip).toHaveAttribute('data-presentation-status', 'unpublished');
+    await expect(initialStrip).toHaveAttribute('data-durable-publication', '');
+    await expect(initialStrip).toHaveAttribute('data-durable-layer-ids', '');
 
     // A fresh document is a single history entry, so there is nothing on either
     // side of the cursor: `canUndo` is `historyIndex > 0` (`src/contexts/useHistory.ts:47`)
@@ -179,12 +204,14 @@ test.describe('Undo and redo', () => {
     // failure but a flaky one. The whole canvas as a one-band stack is the same
     // statement as "the canvas is clear of ink".
     await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink' });
+    await expectPresentationDecision(page);
 
     expect(await hasDarkPixels(await capture(page, clip)), 'undo left ink on the canvas').toBe(false);
     await expect(getRedoButton(page)).toBeEnabled();
 
     await getRedoButton(page).click();
     await waitForBands(page, [wholeCanvasBand(box)], [true], { description: 'the redone stroke to be back' });
+    await expectPresentationDecision(page);
 
     const redone = await getDarkPixelBounds(await capture(page, clip));
     expect(redone, 'redo left the canvas empty').toBeTruthy();

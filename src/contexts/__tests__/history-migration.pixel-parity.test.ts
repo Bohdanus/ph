@@ -12,8 +12,10 @@ import type { Size } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord } from '../layer-types.ts';
 import { durablePresentationIsRendererIdentical } from '../StoreContext.tsx';
+import { durableEntryTitle } from '../history-provenance.ts';
 import { selectHistoryPanelProjection, useHistory } from '../useHistory.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
+import { HIDE_LAYER_ACTION, RENAME_LAYER_ACTION, SHOW_LAYER_ACTION } from '../../util/constants.ts';
 import {
   installPixelCanvasElement,
   pixelHtmlCanvasContexts,
@@ -29,6 +31,8 @@ import {
 import {
   parityFrame,
   paritySize,
+  historyItem,
+  layerA,
   rasterProcessorScenarios,
   replayParityScenarios,
   type ReplayParityScenario,
@@ -651,12 +655,15 @@ describe('legacy/durable pixel parity', () => {
 // --- what this file cannot compare, and why ------------------------------------------------------------
 
 /**
- * NOT AN `it.fails`, because it is not a divergence: it is an axis that does not exist.
+ * The panel axis compares one complete projection, just like the pixel axes compare one complete
+ * raster. Opening-document timelines intentionally exercise the legacy fallback below; a separate
+ * no-baseline fixture reaches the durable branch so titles, enabled flags and current state are
+ * compared rather than merely checking that fallback happened.
  *
- * RQ-4 names history-panel state. The panel may use durable provenance only when every legacy
- * row maps one-to-one to a durable entry. The ordinary scenarios intentionally begin with an
- * opening document row, which is absorbed into the durable baseline and therefore forces the
- * complete legacy projection.
+ * RQ-4 names history-panel state. The panel may use durable provenance only when every legacy row
+ * maps one-to-one to a durable entry. The ordinary scenarios intentionally begin with an opening
+ * document row, which is absorbed into the durable baseline and therefore forces the complete
+ * legacy projection.
  */
 describe('history-panel state', () => {
   it('preserves converted provenance but falls back for the opening baseline row', () => {
@@ -678,5 +685,50 @@ describe('history-panel state', () => {
         durableDocument: document,
       }).source
     ).toBe('legacy');
+  });
+
+  it('compares durable and legacy titles, enabled flags, and current state', () => {
+    const legacyHistory: HistoryItem[] = [
+      historyItem('hide', HIDE_LAYER_ACTION, layerA),
+      historyItem('show', SHOW_LAYER_ACTION, layerA),
+      historyItem('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
+    ];
+    const { document, diagnostics } = legacyHistoryToDurable(legacyHistory, {
+      documentId: 'history-panel-differential',
+    });
+    expect(diagnostics).toEqual([]);
+    expect(document.history).toHaveLength(legacyHistory.length);
+
+    const durableProjection = selectHistoryPanelProjection({
+      history: legacyHistory,
+      historyIndex: document.cursor,
+      documentId: document.documentId,
+      documentRevision: document.documentRevision,
+      branchRevision: document.branchRevision,
+      durableStatus: 'current',
+      durableDocument: document,
+    });
+    const legacyProjection = selectHistoryPanelProjection({
+      history: legacyHistory,
+      historyIndex: document.cursor,
+      documentId: document.documentId,
+      documentRevision: document.documentRevision,
+      branchRevision: document.branchRevision,
+      durableStatus: 'unavailable',
+      durableDocument: null,
+    });
+
+    expect(durableProjection.source).toBe('durable');
+    expect(legacyProjection.source).toBe('legacy');
+    expect(document.history.map((entry) => entry.enabled)).toEqual(legacyHistory.map((item) => !item.disabled));
+    expect(durableProjection.rows.map((row) => row.title)).toEqual(legacyProjection.rows.map((row) => row.title));
+    expect(durableProjection.rows.map((row) => row.isActive)).toEqual(legacyProjection.rows.map((row) => row.isActive));
+    expect(durableProjection.rows.map((row) => row.isCurrent)).toEqual(
+      legacyProjection.rows.map((row) => row.isCurrent)
+    );
+    expect(durableProjection.rows.map((row) => row.title)).toEqual(
+      document.history.map((entry) => durableEntryTitle(entry.provenance!))
+    );
+    expect(durableProjection.rows.findIndex((row) => row.isCurrent)).toBe(document.cursor);
   });
 });

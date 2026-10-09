@@ -10,7 +10,7 @@ const Footer = () => {
       <div className="flex items-center justify-between px-2">
         <div className="flex items-center gap-4">
           {hasImage && width > 0 && height > 0 && (
-            <span className="text-sm text-gray-600 dark:text-gray-300">
+            <span data-testid="footer-dimensions" className="text-sm text-gray-600 dark:text-gray-300">
               Dimensions: {width} × {height} px
             </span>
           )}

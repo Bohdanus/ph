@@ -1,5 +1,6 @@
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { MigrationDiagnostic } from '../../contexts/history-adapter.ts';
+import { replayDurableAtCursor } from '../../contexts/durable-replay.ts';
 
 /**
  * A pathological conversion can emit one diagnostic per history entry, and the
@@ -14,22 +15,42 @@ const EMPTY_PRESENTATION = {
 };
 
 /**
- * The store reader, in a component of its own so the DEV gate can sit ABOVE the subscription. With
- * the guard below `useStore()`, Vite's `import.meta.env.DEV` substitution removes the rendered
- * output and keeps the call: a production bundle then re-renders this on every store transition to
- * return `null`, still holding a live subscription to the durable shadow.
+ * The store reader lives in its own component so the DEV gate sits ABOVE the subscription. Vite's
+ * `import.meta.env.DEV` substitution removes this component and its store read from production.
  */
 const DevStatusStripContents = () => {
-  const [{ durableStatus, durableDiagnostics, durablePresentation: storedPresentation }] = useStore();
+  const [
+    {
+      durableStatus,
+      durableDiagnostics,
+      durablePresentation: storedPresentation,
+      durableDocument,
+      documentId,
+      documentRevision,
+      branchRevision,
+      historyIndex,
+    },
+  ] = useStore();
   const durablePresentation = storedPresentation ?? EMPTY_PRESENTATION;
 
   // A store slice built by hand can omit the list entirely; treating that as
   // "no diagnostics" keeps the footer renderable instead of throwing while it
   // is reporting a status.
   const diagnostics: readonly MigrationDiagnostic[] = durableDiagnostics ?? [];
-  // `current` with a warning is still a real state, so the status alone cannot
-  // decide whether there is anything to say.
-  if (durableStatus === 'current' && diagnostics.length === 0 && durablePresentation.status === 'durable') return null;
+  const isPublishedDurable =
+    durableStatus === 'current' && durablePresentation.status === 'durable' && durableDocument != null;
+  const durablePublication = isPublishedDurable
+    ? `${documentId}@rev${documentRevision}.branch${branchRevision}.history${historyIndex}.durable${durableDocument.durableRevision}`
+    : '';
+  const durableLayerIds = (() => {
+    if (!isPublishedDurable || durablePresentation.cursor === null) return '';
+    const replay = replayDurableAtCursor(durableDocument, durablePresentation.cursor);
+    return Object.values(replay.layers)
+      .filter(({ snapshot }) => snapshot.visible)
+      .sort((left, right) => left.snapshot.order - right.snapshot.order)
+      .map(({ snapshot }) => snapshot.id)
+      .join(',');
+  })();
 
   const shown = diagnostics.slice(0, VISIBLE_DIAGNOSTICS);
   const hidden = diagnostics.length - shown.length;
@@ -41,14 +62,14 @@ const DevStatusStripContents = () => {
       data-presentation-status={durablePresentation.status}
       data-durable-cursor={durablePresentation.cursor ?? ''}
       data-durable-fallback-reason={durablePresentation.reason ?? ''}
-      className="text-xs text-amber-600 dark:text-amber-400"
+      data-durable-publication={durablePublication}
+      data-durable-layer-ids={durableLayerIds}
+      className="text-xs text-amber-800 dark:text-amber-300"
     >
       <span data-testid="dev-status-strip-status">Durable: {durableStatus}</span>
       <span data-testid="dev-status-strip-presentation">
         {' · '}
         {durablePresentation.status === 'durable' ? 'Durable presentation' : 'Legacy presentation'}
-        {durablePresentation.cursor !== null ? ` @ ${durablePresentation.cursor}` : ''}
-        {durablePresentation.reason ? ` (${durablePresentation.reason})` : ''}
       </span>
       {shown.length > 0 && (
         <>
