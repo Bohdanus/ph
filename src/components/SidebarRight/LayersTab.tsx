@@ -87,7 +87,7 @@ export default function LayersTab() {
 
   const isMovableLayer = (layerId: LayerId | null): layerId is LayerId => {
     const layer = layerId ? layers[layerId] : null;
-    return Boolean(layer && !layer.isBedrock);
+    return Boolean(layer && !layer.isBedrock && !layer.locked);
   };
 
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
@@ -260,7 +260,7 @@ export default function LayersTab() {
 
                 <div
                   data-testid="layer-row-content"
-                  draggable={!layer.isBedrock && editingLayerId !== layer.id}
+                  draggable={!layer.isBedrock && !layer.locked && editingLayerId !== layer.id}
                   onDragStart={(e) => {
                     if (isEditable || !isMovableLayer(layer.id)) {
                       e.preventDefault();
@@ -330,7 +330,7 @@ export default function LayersTab() {
 
                   <LayerThumbnail layer={previewLayer} />
 
-                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock} />
+                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock || layer.locked} />
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span

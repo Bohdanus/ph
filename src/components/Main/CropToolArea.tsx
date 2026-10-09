@@ -5,7 +5,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { sortRoundRect } from '../../util/rect.ts';
 import { HANDLE_SIZE } from '../../util/constants.ts';
 import type { ContainDimensions } from '../../util/contain-fit.ts';
-import type { CropToolArgs } from '../../tools/crop.ts';
+import { CROP_OVERLAYS, type CropToolArgs } from '../../tools/crop.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point, Pos, RectXYSorted, Size } from '../../contexts/general-types.ts';
@@ -184,7 +184,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const { applyDocumentCrop } = useLayers();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect } = args;
+  const { aspectRatio, rect, overlayType = 'ruleOfThirds', overlayOrientation = 'normal' } = args;
 
   /**
    * Photoshop commits a crop with Enter and abandons it with Escape, so the panel's Apply and Clear
@@ -199,6 +199,11 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
    * refreshed in an effect, the same shape `TextToolArea` uses for its own args ref.
    */
   const cropKeysRef = useRef({ commit: () => {}, cancel: () => {} });
+  const overlayKeysRef = useRef({ args, overlayType, overlayOrientation });
+
+  useEffect(() => {
+    overlayKeysRef.current = { args, overlayType, overlayOrientation };
+  });
 
   useEffect(() => {
     cropKeysRef.current = {
@@ -216,13 +221,34 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      )
+        return;
+      if (event.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        const current = overlayKeysRef.current;
+        if (event.shiftKey && (current.overlayType === 'triangle' || current.overlayType === 'goldenSpiral')) {
+          setToolArgs({
+            ...current.args,
+            overlayType: current.overlayType,
+            overlayOrientation: current.overlayOrientation === 'normal' ? 'flipped' : 'normal',
+          });
+        } else if (!event.shiftKey) {
+          const index = CROP_OVERLAYS.indexOf(current.overlayType);
+          setToolArgs({ ...current.args, overlayType: CROP_OVERLAYS[(index + 1) % CROP_OVERLAYS.length] });
+        }
+        return;
+      }
       if (event.key === 'Enter') cropKeysRef.current.commit();
       else if (event.key === 'Escape') cropKeysRef.current.cancel();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [setToolArgs]);
 
   /**
    * What `useRect`'s painter last drew, and the contain fit it drew it with.
@@ -255,6 +281,8 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     // Crop is the one consumer whose box may run off the frame, so it keeps the overhang instead
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,
+    overlayType,
+    overlayOrientation,
 
     onRepaint: (sortedRect: RectXYSorted) => {
       // Read after this render has bound `pointerState`. The closure runs from inside `drawMask`,
