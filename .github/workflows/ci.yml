@@ -47,11 +47,7 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npm run lint
-
-      - name: Prettier check
-        continue-on-error: true
-        run: npx prettier --check $(git ls-files '*.js' '*.jsx' '*.mjs' '*.cjs' '*.scss' '*.css' '*.json' '*.jsonc' '*.md' '*.yml' '*.yaml' '*.ts' '*.tsx')
+        run: npm run lint:check
 
       - name: Audit
         run: npm audit --audit-level=high
