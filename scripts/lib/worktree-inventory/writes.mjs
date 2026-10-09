@@ -249,9 +249,9 @@ function readSessions(db, sinceMs) {
            FROM session
           WHERE time_created >= ? OR time_updated >= ?
          UNION
-         SELECT DISTINCT p.session_id
-           FROM part p
-          WHERE p.time_created >= ?
+          SELECT DISTINCT p.session_id
+            FROM part p
+           WHERE p.time_created >= ? OR p.time_updated >= ?
          UNION
          SELECT s.parent_id
            FROM session s
@@ -262,7 +262,7 @@ function readSessions(db, sinceMs) {
          FROM session s
          JOIN recent_ids r ON r.id = s.id`
     )
-    .all(sinceMs, sinceMs, sinceMs);
+    .all(sinceMs, sinceMs, sinceMs, sinceMs);
   const byId = new Map();
   for (const r of rows) {
     byId.set(r.id, {
@@ -324,12 +324,12 @@ function readCalls(db, sessionIds, sinceMs) {
                    THEN json_extract(p.data, '$.state.input.patchText') END AS patch_text
          FROM part p
          JOIN scoped_session s ON s.id = p.session_id
-        WHERE json_extract(p.data, '$.type') = 'tool'
-          AND json_extract(p.data, '$.state.status') = 'completed'
-          AND p.time_created >= ?
-          AND json_extract(p.data, '$.tool') IN (${TRACKED_TOOLS.map(() => '?').join(',')})`
+         WHERE json_extract(p.data, '$.type') = 'tool'
+           AND json_extract(p.data, '$.state.status') = 'completed'
+           AND (p.time_created >= ? OR p.time_updated >= ?)
+           AND json_extract(p.data, '$.tool') IN (${TRACKED_TOOLS.map(() => '?').join(',')})`
     )
-    .all(sinceMs, ...TRACKED_TOOLS);
+    .all(sinceMs, sinceMs, ...TRACKED_TOOLS);
 
   for (const row of rows) {
     out.push({

@@ -3394,6 +3394,51 @@ describe('the call history', () => {
     }
   });
 
+  it('covers a session with recent `part.time_updated` but old `time_created`', () => {
+    const old = NOW - MAX_SESSION_DB_WINDOW_MS - 1;
+    const recent = NOW - 10_000;
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-part-updated-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`CREATE TABLE project_directory (project_id TEXT, directory TEXT, type TEXT);
+               INSERT INTO project_directory VALUES ('p2', '${ROOT.replace(/'/g, "''")}', 'primary');
+               CREATE TABLE session (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+                 agent TEXT, time_created INTEGER, time_updated INTEGER);
+               CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT);`);
+      db.prepare(
+        'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+      ).run('parent', 'p2', null, ROOT, 'parent', 'code', old, old);
+      db.prepare(
+        'INSERT INTO session (id, project_id, parent_id, directory, title, agent, time_created, time_updated) VALUES (?,?,?,?,?,?,?,?)'
+      ).run('child', 'p1', 'parent', `${ROOT}/.kilo/worktrees/x`, 'child', 'code', old, old);
+      db.prepare(
+        'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+      ).run('p1', 'm1', 'parent', old, old, JSON.stringify({ type: 'message', role: 'assistant', content: 'x' }));
+      // A child call created before the window but edited since. The session is
+      // retained because part.time_updated is recent, and the call is attributed.
+      db.prepare(
+        'INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)'
+      ).run(
+        'p2',
+        'm2',
+        'child',
+        old,
+        recent,
+        JSON.stringify(tool('edit', { filePath: `${ROOT}/.kilo/worktrees/x/src/a.ts` }))
+      );
+      db.close();
+
+      const audit = run(dbPath, { worktreePaths: [`${ROOT}/.kilo/worktrees/x`], sinceMs: 0 });
+      const record = audit.byWorktree.get(`${ROOT}/.kilo/worktrees/x`);
+      expect(record.write.calls).toBe(1);
+      expect([...record.write.chats.keys()]).toEqual(['parent']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('counts only calls that completed', () => {
     const fx = makeSessionDb({
       sessions: [{ id: 's1', directory: ROOT, at: NOW - 10_000 }],
