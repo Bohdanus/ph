@@ -812,21 +812,38 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
  * into the worktree, which is the thing the `.gitignore` rule exists to prevent.
  * A guard that cannot be run from a worktree is a guard nobody runs.
  *
- * `git rev-parse --path-format=absolute --git-common-dir` is the one git call
- * that answers this from anywhere in the repository, and the inventory is
- * written beside that common dir's worktree root, which is the main checkout.
- * Falls back to `cwd` so a caller with an injected runner and no repository —
- * the test suite — still resolves a path it controls.
+ * Prefer the worktree that has `main` checked out. The common directory's
+ * parent is usually that checkout, but a bare common repository can be a
+ * separate worktree entry; in that case its inventory may be stale.
+ * Fall back to the common-dir parent when no `main` worktree is registered,
+ * then to `cwd` for a caller outside a repository.
  */
 export function locateInventory(cwd, { run = defaultRun, exists = existsSync } = {}) {
+  let mainRoot = null;
+  try {
+    const worktrees = run(cwd, ['worktree', 'list', '--porcelain']).stdout;
+    mainRoot = worktrees
+      .split(/\r?\n\r?\n/)
+      .map((entry) => ({
+        path: entry.match(/^worktree (.+)$/m)?.[1],
+        isMain: entry.split(/\r?\n/).includes('branch refs/heads/main'),
+      }))
+      .find((entry) => entry.path && entry.isMain)?.path;
+  } catch {
+    /* no registered main worktree; try the common directory */
+  }
+  if (mainRoot) {
+    const candidate = join(mainRoot, 'WORKTREES.json');
+    return exists(candidate) ? candidate : join(cwd, 'WORKTREES.json');
+  }
   try {
     const commonDir = realpathIfExists(
       run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim()
     );
     if (commonDir) {
       // `--git-common-dir` is the `.git` DIRECTORY; its parent is the checkout.
-      const mainRoot = dirname(commonDir);
-      const candidate = join(mainRoot, 'WORKTREES.json');
+      const commonRoot = dirname(commonDir);
+      const candidate = join(commonRoot, 'WORKTREES.json');
       if (exists(candidate)) return candidate;
     }
   } catch {
