@@ -1653,6 +1653,32 @@ describe('locating the inventory', () => {
     expect(resolved).not.toContain('.kilo');
   });
 
+  it('uses the main-branch worktree when the common directory belongs to a bare checkout', () => {
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: (_cwd, args) => ({
+        stdout:
+          args[0] === 'worktree'
+            ? 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n'
+            : '/repo/.git\n',
+      }),
+      exists: (p) => p === '/repo/WORKTREES.json' || p === '/repo/.kilo/worktrees/main/WORKTREES.json',
+    });
+    expect(resolved).toBe('/repo/.kilo/worktrees/main/WORKTREES.json');
+  });
+
+  it('does not use a bare inventory when the registered main worktree has none', () => {
+    const resolved = locateInventory('/repo/.kilo/worktrees/task', {
+      run: (_cwd, args) => ({
+        stdout:
+          args[0] === 'worktree'
+            ? 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n'
+            : '/repo/.git\n',
+      }),
+      exists: (p) => p === '/repo/WORKTREES.json',
+    });
+    expect(resolved).toBe('/repo/.kilo/worktrees/task/WORKTREES.json');
+  });
+
   it('falls back to cwd outside a repository, so the injected suite still resolves', () => {
     const resolved = locateInventory('/somewhere', {
       run: () => {
@@ -1673,7 +1699,7 @@ describe('locating the inventory', () => {
     expect(resolved).toBe('/repo/.kilo/worktrees/task/WORKTREES.json');
   });
 
-  it('asks git for the COMMON dir, which is the one answer available from anywhere', () => {
+  it('checks the registered main worktree before falling back to the common directory', () => {
     const asked = [];
     locateInventory('/repo/.kilo/worktrees/task', {
       run: (cwd, args) => {
@@ -1682,8 +1708,10 @@ describe('locating the inventory', () => {
       },
       exists: () => true,
     });
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toContain('--git-common-dir');
+    expect(asked).toEqual([
+      ['worktree', 'list', '--porcelain'],
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+    ]);
   });
 });
 
