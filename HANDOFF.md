@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230, 66b1132 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2208,23 +2208,6 @@ size only across dialogs (`e2e/document-dialogs.spec.ts` — `documentSize()`). 
 tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
-
-## 66b1132. AirAccLim
-
-**Problem.** Photoshop's Airbrush deposits colour while the pointer is held, and Flow controls how
-fast it builds (https://helpx.adobe.com/photoshop/using/airbrush-tool-options.html). The app's
-`drawSpray()` draws one fixed-alpha radial dab per pointer sample using `args.alpha`; it has no
-time-based accumulation or Flow input in `DrawToolArgs`. A stationary hold therefore cannot build
-paint, and deposition depends on pointer event frequency rather than a Flow setting.
-
-**Fix.** Add a Flow setting to the Spray pen and accumulate deposits over pointer-down time, separately
-from per-stroke Opacity. Preserve the existing visible single-tap dab and verify that slower Flow
-builds more gradually across a hold.
-
-**Files.** `src/util/draw.ts` — `drawSpray()`; `src/tools/draw.ts` — `DrawToolArgs`;
-`src/util/__tests__/draw.test.ts` and `src/tools/__tests__/paint-tools.test.ts` — spray rendering contracts.
-
----
 
 ## 134. Three tool descriptions promise a scrubby slider that does not exist
 

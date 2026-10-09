@@ -281,12 +281,14 @@ describe('Draw toolbar', () => {
         penType: 'spray',
         lineWidth: 100,
         alpha: 0.5,
+        flow: 50,
         lineDash: null,
         color: '#000000',
       });
       expect(getPenTypeSelect()).toHaveValue('spray');
       expect(screen.queryByLabelText(/Dash/)).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/Gap/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/Flow/)).toHaveValue('50');
     });
 
     it('drops the dashed pen dash when switching back to the solid pen', () => {
@@ -331,6 +333,8 @@ describe('Draw toolbar', () => {
       selectPenType('spray');
       expect(getSizeSlider()).toHaveValue('100');
       expect(getAlphaSlider()).toHaveValue('0.5');
+      fireEvent.change(screen.getByLabelText(/Flow/), { target: { value: '25' } });
+      expect(savedDrawPerPen.spray).toMatchObject({ flow: 25 });
 
       selectPenType('pen');
       expect(getSizeSlider()).toHaveValue('42');
@@ -339,6 +343,9 @@ describe('Draw toolbar', () => {
       selectPenType('pen-dashed');
       expect(getDashSlider()).toHaveValue('7');
       expect(getGapSlider()).toHaveValue('3');
+
+      selectPenType('spray');
+      expect(screen.getByLabelText(/Flow/)).toHaveValue('25');
     });
 
     it('drops the active points while switching pens so no stale stroke is previewed', () => {
@@ -591,6 +598,13 @@ describe('Draw toolbar', () => {
 
       changeAlpha('0.2');
       expect(lastPreviewArgs()).toMatchObject({ lineWidth: 30, alpha: 0.2 });
+
+      selectPenType('spray');
+      expect(lastPreviewArgs()).toMatchObject({ penType: 'spray', flow: 50 });
+      expect(lastPreviewArgs().pointTimes).toHaveLength(3);
+
+      fireEvent.change(screen.getByLabelText(/Flow/), { target: { value: '25' } });
+      expect(lastPreviewArgs()).toMatchObject({ flow: 25 });
     });
 
     it('clears the surface and blits the tool canvas at the fixed preview size', () => {

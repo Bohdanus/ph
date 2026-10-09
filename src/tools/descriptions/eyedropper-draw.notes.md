@@ -604,13 +604,10 @@ what is wanted is path work rather than freehand paint. There is no Photoshop eq
 freehand ink stroke, and the file says so.
 
 **The airbrush recommendation was a false pointer and has been cut.** This paragraph used to tell a
-user to reach for "the **Brush's airbrush option** for the spray". A grep for `airbrush` across
-`src/components` and `src/tools` returns nothing outside this directory's own files: the app renders
-no airbrush control on the Draw bar or on the Brush bar, which is the same finding the sibling paint
-family records as `Airbrush` `missing` on the brush. So the sentence pointed at a control that does
-not exist, in the one field a user reads first. `purpose` now says that the app renders no airbrush
-control on any tool and that the Spray pen is the nearest thing here, which is the same fact the
-airbrush row's `missing` status carries.
+user to reach for "the **Brush's airbrush option** for the spray". The app has no dedicated Airbrush
+toggle on the Draw or Brush bar, which is the same finding the sibling paint family records as
+`Airbrush` `missing` on the Brush. Spray now has a separate Flow control that accumulates deposits
+while held; it is not an Airbrush toggle, and Spray remains a distinct pen type.
 
 The `options` array is a census of **the Brush Tool's bar against the app's Draw bar**, and is
 labelled as such here and in `appNotes` — so `control` holds Brush-bar names verbatim, and a
@@ -624,21 +621,21 @@ behavior", never "Photoshop's Draw tool has this".
 | 1   | `Brush Preset picker` | `missing` | —                                                                                                       | No tip, no hardness, no presets. The per-pen records in `savedDrawPerPen` (`src/tools/settings.ts`) are three hardcoded strokes, not a preset system.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 2   | `Size`                | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#size-slider` range, handler `handleSizeChange()`   | Wired and applied verbatim (`src/tools/draw.ts` — `setupDrawCtx()`), but the range diverges at **both** ends: 0.5–500 px, step 0.5, against Photoshop's 1–5000.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | 3   | `Mode`                | `inert`   | declared `src/tools/draw.ts` — `DrawToolArgs.blendMode`                                                 | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`src/tools/settings.ts`) — **and refused even if set**: `src/contexts/layer-utils.ts` — `toolLayerBlendMode()` — returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                                                                                                                                                                                                                                                                                                      |
-| 4   | `Opacity`             | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#alpha-slider` range, handler `handleAlphaChange()` | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts` — `setupDrawCtx()`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`savedDrawPerPen` in `src/tools/settings.ts`). The build-up behavior Adobe documents for this control is not reproduced, so the row is `partial` and not `present`: see the one-stroke, one-layer paragraph above.                                                                                                                                                                                                                                                                              |
-| 5   | `Flow`                | `missing` | —                                                                                                       | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 6   | `Airbrush`            | `missing` | —                                                                                                       | The bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing else. The `spray` pen is the nearest thing and it diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer moves and a held press adds nothing after the single dot it laid. The old `partial` here carried an `appRef` into the Pen Type `<select>`'s `<option>`s in `src/components/ToolbarsRight/Draw/Draw.tsx`, not an airbrush control — a citation to a site that does not contain the control the row is about.                           |
+| 4   | `Opacity`             | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#alpha-slider` range, handler `handleAlphaChange()` | 0–100% on `args.alpha`, applied to the pen renderers. Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`savedDrawPerPen` in `src/tools/settings.ts`). Spray keeps a tap visible, then combines later deposits with Flow; unlike Photoshop, those deposits can exceed the per-stroke Opacity level.                                                                                                                                                                                                                                                                                                                                              |
+| 5   | `Flow`                | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx` — the `#flow-slider` range, handler `handleFlowChange()`   | The Spray-only 1–100% setting scales time-based deposits independently of Opacity, including while the pointer is stationary. Its app default is 50%; Adobe states no default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 6   | `Airbrush`            | `missing` | —                                                                                                       | The bar has no dedicated Airbrush toggle. The Spray pen is reached from a Pen Type dropdown rather than a toggle, but its Flow setting does build deposits during a stationary hold. The old `partial` here carried an `appRef` into the Pen Type `<select>`'s `<option>`s in `src/components/ToolbarsRight/Draw/Draw.tsx`, not an airbrush control — a citation to a site that does not contain the control the row is about.                                                                                                                                                                                                                      |
 | 7   | `Smoothing`           | `inert`   | declared `src/tools/draw.ts` — `DrawToolArgs.smoothing`                                                 | The seventh row, and the one this table was missing. Adobe's stroke-smoothing page puts the control on the options bar for "the Brush, Pencil, Mixer Brush, and Eraser" and gives its range: "Smoothing amount: Set a value between 0 and 100"; higher values "may slightly delay the stroke preview". Declared on the draw args, written by no Draw-bar control, absent from `defaultSettings.draw` (`src/tools/settings.ts`), and `PaintToolArgs` in `src/tools/draw.ts` exists precisely by `Omit`-ing `smoothing` out — so the field is the paint family's and this bar never exposes it. `inert` for the same reason as `Mode`, one row above. |
 
-**Counts: present 0 · partial 2 · inert 2 · missing 3.**
+**Counts: present 0 · partial 3 · inert 2 · missing 2.**
 
 `Size` and the airbrush toggle were both `present`/`partial` on the strength of "it does something
 nearby". Neither is that any more. `Size` is `partial` because `src/tools/descriptions/types.ts` — `ToolControlStatus` — defines the status as
 "its behaviour **or range** diverges", and both of this control's bounds diverge from Photoshop's
 1–5000; the sibling paint family files the same control `partial` for the same class of reason. The
-airbrush toggle is `missing` because the Draw bar contains no control that answers to it at all, and
-the nearest neighbour — the Spray pen — is a different Photoshop control reached a different way.
-Its old `detail` was the sharper defect: it ended "Click the button to toggle it", which would have
-told a user to click a control that does not exist.
+airbrush toggle is `missing` because the Draw bar has no dedicated toggle. The Spray pen is a
+different control reached through Pen Type, although its separate Flow setting now builds deposits
+while the pointer is held still. Its old `detail` was the sharper defect: it ended "Click the button
+to toggle it", which would have told a user to click a control that does not exist.
 
 `Opacity` was `present` and was **also** wrong, in the direction `present` most easily hides: it
 contradicted this file's own `appNotes`, which said the build-up story diverges.
@@ -646,9 +643,10 @@ contradicted this file's own `appNotes`, which said the build-up story diverges.
 `present` as "The app renders this control and it does what Photoshop's does", and Adobe's Opacity
 text makes the build-up rule part of the control rather than an extra: "As you paint over an area,
 the opacity does not exceed the set level no matter how many times you move the pointer over the
-area, until you release the mouse button." A single `beginPath`/`stroke()` over the whole path at
-`globalAlpha` (`src/util/draw.ts` — `drawPen()`, and `src/tools/draw.ts` — `setupDrawCtx()`) does not hold that within a
-self-crossing stroke, so the behaviour diverges and the status is `partial`.
+area, until you release the mouse button." The solid and dashed pens use one `beginPath`/`stroke()`
+over the whole path at `globalAlpha` (`src/util/draw.ts` — `drawPen()`, and `src/tools/draw.ts` —
+`setupDrawCtx()`), while Spray's timed Flow deposits can exceed that level. Both differ from
+Photoshop's rule, so the status remains `partial`.
 
 **`Smoothing` was absent from a table that declares itself the Brush-bar census, and its own
 `appNotes` named it.** The sentence "The two fields the Photoshop paint bar exposes as Mode and

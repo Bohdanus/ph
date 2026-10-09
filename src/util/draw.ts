@@ -1,5 +1,6 @@
 import type { Ctx2D, Point, Pos } from '../contexts/general-types.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
+import { AIRBRUSH_INTERVAL_MS, PAINT_FLOW_DEFAULT, PAINT_FLOW_MAX, PAINT_FLOW_MIN } from './brush-airbrush.ts';
 import { smoothStrokePoints } from '../tools/brush.ts';
 import { hexToRgb } from './rect.ts';
 
@@ -214,12 +215,25 @@ export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
   const color = hexToRgb(args.color);
   // Rounded because the product carries binary-float noise into the colour string
   // (`0.8 * 0.4` is 0.32000000000000006); 8-bit output cannot resolve the difference.
-  const peak = Math.round(args.alpha * SPRAY_PEAK_ALPHA * 1e4) / 1e4;
-  const colorStart = `rgba(${color}, ${peak})`;
-  const colorStop = `rgba(${color}, 0)`;
+  const peak = args.alpha * SPRAY_PEAK_ALPHA;
+  const flowPercent = Number.isFinite(args.flow) ? (args.flow ?? PAINT_FLOW_DEFAULT) : PAINT_FLOW_DEFAULT;
+  const flow = Math.min(PAINT_FLOW_MAX, Math.max(PAINT_FLOW_MIN, flowPercent)) / 100;
   const radius = args.lineWidth * SPRAY_RADIUS_SCALE;
 
   for (let i = 0; i < points.length; i++) {
+    let dabPeak = peak;
+    if (args.pointTimes && i > 0) {
+      const previousTime = args.pointTimes[i - 1];
+      const currentTime = args.pointTimes[i];
+      if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime) || currentTime <= previousTime) continue;
+
+      // A dab at the base opacity every AIRBRUSH_INTERVAL_MS builds exponentially. Scaling
+      // elapsed time this way makes the deposited alpha independent of pointer/refresh rate.
+      dabPeak = 1 - Math.pow(1 - peak * flow, (currentTime - previousTime) / AIRBRUSH_INTERVAL_MS);
+    }
+    const roundedPeak = Math.round(dabPeak * 1e4) / 1e4;
+    const colorStart = `rgba(${color}, ${roundedPeak})`;
+    const colorStop = `rgba(${color}, 0)`;
     const g = ctx.createRadialGradient(points[i].x, points[i].y, 0, points[i].x, points[i].y, radius);
     g.addColorStop(0, colorStart);
     g.addColorStop(SPRAY_CORE_FRACTION, colorStart);

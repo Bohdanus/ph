@@ -13,6 +13,13 @@ export type DrawToolArgs = {
   lineDash?: null | number[];
   points?: Point[];
   /**
+   * Relative elapsed time in milliseconds for each Spray sample. Absent on older strokes,
+   * which retain their original one-dab-per-point rendering.
+   */
+  pointTimes?: number[];
+  /** Spray build rate, as a percentage. */
+  flow?: number;
+  /**
    * Erase instead of paint: the stroke subtracts alpha from whatever is already there.
    *
    * `setupDrawCtx` is the only function that configures both the live preview overlay
@@ -70,7 +77,7 @@ export type PaintToolArgs = Omit<DrawToolArgs, 'toolName' | 'smoothing' | 'blend
     toolName: PaintToolName;
   };
 
-export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points'>;
+export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points' | 'pointTimes'>;
 
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
