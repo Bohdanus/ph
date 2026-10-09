@@ -1107,6 +1107,11 @@ export interface StrokeAnalysis {
   pixelCount: number;
 }
 
+export interface StrokeAnalysisOptions {
+  /** The capture is from the Spray tool, whose opacity and colour can produce mid-tone ink. */
+  tool?: 'spray';
+}
+
 /**
  * The bounding box of the selection handles in a capture. `[IMAGE]`, whole pixels, inclusive;
  * `centerX`/`centerY` are the ROUNDED midpoint of that box and are therefore the same space,
@@ -1312,8 +1317,9 @@ function captureScale(imageWidth: number, imageHeight: number, region: CaptureRe
  * cell colours, and the second of those is checked FIRST because the dark cell sits below
  * `DARK_THRESHOLD` and an exclusion that ran after `isDark` would never be reached for it.
  * What is left is ink: below `DARK_THRESHOLD` in every channel, or a low-saturation grey above
- * `SPRAY_LUMINANCE_THRESHOLD`. A capture carrying nothing else returns `null`, which is the
- * answer `e2e/pen-types.spec.ts:37-40` polls on.
+ * `SPRAY_LUMINANCE_THRESHOLD`. When the caller identifies the captured tool as Spray, any
+ * non-background pixel is accepted; the tool's selected opacity and colour can make its ink
+ * mid-tone or saturated. A capture carrying nothing else returns `null`.
  *
  * `region` is the CSS-pixel size of the clip the capture was taken over, and it is what
  * makes the classification independent of the host's pixel density. The thresholds in
@@ -1335,7 +1341,8 @@ function captureScale(imageWidth: number, imageHeight: number, region: CaptureRe
  */
 export async function getStrokeAnalysis(
   screenshot: Buffer | ImageDataResult,
-  region: CaptureRegion
+  region: CaptureRegion,
+  options: StrokeAnalysisOptions = {}
 ): Promise<StrokeAnalysis | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
@@ -1375,8 +1382,9 @@ export async function getStrokeAnalysis(
     const isSpray =
       !isDark &&
       !isNearWhite &&
-      luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
-      saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD;
+      (options.tool === 'spray' ||
+        (luminance > STROKE_ANALYSIS.SPRAY_LUMINANCE_THRESHOLD &&
+          saturation < STROKE_ANALYSIS.SPRAY_SATURATION_THRESHOLD));
 
     if (isLetterbox) continue;
 

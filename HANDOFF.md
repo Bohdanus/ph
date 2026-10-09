@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-132, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2209,47 +2209,22 @@ tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
 
-## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
+## 66b1132. AirAccLim
 
-**Problem.** `getStrokeAnalysis` counts only pixels that are **dark** (`STROKE_ANALYSIS.DARK_THRESHOLD`)
-**or** a **spray** pixel — and the spray arm is `luminance > SPRAY_LUMINANCE_THRESHOLD` (200),
-`saturation < 30`, and not near-white. Every pixel in between is invisible to it. The spray renderer
-is now denser than it was (it was fixed to give a real dab rather than a grey blur), so a mid-tone
-spray falls into exactly that blind band, and `waitForSprayPixels` then fails on a **timeout** with a
-message about a null analysis rather than about missing ink.
+**Problem.** Photoshop's Airbrush deposits colour while the pointer is held, and Flow controls how
+fast it builds (https://helpx.adobe.com/photoshop/using/airbrush-tool-options.html). The app's
+`drawSpray()` draws one fixed-alpha radial dab per pointer sample using `args.alpha`; it has no
+time-based accumulation or Flow input in `DrawToolArgs`. A stationary hold therefore cannot build
+paint, and deposition depends on pointer event frequency rather than a Flow setting.
 
-**Reproduce.** Spray at a mid luminance and call `getStrokeAnalysis`. The pixel count does not include
-it, so the wait times out. The measurement on the branch: the landed renderer drops the analysis from
-26,040 counted pixels to 8,144.
+**Fix.** Add a Flow setting to the Spray pen and accumulate deposits over pointer-down time, separately
+from per-stroke Opacity. Preserve the existing visible single-tap dab and verify that slower Flow
+builds more gradually across a hold.
 
-**Why it matters beyond this suite:** the threshold is not a test detail, it is the definition of
-"there is ink here". Anything that reasons about spray coverage inherits it, and the unit suite
-hard-codes the same threshold in
-`e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts`'s `CONSTANT_CONTRACT` row for
-`SPRAY_LUMINANCE_THRESHOLD`, so
-changing the rule has to change that too — it is a gate on the gate.
+**Files.** `src/util/draw.ts` — `drawSpray()`; `src/tools/draw.ts` — `DrawToolArgs`;
+`src/util/__tests__/draw.test.ts` and `src/tools/__tests__/paint-tools.test.ts` — spray rendering contracts.
 
-**Fix.** Either widen the classifier to a real "is this an ink pixel for the tool that drew it"
-predicate, or make it tool-parameterised so a spray's expected luminance comes from the tool's own
-`settings` rather than a constant. Then fix the failure MESSAGE: a timeout caused by an empty analysis
-must say so, because "timed out waiting for pixels" sends the next reader to widen a timeout instead
-of looking at the classifier.
-
-**Platform contract.** Photoshop's Airbrush is a density-building tool: it deposits colour while the
-pointer is held, and Flow controls how fast
-(https://helpx.adobe.com/photoshop/using/airbrush-tool-options.html). A single visible tap depositing
-one dab is the correct order of operations — the pre-fix `alpha / 4` peak of 0.125 made the tool dark
-on a drag and invisible on a tap. The flow accumulation itself is not reachable in this renderer; that
-is a separate known limit, and it belongs in this file rather than in a comment on the renderer.
-
-**Where this came from.** The abandoned branch `fix/spray` (`60590a25`, anchored at
-`refs/keep/harvested/fix-spray`). The _code_ half of that branch is already on main as `1a26dfe5` —
-same subject, rebuilt on a different base, which is why `git cherry` reported it unabsorbed. Only the
-defect record was missing, and it is recorded nowhere on main
-(`git show main:e2e/OPEN_PROBLEMS.md | grep -i spray` → empty).
-
-**Files.** `e2e/helpers/canvas-helpers.ts` — `getStrokeAnalysis()` and the `STROKE_ANALYSIS`
-constants; `e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts` — `CONSTANT_CONTRACT`
+---
 
 ## 134. Three tool descriptions promise a scrubby slider that does not exist
 

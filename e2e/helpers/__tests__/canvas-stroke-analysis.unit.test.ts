@@ -193,6 +193,19 @@ describe('getStrokeAnalysis', () => {
     });
   });
 
+  it('includes mid-tone ink when the captured tool is Spray', async () => {
+    const image = await createTestImageData(gray(128), 100, 40);
+    const region = captureRegionOf(image);
+
+    expect(await getStrokeAnalysis(image, region)).toBeNull();
+    expect(await getStrokeAnalysis(image, region, { tool: 'spray' })).toEqual({
+      type: 'spray',
+      segments: 1,
+      verticalSpread: 40,
+      pixelCount: 4000,
+    });
+  });
+
   it('counts only the dark pixels of a mixed row', async () => {
     const image = createImageData(50, 1);
     for (let x = 0; x < 25; x++) setPixel(image, x, 0, black);
@@ -336,6 +349,7 @@ describe('getStrokeAnalysis on the workspace backdrop', () => {
 
   it('returns null for a capture that is nothing but the light letterbox cell', async () => {
     expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION)).toBeNull();
+    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_LIGHT_CELL), REGION, { tool: 'spray' })).toBeNull();
   });
 
   it('returns null for a capture that is nothing but the dark letterbox cell', async () => {
@@ -343,6 +357,7 @@ describe('getStrokeAnalysis on the workspace backdrop', () => {
     // as dark ink rather than as spray — two different wrong answers from one background.
     expect(LETTERBOX_DARK_CELL.red).toBeLessThan(STROKE_ANALYSIS.DARK_THRESHOLD);
     expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION)).toBeNull();
+    expect(await getStrokeAnalysis(backdropOnly(LETTERBOX_DARK_CELL), REGION, { tool: 'spray' })).toBeNull();
   });
 
   it('returns null for the light checkerboard itself, cells and #fff gaps alike', async () => {
@@ -357,6 +372,7 @@ describe('getStrokeAnalysis on the workspace backdrop', () => {
     }
 
     expect(await getStrokeAnalysis(image, REGION)).toBeNull();
+    expect(await getStrokeAnalysis(image, REGION, { tool: 'spray' })).toBeNull();
   });
 
   it('still reads the app spray peak as spray, which is the margin the exclusion must leave', async () => {

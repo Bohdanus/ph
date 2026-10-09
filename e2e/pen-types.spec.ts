@@ -26,17 +26,20 @@ type PenWait = (page: Page, clip: Required<ClipOptions>) => Promise<void>;
 const waitForDarkPixels: PenWait = (page, clip) =>
   waitForCanvasPixels(page, clip, hasDarkPixels, { description: 'dark pixels' });
 
+const getSprayAnalysis = (screenshot: Buffer, clip: Required<ClipOptions>) =>
+  getStrokeAnalysis(screenshot, clip, { tool: 'spray' });
+
 /**
- * Spray lays down light-gray pixels, so a dark-pixel wait can never observe it. Poll the
- * clip until stroke analysis finds any non-background pixels instead.
+ * Spray output depends on its selected opacity and colour, so it may be mid-tone or saturated.
+ * Poll with the tool-specific classifier until it finds non-background pixels.
  *
  * The clip is handed to the classifier as the region it captured, which is what makes the
  * thresholds scale-correct: a 2x host decodes this clip at twice its CSS size, and the
  * analysis is over the stroke, not over the capture's resolution.
  */
 const waitForSprayPixels: PenWait = (page, clip) =>
-  waitForCanvasPixels(page, clip, async (screenshot) => (await getStrokeAnalysis(screenshot, clip)) !== null, {
-    description: 'analysable pixels from the spray stroke',
+  waitForCanvasPixels(page, clip, async (screenshot) => (await getSprayAnalysis(screenshot, clip)) !== null, {
+    description: 'a non-null spray stroke analysis (no spray ink has been classified)',
   });
 
 const PEN_TYPES = [
@@ -104,7 +107,8 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
       await wait(page, clip);
 
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, name, clip);
-      const analysis = await getStrokeAnalysis(screenshot, clip);
+      const analysis =
+        value === 'spray' ? await getSprayAnalysis(screenshot, clip) : await getStrokeAnalysis(screenshot, clip);
 
       expect(analysis, 'Stroke analysis should not be null').not.toBeNull();
       if ('segments' in exp) expect.soft(analysis!.segments).toBe(exp.segments);
