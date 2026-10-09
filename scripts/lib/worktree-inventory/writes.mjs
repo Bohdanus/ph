@@ -1,6 +1,6 @@
 /**
- * Who WROTE in each worktree, who READ it, and who ran commands in it — over all
- * of history, derived from the tool calls themselves.
+ * Who WROTE in each worktree, who READ it, and who ran commands in it — over the
+ * recent session-database safety window, derived from the tool calls themselves.
  *
  * WHY THIS IS NOT `session.directory`
  * ----------------------------------
@@ -21,8 +21,9 @@
  *
  * THREE SEPARATE STRUCTURES, AND WHY THEY ARE NOT MERGED
  * ------------------------------------------------------
- * - `writeHistory` — file-changing tools. PERMANENT. This is the record of who
- *   built what, and losing an entry loses an owner.
+ * - `writeHistory` — file-changing tools in the recent safety window. A worktree
+ *   older than that window cannot be live, so retaining older rows is not useful
+ *   to the inventory and would force an all-history scan of the live database.
  * - `readHistory` — file-reading tools. RELEASABLE. Reading a worktree is
  *   interest, not authorship: a reviewer, an explorer and a debugging agent all
  *   read directories they never touched, and a reader list that only grows stops
@@ -54,6 +55,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import { boundSessionSinceMs } from './session-audit-limits.mjs';
 
 /** The directory this repository keeps its worktrees in. */
 const WORKTREE_DIR_SEGMENT = '.kilo/worktrees/';
@@ -219,8 +221,8 @@ function openDb(dbPath) {
 }
 
 /**
- * EVERY session, and the parent chain that rolls a subagent's call up to the chat
- * a human would recognise.
+ * Every recent session, plus the parent chain that rolls a subagent's call up to
+ * the top-level chat a human would recognise.
  *
  * There is deliberately NO `project_id` filter, and that is a correctness
  * requirement rather than an optimisation. Scoping to one project was tried and
@@ -228,8 +230,9 @@ function openDb(dbPath) {
  * another project that had made 774 completed writes into this checkout — 613
  * into the main checkout and 161 into worktrees. A writer absent from the write
  * history is the one failure this structure cannot have, so the read is
- * unfiltered. Attribution is a question about PATHS, and a path says nothing
- * about which project the session that wrote it belonged to.
+ * not project-filtered. Attribution is a question about PATHS, and a path says
+ * nothing about which project the session that wrote it belonged to. The separate
+ * three-day time bound is still enforced by the query.
  *
  * The filter this replaced was also dead: it looked the project up with
  * `normalisePath(root)`, which on macOS produces `/private/Users/…`, while
@@ -238,10 +241,28 @@ function openDb(dbPath) {
  * while arming a silent 774-write failure the day the path spelling was "fixed".
  * Deleting it is the fix; repairing it was the trap.
  */
-function readSessions(db) {
+function readSessions(db, sinceMs) {
   const rows = db
-    .prepare(`SELECT id, parent_id, directory, title, agent, time_created, time_updated FROM session`)
-    .all();
+    .prepare(
+      `WITH RECURSIVE recent_ids(id) AS (
+         SELECT id
+           FROM session
+          WHERE time_created >= ? OR time_updated >= ?
+         UNION
+         SELECT DISTINCT p.session_id
+           FROM part p
+          WHERE p.time_created >= ?
+         UNION
+         SELECT s.parent_id
+           FROM session s
+           JOIN recent_ids r ON r.id = s.id
+          WHERE s.parent_id IS NOT NULL
+       )
+       SELECT s.id, s.parent_id, s.directory, s.title, s.agent, s.time_created, s.time_updated
+         FROM session s
+         JOIN recent_ids r ON r.id = s.id`
+    )
+    .all(sinceMs, sinceMs, sinceMs);
   const byId = new Map();
   for (const r of rows) {
     byId.set(r.id, {
@@ -262,9 +283,9 @@ function readSessions(db) {
  *
  * A subagent is not a chat anybody opened, and it inherits the parent's
  * directory, so attributing its calls to itself would fill the owner list with ids
- * no human can act on. The walk reads the WHOLE session table rather than any
- * filtered subset, so a subagent whose parent lives under a different project
- * still rolls up instead of being recorded as a chat of its own. Bounded, so a
+ * no human can act on. `readSessions` keeps the recent sessions and recent calls,
+ * then adds every parent needed for attribution, so a parent in another project
+ * still rolls up without reading old call payloads. The walk is bounded, so a
  * cycle in the data cannot hang the generator.
  */
 export function rootSessionId(id, byId) {
@@ -284,7 +305,7 @@ export function rootSessionId(id, byId) {
  * selected behind a `CASE` so the large patch text is only materialised for the
  * 595 rows that need it.
  */
-function readCalls(db, sessionIds) {
+function readCalls(db, sessionIds, sinceMs) {
   const out = [];
   if (sessionIds.length === 0) return out;
 
@@ -305,9 +326,10 @@ function readCalls(db, sessionIds) {
          JOIN scoped_session s ON s.id = p.session_id
         WHERE json_extract(p.data, '$.type') = 'tool'
           AND json_extract(p.data, '$.state.status') = 'completed'
+          AND p.time_created >= ?
           AND json_extract(p.data, '$.tool') IN (${TRACKED_TOOLS.map(() => '?').join(',')})`
     )
-    .all(...TRACKED_TOOLS);
+    .all(sinceMs, ...TRACKED_TOOLS);
 
   for (const row of rows) {
     out.push({
@@ -566,7 +588,7 @@ function summariseKind(kind, { nowMs, liveWindowMs, suppressed = false, released
   };
 }
 
-/** The write history for one worktree. PERMANENT; never subject to a release. */
+/** The write history for one worktree. It is bounded by the session DB window. */
 export function summariseWrites(kind, { nowMs, liveWindowMs, suppressed = false } = {}) {
   return summariseKind(kind, { nowMs, liveWindowMs, suppressed });
 }
@@ -614,21 +636,23 @@ const emptyResult = (dbPath) => ({
 });
 
 /**
- * Read every call this machine has made against these paths and attribute it to a
- * directory.
+ * Read recent calls this machine has made against these paths and attribute them
+ * to a directory. The time bound is enforced here as well as by the CLI because
+ * this function is also called directly by disposal and tests.
  *
  * Returns the same `available: false` shape the other readers use when the
  * database is missing, so a machine with no Kilo history still gets a complete
  * inventory with an empty history on every worktree and a `dataSources` entry
  * saying why.
  */
-export function auditWrites({ dbPath, root, worktreePaths = [], nowMs, liveWindowMs }) {
+export function auditWrites({ dbPath, root, worktreePaths = [], nowMs = Date.now(), liveWindowMs, sinceMs } = {}) {
   const db = openDb(dbPath);
   if (!db) return emptyResult(dbPath);
 
   try {
-    const byId = readSessions(db);
-    const calls = readCalls(db, [...byId.keys()]);
+    const boundedSinceMs = boundSessionSinceMs(sinceMs, nowMs);
+    const byId = readSessions(db, boundedSinceMs);
+    const calls = readCalls(db, [...byId.keys()], boundedSinceMs);
     const index = buildPathIndex(root, worktreePaths);
     const { records, unmapped, unmappedByBucket } = buildCallRecords(calls, { root, index, byId });
 

@@ -770,11 +770,11 @@ named, and the time it happened
 (`scripts/lib/worktree-inventory/writes.mjs`). It is in **three separate
 structures, because they have three different lifetimes**:
 
-| Field          | Tools                                           | Permanent?                     |
-| -------------- | ----------------------------------------------- | ------------------------------ |
-| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **yes** — this is who built it |
-| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable            |
-| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below |
+| Field          | Tools                                           | Retention                                                                           |
+| -------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **last 3 days** — enough to establish live ownership without an all-history DB scan |
+| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable                                                                 |
+| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below                                                      |
 
 Reading a worktree is interest, not authorship: reviewers, explorers and
 debugging agents all read directories they never touched, and a reader list that
@@ -789,8 +789,8 @@ last read is newer than that mark. The mark is read back from the existing file
 and combined with `Math.max`, so it only ever moves forward — a release cannot
 silently undo itself on the next regeneration, and it keeps no record of which
 entries it removed. Writers live in a different structure that nothing filters, so
-a release cannot reach them. On a run with `--release-reads=2026-09-29` on this
-repository: 407 readers became 139, and the 206 writers were unchanged.
+a release cannot reach them. The writer records are bounded to the recent
+three-day safety window, but the reader watermark never filters them.
 
 **A write is a stronger ownership claim than a message**, so
 `writeHistory.derivedChatIds` feeds the `in-use` verdict alongside the session and
