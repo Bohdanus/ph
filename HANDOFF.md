@@ -4433,17 +4433,11 @@ exists here already.
 ## 221. The unit suite still has brittle assertion and fixture gaps
 
 **Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
-assertions that pass on any non-null value, but five classes of test defects remain, each with the
+assertions that pass on any non-null value, but four classes of test defects remain, each with the
 evidence and concrete fix below.
 
 The remaining test defects, each with the fix that was proven to work:
 
-- `src/components/SidebarLeft/__tests__/SidebarLeft.flyout-hardening.test.tsx` addresses flyout rows by
-  position — `screen.getAllByRole('menuitemradio')[0].focus()` and an `items[0]` → `items[1]` pair.
-  Insert a tool at the top of the brush group and both assertions silently check a different element
-  and still pass. The sibling `SidebarLeft.keyboard.test.tsx` now addresses the same rows by their
-  `aria-label`, which is the tool's own label from `toolbar-mapping.ts`, so the replacement is copied
-  from there; the source also renders `data-testid="tool-flyout-item-<name>-<slug>"` already.
 - Over a hundred layout assertions in eight files assert a Tailwind class string through
   `toHaveClass`, concentrated in `HistoryTab.test.tsx`, `LayersTab.test.tsx`,
   `ToolbarHorizontal.test.tsx`, `SidebarLeft.tablet.test.tsx`, `SidebarRight.test.tsx`,
