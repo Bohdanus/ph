@@ -52,7 +52,7 @@ platform limit.
 | Open / import     | `partial`   | No PSB, RAW, HEIF, PDF; 8-bit RGB PSD only                                          |
 | Export            | `partial`   | No PDF/HEIF/HDR; PSD writer drops groups, text and masks                            |
 | Selection         | `divergent` | A shape list, not an alpha channel — so no Combine, Invert, Modify or channels      |
-| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; opacity is model-only              |
+| Layers            | `partial`   | No groups, masks, clipping or adjustment layers; no separate Fill opacity           |
 | History           | `partial`   | Linear panel exists; no state limit, snapshots, non-linear history or History Brush |
 | Panels            | `partial`   | Two panels. Photoshop has seventeen                                                 |
 | Menu bar          | `divergent` | Five menus; Edit holds one item and Image one submenu                               |

@@ -259,6 +259,7 @@ describe('planHistoryAppend: selection translation', () => {
       id: result.entry.id,
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName: SELECTION_ACTION },
       operation: { kind: 'set-selection', before: previousSelectionState, after: nextSelectionState },
     });
   });
@@ -345,6 +346,7 @@ describe('planHistoryAppend: layer-property translation', () => {
       id: result.entry.id,
       schemaVersion: DURABLE_SCHEMA_VERSION,
       enabled: true,
+      provenance: { actionName },
       operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch },
     });
     const operation = result.durableEntry?.operation;
@@ -746,6 +748,11 @@ describe('decideDurableAppend', () => {
       'a foreign id',
       { ...planned, id: 'elsewhere' },
       'durable entry id elsewhere does not match the legacy entry id crop-1',
+    ],
+    [
+      'a provenance recording a different action than the legacy entry',
+      { ...planned, provenance: { actionName: RENAME_LAYER_ACTION } },
+      'the durable history provenance does not match the legacy entry',
     ],
     ['a different schema version', { ...planned, schemaVersion: 99 }, 'durable schema version 99'],
     [

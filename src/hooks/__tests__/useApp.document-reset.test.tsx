@@ -429,7 +429,8 @@ describe('the outgoing document fixture is one production could really have prod
     const result = setup();
     await seedOutgoingDocument(result);
 
-    await waitFor(() => expect(result.current.store.layers['old-1'].tmpCanvas).not.toBeNull());
+    await waitFor(() => expect(result.current.store.layers['old-1'].durablePresentation?.bitmap).not.toBeNull());
+    expect(result.current.store.layers['old-1'].tmpCanvas).toBeNull();
     expect(result.current.store.layers['old-1'].pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(result.current.store.historyIndex).toBe(1);
   });

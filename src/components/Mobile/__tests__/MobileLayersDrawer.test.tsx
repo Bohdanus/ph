@@ -6,6 +6,9 @@ import { MobileLayersDrawer } from '../MobileLayersDrawer.tsx';
 import { reorderLayers } from '../../../contexts/layer-utils.ts';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../../util/constants.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
+import { getHistoryItemTitle } from '../../../contexts/useHistory.ts';
+import type { HistoryPanelProjection } from '../../../contexts/useHistory.ts';
+import type { HistoryItem } from '../../../contexts/history-types.ts';
 
 const createBlankLayerMock = vi.hoisted(() => vi.fn());
 const removeLayerMock = vi.hoisted(() => vi.fn());
@@ -60,6 +63,7 @@ vi.mock('../../../contexts/useHistory.ts', async (importOriginal) => {
     useHistory: () => ({
       resetHistoryTo: resetHistoryToMock,
       toggleDisabled: toggleDisabledMock,
+      historyPanelProjection: buildLegacyProjection(),
       canUndo: () => true,
       canRedo: () => false,
       undo: vi.fn(),
@@ -67,6 +71,20 @@ vi.mock('../../../contexts/useHistory.ts', async (importOriginal) => {
     }),
   };
 });
+
+function buildLegacyProjection(): HistoryPanelProjection {
+  const history = storeStateMock.history as unknown as HistoryItem[];
+  return {
+    source: 'legacy',
+    rows: history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= storeStateMock.historyIndex,
+      isCurrent: originalIndex === storeStateMock.historyIndex,
+    })),
+  };
+}
 
 const makeLayer = (id: string, name: string, order: number) => ({
   id,
@@ -266,14 +284,48 @@ describe('MobileLayersDrawer', () => {
     expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
-  it('writes layer opacity through the durable action that replays cleanly', () => {
+  it('commits one durable opacity action when a slider gesture ends', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '50' } });
+    fireEvent.change(slider, { target: { value: '25' } });
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '25%');
+
+    fireEvent.pointerUp(slider);
+
+    expect(updateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('commits an opacity change on keyboard gesture completion', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '33' } });
+    fireEvent.keyUp(slider, { key: 'ArrowRight' });
+
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.33 }, SET_LAYER_OPACITY_ACTION);
+  });
+
+  it('discards an opacity draft when the slider gesture is cancelled', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    const slider = screen.getByRole('slider', { name: 'Opacity for Upper' });
+
+    fireEvent.change(slider, { target: { value: '33' } });
+    fireEvent.pointerCancel(slider);
+
+    expect(updateLayerMock).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute('aria-valuetext', '100%');
+  });
+
+  it('disables opacity changes for a locked layer', () => {
+    storeStateMock.layers.upper = { ...freshLayers().upper, locked: true };
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
-    fireEvent.change(screen.getByRole('slider', { name: 'Opacity for Upper' }), {
-      target: { value: '0.25' },
-    });
-
-    expect(updateLayerMock).toHaveBeenCalledWith('upper', { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+    expect(screen.getByRole('slider', { name: 'Opacity for Upper' })).toBeDisabled();
+    expect(updateLayerMock).not.toHaveBeenCalled();
   });
 
   it('selects a layer by clicking the row, for pointer users', () => {

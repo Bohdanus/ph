@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2608,91 +2608,6 @@ id; `e2e/global-setup.ts` — `refuseVisibleBrowser()`;
 `e2e/helpers/console-police.ts` — its "WHAT IS REPORTED BUT NOT FAILED" note
 
 ---
-
-## 142. `classify` reports the main worktree as `keep` while it holds the only copy of uncommitted work
-
-`scripts/lib/worktree-inventory/classify.mjs`'s `classify()` returns for the primary worktree before
-any
-tree-state check runs:
-
-```js
-if (wt.isPrimary) {
-  recommendation = live ? RECOMMENDATION.IN_USE : RECOMMENDATION.KEEP;
-  reasons.push('the main worktree is never a deletion candidate');
-}
-```
-
-`KEEP` maps to `ACTION.KEEP` in `classify()`'s one-decision `switch (recommendation)`, never
-`AT_RISK`. The `STATUS.UNCOMMITTED_ONLY` arm in `classify()` that produces `SALVAGE` → `AT_RISK` is
-downstream and never reached for the main checkout.
-
-**Observed, not inferred.** While correcting the `color`/`levels`/`transform` rail-removal decision
-record, `npm run test` failed with:
-
-```
-ph (curated: NONE): ahead=0 onMain=true dirty=3 untracked=0
-  -> status=landed recommendation=keep action=keep prunable=false
-  — readable, so this must be reported as at-risk, not as anything else
-```
-
-Three modified files in main, in no commit on any branch, classified as **keep**. The guard in
-`scripts/__tests__/worktree-inventory.test.mjs` — `describe('the duplicate-key reader, proven against
-injected shapes')` — caught it and the suite went green the
-moment the files were committed — which is the correct behaviour of the guard and the defect in
-`classify` at the same time.
-
-**Why it matters.** The inventory's stated purpose is to point an operator at work that exists in no
-commit and can therefore be lost. Main is the **most** likely place for that, not the least:
-`docs/ORCHESTRATION.md` — "Landing" records that other sessions commit into it concurrently, and its
-`git add -A` bullet documents a merge that silently reverted 17 files through it. A `keep` verdict is
-read as "this checkout is fine" by anything consuming the inventory, and the one checkout whose loss
-is
-catastrophic gets the verdict that says nothing needs attention. The `isPrimary` exemption is
-correct for **deletion** — the comment inside `classify()`'s `wt.isPrimary` branch is right that main
-is the landing site — but
-the branch conflates "not a deletion candidate" with "nothing to report".
-
-**Fix.** Keep the primary worktree out of every prune and dispose verdict, and make the dirty case
-fall through to the salvage path rather than short-circuiting it. The narrowest correct shape is to
-compute `uncommitted` first and let a primary worktree with a dirty tree reach the same
-`AT_RISK` verdict a secondary one gets, while a clean primary still reports `keep` for the reason it
-already gives. `wt.isPrimary` then needs to gate the _prune_ decision rather than the whole
-recommendation.
-
-**This entry is not a request to weaken a test.** The failing assertion is the guard working. Do not
-touch that guard in `worktree-inventory.test.mjs`; fix `classify`. Reproduce by editing any tracked
-file in
-main and running `npx vitest run scripts/__tests__/worktree-inventory.test.mjs`.
-
-**Files.** `scripts/lib/worktree-inventory/classify.mjs` — `classify()`, its `wt.isPrimary`
-early-return, its `STATUS.UNCOMMITTED_ONLY` salvage arm, its `STATUS.UNMERGED_WORK` arms and its
-one-decision `switch (recommendation)`;
-`scripts/__tests__/worktree-inventory.test.mjs` — the `it('declares no key twice, because a
-duplicate key silently discards a curation change')` title
-
-```
-docs(handoff): the AVIF timeout is a symlink artefact, and main's entry is correct
-
-Two audits disagreed about e2e/OPEN_PROBLEMS.md:705. The second measured the AVIF
-pair failing on a detached worktree of committed main and concluded the entry was
-falsified. The measurement was made through a symlinked node_modules, so Vite
-refused to serve the @jsquash avif_enc.wasm - the run's own [WebServer] log says so
-in one line - and the encoder never finished. With a real npm ci in the worktree the
-same specs pass on the same commit.
-
-Acting on the wrong conclusion would have replaced a correct entry with a wrong
-one, so the finding is recorded as a non-finding.
-
-diff --git a/HANDOFF.md b/HANDOFF.md
-index 772cc328..d599aa82 100644
---- a/HANDOFF.md
-+++ b/HANDOFF.md
-@@ -4471,3 +4471,47 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
-form of the same trap: they not only work, they work on the wrong files.
-
-**Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
-
-```
 
 ## 143. The AVIF export timeout is NOT a defect, and `e2e/OPEN_PROBLEMS.md`'s entry is correct — do not "correct" it
 

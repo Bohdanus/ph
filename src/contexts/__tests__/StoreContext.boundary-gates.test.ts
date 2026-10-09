@@ -7,7 +7,7 @@ import type { Action, PublicAction, StoreDispatch } from '../StoreContext.tsx';
 
 const srcDir = resolve(import.meta.dirname, '../..');
 const repoRoot = resolve(srcDir, '..');
-const forbiddenModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
+const forbiddenModules = ['replay-coordinator', 'replay-checkpoints'] as const;
 const materializationModule = 'materialization';
 
 /**
@@ -19,7 +19,7 @@ const materializationModule = 'materialization';
  * `it('keeps the deleted coordination modules deleted')` is what makes the retirement
  * verifiable rather than assumed.
  */
-const deletedModules = ['replay-coordinator', 'replay-checkpoints'] as const;
+const deletedModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
 
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 
@@ -275,7 +275,11 @@ type Equal<Left, Right> =
  * cannot reach them, and a census that stopped at the public 29 would pass over
  * exactly the arms nothing in production dispatches.
  */
-const INTERNAL_ACTION_TYPES = ['PUBLISH_RUNTIME_PRESENTATION', 'ADOPT_LAYER_BITMAPS'] as const;
+const INTERNAL_ACTION_TYPES = [
+  'PUBLISH_RUNTIME_PRESENTATION',
+  'ADOPT_LAYER_BITMAPS',
+  'SET_DURABLE_PRESENTATION',
+] as const;
 
 /**
  * The reducer's own body, sliced out of the module source.
@@ -376,10 +380,11 @@ describe('StoreContext boundary gates', () => {
     expect(walkedProductionModules()).toEqual(trackedProductionModules());
   });
 
-  // The forbidden set contains retired coordination and budget modules — `replay-budget`,
-  // `replay-coordinator`, and `replay-checkpoints`. The last two no longer exist as files;
-  // they are kept in the set so the gate still reports a reintroduction, which is what the
-  // synthetic specifiers in `it('reports a forbidden module from any module…')` exercise.
+  // The forbidden set contains retired coordination modules — `replay-coordinator` and
+  // `replay-checkpoints`. They no longer exist as files; they are kept in the set so the gate
+  // still reports a reintroduction, which is what the synthetic specifiers in
+  // `it('reports a forbidden module from any module…')` exercise. The dormant replay budget is
+  // covered by `deletedModules` below.
   // `materialization.ts` is intentionally excluded: the durable compositor is its one allowed
   // production boundary. `presentation-evaluator.ts` is imported by production on purpose
   // (`layer-renderer.ts` and `useLayer.ts` — `operationsRetainedAfterBake()`, and
@@ -411,6 +416,7 @@ describe('StoreContext boundary gates', () => {
   it('routes production durable materialization only through the compositor boundary', () => {
     expect(materializationProductionImports().map(({ file, specifier }) => ({ file, specifier }))).toEqual([
       { file: 'src/contexts/durable-compositor.ts', specifier: './materialization.ts' },
+      { file: 'src/contexts/durable-presentation.ts', specifier: './materialization.ts' },
     ]);
   });
 
@@ -430,6 +436,19 @@ describe('StoreContext boundary gates', () => {
       dispatch({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers: {} } });
       // @ts-expect-error internal bitmap adoption is not a public store action
       dispatch({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [] } });
+      const setDurablePresentationAction = {
+        type: 'SET_DURABLE_PRESENTATION',
+        payload: {
+          documentId: '',
+          documentRevision: 0,
+          branchRevision: 0,
+          historyIndex: 0,
+          durableRevision: 0,
+          record: { status: 'unpublished', cursor: null, layerIds: [], reason: null },
+        },
+      };
+      // @ts-expect-error internal durable presentation is not a public store action
+      dispatch(setDurablePresentationAction);
     };
     void typeProbe;
   });

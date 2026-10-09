@@ -8,6 +8,27 @@ export type DurableCompositorRequest = Omit<MaterializationRequest, 'frame'> &
     frame?: DocumentFrame;
   }>;
 
+export type DurableCompositionRefusalCode = 'materialization-refused' | 'layer-coverage' | 'renderer-incompatible';
+
+export class DurableCompositionRefusal extends Error {
+  readonly code: DurableCompositionRefusalCode;
+  readonly missingLayerIds: readonly string[];
+  readonly unexpectedLayerIds: readonly string[];
+
+  constructor(
+    code: DurableCompositionRefusalCode,
+    message: string,
+    missingLayerIds: readonly string[] = [],
+    unexpectedLayerIds: readonly string[] = []
+  ) {
+    super(message);
+    this.name = 'DurableCompositionRefusal';
+    this.code = code;
+    this.missingLayerIds = Object.freeze([...missingLayerIds]);
+    this.unexpectedLayerIds = Object.freeze([...unexpectedLayerIds]);
+  }
+}
+
 export type DurableComposite = Readonly<{
   bitmap: BitmapSource;
   frame: DocumentFrame;
@@ -57,6 +78,29 @@ function orderedLayers(replay: DurableReplayResult): readonly string[] {
     .map((layer) => layer.snapshot.id);
 }
 
+function requireVisibleLayerCoverage(
+  replay: DurableReplayResult,
+  materialized: Readonly<Record<string, MaterializedLayer>>
+): void {
+  const expected = orderedLayers(replay).filter((layerId) => replay.layers[layerId]?.snapshot.visible);
+  const actual = Object.keys(materialized);
+  const missing = expected.filter((layerId) => !materialized[layerId]);
+  const unexpected = actual.filter((layerId) => !replay.layers[layerId]?.snapshot.visible);
+  if (missing.length === 0 && unexpected.length === 0 && actual.length === expected.length) return;
+
+  const parts = [
+    'Durable composition refused because visible materialization coverage is incomplete',
+    missing.length > 0 ? `missing: ${missing.join(', ')}` : '',
+    unexpected.length > 0 ? `unexpected: ${unexpected.join(', ')}` : '',
+  ].filter(Boolean);
+  throw new DurableCompositionRefusal(
+    missing.length > 0 ? 'materialization-refused' : 'layer-coverage',
+    parts.join('; '),
+    missing,
+    unexpected
+  );
+}
+
 /**
  * Composes successful per-layer materializations into one document-frame bitmap.
  * `materializeDocument` deliberately returns only layers that could be rendered;
@@ -74,6 +118,7 @@ export async function composeDurableDocument(
   let bitmap: BitmapSource;
 
   try {
+    requireVisibleLayerCoverage(replay, materialized.layers);
     const canvas = createCanvas(frame.width, frame.height);
     const context = context2d(canvas);
     for (const layerId of orderedLayers(replay)) {

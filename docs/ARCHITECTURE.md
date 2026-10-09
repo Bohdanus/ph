@@ -9,47 +9,47 @@ This page is about how.
 ## The one fact that costs newcomers the most
 
 **`store.durableDocument` is a complete, correctly-typed, fully-populated
-document that is not the truth.**
+document whose authority is surface-specific during the staged cutover.**
 
 It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
-rebuilt on every commit and every navigation. `durableDocument` itself is read at
-exactly one place — `StoreContext.tsx`. Four comments across three files say so,
-and a newcomer who reads `src/contexts/history-model.ts` first will conclude the
-opposite.
+rebuilt on every commit and every navigation. Successful supported navigation and
+export consume its materialized projection; logical append/preview editing and
+unsupported documents retain the legacy compatibility path.
 
 `durableStatus` is a second thing and has its own readers: `DevStatusStrip` and
 the crash screen display it, so "read at one place" is a claim about
 `durableDocument`, not about the shadow as a whole.
 
-The corollary is the one that bites: **`store.history` is the only thing that
-rendering, export and undo read, and it stores args, never pixels.** Undo re-runs
-the tool processors. It is not an inverse operation and it is not incremental.
+The corollary is the one that still bites: **`store.history` remains the logical
+timeline for append, branch, and compatibility fallback, and it stores args,
+never pixels.** Durable navigation uses the materialized projection; preview and
+legacy fallback still re-run the tool processors. Undo and compatibility replay
+are processor replays, not inverse or incremental operations.
 
 Evidence, all three current:
 
 - `src/contexts/StoreContext.tsx` — the doc comment on `StoreData`'s
-  `durableDocument` field — _"Diagnostic shadow only; legacy history/runtime
-  layers remain authoritative during cutover."_
+  `durableDocument` field — _"Durable logical document used by successful
+  navigation/export; legacy history remains the structural fallback."_
 - `src/contexts/StoreContext.tsx` — the doc comment on the `durableStatus` field
   beside it — _"A non-current sidecar must never be used as a replay or export
   input."_
-- `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — _"Navigation
-  therefore replays the legacy runtime representation and lets StoreContext
-  rebuild the sidecar."_
+- `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — the durable
+  publication is awaited and legacy replay is painted only for the fallback
+  outcome.
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
 `StoreContext.tsx`'s `publishDurableNavigationPresentation()` calls
-`composeDurableDocument()` on the navigation path, so the durable document now
-feeds a presentation cache. It does not feed logical state — the composition is
-staged off-tree, every layer is checked by `durablePresentationIsRendererIdentical()`
-against the legacy replay and a mismatch is declined, and the publication goes
-through `PUBLISH_RUNTIME_PRESENTATION`, whose `layersDifferOnlyByPresentation()`
-guard refuses any logical movement. `publishDurableNavigationPresentation()` also
-returns early while any snapshot in the replay carries a `'legacy-tool'` source,
-so the durable presentation is skipped outright for a document still holding a
-legacy tool snapshot.
+`composeDurableDocument()` on the navigation path, so the durable document feeds
+the normal supported-navigation presentation. It does not replace logical state:
+the composition is staged off-tree, every layer is checked by
+`durablePresentationIsRendererIdentical()` against the legacy structural replay,
+and publication goes through `PUBLISH_RUNTIME_PRESENTATION`, whose
+`layersDifferOnlyByPresentation()` guard refuses logical movement. The awaitable
+publication returns a durable outcome or a complete legacy fallback; any replay
+carrying a `'legacy-tool'` source selects the latter.
 
 The requirements and staged cutover sequence are owned by
 [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md). This page records the current

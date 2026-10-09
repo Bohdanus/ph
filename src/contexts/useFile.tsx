@@ -18,6 +18,12 @@ import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { NewDocumentBlankParams } from './tool-types.ts';
 import { stripOutputFileExtension } from '../constants/imageFormats.ts';
+import { useOptionalStore } from './StoreContext.tsx';
+import { composeDurableDocument } from './durable-compositor.ts';
+import { replayDurableAtCursor } from './durable-replay.ts';
+import { getAssetRegistry } from './asset-registry.ts';
+import { durableExportRecords } from './export-canvas.ts';
+import { documentFrameEquals } from './document-frame.ts';
 
 export type ImageUploadResponse =
   | { fileName: string; document: PsdDocument }
@@ -52,6 +58,12 @@ type FileProviderProps = PropsWithChildren;
 
 // FileProvider is a persistent provider that owns the hidden DOM used for file I/O
 export const FileProvider = ({ children }: FileProviderProps) => {
+  const storeContext = useOptionalStore();
+  const store = storeContext?.[0] ?? null;
+  const latestStoreRef = useRef(store);
+  useEffect(() => {
+    latestStoreRef.current = store;
+  }, [store]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [showNewDialog, setShowNewDialog] = useState(false);
@@ -129,16 +141,70 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   );
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
+    let durableComposite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
     try {
       const { layers, size, documentFrame } = fileInput!;
+      let exportLayers = layers;
+      let exportSize = size;
+      let exportFrame = documentFrame;
+      const current = latestStoreRef.current;
+      const frameMatches =
+        documentFrame && current?.documentFrame
+          ? documentFrameEquals(documentFrame, current.documentFrame)
+          : documentFrame === current?.documentFrame;
+      if (
+        current?.durableStatus === 'current' &&
+        current.durableDocument &&
+        current.durableDocument.cursor === current.historyIndex &&
+        current.durableDocument.documentId === current.documentId &&
+        current.durableDocument.documentRevision === current.documentRevision &&
+        current.durableDocument.branchRevision === current.branchRevision &&
+        layers === current.layers &&
+        size.width === current.totalSize.width &&
+        size.height === current.totalSize.height &&
+        frameMatches
+      ) {
+        try {
+          const replay = replayDurableAtCursor(current.durableDocument, current.durableDocument.cursor);
+          durableComposite = await composeDurableDocument(replay, {
+            documentId: current.documentId,
+            baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
+            operationSetRevision: current.durableDocument.durableRevision,
+            assetRegistry: getAssetRegistry(),
+          });
+          const records = durableExportRecords(replay, durableComposite);
+          const latest = latestStoreRef.current;
+          if (
+            !latest ||
+            latest.durableStatus !== 'current' ||
+            latest.durableDocument?.durableRevision !== current.durableDocument.durableRevision ||
+            latest.historyIndex !== current.historyIndex ||
+            latest.documentRevision !== current.documentRevision ||
+            latest.branchRevision !== current.branchRevision
+          ) {
+            durableComposite.release();
+            durableComposite = undefined;
+          } else {
+            exportLayers = records.layers;
+            exportSize = records.size;
+            exportFrame = records.frame;
+          }
+        } catch {
+          durableComposite?.release();
+          durableComposite = undefined;
+        }
+      }
+
       if (format === 'psd') {
         const { savePsd } = await import('./psd-utils.ts');
-        const buffer = documentFrame ? await savePsd(layers, size, documentFrame) : await savePsd(layers, size);
+        const buffer = exportFrame
+          ? await savePsd(exportLayers, exportSize, exportFrame)
+          : await savePsd(exportLayers, exportSize);
         downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
       } else {
         // Rendered here rather than handed in, so the encoded pixels are the DOCUMENT at
         // DOCUMENT resolution whatever the display canvas is doing. See export-canvas.ts.
-        await saveImageToDisk(renderExportCanvas(layers, size, documentFrame), fileName, format, quality);
+        await saveImageToDisk(renderExportCanvas(exportLayers, exportSize, exportFrame), fileName, format, quality);
       }
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
@@ -160,6 +226,8 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
       throw error;
+    } finally {
+      durableComposite?.release();
     }
   }
 

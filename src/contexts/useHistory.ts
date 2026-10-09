@@ -10,6 +10,8 @@ import { SET_DOCUMENT_FRAME_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
+import type { DurableDocument } from './history-model.ts';
+import { durableEntryTitle } from './history-provenance.ts';
 import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
@@ -29,6 +31,99 @@ export function getHistoryItemTitle(item: HistoryItem) {
   return actionName;
 }
 
+export type HistoryPanelRow = Readonly<{
+  item: HistoryItem;
+  originalIndex: number;
+  title: string | undefined;
+  isActive: boolean;
+  isCurrent: boolean;
+}>;
+
+export type HistoryPanelProjection = Readonly<{
+  source: 'legacy' | 'durable';
+  rows: readonly HistoryPanelRow[];
+}>;
+
+export type HistoryPanelProjectionInput = Readonly<{
+  history: readonly HistoryItem[];
+  historyIndex: number;
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  durableStatus?: string;
+  durableDocument?: DurableDocument | null;
+}>;
+
+function legacyHistoryPanelRows(history: readonly HistoryItem[], historyIndex: number): readonly HistoryPanelRow[] {
+  return Object.freeze(
+    history.map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      title: getHistoryItemTitle(item),
+      isActive: originalIndex <= historyIndex,
+      isCurrent: originalIndex === historyIndex,
+    }))
+  );
+}
+
+function hasUniqueIds(ids: readonly string[]): boolean {
+  return new Set(ids).size === ids.length;
+}
+
+/**
+ * Selects one complete history-panel authority. Durable rows are admitted only
+ * when they are a one-to-one, title/effective-enabled-state match for legacy
+ * rows. The opening document row has no durable entry, so ordinary timelines
+ * intentionally remain on the complete legacy projection.
+ */
+export function selectHistoryPanelProjection(input: HistoryPanelProjectionInput): HistoryPanelProjection {
+  const legacyRows = legacyHistoryPanelRows(input.history, input.historyIndex);
+  const durable = input.durableDocument;
+  if (
+    input.durableStatus !== 'current' ||
+    !durable ||
+    durable.documentId !== input.documentId ||
+    durable.documentRevision !== input.documentRevision ||
+    durable.branchRevision !== input.branchRevision ||
+    durable.history.length !== input.history.length ||
+    durable.cursor !== input.historyIndex ||
+    (input.history.length === 0
+      ? input.historyIndex !== -1
+      : input.historyIndex < 0 || input.historyIndex >= input.history.length)
+  ) {
+    return { source: 'legacy', rows: legacyRows };
+  }
+
+  const legacyIds = input.history.map((item) => item.id);
+  const durableIds = durable.history.map((entry) => entry.id);
+  if (!hasUniqueIds(legacyIds) || !hasUniqueIds(durableIds)) {
+    return { source: 'legacy', rows: legacyRows };
+  }
+
+  const durableRows: HistoryPanelRow[] = [];
+  for (let index = 0; index < input.history.length; index += 1) {
+    const item = input.history[index];
+    const entry = durable.history[index];
+    if (!item || !entry || item.id !== entry.id || !entry.provenance) {
+      return { source: 'legacy', rows: legacyRows };
+    }
+    const legacyTitle = getHistoryItemTitle(item);
+    const durableTitle = durableEntryTitle(entry.provenance);
+    if (legacyTitle !== durableTitle || Boolean(item.disabled) !== !entry.enabled) {
+      return { source: 'legacy', rows: legacyRows };
+    }
+    durableRows.push({
+      item,
+      originalIndex: index,
+      title: durableTitle,
+      isActive: index <= input.historyIndex,
+      isCurrent: index === input.historyIndex,
+    });
+  }
+
+  return { source: 'durable', rows: Object.freeze(durableRows) };
+}
+
 export const useHistory = () => {
   const [
     {
@@ -40,7 +135,12 @@ export const useHistory = () => {
       totalSize: currentSize,
       documentFrame: currentDocumentFrame,
       branchRevision = 0,
+      durableDocument,
+      durableStatus,
+      documentId,
+      documentRevision,
       clearPreviewLayers,
+      publishDurableNavigationPresentation,
     },
     dispatch,
   ] = useStore();
@@ -72,11 +172,15 @@ export const useHistory = () => {
     return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame);
   }
 
-  function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
+  async function resetHistoryTo(
+    targetIndex: number,
+    _history: HistoryItem[] = history,
+    _branchRevision = branchRevision
+  ) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return Promise.resolve();
-    // Durable replay remains a diagnostic shadow until every pixel consumer
-    // uses the same materialization contract. Navigation therefore replays the
-    // legacy runtime representation and lets StoreContext rebuild the sidecar.
+    // Legacy replay remains the structural substrate and complete fallback. The
+    // durable publication paints the normal path when every identity, coverage,
+    // and materialization gate succeeds.
     try {
       const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
       const replay = replayHistory(
@@ -123,10 +227,6 @@ export const useHistory = () => {
         activeLayerId && replay.layers[activeLayerId]
           ? activeLayerId
           : (sortedLayers[sortedLayers.length - 1]?.id ?? null);
-      if (!drawReplay(replay.layers, replay.documentFrame)) {
-        throw new Error('Unable to publish replayed history presentation');
-      }
-
       dispatch({
         type: 'APPLY_HISTORY_REPLAY',
         payload: {
@@ -142,6 +242,18 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      const outcome = publishDurableNavigationPresentation
+        ? await publishDurableNavigationPresentation()
+        : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
+      if (outcome.status === 'stale') return;
+      const painted =
+        outcome.status === 'durable'
+          ? (() => {
+              const canvas = canvasRef.current;
+              return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame);
+            })()
+          : drawReplay(replay.layers, replay.documentFrame);
+      if (!painted) throw new Error('Unable to publish replayed history presentation');
       // Dropped HERE, after the replay has been published and applied, and not
       // ahead of it. A navigation that throws — a converter refusal, a tool
       // processor, a refused publication — leaves the visible canvas and the
@@ -200,5 +312,14 @@ export const useHistory = () => {
     redo,
     resetHistoryTo,
     toggleDisabled,
+    historyPanelProjection: selectHistoryPanelProjection({
+      history,
+      historyIndex,
+      documentId,
+      documentRevision,
+      branchRevision,
+      durableStatus,
+      durableDocument,
+    }),
   };
 };

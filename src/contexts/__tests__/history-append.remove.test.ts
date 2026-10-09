@@ -144,10 +144,13 @@ describe('remove-layer append boundary', () => {
       // Hand-written expected shape. The parity assertion above can only prove the
       // two implementations agree; these values are what "agree" has to mean, so a
       // wrong rule on both sides still fails here.
+      // provenance carries the legacy actionName so the history panel can label
+      // the removal without re-opening the legacy entry.
       expect(derived).toEqual({
         id: 'remove-layer-1',
         schemaVersion: DURABLE_SCHEMA_VERSION,
         enabled: true,
+        provenance: { actionName: REMOVE_ACTION },
         operation: { kind: 'remove-layer', layerId: 'layer-1' },
       });
     });
@@ -360,6 +363,7 @@ describe('remove-layer append boundary', () => {
         id: 'remove-layer-1',
         schemaVersion: DURABLE_SCHEMA_VERSION,
         enabled: true,
+        provenance: { actionName: REMOVE_ACTION },
         operation: { kind: 'remove-layer', layerId: 'layer-1' },
       });
       expect(Object.isFrozen(result.durableEntry!.operation)).toBe(true);

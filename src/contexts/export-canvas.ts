@@ -2,8 +2,47 @@ import type { DocumentFrame } from './document-frame.ts';
 import { documentFrameFromSize, documentFrameSize, isValidDocumentFrame } from './document-frame.ts';
 import type { LayersRecord } from './layer-types.ts';
 import type { Size } from './general-types.ts';
+import type { DurableComposite } from './durable-compositor.ts';
+import type { DurableReplayResult } from './durable-replay.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { getSortedLayersArray } from './layer-utils.ts';
+
+export type DurableExportRecords = Readonly<{
+  layers: LayersRecord;
+  size: Size;
+  frame: DocumentFrame;
+}>;
+
+/**
+ * Adapts a complete durable replay/materialization pair to the existing raster
+ * and PSD export contracts. The composite owns the bitmaps; this adapter only
+ * borrows them until the caller releases the composite after encoding.
+ */
+export function durableExportRecords(replay: DurableReplayResult, composite: DurableComposite): DurableExportRecords {
+  const layers: LayersRecord = {};
+  for (const { snapshot } of Object.values(replay.layers)) {
+    const materialized = composite.layers[snapshot.id];
+    layers[snapshot.id] = {
+      id: snapshot.id,
+      name: snapshot.name,
+      isBedrock: snapshot.isBedrock,
+      bitmap: null,
+      tmpCanvas: materialized?.bitmap ?? null,
+      visible: snapshot.visible,
+      opacity: snapshot.opacity,
+      locked: snapshot.locked,
+      blendMode: snapshot.blendMode,
+      order: snapshot.order,
+      pos: materialized?.bounds ?? snapshot.pos,
+      operations: [],
+    };
+  }
+  return {
+    layers,
+    size: documentFrameSize(replay.frame),
+    frame: replay.frame,
+  };
+}
 
 /**
  * Builds the surface a raster export encodes from.

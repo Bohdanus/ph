@@ -652,6 +652,7 @@ describe('durable entry id uniqueness', () => {
           id: 'blur-edit',
           schemaVersion: 1,
           enabled: true,
+          provenance: { actionName: TOOL_ACTION, toolName: 'blur' },
           operation: {
             kind: 'apply-filter',
             layerId,
@@ -662,6 +663,7 @@ describe('durable entry id uniqueness', () => {
           id: 'color-edit',
           schemaVersion: 1,
           enabled: true,
+          provenance: { actionName: TOOL_ACTION, toolName: 'color' },
           operation: {
             kind: 'apply-filter',
             layerId,
