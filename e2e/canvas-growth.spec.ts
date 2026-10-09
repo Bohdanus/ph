@@ -36,9 +36,9 @@ async function backingStore(page: Page): Promise<Size> {
   });
 }
 
-/** The Footer's `totalSize` readout, read as text so it is an independent second source. */
+/** The Footer's `totalSize` readout, excluding the independent development status seam. */
 async function footerDimensions(page: Page): Promise<string> {
-  const text = await page.locator('footer').textContent();
+  const text = await page.getByTestId('footer-dimensions').textContent();
   return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 

@@ -28,6 +28,6 @@ export function durableEntryTitle(provenance: DurableEntryProvenance): string | 
   if (provenance.toolName !== undefined) return provenance.toolName;
   if (provenance.actionName === TOOL_ACTION) return undefined;
   if (provenance.actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
-  if (provenance.actionName === SET_LAYER_OPACITY_ACTION) return 'Set Opacity';
+  if (provenance.actionName === SET_LAYER_OPACITY_ACTION) return 'set layer opacity';
   return provenance.actionName;
 }

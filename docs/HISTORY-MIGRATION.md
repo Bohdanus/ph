@@ -156,11 +156,10 @@ variant or an equivalent atomic history action.
    raster append path and the navigation presentation mount are closed, and the
    §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
-   planned, replayed and cloned. Logical replay parity and a pixel/export
-   differential both exist; what is still owed is the two scenarios jsdom cannot
-   render in either direction (§206), history-panel parity (§207), options-bar
-   rehydration, the browser authority seam (§203), and the pinned `args.enabled`
-   divergence.
+   planned, replayed and cloned. Logical replay parity, history-panel parity, and
+   the browser authority seam now exist alongside the pixel/export differential;
+   what is still owed is the two scenarios jsdom cannot render in either direction,
+   options-bar rehydration, and the pinned `args.enabled` divergence.
    Do not read the landed operation as a closed requirement; the
    operator's ruling was that the operation and its visible consumer land as one
    slice, and the consumer is still legacy-sourced.

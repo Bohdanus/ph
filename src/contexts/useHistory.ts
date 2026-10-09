@@ -26,7 +26,7 @@ export function getHistoryItemTitle(item: HistoryItem) {
   }
 
   if (actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
-  if (actionName === SET_LAYER_OPACITY_ACTION) return 'Set Opacity';
+  if (actionName === SET_LAYER_OPACITY_ACTION) return 'set layer opacity';
 
   return actionName;
 }
