@@ -65,6 +65,7 @@ import {
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
+import { buildDurablePresentationProjection, DurablePresentationProjectionRefusal } from './durable-presentation.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -1182,6 +1183,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
       }
       detached = composite.takeLayers();
+      const projection = buildDurablePresentationProjection(replay, detached.layers);
       const latest = latestStateRef.current;
       const nextLayers = { ...latest.layers };
       const visibleLayerIds = Object.values(replay.layers)
@@ -1200,7 +1202,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
       }
       for (const layerId of visibleLayerIds) {
-        const materialized = detached.layers[layerId];
+        const materialized = projection.layers[layerId];
         if (!materialized) {
           failureReason = 'layer-coverage';
           throw new DurableCompositionRefusal('layer-coverage', `Durable navigation layer ${layerId} is missing`);
@@ -1233,7 +1235,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         );
       }
 
-      for (const materialized of Object.values(detached.layers)) {
+      for (const layerId of projection.visibleLayerIds) {
+        const materialized = projection.layers[layerId];
+        if (!materialized.bitmap || !materialized.lease) continue;
         presentationScope.trackPublishedLease(state.documentId, materialized.bitmap, materialized.lease.release);
       }
       const action: Extract<InternalAction, { type: 'PUBLISH_RUNTIME_PRESENTATION' }> = {
@@ -1252,7 +1256,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       detached = undefined;
     } catch (error) {
       detached?.release();
-      const reason = error instanceof DurableCompositionRefusal ? error.code : failureReason;
+      const reason =
+        error instanceof DurableCompositionRefusal
+          ? error.code
+          : error instanceof DurablePresentationProjectionRefusal
+            ? 'layer-coverage'
+            : failureReason;
       publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason });
     } finally {
       composite?.release();
