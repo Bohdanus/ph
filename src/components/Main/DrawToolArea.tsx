@@ -23,6 +23,10 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
   const args = toolArgs as DrawToolArgs;
   const pointsRef = useRef<Point[]>([]);
+  const pointTimesRef = useRef<number[]>([]);
+  const currentPointRef = useRef<Point | null>(null);
+  const sprayStartedAtRef = useRef<number | null>(null);
+  const sprayStrokeActiveRef = useRef(false);
   const frameRequested = useRef<number | null>(null);
   /**
    * The pointer id this component's own claim was taken with. The cancel handler and the unmount
@@ -35,6 +39,26 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     ref: containerRef,
     imageSize: totalSize,
   });
+
+  const appendSpraySample = (point: Point, time: number) => {
+    const startedAt = sprayStartedAtRef.current;
+    if (startedAt === null) return;
+
+    // Preserve the initial dab, then extend one stationary endpoint so held Flow accrues without
+    // storing a point for every animation frame.
+    const elapsed = Math.max(pointTimesRef.current[pointTimesRef.current.length - 1] ?? 0, time - startedAt);
+    const points = pointsRef.current;
+    const lastPoint = points[points.length - 1];
+    if (!lastPoint || lastPoint.x !== point.x || lastPoint.y !== point.y) {
+      points.push(point);
+      pointTimesRef.current.push(elapsed);
+    } else if (points.length === 1 && elapsed > (pointTimesRef.current[0] ?? 0)) {
+      points.push(point);
+      pointTimesRef.current.push(elapsed);
+    } else if (points.length > 1) {
+      pointTimesRef.current[pointTimesRef.current.length - 1] = elapsed;
+    }
+  };
 
   // One stroke, one bracket, one repaint. `drawLine` re-strokes the whole accumulated path on
   // every call, so the repaint is coalesced into a single animation frame exactly as
@@ -49,15 +73,23 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
   // live inside `setupDrawCtx` itself: `drawLine` reads what it wrote, and this function is called
   // once per frame against one context. Bracketing per paint also means no save level can outlive
   // the gesture, whatever happens to the pointer.
-  const flushDrawingFrame = () => {
+  const flushDrawingFrame = (frameTime?: number) => {
     frameRequested.current = null;
+
+    if (frameTime !== undefined && sprayStrokeActiveRef.current && currentPointRef.current) {
+      appendSpraySample(currentPointRef.current, frameTime);
+    }
 
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
 
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);
 
-    const drawArgs = { ...args, points: pointsRef.current };
+    const drawArgs = {
+      ...args,
+      points: pointsRef.current,
+      ...(args.penType === 'spray' ? { pointTimes: pointTimesRef.current } : {}),
+    };
     ctx.save();
     try {
       setupDrawCtx(ctx, drawArgs);
@@ -67,6 +99,10 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       });
     } finally {
       ctx.restore();
+    }
+
+    if (sprayStrokeActiveRef.current) {
+      frameRequested.current = requestAnimationFrame(flushDrawingFrame);
     }
   };
 
@@ -90,17 +126,28 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       claimedPointerIdRef.current = event.pointerId;
     }
 
-    pointsRef.current = [getLocalCoords(event)];
+    const point = getLocalCoords(event);
+    pointsRef.current = [point];
+    currentPointRef.current = point;
+    pointTimesRef.current = args.penType === 'spray' ? [0] : [];
+    sprayStartedAtRef.current = args.penType === 'spray' ? performance.now() : null;
+    sprayStrokeActiveRef.current = args.penType === 'spray';
 
     // Synchronous, deliberately: this is the only paint a single-point stroke gets, and waiting
     // for a frame would leave a click with no visible mark until the pointer moved again.
     flushDrawingFrame();
+    if (sprayStrokeActiveRef.current && frameRequested.current === null) {
+      frameRequested.current = requestAnimationFrame(flushDrawingFrame);
+    }
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
 
-    pointsRef.current.push(getLocalCoords(event));
+    const point = getLocalCoords(event);
+    currentPointRef.current = point;
+    if (sprayStrokeActiveRef.current) appendSpraySample(point, performance.now());
+    else pointsRef.current.push(point);
 
     if (frameRequested.current !== null) return;
 
@@ -114,6 +161,8 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     // hand the document back on the first pointer's behalf, and this runs before every early return
     // in the commit path below.
     releaseDocumentClaim();
+    const wasSpray = sprayStrokeActiveRef.current;
+    sprayStrokeActiveRef.current = false;
 
     // Cancel AND null, as `useRect` does. Nulling alone would leave `frameRequested`
     // permanently non-null and every later drag's preview silently dropped; cancelling alone would
@@ -125,8 +174,11 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     }
 
     const coords = getLocalCoords(event);
+    currentPointRef.current = coords;
     const lastPoint = pointsRef.current[pointsRef.current.length - 1];
-    if (!lastPoint || lastPoint.x !== coords.x || lastPoint.y !== coords.y) {
+    if (wasSpray) {
+      appendSpraySample(coords, performance.now());
+    } else if (!lastPoint || lastPoint.x !== coords.x || lastPoint.y !== coords.y) {
       pointsRef.current.push(coords);
     }
 
@@ -134,7 +186,11 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     const pos = pointsBoundingPosOutward({ points: oldPoints, lineWidth: args.lineWidth });
     const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
 
-    const finalArgs = { ...args, points: newPoints };
+    const finalArgs = {
+      ...args,
+      points: newPoints,
+      ...(wasSpray ? { pointTimes: [...pointTimesRef.current] } : {}),
+    };
     const fullArgs: FullArgs = {
       args: finalArgs,
       pos,
@@ -143,6 +199,9 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     createLayerFromTool(fullArgs);
 
     pointsRef.current = [];
+    pointTimesRef.current = [];
+    currentPointRef.current = null;
+    sprayStartedAtRef.current = null;
     overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
   };
 
@@ -150,6 +209,19 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
     // so a claim left open here would gate every later keystroke for a stroke that does not exist.
     releaseDocumentClaim();
+    const wasSpray = sprayStrokeActiveRef.current;
+    sprayStrokeActiveRef.current = false;
+    if (wasSpray) {
+      if (frameRequested.current !== null) {
+        cancelAnimationFrame(frameRequested.current);
+        frameRequested.current = null;
+      }
+      pointsRef.current = [];
+      pointTimesRef.current = [];
+      currentPointRef.current = null;
+      sprayStartedAtRef.current = null;
+      overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
+    }
   };
 
   useEffect(() => {
@@ -162,6 +234,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       // An unmount between claim and commit is an abort like any other. Paired with the provider-level
       // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
       releaseDocumentClaim();
+      sprayStrokeActiveRef.current = false;
 
       // Cancel FIRST, then clear: a frame still queued for `flushDrawingFrame` would otherwise
       // repaint the stroke AFTER the clear and resurrect it. Cancel AND null, as the pointer-up

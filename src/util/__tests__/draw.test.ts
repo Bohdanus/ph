@@ -226,6 +226,50 @@ describe('drawSpray', () => {
     expect(ctx.arc).toHaveBeenCalledTimes(2);
     expect(ctx.fill).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps the initial tap unchanged and scales later deposits by Flow and elapsed time', () => {
+    const ctx = makeMockCtx();
+    const gradients: CanvasGradient[] = [];
+    vi.spyOn(ctx, 'createRadialGradient').mockImplementation(() => {
+      const gradient: CanvasGradient = { addColorStop: vi.fn() };
+      gradients.push(gradient);
+      return gradient;
+    });
+    const args = {
+      points: [
+        { x: 5, y: 5 },
+        { x: 5, y: 5 },
+      ],
+      pointTimes: [0, 8.3],
+      alpha: 0.8,
+      flow: 50,
+      color: '#ff0000',
+      lineWidth: 10,
+      toolName: 'draw' as const,
+      penType: 'spray' as const,
+    };
+
+    drawSpray({ args, ctx });
+
+    const rgb = hexToRgb('#ff0000');
+    expect(gradients[0].addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32)`);
+    expect(gradients[1].addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.16)`);
+
+    const slower = makeMockCtx();
+    const slowerGradient: CanvasGradient = { addColorStop: vi.fn() };
+    vi.spyOn(slower, 'createRadialGradient').mockReturnValue(slowerGradient);
+    drawSpray({
+      args: { ...args, flow: 25, pointTimes: [0, 16.6] },
+      ctx: slower,
+    });
+    expect(slowerGradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.1536)`);
+
+    const tap = makeMockCtx();
+    const tapGradient: CanvasGradient = { addColorStop: vi.fn() };
+    vi.spyOn(tap, 'createRadialGradient').mockReturnValue(tapGradient);
+    drawSpray({ args: { ...args, points: [args.points[0]], pointTimes: [0], flow: 1 }, ctx: tap });
+    expect(tapGradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32)`);
+  });
 });
 
 describe('drawLine', () => {

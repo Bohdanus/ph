@@ -1,6 +1,7 @@
 import { cloneDeep } from 'lodash-es';
 
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
+import { PAINT_FLOW_DEFAULT } from '../util/brush-airbrush.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
 import { AUTO_LEADING } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
@@ -46,13 +47,13 @@ import type { SpotHealingToolArgs } from './spotHealing.ts';
 import type { HealingBrushToolArgs } from './healingBrush.ts';
 import type { PatchToolArgs } from './patch.ts';
 
-type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
+type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'pointTimes' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
 
 export const savedDrawPerPen: Record<PenType, PenSettings> = {
   pen: { alpha: 0.9, lineWidth: 10 },
   'pen-dashed': { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] },
-  spray: { alpha: 0.5, lineWidth: 100 },
+  spray: { alpha: 0.5, flow: PAINT_FLOW_DEFAULT, lineWidth: 100 },
 };
 
 export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {

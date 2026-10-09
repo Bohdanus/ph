@@ -318,7 +318,7 @@ describe('saveLastSettings tool-name coverage', () => {
 const penPresets: readonly [PenType, Record<string, unknown>][] = [
   ['pen', { alpha: 0.9, lineWidth: 10 }],
   ['pen-dashed', { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] }],
-  ['spray', { alpha: 0.5, lineWidth: 100 }],
+  ['spray', { alpha: 0.5, flow: 50, lineWidth: 100 }],
 ];
 
 const figurePresets: readonly [FigureType, Record<string, unknown>][] = [

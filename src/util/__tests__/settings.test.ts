@@ -852,7 +852,7 @@ describe('defaultSettings and lastSavedSettings', () => {
   it('savedDrawPerPen has entries for all pen types', () => {
     expect(savedDrawPerPen.pen).toMatchObject({ alpha: 0.9, lineWidth: 10 });
     expect(savedDrawPerPen['pen-dashed']).toMatchObject({ alpha: 0.9, lineWidth: 10, lineDash: [5, 30] });
-    expect(savedDrawPerPen.spray).toMatchObject({ alpha: 0.5, lineWidth: 100 });
+    expect(savedDrawPerPen.spray).toMatchObject({ alpha: 0.5, flow: 50, lineWidth: 100 });
   });
 
   it('savedArgsPerFigure has entries for all figure types', () => {
