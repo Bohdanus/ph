@@ -12,6 +12,7 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 | [`DOCUMENTATION.md`](DOCUMENTATION.md)               | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
 | [`OVERRIDES.md`](OVERRIDES.md)                       | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
 | [`FEATURES.md`](FEATURES.md)                         | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)             | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)                 | What the code is and how it fits together                                                  |
 | [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)       | Durable-history requirements, sequencing, and operator gates                               |
 | [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md) | Fetched Adobe evidence and processed Layers/History panel summary                          |
