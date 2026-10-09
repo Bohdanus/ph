@@ -358,12 +358,21 @@ React.
 
 ## Visual regression tests
 
-`e2e/export/visual-regression.spec.ts` compares exported images against committed
-baseline snapshots.
+`e2e/export/visual-regression.spec.ts` contains two kinds of tests:
+
+- **OS-specific visual regression tests** — compare exported images against committed
+  platform-specific baseline snapshots. These must be re-recorded per operating system.
+- **OS-agnostic tests** — tagged `@os-agnostic` in the test name, these verify geometric
+  and logical properties (layout independence, document-space mapping, byte-identical
+  exports) without comparing against committed pixel baselines. A failure in any
+  `@os-agnostic` test indicates a real logic regression, not an OS rendering difference.
 
 ```bash
-# run them
-npx playwright test e2e/export/visual-regression.spec.ts
+# run only the OS-agnostic tests
+npx playwright test e2e/export/visual-regression.spec.ts --grep "@os-agnostic"
+
+# run only the visual regression (OS-specific) tests
+npx playwright test e2e/export/visual-regression.spec.ts --grep-invert "@os-agnostic"
 
 # update the baselines, then review `git diff` before committing
 npm run test:e2e:update-baselines
