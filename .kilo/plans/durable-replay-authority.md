@@ -152,6 +152,7 @@ layer presentation consumed by runtime and export.
 Production files:
 
 - `src/contexts/materialization.ts`
+- `src/contexts/durable-presentation.ts`
 - `src/contexts/durable-compositor.ts`
 - `src/contexts/presentation-evaluator.ts`
 - `src/contexts/layer-renderer.ts`
@@ -165,6 +166,8 @@ Work:
 - Produce a durable layer projection containing durable snapshot metadata,
   materialized bitmap and materialized bounds. Keep retained operations empty
   once the presentation is baked.
+- Hidden layers carry durable metadata and snapshot bounds but no bitmap or
+  lease; visible-layer coverage remains all-or-nothing before publication.
 - Stage the complete projection before publication, verify document identity,
   cursor, branch revision and layer coverage, then publish once.
 - Track every published bitmap through the existing document presentation scope
