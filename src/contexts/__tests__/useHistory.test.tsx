@@ -205,6 +205,7 @@ function makeReplayLayer(id: string, order: number, bitmap: ImageBitmap): Layer 
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
   };
 }
@@ -742,6 +743,7 @@ describe('useHistory undo replay', () => {
         blendMode: 'multiply',
         order: 7,
         pos: { x: -8, y: 13, width: 40, height: 20 },
+        presentationBounds: null,
         operations: [],
       },
       bottom: {
@@ -756,6 +758,7 @@ describe('useHistory undo replay', () => {
         blendMode: 'screen',
         order: 2,
         pos: { x: 4, y: -2, width: 40, height: 20 },
+        presentationBounds: null,
         operations: [],
       },
     };

@@ -64,13 +64,13 @@ export function materializePresentationBitmap(canvas: BitmapSource): Promise<Bit
 
 /**
  * The only fields a promotion may change. Naming them keeps every other layer
- * field in scope automatically, so a newly added durable field is compared
+ * field in scope automatically, so a newly added logical field is compared
  * instead of silently excluded from the guard.
  */
-const PRESENTATION_FIELDS: (keyof Layer)[] = ['bitmap', 'tmpCanvas', 'durablePresentation'];
+const PRESENTATION_FIELDS: (keyof Layer)[] = ['bitmap', 'tmpCanvas', 'presentationBounds'];
 
 /**
- * Everything a layer owns except the two presentation caches. Reading the keys
+ * Everything a layer owns except the presentation cache fields. Reading the keys
  * rather than naming them keeps every current and future durable field in scope.
  */
 function logicalLayerState(layer: Layer): Record<string, unknown> {

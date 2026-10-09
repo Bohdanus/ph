@@ -23,6 +23,7 @@ const layer: Layer = {
   blendMode: 'source-over',
   order: 0,
   pos: { x: 0, y: 0, width: 100, height: 80 },
+  presentationBounds: null,
   source: {
     kind: 'blank',
     color: '#ffffff',

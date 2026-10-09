@@ -10,7 +10,6 @@ const VISIBLE_DIAGNOSTICS = 3;
 const EMPTY_PRESENTATION = {
   status: 'unpublished' as const,
   cursor: null,
-  layerIds: [] as readonly string[],
   reason: null,
 };
 
@@ -41,7 +40,6 @@ const DevStatusStripContents = () => {
       data-status={durableStatus}
       data-presentation-status={durablePresentation.status}
       data-durable-cursor={durablePresentation.cursor ?? ''}
-      data-durable-layer-ids={durablePresentation.layerIds.join(',')}
       data-durable-fallback-reason={durablePresentation.reason ?? ''}
       className="text-xs text-amber-600 dark:text-amber-400"
     >
@@ -50,7 +48,6 @@ const DevStatusStripContents = () => {
         {' · '}
         {durablePresentation.status === 'durable' ? 'Durable presentation' : 'Legacy presentation'}
         {durablePresentation.cursor !== null ? ` @ ${durablePresentation.cursor}` : ''}
-        {durablePresentation.layerIds.length > 0 ? ` [${durablePresentation.layerIds.join(', ')}]` : ''}
         {durablePresentation.reason ? ` (${durablePresentation.reason})` : ''}
       </span>
       {shown.length > 0 && (

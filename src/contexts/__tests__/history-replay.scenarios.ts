@@ -59,6 +59,7 @@ export function runtimeLayer(id: string, order: number, pos = { x: 20, y: 30, wi
     blendMode: 'source-over',
     order,
     pos,
+    presentationBounds: null,
     source,
     operations: [],
   };
@@ -111,6 +112,7 @@ export function rasterLayer(id: string, order: number, pos: Layer['pos']): Layer
     blendMode: 'source-over',
     order,
     pos,
+    presentationBounds: null,
     source,
     operations: [],
   };

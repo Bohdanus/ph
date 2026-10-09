@@ -396,6 +396,7 @@ export const useLayers = () => {
       pos: { ...rebuilt.pos },
       bitmap: rebuilt.bitmap,
       tmpCanvas: rebuilt.tmpCanvas,
+      presentationBounds: null,
     };
     const item = {
       layerId: id,
@@ -843,6 +844,7 @@ export const useLayers = () => {
           ...layer,
           operations: [...layer.operations, createAffineLayerOperation(transform)],
           tmpCanvas: null,
+          presentationBounds: null,
         };
         previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
         drawAllLayers();
@@ -858,6 +860,7 @@ export const useLayers = () => {
         ...layer,
         operations: [...layer.operations, createLayerOperation(toolArgs as LayerOperationArgs)],
         tmpCanvas: null,
+        presentationBounds: null,
       };
       previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
       drawAllLayers();
@@ -868,7 +871,12 @@ export const useLayers = () => {
       const { move, resize } = toolArgs as RepositionToolArgs;
       const positionPatch = resize ?? move;
       if (!positionPatch) return false;
-      const previewLayer = { ...layer, pos: { ...layer.pos, ...positionPatch }, tmpCanvas: null };
+      const previewLayer = {
+        ...layer,
+        pos: { ...layer.pos, ...positionPatch },
+        tmpCanvas: null,
+        presentationBounds: null,
+      };
       previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
       drawAllLayers();
       return true;
@@ -917,6 +925,7 @@ export const useLayers = () => {
         ? { source: undefined }
         : {}),
       tmpCanvas: canvas,
+      presentationBounds: null,
     };
     previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
 
@@ -939,6 +948,7 @@ export const useLayers = () => {
         ...layer,
         bitmap: null,
         tmpCanvas: null,
+        presentationBounds: null,
       },
       toolArgs: undefined,
     };

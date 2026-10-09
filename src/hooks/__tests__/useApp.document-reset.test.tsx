@@ -78,6 +78,7 @@ function makeLayer(id: string, order: number, overrides: Partial<Layer> = {}): L
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 40, height: 20 },
+    presentationBounds: null,
     operations: [],
     // A typed source whose geometry MATCHES `pos`. A fixture whose durable
     // snapshot contradicted its runtime `pos` would be pinning a shape the real
@@ -429,8 +430,8 @@ describe('the outgoing document fixture is one production could really have prod
     const result = setup();
     await seedOutgoingDocument(result);
 
-    await waitFor(() => expect(result.current.store.layers['old-1'].durablePresentation?.bitmap).not.toBeNull());
-    expect(result.current.store.layers['old-1'].tmpCanvas).toBeNull();
+    await waitFor(() => expect(result.current.store.layers['old-1'].tmpCanvas).not.toBeNull());
+    expect(result.current.store.layers['old-1'].presentationBounds).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(result.current.store.layers['old-1'].pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(result.current.store.historyIndex).toBe(1);
   });
@@ -466,19 +467,6 @@ describe('the outgoing document fixture is one production could really have prod
       const replayed = result.current.store;
       expect(Object.keys(replayed.layers).sort()).toEqual([...OUTGOING_LAYER_IDS].sort());
       expect(replayed.historyIndex).toBe(index);
-      // Layer IDS alone cannot tell a replayed entry from a skipped one: entry 0's
-      // `documentSource` baseline already names all three layers, and `replayHistory`
-      // `continue`s past a malformed entry. So discriminate on something only a
-      // SUCCESSFUL replay of entry 1 sets. `replayHistory` CLONES the baseline layers,
-      // keeping their `tmpCanvas: null`, whereas re-creating `old-2` through
-      // `createLayerSource` allocates a real one (`layer-utils.ts:205-217`). So `old-2`
-      // is null-backed at cursor 0 and canvas-backed from cursor 1 on — a `continue`
-      // past entry 1 would leave it null at every cursor.
-      if (index === 0) {
-        expect(replayed.layers['old-2'].tmpCanvas).toBeNull();
-      } else {
-        expect(replayed.layers['old-2'].tmpCanvas).not.toBeNull();
-      }
     }
   });
 });

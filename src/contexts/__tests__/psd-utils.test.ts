@@ -113,6 +113,7 @@ function layer(patch: Partial<Layer> = {}): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { x: 0, y: 0, width: 1, height: 1 },
+    presentationBounds: null,
     operations: [],
     ...patch,
   };

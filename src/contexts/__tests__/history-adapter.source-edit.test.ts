@@ -62,6 +62,7 @@ function textLayer(): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { ...firstBox },
+    presentationBounds: null,
     source: toolSource(firstText),
     operations: [],
   };

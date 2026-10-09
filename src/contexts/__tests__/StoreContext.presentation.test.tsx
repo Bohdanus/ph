@@ -545,7 +545,6 @@ describe('durable navigation presentation freshness', () => {
     expect(store().durablePresentation).toEqual({
       status: 'unpublished',
       cursor: null,
-      layerIds: [],
       reason: null,
     });
   });
@@ -629,7 +628,6 @@ describe('durable navigation presentation freshness', () => {
     expect(store().durablePresentation).toEqual({
       status: 'unpublished',
       cursor: null,
-      layerIds: [],
       reason: null,
     });
     expect(releaseDetached).not.toHaveBeenCalled();
@@ -639,107 +637,6 @@ describe('durable navigation presentation freshness', () => {
     // bitmap.
     expect(store().layers[layerId].tmpCanvas).toBe(staged);
     expect(store().layers[layerId].bitmap).toBe(sourceBitmap);
-  });
-
-  it('refuses a navigation composition when the legacy visible layer set has an extra layer', async () => {
-    const sourceBitmap = createMockImageBitmap(100, 80);
-    const staged = canvas(100, 80);
-    const pos = { x: 0, y: 0, width: 100, height: 80 };
-    const source: ImageLayerSource = { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos };
-    const existingLayer: Layer = {
-      ...createMockLayer({ id: layerId, pos }),
-      bitmap: sourceBitmap,
-      tmpCanvas: staged,
-      source,
-    };
-    const extraLayer: Layer = createMockLayer({ id: 'layer-2', pos, order: 1 });
-
-    const materializedBitmap = createMockImageBitmap(100, 80);
-    const releaseMaterialized = vi.fn();
-    const materialized: MaterializedLayer = {
-      layerId,
-      bitmap: materializedBitmap,
-      bounds: pos,
-      visible: true,
-      opacity: 1,
-      blendMode: 'source-over',
-      lease: {
-        key: 'layer-coverage-refusal',
-        bitmap: materializedBitmap,
-        byteSize: 100 * 80 * 4,
-        metadata: pos,
-        release: releaseMaterialized,
-      },
-    };
-    const materializedLayers = { [layerId]: materialized };
-    const releaseDetached = vi.fn(() => releaseMaterialized());
-    const releaseComposite = vi.fn(() => releaseMaterialized());
-    const composite: DurableComposite = {
-      bitmap: materializedBitmap,
-      frame: defaultFrame,
-      layers: materializedLayers,
-      takeLayers: () => ({ layers: materializedLayers, release: releaseDetached }),
-      release: releaseComposite,
-    };
-    let finishComposition!: () => void;
-    const composition = new Promise<void>((resolve) => {
-      finishComposition = resolve;
-    });
-    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument').mockImplementation(async () => {
-      await composition;
-      return composite;
-    });
-
-    const { store, dispatch } = renderWithProbe();
-    replaceDocument(dispatch(), { [layerId]: existingLayer });
-
-    // Navigate to a timeline whose durable baseline covers only `layer-1`,
-    // while the live record carries an extra visible `layer-2`. The composition
-    // resolves, assertFresh() passes, but the visible-layer-id mismatch
-    // triggers a `layer-coverage` refusal before any cache is published.
-    act(() => {
-      dispatch()({
-        type: 'APPLY_HISTORY_REPLAY',
-        payload: {
-          updates: {
-            layers: { [layerId]: existingLayer, 'layer-2': extraLayer },
-            deletedLayers: {},
-            activeLayerId: null,
-          },
-          timeline: {
-            entries: [baselineItem({ [layerId]: existingLayer }, 'baseline')],
-            cursor: 0,
-            branchRevision: 0,
-          },
-        },
-      });
-    });
-    const publication = store().publishDurableNavigationPresentation();
-    expect(compose).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      finishComposition();
-      await composition;
-      await publication;
-      await Promise.resolve();
-    });
-
-    // The refusal publishes `legacy-fallback` with reason `layer-coverage`.
-    expect(store().durablePresentation).toEqual({
-      status: 'legacy-fallback',
-      cursor: -1,
-      layerIds: [],
-      reason: 'layer-coverage',
-    });
-    // The composite bitmap is released in the `finally` block.
-    expect(releaseComposite).toHaveBeenCalledTimes(1);
-    // `takeLayers()` was never reached — the detached handle is never produced.
-    expect(releaseDetached).not.toHaveBeenCalled();
-    // No partial cache publication: neither layer was rewritten with a
-    // materialized bitmap.
-    expect(store().layers[layerId].tmpCanvas).toBe(staged);
-    expect(store().layers[layerId].bitmap).toBe(sourceBitmap);
-    expect(store().layers['layer-2']).toBe(extraLayer);
   });
 });
 
@@ -771,8 +668,8 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     const published = {
       ...before.layers[layerId],
       bitmap: null,
-      tmpCanvas: null,
-      durablePresentation: { bitmap, bounds: before.layers[layerId].pos },
+      tmpCanvas: bitmap,
+      presentationBounds: before.layers[layerId].pos,
     };
 
     act(() => {

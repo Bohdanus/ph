@@ -217,6 +217,7 @@ export const useHistory = () => {
               operations: operationsRetainedAfterBake(layer),
               source: undefined,
               tmpCanvas: canvas,
+              presentationBounds: null,
             };
           },
         },

@@ -29,6 +29,7 @@ describe('drawLayerSource', () => {
       blendMode: 'source-over',
       order: 0,
       pos: { x: 4, y: 6, width: 100, height: 50 },
+      presentationBounds: null,
       operations: [],
       source: {
         kind: 'tool',
@@ -79,6 +80,7 @@ describe('drawLayerSource', () => {
       blendMode: 'source-over' as const,
       order: 0,
       pos: { x: 45, y: 38, width: 20, height: 10 },
+      presentationBounds: null,
       operations: [],
       source: { kind: 'image' as const, bitmap, name: 'Image', pos: { x: 45, y: 38, width: 20, height: 10 } },
     } satisfies Layer;
@@ -87,7 +89,7 @@ describe('drawLayerSource', () => {
     expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 5, 8, 20, 10);
   });
 
-  it('uses a durable baked presentation without rematerializing or reapplying operations', () => {
+  it('uses a baked tmpCanvas without rematerializing or reapplying operations', () => {
     const bitmap = { width: 30, height: 40 } as ImageBitmap;
     const ctx = {
       save: vi.fn(),
@@ -100,14 +102,14 @@ describe('drawLayerSource', () => {
       name: 'Baked',
       isBedrock: false,
       bitmap: null,
-      tmpCanvas: null,
-      durablePresentation: { bitmap, bounds: { x: 10, y: 20, width: 30, height: 40 } },
+      tmpCanvas: bitmap,
       visible: true,
       opacity: 1,
       locked: false,
       blendMode: 'source-over' as const,
       order: 0,
       pos: { x: 0, y: 0, width: 10, height: 10 },
+      presentationBounds: { x: 10, y: 20, width: 30, height: 40 },
       operations: [{ id: 'filter', args: { toolName: 'blur', radius: 2 }, enabled: true }],
     } satisfies Layer;
 
@@ -134,6 +136,7 @@ describe('drawLayersToCanvas vector staging', () => {
       blendMode: 'source-over',
       order: 0,
       pos,
+      presentationBounds: null,
       operations: [],
       source: {
         kind: 'tool',
@@ -193,6 +196,7 @@ describe('drawLayersToCanvas vector staging', () => {
       blendMode: 'source-over',
       order: 1,
       pos: { x: 8, y: 10, width: 20, height: 10 },
+      presentationBounds: null,
       operations: [],
     };
 

@@ -40,6 +40,7 @@ function blankLayer(id: string, order = 0): Layer {
     blendMode: 'source-over',
     order,
     pos,
+    presentationBounds: null,
     source: { kind: 'blank', color: '#ffffff', opacity: 1, isBedrock: false, pos },
     operations: [],
   };

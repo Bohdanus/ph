@@ -19,6 +19,7 @@ function existingLayers(overrides: LayersRecord = {}): LayersRecord {
       blendMode: 'source-over',
       order: 3,
       pos: { x: 0, y: 0, width: 10, height: 10 },
+      presentationBounds: null,
       operations: [],
     },
     ...overrides,

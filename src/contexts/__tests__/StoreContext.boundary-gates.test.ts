@@ -19,7 +19,7 @@ const materializationModule = 'materialization';
  * `it('keeps the deleted coordination modules deleted')` is what makes the retirement
  * verifiable rather than assumed.
  */
-const deletedModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints'] as const;
+const deletedModules = ['replay-budget', 'replay-coordinator', 'replay-checkpoints', 'durable-presentation'] as const;
 
 const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 
@@ -398,7 +398,7 @@ describe('StoreContext boundary gates', () => {
   // The gate above is blind to the deletion itself: a forbidden-basename match never asks
   // whether the module exists, so the set would pass unchanged with both files restored and
   // only their importers added. This is the leg that fails in that case, and it is the one
-  // that makes the two entries in `deletedModules` mean "retired" rather than merely
+  // that makes the entries in `deletedModules` mean "retired" rather than merely
   // "unimported". Reading git rather than the filesystem is what makes it exact — an
   // untracked leftover on disk is caught by the walk-equality case above, not here.
   it('keeps the deleted coordination modules deleted', () => {
@@ -416,7 +416,6 @@ describe('StoreContext boundary gates', () => {
   it('routes production durable materialization only through the compositor boundary', () => {
     expect(materializationProductionImports().map(({ file, specifier }) => ({ file, specifier }))).toEqual([
       { file: 'src/contexts/durable-compositor.ts', specifier: './materialization.ts' },
-      { file: 'src/contexts/durable-presentation.ts', specifier: './materialization.ts' },
     ]);
   });
 
@@ -444,7 +443,7 @@ describe('StoreContext boundary gates', () => {
           branchRevision: 0,
           historyIndex: 0,
           durableRevision: 0,
-          record: { status: 'unpublished', cursor: null, layerIds: [], reason: null },
+          record: { status: 'unpublished', cursor: null, reason: null },
         },
       };
       // @ts-expect-error internal durable presentation is not a public store action

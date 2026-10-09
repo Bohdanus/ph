@@ -25,12 +25,6 @@ export type ToolLayerSource = {
 
 export type LayerSource = BlankLayerSource | ImageLayerSource | ToolLayerSource;
 
-/** Disposable baked pixels published by durable navigation. Logical source and operations remain intact. */
-export type DurableLayerPresentation = Readonly<{
-  bitmap: BitmapSource;
-  bounds: Pos;
-}>;
-
 export type LayerOperationArgs = Extract<ToolArgs, { toolName: 'blur' | 'color' | 'levels' }>;
 
 // Operations are the canonical editable form; rendered bitmaps are disposable materializations.
@@ -67,8 +61,7 @@ export type Layer = {
   order: number;
 
   pos: Pos;
-
-  durablePresentation?: DurableLayerPresentation;
+  presentationBounds: null | Pos;
 
   source?: LayerSource;
   operations: readonly LayerOperation[];

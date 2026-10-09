@@ -245,12 +245,10 @@ const durableExportRecords = (
       id: layerId,
       name: snapshot.name,
       isBedrock: snapshot.isBedrock,
-      // `materialized.bounds` is the DURABLE extent. Using the legacy `pos` here is what made the
-      // axis blind: the accept predicate required the two to be equal, so the one value worth
-      // comparing was equal by precondition.
-      pos: { ...materialized.bounds },
+      pos: { ...snapshot.pos },
       bitmap: null,
       tmpCanvas: materialized.bitmap,
+      presentationBounds: materialized.bounds,
       visible: snapshot.visible,
       opacity: snapshot.opacity,
       locked: snapshot.locked,

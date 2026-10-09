@@ -34,6 +34,7 @@ function blankLayer(): Layer {
     blendMode: 'source-over',
     order: 0,
     pos,
+    presentationBounds: null,
     source,
     operations: [],
   };

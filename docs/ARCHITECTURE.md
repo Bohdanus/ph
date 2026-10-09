@@ -245,7 +245,7 @@ retires unreferenced ones against a liveness thunk —
 `DocumentPresentationScope.retireUnreferenced()`.
 
 The guard that makes a promotion safe is `layersDifferOnlyByPresentation()`
-over `PRESENTATION_FIELDS = ['bitmap', 'tmpCanvas']`: a
+over `PRESENTATION_FIELDS = ['bitmap', 'tmpCanvas', 'presentationBounds']`: a
 publication that also moves logical state is refused and `console.error`'d, with the
 offending ids from `divergentLayerIds()`, by the dispatcher's
 `PUBLISH_RUNTIME_PRESENTATION` branch in `StoreContext.tsx`.

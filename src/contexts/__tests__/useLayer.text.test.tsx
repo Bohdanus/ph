@@ -36,6 +36,7 @@ vi.mock('../layer-utils.ts', async (importActual) => {
     blendMode: 'source-over',
     order: 0,
     pos: { x: 0, y: 0, width: 100, height: 50 },
+    presentationBounds: null,
     operations: [],
     source: params.source as Layer['source'],
   }));
@@ -250,6 +251,7 @@ describe('useLayers text commit idempotency boundary', () => {
       blendMode: 'source-over',
       order: 0,
       pos: { x: 0, y: 0, width: 100, height: 50 },
+      presentationBounds: null,
       operations: [],
       source: params.source as Layer['source'],
     }));

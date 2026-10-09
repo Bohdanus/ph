@@ -34,6 +34,7 @@ export function durableExportRecords(replay: DurableReplayResult, composite: Dur
       blendMode: snapshot.blendMode,
       order: snapshot.order,
       pos: materialized?.bounds ?? snapshot.pos,
+      presentationBounds: null,
       operations: [],
     };
   }

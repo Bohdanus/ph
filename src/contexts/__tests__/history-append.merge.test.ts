@@ -37,6 +37,7 @@ function blankLayer(id: string, order: number): Layer {
     blendMode: 'source-over',
     order,
     pos: { x: 0, y: 0, width: 100, height: 80 },
+    presentationBounds: null,
     source: {
       kind: 'blank',
       color: '#ffffff',

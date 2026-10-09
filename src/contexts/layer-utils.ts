@@ -222,6 +222,7 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     pos,
     source,
     operations: [],
+    presentationBounds: null,
     visible: true,
     isBedrock: isBedrock ?? false,
 

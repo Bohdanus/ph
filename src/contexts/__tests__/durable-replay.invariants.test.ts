@@ -35,6 +35,7 @@ function createBaselineLayer(): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { x: 20, y: 30, width: 120, height: 80 },
+    presentationBounds: null,
     source: {
       kind: 'blank' as const,
       color: '#ffffff',
@@ -350,6 +351,7 @@ describe('replayDurableDocument switch arm and edge-case coverage', () => {
       blendMode: 'source-over',
       order,
       pos: { x: 20, y: 30, width: 120, height: 80 },
+      presentationBounds: null,
       source: {
         kind: 'blank' as const,
         color: '#ffffff',

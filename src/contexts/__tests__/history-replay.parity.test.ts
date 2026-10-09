@@ -52,6 +52,7 @@ function runtimeLayer(id: string, order: number, pos = { x: 20, y: 30, width: 12
     blendMode: 'source-over',
     order,
     pos,
+    presentationBounds: null,
     source,
     operations: [],
   };
