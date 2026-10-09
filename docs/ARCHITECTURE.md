@@ -24,7 +24,8 @@ the crash screen display it, so "read at one place" is a claim about
 The corollary is the one that still bites: **`store.history` remains the logical
 timeline for append, branch, and compatibility fallback, and it stores args,
 never pixels.** Durable navigation uses the materialized projection; preview and
-legacy fallback still re-run the tool processors.
+legacy fallback still re-run the tool processors. Undo and compatibility replay
+are processor replays, not inverse or incremental operations.
 
 Evidence, all three current:
 

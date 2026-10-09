@@ -14,8 +14,6 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 | [`FEATURES.md`](FEATURES.md)                   | What the app can and cannot do, system-wide, against Photoshop                             |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md)           | What the code is and how it fits together                                                  |
 | [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | Durable-history requirements, sequencing, and operator gates                               |
-| [`../AGENTS.md`](../AGENTS.md)                 | The rules an agent reads first: delegation, worktrees, gates, no browser windows           |
-| [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md)           | The product requirement for the Tools rail, and its open violations                        |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -70,13 +68,24 @@ same shape as [`LAYERS-PANEL.md`](LAYERS-PANEL.md).
 | [`../e2e/MIGRATION-TODO.md`](../e2e/MIGRATION-TODO.md)                                                 | What the history migration left undone, in the e2e suite's own words                        |
 | [`E2E-HARDENING-PLAN.md`](E2E-HARDENING-PLAN.md)                                                       | The e2e hardening campaign: who owns which file, what order, and what not to schedule again |
 
-The agent procedures live outside this directory, under `.skills/`:
-`.skills/hard-merge.md`, `.skills/photoshop-tool-creation.md`, `.skills/stale-worktree-reclaim.md`,
-`.skills/worktree-merge-harvest.md`, `.skills/broad-test-improvement.md`,
-`.skills/overnight-sweep.md`, `.skills/copilot-chat-history.md`, `.skills/chat-history-query.md`,
-`.skills/chat-loose-end-scan.md`, and `.skills/kilo-chat-history.md`. `AGENTS.md` states the rules; a
-skill states the procedure for one of them. `e2e/fixtures/README.md` is the Playwright fixture
-conventions note.
+The agent procedures live outside this directory, under `.skills/`, one file per
+procedure. `AGENTS.md` states the rules, and a skill states the procedure for one of
+the situations it describes.
+
+| Skill                                                                            | Its one job                                                                                                                                                  |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`../.skills/broad-test-improvement.md`](../.skills/broad-test-improvement.md)   | Fix broken tests, raise coverage, and strengthen assertions without touching source code                                                                     |
+| [`../.skills/chat-history-query.md`](../.skills/chat-history-query.md)           | Locate and query old Kilo and GitHub Copilot Chat sessions from local SQLite, JSONL, and legacy JSON stores                                                  |
+| [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)         | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered |
+| [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)       | Locate and query GitHub Copilot Chat sessions from Chronicle SQLite and JSONL stores. Read-only, local-first                                                 |
+| [`../.skills/hard-merge.md`](../.skills/hard-merge.md)                           | Merge two branches with overlapping features, recovering requirements from chat history and arbitrating conflicts against Photoshop                          |
+| [`../.skills/kilo-chat-history.md`](../.skills/kilo-chat-history.md)             | Locate and query Kilo chat sessions from local SQLite database and legacy JSON stores. Read-only, local-first                                                |
+| [`../.skills/overnight-sweep.md`](../.skills/overnight-sweep.md)                 | An autonomous, token-conscious pass over documented defects and unfinished work                                                                              |
+| [`../.skills/photoshop-tool-creation.md`](../.skills/photoshop-tool-creation.md) | Build a new Photoshop-faithful tool end to end: research, options bar, implementation, tests, e2e                                                            |
+| [`../.skills/stale-worktree-reclaim.md`](../.skills/stale-worktree-reclaim.md)   | Find abandoned worktrees, prove the owning session dead, triage into delete/land/defer                                                                       |
+| [`../.skills/worktree-merge-harvest.md`](../.skills/worktree-merge-harvest.md)   | Land work from free worktrees onto `main`, with reviews and gates                                                                                            |
+
+`e2e/fixtures/README.md` is the Playwright fixture conventions note.
 
 ## Open problems
 

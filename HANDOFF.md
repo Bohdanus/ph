@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 82, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 157, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-128, 130-131, 136-137, 141-142, 145, 154-155, 157, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 200, 204-205, 208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -867,6 +867,100 @@ only and may not edit production.
 right thing in a browser, and the two `it.fails` were correctly removed. The finding is that the
 justification for that removal is still in production prose in the opposite form, and a reader who
 trusts it would re-add the tripwires.
+
+## 82. The parser retires a LIVE numbered heading that ends in a status word, silently
+
+`scripts/lib/agent-board/handoff-import.mjs` — `DEAD_HEADING`, consumed by `assemble`
+
+**The defect.** `DEAD_HEADING` requires the status word to be last, which is right, and
+`assemble` consumes a matching heading with `continue` without ever opening it as an item. Those
+two facts compose into a silent loss: a **live** numbered heading that happens to end in a status
+word is retired, and its prose leaves the import with nothing anywhere in the parse result saying
+so. Measured through the real parser, both directions, side by side (indented deliberately: the
+heading-count assertion — `scripts/__tests__/handoff-import.test.mjs`, the
+`it('produces one item per numbered heading, and no item for a prose section')` title — matches
+`^#{1,6}[ \t]+\d+` **without skipping fenced code**, so an example of this shape written at column
+zero inside any fenced block fails that test against the parser being _right_ — a blind spot in the
+assertion, pre-existing, and the reason for the indentation):
+
+```
+  ## 31. The dialog-closed assertion is fixed   ->  dead=[31]  items=[]
+  ## 9.  — deleted .                           ->  dead=[]   items=[#9]
+```
+
+The first is a live entry retired. The second is the **visible** false row — a title printed on
+`swarm ready` that a reader can clear. A numbered heading that genuinely ends in a status word
+(`## 5. Whatever — resolved`) is not _structurally_ distinguishable from one that merely does, so
+anchoring the word does not separate the two cases; it only decides which one the corpus has not
+produced yet. Latent, not live: over the 97 real headings on `main` at `0d64d75` the narrow rule
+and the loose one give the same verdict for every heading except the five the loose one gets
+wrong, and the one genuine retirement is still read as a retirement. The narrowness is a
+judgement about the corpus, not a proof, which is why the paragraph on the obvious fix below
+measures what the alternative actually does rather than assuming it does nothing.
+
+**Why this is a filed defect and not a documentation nit.** The `DEAD_HEADING` docstring carried
+an argument that this risk was one-sided and loud — under-matching a retirement gives a visible
+row, over-matching is always a silent loss. That argument was **false for numbered headings**, for
+the reason `DEAD_HEADING`'s own separator class gives, measured in the table at the end of this
+entry. It is now corrected in place to state that the residual risk is two-sided, with both
+measured rows quoted.
+
+**Provenance, because the false claim is not on `main` and the question was lost with it.** The
+claim was written in `a3f1dcc` (the campaign branch) under a heading reading "THE TWO FAILURE
+MODES ARE NOT SYMMETRIC, AND THAT IS THE ARGUMENT FOR THE RULE". `bd137d0` merged that branch
+after pointing its parser change at `eba42f8`'s implementation and keeping the tests; the
++146/-0 merge dropped the whole argument block. Dropping a false claim was right. Dropping the
+question it was an answer to was not, and `eba42f8`'s shorter docstring argues the rule
+empirically without ever addressing the over-match direction.
+
+**Why the obvious fix is worse than the defect — and the first version of that paragraph was
+itself wrong.** Requiring a separator before the marker (`— resolved`, `(done)`, `…: fixed`) was
+written off here as "does not distinguish the two cases either", on the grounds that a title may
+legitimately end in a separator character. **That reason is false, and it was the reason the
+paragraph below it was already making correctly.** Dropping `\s` from `DEAD_HEADING`'s separator
+class `(?:^|[\s\-–—(\[])` to `(?:^|[\-–—(\[])` does separate the cases: it keys on _no space before
+the marker_, and the ordinary English shape of a retirement — `… — deleted`, `… — resolved` — has
+one. `## 5. Whatever — resolved` goes from `DEAD` to `live`, and so does `## 31. The
+dialog-closed assertion is fixed`.
+
+What it buys that is real; what it costs is larger, and the cost is measurable. Re-derived by
+patching the separator class and re-running the real parser over the merged corpus:
+
+| Heading                                                                                                                                                                                         | Now                | Separator required |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------ |
+| `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs` — the `it('reads a heading that ENDS with a status marker as a retirement, in every separator form')` title) | `dead=[13]`        | `dead=[]`          |
+| `### Items 5, 7, 9, … — deleted` (this file's preamble heading, the corpus's **only** real retirement)                                                                                          | `dead=` 26 numbers | `dead=[]`          |
+| Whole `HANDOFF.md` — `planImport(...).create`                                                                                                                                                   | 49                 | **51**             |
+
+The second row is the one that decides it. That preamble heading is the one the `DEAD_HEADING`
+docstring names as "the only retirement marker any of the three documents actually uses", and the
+separator requirement re-reads it as live prose: `dead` goes from 26 numbers to **none**, and two
+already-retired items — `HANDOFF.md#7` and `HANDOFF.md#18` — come back to the board as open work.
+So the fix does not trade a silent loss for one false row; it trades it for **26** un-retirements
+and two live ones, on a heading the corpus really contains, and it breaks the pinned fixture while
+doing it. Adopting it is a corpus change, not a parser change, and it is the operator's to make.
+
+**What a fix needs, and why it is not one line.** Either a marker position that cannot be
+incidental, or a **loud** failure when a `NUMBERED` heading is retired without the document having
+listed retired items. The loud option is the only one that preserves both directions, and it is
+not local: it needs a field on `ParseResult` (whose exact shape
+`handoff-import.test.mjs` asserts on an empty document), and a caller in `agent-board.mjs` that
+actually reports it. The importer now reports duplicate numbered origins, but that does not
+identify this different status-word case. The operator should choose which of the two behaviours a
+mistyped heading should have.
+
+**Pinned while unfixed, as an `it.fails` tripwire.** `scripts/__tests__/handoff-import.test.mjs`
+holds the shape in `it.fails('keeps a LIVE numbered heading that ends in a status word as an open,
+filed item')`: the body asserts what a **fixed** parser returns, so it is red today and the `fails`
+is what makes the suite green. It is the marker the repo already uses in ~20 places
+(`image-processors.test.ts` — the `it.fails('clamps a negative or non-finite radius into a valid CSS
+filter …')` inside `describe('tool image processors')`, whose title carries its own stale
+`src/tools/blur.ts` citation; and `StoreContext.durable-boundary.test.tsx` — the `it('uses the
+replacement document baseline when updates omit totalSize and documentFrame')` title). **Delete the
+`it.fails` in the same change that fixes `DEAD_HEADING`** — the moment the body goes green, the
+`fails` goes red, which is the intended signal and not a regression to chase. The live side of the
+same rule, and the visible false row it contrasts with, are held in an ordinary green test beside
+it, so a pin that starts failing for an unrelated reason cannot hide behind the `it.fails` passing.
 
 ## 83. The panel workspace: seven documented Photoshop behaviours are NOT built, and the list matters more than the feature
 
