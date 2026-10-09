@@ -442,7 +442,7 @@ describe('calculateNewRect', () => {
       canvasRef,
       imageSize
     );
-    expect(result!.x2).toBe(100 + 2 * 5);
+    expect(result!.x2 - result!.x1).toBe(100 + 2 * 5);
   });
 
   it('expands a point box equally around the click for every alignment setting', () => {
@@ -489,8 +489,8 @@ describe('calculateNewRect', () => {
     // `ctx.font` to the 16px face the args carry, so `'hi'` measures 2 * 16 = 32; plus `TEXT_PADDING`
     // at each end, that is 42. The box arrived 100 wide and must come back 42 wide — a grow-only rule
     // returns 100 and this test fails.
-    expect(result!.x1).toBe(0);
-    expect(result!.x2).toBe(2 * 16 + 2 * TEXT_PADDING);
+    expect(result!.x1 + result!.x2).toBe(100);
+    expect(result!.x2 - result!.x1).toBe(2 * 16 + 2 * TEXT_PADDING);
   });
 
   it('grows and shrinks a point box around its fixed click', () => {
@@ -538,7 +538,7 @@ describe('calculateNewRect', () => {
       imageSize
     );
 
-    expect(result).toEqual({ x1: 0, y1: 0, x2: 50, y2: 50 });
+    expect(result).toEqual({ x1: 25, y1: 8, x2: 75, y2: 42 });
   });
 
   it('measures with the font the args carry, so the box follows the face', () => {
@@ -570,9 +570,9 @@ describe('calculateNewRect', () => {
       imageSize
     );
     // 'hello' is five characters, and the mock charges `fontSize` per character.
-    expect(at16!.x2).toBe(5 * 16 + 2 * 5);
-    expect(at64!.x2).toBe(5 * 64 + 2 * 5);
-    expect(at64!.x2).toBeGreaterThan(at16!.x2);
+    expect(at16!.x2 - at16!.x1).toBe(5 * 16 + 2 * 5);
+    expect(at64!.x2 - at64!.x1).toBe(5 * 64 + 2 * 5);
+    expect(at64!.x2 - at64!.x1).toBeGreaterThan(at16!.x2 - at16!.x1);
   });
 
   it('widens for tracking, through the per-grapheme fallback', () => {
@@ -616,8 +616,8 @@ describe('calculateNewRect', () => {
         text: 'hello',
         fontSize: 16,
         lineHeight: 1.2,
-        // A click ten pixels from the right edge of a thousand-pixel document. The box has to grow
-        // rightward past the document, because the committed layer's canvas IS this rect
+        // A click ten pixels from the right edge of a thousand-pixel document. The centred box grows
+        // past the document on the right, because the committed layer's canvas IS this rect
         // (`createLayerFromTool` takes `pos` from it and `createLayerSource` sizes the creator's
         // canvas at `size: pos`), so clamping the extent wrote a ten-pixel bitmap holding the first
         // few pixels of one glyph while the overlay showed the whole string.
@@ -632,7 +632,7 @@ describe('calculateNewRect', () => {
     expect(result!.x2).toBeGreaterThan(imageSize.width);
   });
 
-  it('clamps the origin of a point box that would otherwise start outside the document', () => {
+  it('clamps a point box origin when its centred left edge falls outside the document', () => {
     const canvasRef = makeCanvasRef(300);
     const result = calculateNewRect(
       {
@@ -640,17 +640,54 @@ describe('calculateNewRect', () => {
         text: 'hello',
         fontSize: 16,
         lineHeight: 1.2,
-        // Right-aligned text growing leftward off a press below the document.
+        // The click is near the left edge and the measured line is wider than the available space.
         rect: { x1: 5, y1: 1005, x2: 5, y2: 1005 },
         align: 'right',
       } as TextToolArgs,
       canvasRef,
       imageSize
     );
-    expect(result!.y1).toBe(1000);
-    expect(result!.x1).toBeGreaterThanOrEqual(0);
+    expect(result!.y1).toBeCloseTo(1005 - (16 * 1.2 + 2 * TEXT_PADDING) / 2);
+    expect(result!.x1).toBe(0);
+    expect(result!.x2).toBe(300 + 2 * TEXT_PADDING);
     // And the extent is still the content's, so nothing is cropped by the origin clamp.
     expect(result!.x2 - result!.x1).toBe(300 + 2 * 5);
+  });
+
+  it('keeps the original click centred across successive point-text edits', () => {
+    const first = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'a',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 500, y1: 100, x2: 500, y2: 100 },
+        kind: 'point',
+      } as TextToolArgs,
+      makeCanvasRef(16),
+      imageSize
+    )!;
+    const second = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'a\nb\nc',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: first,
+        kind: 'point',
+      } as TextToolArgs,
+      makeCanvasRef(160),
+      imageSize
+    )!;
+
+    expect(first.x1 + first.x2).toBe(1000);
+    expect(second.x1 + second.x2).toBe(1000);
+    expect(first.y1 + first.y2).toBe(200);
+    expect(second.y1 + second.y2).toBe(200);
+    expect(second.x1).toBeLessThan(first.x1);
+    expect(second.x2).toBeGreaterThan(first.x2);
+    expect(second.y1).toBeLessThan(first.y1);
+    expect(second.y2).toBeGreaterThan(first.y2);
   });
 
   it('expands height for multi-line text', () => {

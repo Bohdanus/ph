@@ -363,6 +363,7 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    if (isLayerLocked(layer)) return null;
     delete previewLayersRef.current[id];
     const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
     const currentArgs = layer.source?.kind === 'tool' ? layer.source.args : null;

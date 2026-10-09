@@ -134,53 +134,6 @@ describe('PanelLayout', () => {
     });
   });
 
-  describe('the two edges, which are two facts', () => {
-    // The property the whole split exists for: each setter writes its own field and reads no
-    // other, so re-docking one column cannot move the other. Under the single `dockOnLeft` this
-    // replaced, moving EITHER subject meant writing the other's position too — the rail claimed
-    // `[grid-area:left]` exactly when the dock claimed `[grid-area:right]` — so every re-dock of
-    // one teleported the other, and Adobe documents no such exchange.
-    it('moves the tools rail without moving the panel dock', () => {
-      const { result } = renderLayout();
-
-      act(() => result.current.setToolsSide('right'));
-      expect(result.current.toolsSide).toBe('right');
-      // The sibling is read rather than left alone: under one shared field, `true` here was the
-      // correct reading of "the rail moved right" and the dock swapped edges with it. Both start
-      // on the right, so an implementation that silently moved both would leave this passing on
-      // the moved value and failing on the invariant below it.
-      expect(result.current.dockSide).toBe('right');
-    });
-
-    it('moves the panel dock without moving the tools rail', () => {
-      const { result } = renderLayout();
-
-      act(() => result.current.setDockSide('left'));
-      expect(result.current.dockSide).toBe('left');
-      // The mirror of the test above, and the one a shared flag could not survive: the rail's
-      // default edge is `'left'` here, so a setter that moved both would move the rail to
-      // `'right'` — the inverse of what was asked for, on the column the user never touched.
-      expect(result.current.toolsSide).toBe('left');
-    });
-
-    // Docking is additive: "To dock a panel, drag it by it's tab to the edge of another panel or
-    // panel group", so a panel dropped on a column JOINS it and leaves the other edge alone. Both
-    // subjects on one edge is therefore the ordinary case, and it is the arrangement a single
-    // shared boolean could not name at all — two arrangements became four.
-    it('puts both on one edge, which is what makes them independent', () => {
-      const { result } = renderLayout();
-
-      act(() => result.current.setToolsSide('left'));
-      act(() => result.current.setDockSide('left'));
-
-      // The rail is already on the left, so the first call takes the unchanged-value branch of
-      // its own setter and the dock is what actually moves here. What is asserted is the
-      // resulting PAIR, which is the state a shared field could not represent at all.
-      expect(result.current.toolsSide).toBe('left');
-      expect(result.current.dockSide).toBe('left');
-    });
-  });
-
   describe('persistence', () => {
     // The whole record, asserted exactly, because this is the only place the persisted SHAPE is
     // pinned at all. A field added to `LayoutState` without a line here would persist silently
@@ -204,8 +157,8 @@ describe('PanelLayout', () => {
         splitRatio: 0.4,
         panelOrder: ['layers', 'history'],
         rolledUp: { history: false, layers: true },
-        toolsSide: 'right',
-        dockSide: 'left',
+        toolsSide: 'left',
+        dockSide: 'right',
         isCollapsed: false,
       });
     });
@@ -229,8 +182,8 @@ describe('PanelLayout', () => {
       expect(result.current.splitRatio).toBe(0.35);
       expect(result.current.panelOrder).toEqual(['layers', 'history']);
       expect(result.current.rolledUp.history).toBe(true);
-      expect(result.current.toolsSide).toBe('right');
-      expect(result.current.dockSide).toBe('left');
+      expect(result.current.toolsSide).toBe('left');
+      expect(result.current.dockSide).toBe('right');
     });
 
     // A stored value that parses but is out of range is the case a naive `JSON.parse` guard
@@ -274,35 +227,6 @@ describe('PanelLayout', () => {
       expect(result.current.rolledUp).toEqual({ history: false, layers: false });
     });
 
-    // A stored `dockOnLeft` said which of the two columns was where rather than which was
-    // which — `true` rendered the rail right and the dock left — so `readStoredLayout`
-    // translates it into the pair it used to mean instead of discarding it. Discarding would
-    // silently snap every workspace that had ever been re-docked back to the default
-    // arrangement on the next reload, which is the user's layout being replaced by a guess.
-    // Load-bearing, not cosmetic: the persisted pair is the only record of where anything was.
-    it('restores a workspace stored under the old shared flag', () => {
-      localStorage.setItem('panelLayout', JSON.stringify({ dockOnLeft: true }));
-
-      const { result } = renderLayout();
-      expect(result.current.toolsSide).toBe('right');
-      expect(result.current.dockSide).toBe('left');
-    });
-
-    // The migration is per FIELD rather than all-or-nothing. A record written by a build that
-    // had both new fields can only be whole, but a hand-edited or partially-written one — which
-    // is exactly the record most likely to still carry the legacy flag — should not lose a
-    // valid side because its sibling was missing.
-    it('prefers a stored side over the old shared flag', () => {
-      localStorage.setItem('panelLayout', JSON.stringify({ dockOnLeft: true, toolsSide: 'left' }));
-
-      const { result } = renderLayout();
-      expect(result.current.toolsSide).toBe('left');
-      // One field losing to an explicit stored value must not take the other field's migration
-      // with it, which is the whole reason the two assignments in `readStoredLayout` are
-      // separate `??=` statements rather than one branch that sets both.
-      expect(result.current.dockSide).toBe('left');
-    });
-
     // A side is an enum with exactly two members, so `'middle'` is a record this app never
     // wrote and `readStoredSide` returns `undefined` for it rather than letting it reach a
     // comparison. The half of the rule that matters is what happens NEXT: the stored record is
@@ -314,25 +238,6 @@ describe('PanelLayout', () => {
 
       const { result } = renderLayout();
       expect(result.current.toolsSide).toBe('left');
-    });
-
-    // One key, one record, both sides inside it, and the legacy field GONE. Keeping
-    // `dockOnLeft` in the stored record would leave the reader choosing between two sources of
-    // truth for the same fact on the next load, and the next load is the only thing that ever
-    // reads it — the migration is a read-time translation, not a stored alias.
-    it('writes the two sides under the same one key', () => {
-      localStorage.setItem('panelLayout', JSON.stringify({ dockOnLeft: true }));
-
-      renderLayout();
-
-      // Both written sides differ from the opening arrangement, so neither can be satisfied by
-      // a default leaking through: what is asserted is the migrated pair reaching storage.
-      expect(persisted()).toMatchObject({ toolsSide: 'right', dockSide: 'left' });
-      expect(persisted()).not.toHaveProperty('dockOnLeft');
-      // Nothing else in the app writes to storage, so a second key would mean the layout grew
-      // one — a per-side key is the shape this record must never take.
-      expect(localStorage.length).toBe(1);
-      expect(localStorage.key(0)).toBe('panelLayout');
     });
   });
 

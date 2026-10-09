@@ -305,9 +305,9 @@ export const calculateNewRect = (
       /**
        * The point arm, and the ONE place a point box's geometry is decided at all.
        *
-       * **The box hugs its ink, in both directions, and stays centred on the click.** The width is
-       * recomputed on every edit so replacing the placeholder does not leave unused space, and the
-       * click remains the stable horizontal anchor while the text changes.
+       * **The box hugs its ink, in both directions, and stays centred on the click.** Width and
+       * height are recomputed on every edit so replacing the placeholder does not leave unused space,
+       * and the click remains the stable anchor while the text changes.
        *
        * - The width is recomputed every call rather than compared against what is there. "When you
        *   enter point type, each line of type is independent — the line expands or shrinks as you edit
@@ -326,10 +326,13 @@ export const calculateNewRect = (
        * transform question rather than to point type.
        *
        * `clampEdge` still applies to the calculated left edge. A click close to the document edge may
-       * therefore lose perfect centring in order to keep the type origin inside the document.
+       * therefore lose perfect centring to keep the layer origin inside the document.
        */
       const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-      const centerX = newRect.x1;
+      // `newRect` has already been clamped for the document frame. Use the incoming rect's centre
+      // instead: after the first keystroke its left edge is no longer the placement point, and using
+      // it as the next centre makes the box drift left by half its previous width on every edit.
+      const centerX = (placed.x1 + placed.x2) / 2;
       const x1 = clampEdge(centerX - requiredWidth / 2, imageSize.width);
       newRect = { ...newRect, x1, x2: x1 + requiredWidth };
     }
@@ -346,9 +349,9 @@ export const calculateNewRect = (
   // not yet resident — on every keystroke, purely to have the number discarded one line later.
   if (!isParagraph) {
     const pointRequiredHeight = hardBreakHeight(ctx2d, newArgs, text);
-    if (pointRequiredHeight > newRect.y2 - newRect.y1) {
-      newRect = { ...newRect, y2: newRect.y1 + pointRequiredHeight };
-    }
+    const centerY = (placed.y1 + placed.y2) / 2;
+    const y1 = clampEdge(centerY - pointRequiredHeight / 2, imageSize.height);
+    newRect = { ...newRect, y1, y2: y1 + pointRequiredHeight };
   }
 
   // A PARAGRAPH box keeps every edge clamped to the document, which is the same
