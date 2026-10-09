@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures/extended-test';
+import { expect, test, type Page } from './fixtures/extended-test';
 import { drawLine, getDarkPixelBounds, getWorkspaceCanvas, waitForCanvasRedraw } from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
@@ -7,25 +7,57 @@ import { clickToolButton } from './helpers/toolbar-helpers';
 /** How far, in CSS pixels, the drawn stroke may sit from the point it was drawn at. */
 const CSS_POSITION_TOLERANCE = 25;
 
+const BACKING_STORE_TEST_IDS = [
+  'workspace-canvas',
+  'tool-overlay-canvas',
+  'rect-overlay-canvas',
+  'selection-ants-canvas',
+] as const;
+
+async function expectCanvasBackingStoresMatchDocument(page: Page): Promise<void> {
+  const workspace = page.getByTestId('workspace-container');
+  const widthAttribute = 'data-fit-document-width';
+  const heightAttribute = 'data-fit-document-height';
+
+  await expect(workspace).toHaveAttribute(widthAttribute, /^\d+$/);
+  await expect(workspace).toHaveAttribute(heightAttribute, /^\d+$/);
+
+  const documentWidth = await workspace.getAttribute(widthAttribute);
+  const documentHeight = await workspace.getAttribute(heightAttribute);
+  if (documentWidth === null || documentHeight === null) {
+    throw new Error('workspace document dimensions were not published');
+  }
+  expect(Number(documentWidth), 'document width').toBeGreaterThan(0);
+  expect(Number(documentHeight), 'document height').toBeGreaterThan(0);
+
+  for (const testId of BACKING_STORE_TEST_IDS) {
+    const canvas = page.getByTestId(testId);
+    await expect(canvas, `${testId} backing-store width`).toHaveAttribute('width', documentWidth);
+    await expect(canvas, `${testId} backing-store height`).toHaveAttribute('height', documentHeight);
+  }
+}
+
 test.describe('Device pixel ratio', () => {
   // The project default is an emulated `deviceScaleFactor` of 1, so a test that merely reads
   // `window.devicePixelRatio` cannot tell a 1x run from a 2x one - which is why the file
   // used to hold `expect(dpr).toBeGreaterThanOrEqual(1)`, an assertion no page this suite
   // can load can fail. For POINTER MAPPING the app reads layout pixels only and never consults
   // `devicePixelRatio` (pinned at the unit level in
-  // `src/hooks/__tests__/usePointerPosition.test.ts:856-869`), so the only app behaviour worth
-  // asserting here is that drawing still lands under the cursor when the ratio is 2.
+  // `src/hooks/__tests__/usePointerPosition.test.ts:856-869`), so drawing still needs to be
+  // checked at ratio 2.
   //
   // "for POINTER MAPPING" is load-bearing, and it was written here to stop the sentence from
   // being read as "the app never touches a device-pixel count". It stopped being true when the
   // three option-bar thumbnails began multiplying their backing store by the ratio
-  // (`src/hooks/useDevicePixelRatio.ts`). This spec is still the right shape for what it covers,
-  // and it still CANNOT detect a change to a backing store: `imageBoundsToCss` is scale-agnostic
-  // by construction, so this file passes identically at a 1x, 2x or 8x store. The gap that leaves
-  // is recorded in `e2e/OPEN_PROBLEMS.md` under "no mobile or HiDPI project".
+  // (`src/hooks/useDevicePixelRatio.ts`). This spec also pins backing-store dimensions directly:
+  // `imageBoundsToCss` remains scale-agnostic by construction, so screenshot mapping alone cannot
+  // detect that regression. The lack of a dedicated HiDPI project is recorded in
+  // `e2e/OPEN_PROBLEMS.md`.
   test.use({ deviceScaleFactor: 2 });
 
-  test('canvas drawing maps CSS pixels, not device pixels, at an emulated ratio of 2', async ({ page }, testInfo) => {
+  test('canvas backing stores match document pixels and drawing maps CSS pixels at ratio 2', async ({
+    page,
+  }, testInfo) => {
     await page.goto('/');
     // The precondition, and the reason the rest of this test is not vacuous: if the override
     // above were ever dropped, the page would report 1, every assertion below would still
@@ -39,6 +71,7 @@ test.describe('Device pixel ratio', () => {
     // only place that can confirm the override applied. `cdp-helpers.spec.ts`'s 2x block
     // reads it the same way.
     expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
+    await expectCanvasBackingStoresMatchDocument(page);
 
     const canvas = getWorkspaceCanvas(page);
     await expect(canvas).toBeVisible();
@@ -66,5 +99,15 @@ test.describe('Device pixel ratio', () => {
     expect(Math.abs(line.left - start.x), 'line start far from cursor').toBeLessThan(CSS_POSITION_TOLERANCE);
     expect(Math.abs(line.right - end.x), 'line end far from cursor').toBeLessThan(CSS_POSITION_TOLERANCE);
     expect(Math.abs((line.top + line.bottom) / 2 - start.y), 'line shifted in Y').toBeLessThan(CSS_POSITION_TOLERANCE);
+  });
+});
+
+test.describe('Canvas backing store at 1x', () => {
+  test.use({ deviceScaleFactor: 1 });
+
+  test('all canvas backing stores stay at document resolution', async ({ page }) => {
+    await page.goto('/');
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
+    await expectCanvasBackingStoresMatchDocument(page);
   });
 });

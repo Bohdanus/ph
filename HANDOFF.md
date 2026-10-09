@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 47-54, 56-59, 61-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 199-200, 204-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3196,53 +3196,6 @@ change. Raising the display resolution (D2c) does not.
 slider's `step`), `e2e/export/visual-regression.spec.ts`
 
 ---
-
-## 165. Nothing in the suite can detect a change to a canvas backing store
-
-`e2e/check-dpr.spec.ts` (`CSS_POSITION_TOLERANCE`), `e2e/helpers/screenshot-scale.ts`
-(`imageBoundsToCss()`)
-
-`imageBoundsToCss` derives its scale from the decoded capture's extent over the measured box's
-extent, so it is invariant under capture scaling: `check-dpr.spec.ts` passes identically whether
-the store is 1×, 2× or 8×. Its tolerance is 25 CSS px (`CSS_POSITION_TOLERANCE`, declared beside
-the imports, and asserted by the file's three `line start`/`line end`/`line shifted in Y`
-expectations), roughly 50× the measured pointer-mapping error, so it distinguishes
-"mapping is DPR-invariant" from "mapping is grossly broken" and nothing finer. It is the only
-`page.goto('/')` in the suite under an emulated `deviceScaleFactor: 2`; every other 2× test uses
-`page.setContent` on synthetic HTML. Two further sites divide by a canvas's own extent
-(the `scale`/`offsetX`/`offsetY` block in `e2e/selection-marching-ants.spec.ts`, and the same
-block in `e2e/selection-gestures.spec.ts`), so
-doubling the store halves the derived scale and leaves the CSS position unchanged — equally blind.
-
-The three overlay stores (`tool-overlay-canvas`, `rect-overlay-canvas`, `selection-ants-canvas`,
-the three `<canvas>` elements in `src/components/Main/Main.tsx`) are compared against nothing, not
-even each other, so
-a change that raised one and not the others is undetectable.
-
-**The relation to pin is `store / data-fit-document-* === 1`, in BOTH a dpr-1 and a dpr-2
-context** — the dpr-2 copy is load-bearing, not redundant, since a dpr-conditional raise passes
-at dpr 1. The right-hand side comes from the app's own `data-fit-document-*`
-(`publishFit()` in `src/hooks/usePointerPosition.ts`, from the store's `totalSize`), which is a
-different subsystem from `resizeCanvas`.
-
-**Do not write `canvas.width === box.width * devicePixelRatio`.** It is false today twice over:
-`resizeCanvas()` in `src/util/canvas.ts` assigns the width in JS, so no device property is in the
-causal chain;
-and the workspace `<canvas>` is `h-full w-full object-contain` in `Main.tsx`, so the store is a
-_document_
-quantity and the box enters only through the contain fit, on the **binding axis** alone. At
-1280×720 the fit is height-limited (583/600 = 0.9717), so the width-axis form is red today
-(777.3 vs 974). `e2e/text-tool.spec.ts` already rejects the DPR form in writing, for captures.
-
-**Files.** `e2e/check-dpr.spec.ts`, `e2e/helpers/screenshot-scale.ts` (its module header, and
-`imageBoundsToCss()`), `e2e/selection-marching-ants.spec.ts` (its contain-fit mapping),
-`e2e/selection-gestures.spec.ts` (the same block), `src/components/Main/Main.tsx` (the four
-overlay and workspace canvases), `src/hooks/usePointerPosition.ts` (`publishFit()`),
-`playwright.config.ts` (no `deviceScaleFactor`; `devices['Desktop Chrome HiDPI']` exists with the
-same 1280×720 viewport, and nothing in `e2e/` reads `window.screen`, so a second project would not
-move any layout arithmetic — but it would put the six known 2× failures in
-`e2e/OPEN_PROBLEMS.md`'s "P3 — no mobile or HiDPI project, and no touch anywhere" entry into the
-default run)
 
 ---
 
