@@ -473,8 +473,14 @@ this codebase:
 A layer's raster is layer-local; a tool's args are document-space. The conversion
 between them is `documentPointsToLayerLocal`.
 
-This is the codebase's most reliable defect class, and also the one with the
-largest false-positive rate: `HANDOFF.md` §132 investigated exactly this and
-concluded the three conversions in the shape path were already correct. It
-derives the arithmetic; it is not pinned by a test. Read the conversion at both
-call sites before assuming the other one is wrong.
+Shapes are a high-risk false-positive area. `ShapeToolArea.handlePointerUp()`
+converts the preview points to document space, then `commitShape()` derives the
+bounds there and stores the shape points relative to those bounds.
+`createLayerFromTool()` preserves an explicitly supplied `pos`; only its
+no-`pos` branch converts canvas geometry. The renderer maps the committed
+document-space bounds back through the frame, so the preview and rendered shape
+occupy the same canvas bounds. `computes the committed bounds from the same
+geometry the preview draws` pins the gesture-to-commit relation, and `renders a
+committed shape at its preview bounds through a non-zero frame` pins the
+renderer side. Keep a non-zero frame in both cases; a zero origin hides a
+dropped offset.

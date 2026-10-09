@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-68, 69-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-131, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-132, 136-137, 141-142, 144-145, 149, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2208,59 +2208,6 @@ size only across dialogs (`e2e/document-dialogs.spec.ts` — `documentSize()`). 
 tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
-
-## 132. The shape's three document-frame conversions are correct, and no test pins that
-
-**This entry is a guard against a future "simplification", plus a missing tripwire.** An earlier
-reading of this code claimed the frame offset is applied twice to a shape and lands it 2x from
-where it was dragged. **That reading was wrong.** The arithmetic is worth writing down so nobody
-derives it again. Three conversions, in order:
-
-| where                                                                                  | conversion        | sign   |
-| -------------------------------------------------------------------------------------- | ----------------- | ------ |
-| `ShapeToolArea.tsx`'s `handlePointerUp()`, `canvasToDocumentPoint(..., documentFrame)` | canvas → document | **+1** |
-| `useLayer.ts`'s `createLayerFromTool`, `pos: canvasToDocumentPos(pos, documentFrame)`  | canvas → document | **+1** |
-| `layer-renderer.ts`'s `drawLayerSource()`, `position.x - (documentFrame?.x ?? 0)`      | document → canvas | **−1** |
-
-`document-frame.ts`'s `canvasToDocumentPos()` adds. `documentToCanvasPos()` subtracts. The
-renderer's inline subtraction is that same conversion. **Net +1**, which is
-correct: a shape in a cropped document belongs one frame down and right of the origin.
-
-The two "+1"s are not redundant. The first converts the _gesture_ from canvas to document space.
-The second is `createLayerFromTool`'s unconditional conversion, which exists because a caller may
-supply a `pos` already in layer space and a caller may not. `useLayer.ts`'s `_addLayer()` skips only
-the _derivation_ when `pos` is supplied; the conversion inside `createLayerFromTool` is not
-conditional, and that is deliberate rather than an oversight.
-
-**Do not "fix" this by dropping either conversion.**
-
-**The tripwire this names is not on `main`, and two documents claim it is.** An earlier revision of
-this entry said a test already pinned the cancellation, and `docs/ARCHITECTURE.md` — "File I/O"
-repeats that
-claim. Both are false: `grep -rn "cancels the commit's" src/ e2e/` returns nothing, and the four
-`ShapeToolArea.test.tsx` cases naming a `documentFrame` are about the
-`it('falls back to documentFrameFromSize when currentFrame is null')` fallback, not about the offset
-cancelling. The nearest analogue is about the Draw tool, and **it is on `main`**, not on the
-unlanded branch an earlier version of this entry named: `src/components/Main/__tests__/DrawToolArea.test.tsx`'s
-`it('shifts the committed bounding box by the document frame origin')` case, added by `b3a0cdc4`
-("test(editor): pin invariants and failure-mode contracts"), which
-`git branch --contains b3a0cdc4` lists `main` among.
-`git merge-base --is-ancestor fix/shape-truth main` fails, and that branch carries the case only
-because it descends from `main` — so `fix/shape-truth` is not where the test came from, whatever
-`git log` walked back through it. **Two corrections, in one change:** add the shape test the Draw
-case stands in for, and strike the
-sentence from `docs/ARCHITECTURE.md` that says one exists.
-
-The test to add: a shape committed into a non-zero `documentFrame`, asserting the committed bounds
-equal the preview bounds plus the frame — the same relation the
-`it('computes the committed bounds from the same geometry the preview draws')` case in
-`ShapeToolArea.test.tsx` already
-checks between preview and commit, extended to the renderer's subtraction.
-
-**Files.** `src/components/Main/ShapeToolArea.tsx` — `handlePointerUp()`;
-`src/contexts/useLayer.ts` — `createLayerFromTool`;
-`src/contexts/layer-renderer.ts` — `drawLayerSource()`; `src/contexts/document-frame.ts` —
-`canvasToDocumentPos()` and `documentToCanvasPos()`; `docs/ARCHITECTURE.md` — "File I/O"
 
 ## 133. The e2e stroke analysis cannot see a spray pixel, so a darker Airbrush silently fails its own wait
 
