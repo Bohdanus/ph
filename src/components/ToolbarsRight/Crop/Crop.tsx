@@ -1,5 +1,5 @@
 import React from 'react';
-import type { CropToolArgs } from '../../../tools/crop.ts';
+import { CROP_OVERLAYS, type CropToolArgs, type CropOverlayType } from '../../../tools/crop.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
@@ -14,12 +14,21 @@ const aspectRatios = [
   { label: '9:16', value: 9 / 16 },
 ];
 
+const overlayLabels: Record<CropOverlayType, string> = {
+  ruleOfThirds: 'Rule of Thirds',
+  grid: 'Grid',
+  diagonal: 'Diagonal',
+  triangle: 'Triangle',
+  goldenRatio: 'Golden Ratio',
+  goldenSpiral: 'Golden Spiral',
+};
+
 const Crop: React.FC<{}> = () => {
   const { applyDocumentCrop } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect, preRatioRect } = args;
+  const { aspectRatio, rect, preRatioRect, overlayType = 'ruleOfThirds' } = args;
 
   const onChange = setToolArgs;
 
@@ -70,6 +79,29 @@ const Crop: React.FC<{}> = () => {
           {aspectRatios.map((ratio) => (
             <option key={ratio.label} value={ratio.value ?? ''}>
               {ratio.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor="crop-overlay"
+          className="whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
+          Overlay
+        </label>
+        <select
+          id="crop-overlay"
+          value={overlayType}
+          onChange={(event) =>
+            onChange({ ...args, overlayType: event.target.value as CropOverlayType, overlayOrientation: 'normal' })
+          }
+          className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+        >
+          {CROP_OVERLAYS.map((type) => (
+            <option key={type} value={type}>
+              {overlayLabels[type]}
             </option>
           ))}
         </select>

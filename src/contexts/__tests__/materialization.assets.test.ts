@@ -655,6 +655,62 @@ describe('materialization vector argument scaling', () => {
   });
 });
 
+describe('materialization text argument scaling', () => {
+  function textLayer(
+    sourcePos: { x: number; y: number; width: number; height: number },
+    args: Record<string, unknown>
+  ) {
+    return makeLayer(
+      'layer-1',
+      Object.freeze({
+        kind: 'text' as const,
+        toolName: 'text',
+        args: Object.freeze({ toolName: 'text', ...args }),
+        size: { width: 10, height: 10 },
+        sourcePos: Object.freeze(sourcePos),
+      }),
+      { x: 0, y: 0, width: 200, height: 100 }
+    );
+  }
+
+  async function captureTextArgs(layer: DurableReplayLayer, registry: AssetRegistry) {
+    const seen: Array<Record<string, unknown>> = [];
+    vi.spyOn(toolProcessors.text, 'imageProcessor').mockImplementation(() => (args) => {
+      seen.push(args as unknown as Record<string, unknown>);
+      return [new RecordingOffscreenCanvas(200, 100) as unknown as BitmapSource];
+    });
+    await materializeLayer(layer, makeRequest(registry));
+    return seen;
+  }
+
+  it('scales text font size and layout rect to the current presentation size', async () => {
+    const registry = new AssetRegistry();
+    const layer = textLayer(
+      { x: 0, y: 0, width: 100, height: 50 },
+      { fontSize: 32, text: 'hi', rect: { x1: 10, y1: 5, x2: 40, y2: 20 } }
+    );
+
+    const [args] = await captureTextArgs(layer, registry);
+
+    expect(args.fontSize).toBe(64);
+    expect(args.rect).toEqual({ x1: 20, y1: 10, x2: 80, y2: 40 });
+    expect(args.text).toBe('hi');
+    registry.shutdown();
+  });
+
+  it('passes text arguments through when the source has no positive intrinsic size', async () => {
+    const registry = new AssetRegistry();
+    const args = { fontSize: 32, text: 'hi', rect: { x1: 10, y1: 5, x2: 40, y2: 20 } };
+    const layer = textLayer({ x: 0, y: 0, width: 0, height: 50 }, args);
+
+    const [seen] = await captureTextArgs(layer, registry);
+
+    expect(seen.fontSize).toBe(32);
+    expect(seen.rect).toEqual(args.rect);
+    registry.shutdown();
+  });
+});
+
 describe('materialization operation loop guards', () => {
   it.each([
     {
