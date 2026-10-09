@@ -86,8 +86,17 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
@@ -306,9 +315,13 @@ const REGENERABLE_IGNORED = [
  * direction and matches every other detection-fails-open-explicitly decision
  * here: this is policy, not detection.
  */
-const PROTECTED_BENEATH = REGENERABLE_IGNORED.filter((entry) => entry.except).flatMap((entry) =>
-  entry.except.map((sub) => `${entry.prefix}/${sub}`)
-);
+const PROTECTED_BENEATH = [
+  ...REGENERABLE_IGNORED.filter((entry) => entry.except).flatMap((entry) =>
+    entry.except.map((sub) => `${entry.prefix}/${sub}`)
+  ),
+  // A disposable checkout can itself contain a child worktree with live work.
+  '.kilo/worktrees',
+];
 
 /**
  * True when no command rebuilds this ignored path.
@@ -661,10 +674,11 @@ export function readGitState(cwd, target, { run = defaultRun, list = listWorktre
   let entries;
   try {
     entries = list(cwd);
-  } catch {
-    return { found: false };
+  } catch (err) {
+    return { found: false, listError: firstLine(err) };
   }
-  if (!Array.isArray(entries) || entries.length === 0) return { found: false, known: [] };
+  if (!Array.isArray(entries)) return { found: false, listError: 'git worktree list returned invalid data' };
+  if (entries.length === 0) return { found: false, listError: 'git worktree list returned no worktrees' };
 
   const wanted = realpathIfExists(resolve(cwd, target));
   let match = entries.find((e) => realpathIfExists(e.path) === wanted);
@@ -819,6 +833,142 @@ export function locateInventory(cwd, { run = defaultRun, exists = existsSync } =
     /* not a repository, or git could not answer; `cwd` below is the fallback */
   }
   return join(cwd, 'WORKTREES.json');
+}
+
+/**
+ * Resolve a directory Git no longer registers, limited to one real directory
+ * directly inside the repository's worktree storage.
+ */
+export function resolveOrphanDirectory(
+  cwd,
+  target,
+  { inventoryPath = locateInventory(cwd), run = defaultRun, lstat = lstatSync, realpath = realpathSync } = {}
+) {
+  let repositoryRoot = dirname(inventoryPath);
+  if (!existsSync(inventoryPath)) {
+    let commonDir;
+    try {
+      commonDir = run(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']).stdout.trim();
+    } catch (err) {
+      return {
+        found: false,
+        reason: 'repository-root-unreadable',
+        path: cwd,
+        error: firstLine(err),
+      };
+    }
+    if (!commonDir) {
+      return { found: false, reason: 'repository-root-unreadable', path: cwd };
+    }
+    const canonicalCommonDir = realpathIfExists(commonDir);
+    repositoryRoot = basename(canonicalCommonDir) === '.git' ? dirname(canonicalCommonDir) : canonicalCommonDir;
+  }
+
+  const worktreesRoot = resolve(repositoryRoot, '.kilo', 'worktrees');
+  const candidate = isAbsolute(target) || target.includes('/') ? resolve(cwd, target) : resolve(worktreesRoot, target);
+
+  let rootStat;
+  try {
+    rootStat = lstat(worktreesRoot);
+  } catch (err) {
+    return {
+      found: false,
+      reason: err?.code === 'ENOENT' ? 'worktrees-root-missing' : 'worktrees-root-unreadable',
+      path: worktreesRoot,
+      error: firstLine(err),
+    };
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    return { found: false, reason: 'worktrees-root-not-directory', path: worktreesRoot };
+  }
+
+  let candidateStat;
+  try {
+    candidateStat = lstat(candidate);
+  } catch (err) {
+    const reason = err?.code === 'ENOENT' ? 'missing' : err?.code === 'ENOTDIR' ? 'not-directory' : 'unreadable';
+    return { found: false, reason, path: candidate, error: firstLine(err) };
+  }
+  if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) {
+    return { found: false, reason: 'not-directory', path: candidate };
+  }
+
+  let canonicalRoot;
+  let absolutePath;
+  try {
+    canonicalRoot = realpath(worktreesRoot);
+    absolutePath = realpath(candidate);
+  } catch (err) {
+    return { found: false, reason: 'unreadable', path: candidate, error: firstLine(err) };
+  }
+
+  const relativePath = relative(canonicalRoot, absolutePath);
+  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    return { found: false, reason: 'outside-worktrees', path: candidate, worktreesRoot: canonicalRoot };
+  }
+  if (relativePath.split(sep).length !== 1) {
+    return { found: false, reason: 'not-direct-child', path: candidate, worktreesRoot: canonicalRoot };
+  }
+
+  return {
+    found: true,
+    name: basename(absolutePath),
+    absolutePath,
+    worktreesRoot: canonicalRoot,
+  };
+}
+
+/**
+ * Inspect an unregistered directory without following links or walking
+ * regenerable output trees. Unknown content is reported as work and refuses
+ * disposal; collapsed allowlisted directories still use the protected-path
+ * exceptions enforced for registered worktrees.
+ */
+export function inspectOrphanContent(root, { lstat = lstatSync, readdir = readdirSync } = {}) {
+  let entries;
+  try {
+    entries = readdir(root);
+  } catch (err) {
+    return {
+      regenerablePaths: [],
+      protectedPaths: [],
+      errors: [`${root}: ${firstLine(err)}`],
+    };
+  }
+
+  const regenerablePaths = [];
+  const protectedPaths = [];
+  const errors = [];
+  const directories = [];
+  for (const name of entries.sort()) {
+    const path = name;
+    let stat;
+    try {
+      stat = lstat(join(root, path));
+    } catch (err) {
+      protectedPaths.push(path);
+      errors.push(`${path}: ${firstLine(err)}`);
+      continue;
+    }
+    if (stat.isSymbolicLink()) {
+      protectedPaths.push(path);
+    } else if (stat.isDirectory()) {
+      const directoryPath = `${path}/`;
+      directories.push(directoryPath);
+      (isRegenerableIgnored(directoryPath) ? regenerablePaths : protectedPaths).push(directoryPath);
+    } else if (stat.isFile() && isRegenerableIgnored(path)) {
+      regenerablePaths.push(path);
+    } else {
+      protectedPaths.push(path);
+    }
+  }
+
+  protectedPaths.push(...protectedContentOnDisk(root, directories));
+  return {
+    regenerablePaths: [...new Set(regenerablePaths)].sort(),
+    protectedPaths: [...new Set(protectedPaths)].sort(),
+    errors,
+  };
 }
 
 /**
@@ -1016,6 +1166,49 @@ function collectOwnership(cwd, gitState, { nowMs = Date.now(), liveWindowMs = LI
   // zero rows.
   const sessions = readSessionsIn(gitState.absolutePath, { nowMs, liveWindowMs });
   return { board: boardRows, sessions };
+}
+
+/** The ownership and content checks for a directory without a Git worktree. */
+export function orphanPreflight({ ownership, content, preserveBranch = false } = {}) {
+  const failures = [];
+  const refuse = (code, ...args) => failures.push({ code, message: REFUSALS[code](...args) });
+  if (preserveBranch) {
+    failures.push({ code: 'orphan-no-branch', message: 'An unregistered directory has no branch to keep.' });
+  }
+  if (!ownership?.board || ownership.board.available !== true) {
+    refuse(
+      'board-unavailable',
+      ownership?.board?.error ?? ownership?.board?.dbPath ?? 'board ownership was not available'
+    );
+  }
+  if (!ownership?.sessions || ownership.sessions.available !== true) {
+    refuse(
+      'sessions-unavailable',
+      ownership?.sessions?.error ?? ownership?.sessions?.dbPath ?? 'session ownership was not available'
+    );
+  }
+  if ((ownership?.board?.claims?.length ?? 0) > 0) refuse('board-claim', ownership.board.claims.length);
+  if ((ownership?.board?.fileLocks?.length ?? 0) > 0) {
+    refuse('board-lock', ownership.board.fileLocks.length);
+  }
+  if ((ownership?.board?.liveAgents?.length ?? 0) > 0) {
+    refuse('board-agent-live', ownership.board.liveAgents.length);
+  }
+  if ((ownership?.sessions?.live?.length ?? 0) > 0) refuse('live-session', ownership.sessions.live.length);
+  if (!content) {
+    failures.push({ code: 'orphan-content-unreadable', message: 'The directory contents were not inspected.' });
+  } else {
+    for (const error of content.errors ?? []) {
+      failures.push({ code: 'orphan-content-unreadable', message: `Could not inspect content: ${error}` });
+    }
+    if ((content.protectedPaths?.length ?? 0) > 0) {
+      failures.push({
+        code: 'orphan-content',
+        message: `The directory contains content not on the regenerable allowlist: ${content.protectedPaths.join(', ')}`,
+      });
+    }
+  }
+  return { ok: failures.length === 0, failures };
 }
 
 /**
@@ -1425,13 +1618,19 @@ const defaultFs = { mkdirSync, writeFileSync };
 
 const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [--keep-branch] [--max-age-minutes <n>]
 
-  <worktree>   a path or a name as \`git worktree list\` prints it.
+  <worktree>   a registered worktree, or an unregistered directory directly under
+               the repository's .kilo/worktrees/ containing only regenerable content.
 
-Refuses unless the generated inventory calls this worktree \`action: "dispose"\`
-or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects an \`at-risk\`
-worktree. No board claim, lock or live agent may name it, no session may have it
-as its directory inside the live window, and ignored content or Git operations
-in progress always refuse removal.
+For a registered worktree, refuses unless the generated inventory calls it
+\`action: "dispose"\` or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects
+an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
+may have it as its directory inside the live window, and ignored content or Git
+operations in progress always refuse removal.
+
+If Git no longer registers the directory, the fallback only accepts a real
+direct child of the repository's \`.kilo/worktrees/\`. Every entry must be explicitly
+regenerable, no board or session may own it, and \`--keep-branch\` is inapplicable.
+Unknown content is reported and preserved.
 Ordinary disposal anchors the branch at
 ${KEEP_REF_PREFIX}<name>. Branch-preserving disposal archives uncommitted work
 before removing the directory and leaves the branch ref untouched.
@@ -1498,6 +1697,12 @@ function main(argv) {
   const nowMs = Date.now();
   const gitState = readGitState(cwd, target);
   if (!gitState.found) {
+    if (gitState.listError) {
+      process.stderr.write(
+        `dispose: cannot establish whether "${target}" is registered because \`git worktree list\` failed: ${gitState.listError}\n`
+      );
+      return 1;
+    }
     // An ambiguous name is NOT "no worktree named X". It is several, and
     // reporting that as absence would send the caller off to re-read a list that
     // already contains the answer.
@@ -1507,10 +1712,56 @@ function main(argv) {
       );
       return 3;
     }
-    process.stderr.write(
-      `dispose: no worktree "${target}". Known:\n${(gitState.known ?? []).map((n) => `  ${n}`).join('\n')}\n`
-    );
-    return 1;
+    const orphan = resolveOrphanDirectory(cwd, target);
+    if (!orphan.found) {
+      const descriptions = {
+        missing: 'the path does not exist',
+        'not-directory': 'the path is not a directory',
+        'outside-worktrees': 'the path is outside the repository .kilo/worktrees/ directory',
+        'not-direct-child': 'the path is not a direct child of .kilo/worktrees/',
+        'worktrees-root-missing': 'the repository .kilo/worktrees/ directory does not exist',
+        'worktrees-root-not-directory': 'the repository .kilo/worktrees/ path is not a real directory',
+        'worktrees-root-unreadable': 'the repository .kilo/worktrees/ directory cannot be read',
+        'repository-root-unreadable': 'the repository root cannot be located',
+        unreadable: `the path cannot be inspected${orphan.error ? `: ${orphan.error}` : ''}`,
+      };
+      process.stderr.write(
+        `dispose: no registered worktree "${target}", and the orphan fallback refused it: ${
+          descriptions[orphan.reason] ?? orphan.reason
+        }${orphan.error ? ` (${orphan.error})` : ''}.\n`
+      );
+      return 1;
+    }
+    if (preserveBranch) {
+      process.stderr.write('dispose: an unregistered directory has no branch to keep.\n');
+      return 3;
+    }
+
+    const ownership = collectOwnership(cwd, orphan, { nowMs });
+    const content = inspectOrphanContent(orphan.absolutePath);
+    const verdict = orphanPreflight({ ownership, content });
+    for (const path of content.regenerablePaths) {
+      process.stdout.write(`  found regenerable content: ${path}\n`);
+    }
+    for (const failure of verdict.failures) {
+      process.stderr.write(`  - ${failure.message}\n`);
+    }
+    if (!verdict.ok) {
+      process.stderr.write(`dispose: refusing unregistered directory ${orphan.absolutePath}.\nNothing was changed.\n`);
+      return 1;
+    }
+    if (dryRun) {
+      process.stdout.write(`dispose: ${orphan.absolutePath} is safe to remove.\n  would remove orphan directory\n`);
+      return 0;
+    }
+    try {
+      rmSync(orphan.absolutePath, { recursive: true, force: false });
+    } catch (err) {
+      process.stderr.write(`dispose: could not remove ${orphan.absolutePath}: ${firstLine(err)}\n`);
+      return 2;
+    }
+    process.stdout.write(`dispose: removed unregistered directory ${orphan.absolutePath}.\n`);
+    return 0;
   }
 
   const inventory = readInventory(cwd, gitState, { nowMs });

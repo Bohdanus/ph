@@ -643,6 +643,14 @@ It refuses, and says which signal refused, unless all of these hold:
   it does not name counts as work.** `.serena/`, `playwright/.auth`, `*.local`
   and `*.log` are deliberately absent from it.
 
+When Git no longer registers a directory, `npm run dispose -- <name>` also accepts
+an unregistered directory only when it is a real direct child of the repository's
+`.kilo/worktrees/`. The tool applies the same board and session ownership checks,
+then allows only explicitly regenerable contents; unknown files, symlinks,
+protected subtrees and unreadable content refuse removal. This path removes no
+branch, and `--keep-branch` does not apply. Use `--dry-run` to review the findings
+before removal.
+
 Any one of those refuses on its own. `in-use` from two independent sources is the
 one that matters: `session.directory` records where a chat was **opened**, so its
 absence is never evidence of abandonment, and the board's `agents` table is what
