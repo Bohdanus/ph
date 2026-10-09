@@ -137,6 +137,11 @@ export type DurablePresentationRecord = Readonly<{
   reason: DurablePresentationReason | null;
 }>;
 
+export type DurableNavigationPresentationOutcome =
+  | Readonly<{ status: 'durable'; layers: LayersRecord; frame: DocumentFrame; cursor: number }>
+  | Readonly<{ status: 'legacy-fallback'; reason: DurablePresentationReason; cursor: number }>
+  | Readonly<{ status: 'stale'; reason: 'stale'; cursor: number }>;
+
 const EMPTY_DURABLE_PRESENTATION: DurablePresentationRecord = Object.freeze({
   status: 'unpublished',
   cursor: null,
@@ -185,6 +190,7 @@ export type StoreData = {
   publishRuntimePresentation: (layers: LayersRecord) => void;
   /** Internal adoption registration; the action is not part of public dispatch. */
   adoptLayerBitmaps: (bitmaps: readonly BitmapSource[]) => void;
+  publishDurableNavigationPresentation: () => Promise<DurableNavigationPresentationOutcome>;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
@@ -217,7 +223,7 @@ export type StoreData = {
   documentId: string;
   documentRevision: number;
   branchRevision: number;
-  /** Diagnostic shadow only; legacy history/runtime layers remain authoritative during cutover. */
+  /** Durable logical document used by successful navigation/export; legacy history remains the structural fallback. */
   durableDocument: DurableDocument | null;
   /** A non-current sidecar must never be used as a replay or export input. */
   durableStatus: DurableDocumentStatus;
@@ -439,6 +445,7 @@ const initialState: StoreData = {
   promoteLayerPresentation: () => undefined,
   publishRuntimePresentation: () => undefined,
   adoptLayerBitmaps: () => undefined,
+  publishDurableNavigationPresentation: async () => ({ status: 'legacy-fallback', reason: 'stale', cursor: -1 }),
   previewLayers: { current: {} },
 
   hasImage: false,
@@ -1108,9 +1115,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     state: StoreData,
     document: DurableDocument,
     durableCursor: number
-  ): Promise<void> => {
+  ): Promise<DurableNavigationPresentationOutcome> => {
     const replay = replayDurableAtCursor(document, durableCursor);
-    const publishRecord = (record: DurablePresentationRecord) => {
+    const publishRecord = (record: DurablePresentationRecord): boolean => {
       const action: Extract<InternalAction, { type: 'SET_DURABLE_PRESENTATION' }> = {
         type: 'SET_DURABLE_PRESENTATION',
         payload: {
@@ -1124,16 +1131,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       const latest = latestStateRef.current;
       const next = reducer(latest, action);
-      if (next === latest) return;
+      if (next === latest) return false;
       latestStateRef.current = next;
       rawDispatch(action);
+      return true;
     };
 
     // Legacy-tool sources remain an explicitly unsupported durable source. Keep
     // navigation on the legacy presentation until that source adapter exists.
     if (Object.values(replay.layers).some(({ snapshot }) => snapshot.source.kind === 'legacy-tool')) {
-      publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason: 'unsupported-source' });
-      return;
+      const accepted = publishRecord({
+        status: 'legacy-fallback',
+        cursor: durableCursor,
+        layerIds: [],
+        reason: 'unsupported-source',
+      });
+      return accepted
+        ? { status: 'legacy-fallback', reason: 'unsupported-source', cursor: durableCursor }
+        : { status: 'stale', reason: 'stale', cursor: durableCursor };
     }
 
     const registry = getAssetRegistry();
@@ -1259,15 +1274,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
       detached = undefined;
+      return { status: 'durable', layers: nextLayers, frame: replay.frame, cursor: durableCursor };
     } catch (error) {
       detached?.release();
-      const reason =
+      const reason: DurablePresentationReason =
         error instanceof DurableCompositionRefusal
           ? error.code
           : error instanceof DurablePresentationProjectionRefusal
             ? 'layer-coverage'
             : failureReason;
-      publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason });
+      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, layerIds: [], reason });
+      if (!accepted || String(reason) === 'stale') return { status: 'stale', reason: 'stale', cursor: durableCursor };
+      return { status: 'legacy-fallback', reason, cursor: durableCursor };
     } finally {
       composite?.release();
     }
@@ -1668,10 +1686,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
-      if (converted.status === 'current' && converted.document) {
-        const durableCursor = converted.legacyCursorToDurableCursor?.[action.payload.timeline.cursor] ?? -1;
-        void publishDurableNavigationPresentation(nextState, converted.document, durableCursor);
-      }
       // Replay is the other way a cache leaves the record, and the identity case
       // is the common one: navigating back over a removal re-creates the layer
       // under the same id with no cache at all, or with a different one. The
@@ -1729,6 +1743,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   const dispatchInternalAction = (action: InternalAction) => dispatchAction(action);
   const dispatch: StoreDispatch = (action) => dispatchAction(action);
+  const publishDurableNavigation = (): Promise<DurableNavigationPresentationOutcome> => {
+    const latest = latestStateRef.current;
+    if (latest.durableStatus !== 'current' || !latest.durableDocument) {
+      return Promise.resolve({ status: 'legacy-fallback', reason: 'stale', cursor: latest.historyIndex });
+    }
+    return publishDurableNavigationPresentation(latest, latest.durableDocument, latest.durableDocument.cursor);
+  };
   const publishRuntimePresentation = (layers: LayersRecord) =>
     dispatchInternalAction({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers } });
   const adoptLayerBitmaps = (bitmaps: readonly BitmapSource[]) =>
@@ -1783,6 +1804,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     promoteLayerPresentation,
     publishRuntimePresentation,
     adoptLayerBitmaps,
+    publishDurableNavigationPresentation: publishDurableNavigation,
     previewLayers: previewLayersRef,
     viewStateRef,
     viewState: viewStateRef.current,
