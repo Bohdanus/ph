@@ -57,9 +57,12 @@ defect or a stale document. Write it up ([`../HANDOFF.md`](../HANDOFF.md)) rathe
 than quietly reconciling it in whichever direction is cheaper.
 
 A documented constraint beats a cleaner design. If `docs/` says the presentation
-cache is published through a typed action, then a refactor that promotes a cache
-outside reducer publication has not improved the code — it has broken a rule that
-exists for a stated reason.
+cache is published through a typed action, then a refactor that bypasses the
+reducer's publication guard has not improved the code — it has broken a rule
+that exists for a stated reason. The rule is: `PUBLISH_RUNTIME_PRESENTATION`
+must be refused unless `layersDifferOnlyByPresentation` proves the publication
+moves no durable layer state, and `PROMOTE_LAYER_PRESENTATIONS` must re-check
+`isSamePresentationCanvas` per record it rewrites.
 
 ## The override rule
 
