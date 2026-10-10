@@ -189,6 +189,12 @@ export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
 
+`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
+SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
+them. Sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a tool
+that left the paint panel must not be widened back for a new bar. A group that persists one key
+may not absorb a tool that has more than one.
+
 ## Free subagent models
 
 Poolside Laguna S 2.1 is preferred for subagents. Note: rate-limited — at most 2 subagents using it may run at a time.
