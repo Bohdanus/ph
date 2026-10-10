@@ -669,7 +669,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          "The blend mode for the fill, offering the 27 layer blend modes — Dissolve among them — plus Clear, the one extra this tool gets. Behind is the Brush's alone, so it is not offered here. Default Normal.",
+          "The blend mode for the fill. Photoshop offers the 27 layer blend modes — Dissolve among them — plus Clear, the one extra this tool gets; Behind is the Brush's alone. The app renders no Mode control for the Paint Bucket. Default Normal.",
         status: 'missing',
       },
       {
@@ -758,7 +758,7 @@ export const paintDescriptions: Record<
       {
         control: 'Mode',
         detail:
-          'The blend mode the copied pixels composite with, offering the 27 layer blend modes, Dissolve among them, and neither of the two extras the painting tools add: Behind is the Brush’s alone and Clear goes to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command, so the Clone Stamp gets neither. Default Normal.',
+          "The blend mode the copied pixels composite with. Photoshop offers the 27 layer blend modes, Dissolve among them, and neither of the two extras the painting tools add: Behind is the Brush's alone and Clear goes to the shape tools, the Paint Bucket, the Brush, the Pencil, the Fill command and the Stroke command, so the Clone Stamp gets neither. The app renders no Mode control for the Clone Stamp. Default Normal.",
         status: 'missing',
       },
       {
