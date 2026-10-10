@@ -40,16 +40,15 @@ ID to stdout. Verify the match by running with `FIND_SESSION_VERBOSE=1`:
 npm run session:id -- "distinctive current task phrase" 2>&1
 ```
 
-When no phrase is given, the helper falls back to the most recent top-level session in this
-repository. If the database cannot be opened or no session matches, the helper exits non-zero with a
-message on stderr.
+When no phrase is given, the helper falls back to the most recent top-level session across all
+repositories (use `FIND_SESSION_VERBOSE=1` to verify the directory). If the database cannot be opened
+or no session matches, the helper exits non-zero with a message on stderr.
 
 If the helper is unavailable, fall back to a manual read-only search:
 
 ```sh
 sqlite3 -readonly "$HOME/.local/share/kilo/kilo.db" "
   SELECT s.id, s.title, s.directory,
-         datetime(s.time_created / 1000, 'unixepoch') AS created,
          datetime(s.time_updated / 1000, 'unixepoch') AS updated
   FROM session s
   JOIN message m ON m.session_id = s.id
