@@ -306,7 +306,7 @@ describe('normalizeShapeGeometry', () => {
     });
   });
 
-  it.each(['triangle', 'polygon', 'star'] as const)('keeps %s geometry consistent with the other figures', (figure) => {
+  it.each(['polygon', 'star'] as const)('keeps %s geometry consistent with the other figures', (figure) => {
     expect(normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 10 }, figure, noModifiers)).toEqual({
       start: { x: 0, y: 0 },
       end: { x: 30, y: 10 },
@@ -314,6 +314,51 @@ describe('normalizeShapeGeometry', () => {
     expect(normalizeShapeGeometry({ x: 0, y: 0 }, { x: 30, y: 10 }, figure, { shiftKey: true, altKey: false })).toEqual(
       { start: { x: 0, y: 0 }, end: { x: 30, y: 30 } }
     );
+  });
+
+  describe('triangle', () => {
+    it('uses the drag box for an isosceles triangle without shift', () => {
+      expect(normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'triangle', noModifiers)).toEqual({
+        start: { x: 10, y: 20 },
+        end: { x: 90, y: 45 },
+      });
+    });
+
+    it('uses an equilateral box when the drag is wider than tall', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 90, y: 45 }, 'triangle', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.x).toBe(90);
+      expect(result.end.y).toBeCloseTo(20 + 80 * (Math.sqrt(3) / 2), 10);
+      expect(result.end.y - result.start.y).toBeCloseTo((result.end.x - result.start.x) * (Math.sqrt(3) / 2), 10);
+    });
+
+    it('uses an equilateral box when the drag is taller than wide', () => {
+      const result = normalizeShapeGeometry({ x: 10, y: 20 }, { x: 35, y: 100 }, 'triangle', {
+        shiftKey: true,
+        altKey: false,
+      });
+
+      expect(result.start).toEqual({ x: 10, y: 20 });
+      expect(result.end.y).toBe(100);
+      expect(result.end.x).toBeCloseTo(10 + 80 / (Math.sqrt(3) / 2), 10);
+      expect(result.end.y - result.start.y).toBeCloseTo((result.end.x - result.start.x) * (Math.sqrt(3) / 2), 10);
+    });
+
+    it('keeps an equilateral triangle centered with alt and shift', () => {
+      const result = normalizeShapeGeometry({ x: 100, y: 100 }, { x: 150, y: 130 }, 'triangle', {
+        shiftKey: true,
+        altKey: true,
+      });
+
+      expect((result.start.x + result.end.x) / 2).toBe(100);
+      expect((result.start.y + result.end.y) / 2).toBe(100);
+      expect(result.end.x - result.start.x).toBeCloseTo(100, 10);
+      expect(result.end.y - result.start.y).toBeCloseTo(100 * (Math.sqrt(3) / 2), 10);
+    });
   });
 });
 
@@ -631,8 +676,17 @@ describe('drawShape', () => {
     expect(ctx.lineTo).toHaveBeenCalledWith(30, 10);
   });
 
+  it('draws a drag-defined isosceles triangle', () => {
+    const ctx = createCtx();
+    drawShape(ctx, { ...baseArgs, figure: 'triangle', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
+    expect(ctx.moveTo).toHaveBeenCalledWith(10, 0);
+    expect(ctx.lineTo).toHaveBeenNthCalledWith(1, 20, 20);
+    expect(ctx.lineTo).toHaveBeenNthCalledWith(2, 0, 20);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+    expect(ctx.closePath).toHaveBeenCalled();
+  });
+
   it.each([
-    ['triangle', 3],
     ['polygon', 5],
     ['star', 10],
   ] as const)('closes a %s path with %i vertices', (figure, sides) => {

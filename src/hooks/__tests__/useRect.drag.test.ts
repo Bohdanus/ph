@@ -1258,4 +1258,13 @@ describe('useRect fresh-drag modifiers', () => {
     // 200x50 is wider than 2:1, so the width collapses to the 50px height doubled.
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 200, y2: 150 });
   });
+
+  it('places a fixed-size marquee centred on the press point', () => {
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 } },
+      { fixedSize: { width: 80, height: 40 } }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 60, y1: 80, x2: 140, y2: 120 });
+  });
 });

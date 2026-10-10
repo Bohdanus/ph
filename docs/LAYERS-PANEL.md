@@ -17,8 +17,8 @@ fact about Photoshop this document could not establish; it is neither required n
 the marker, not just the prose around it: `UNVERIFIED` in particular is not a decision.
 
 **Scope.** The Layers panel only. It is the tab `SidebarRight` renders at
-`src/components/SidebarRight/SidebarRight.tsx` — `renderPanel()`, and its mobile counterpart
-`src/components/Mobile/MobileLayersDrawer.tsx`. It is **not** the History panel, the Channels or
+`src/components/SidebarRight/SidebarRight.tsx` — `renderPanel()`, and its tablet touch counterpart
+`src/components/Mobile/MobileLayersDrawer.tsx`. It is **not** a handheld-phone surface, nor is it the History panel, the Channels or
 Paths tabs, the tool options bars that `docs/TOOLS.md` generates, or the dock layout. Where the panel
 is not the right home for a Photoshop requirement, this file says where that home is instead of
 restating it.
@@ -28,7 +28,7 @@ restating it.
 ## Operator Requirements (2026-10-09)
 
 These requirements override the earlier workspace-docking direction and are the product contract
-for the desktop shell:
+for the desktop and tablet shell:
 
 - `HAVE` — Layers and History share a movable horizontal separator. Dragging it up or down changes
   both panels' heights, with minimum usable heights on both sides.
@@ -59,7 +59,7 @@ still retained because Adobe documents resizing panel edges and dividers.
 | Lock enforcement          | `src/contexts/useLayer.ts` — `isLayerLocked()`                                     | Checked only from `updateLayerByTool()` and `tempUpdateLayer()`; the **only** source of `locked: true` is PSD import                  |
 | History / undo            | `src/contexts/history-replay.ts` — `replayHistory()`                               | Per-action arms: the layer arms, plus the document-frame and selection arms                                                           |
 | Durable property path     | `src/contexts/history-adapter.ts` — `LayerPropertyKey`                             | `LayerPropertyKey = 'visible' \| 'name'` — the closed set                                                                             |
-| Mobile panel              | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | A separate, richer surface: new-layer, delete, rename, move up/down                                                                   |
+| Tablet touch panel        | `src/components/Mobile/MobileLayersDrawer.tsx`                                     | Tablet touch surface: new-layer, delete, rename, move up/down; handheld phones are out of scope                                       |
 | Tests                     | `src/components/SidebarRight/__tests__/LayersTab*.test.tsx`, `e2e/layers*.spec.ts` | What each suite pins is in [§16](#16-test-coverage-that-exists)                                                                       |
 
 The panel today is **a list of names with an eye, thumbnail, and bin**. Everything else in this document is a
@@ -732,7 +732,12 @@ Not this file's scope, named once so nobody files the omission here:
 
 ---
 
-## 14. Mobile
+## 14. Tablet Touch Surface (Not Handheld Phone)
+
+**Hard boundary:** the `MobileLayersDrawer` name is historical. It supports tablet-sized touch devices,
+including Retina/high-DPI tablets; handheld phone layouts such as iPhone-sized screens are not supported.
+Do not add phone-only layer interactions or phone breakpoints. The tablet surface must obey the same
+document and pinned-panel rules as desktop.
 
 `MobileLayersDrawer.tsx` is a **separate component** from `LayersTab`, not a responsive variant, and it
 is currently **richer** than the desktop panel: it has a `New Layer` button, a delete button, rename,
@@ -809,7 +814,7 @@ this table or explicitly marked as not blocking.
 
 **This table is not a definition of done.** Not sequenced here: layer color labels, Fill,
 Background conversion and the `isBackground` concept, the panel-menu commands beyond Merge, layer
-styles and the `fx` control, and mobile parity ([§14](#14-mobile), which is in scope and whose pinned
+styles and the `fx` control, and tablet touch parity ([§14](#14-tablet-touch-surface-not-handheld-phone), which is in scope and whose pinned
 tests any opacity work changes). They are requirements, not priorities.
 
 The ordering rule this table encodes: **a visual requirement that a model field enables comes after
@@ -875,23 +880,6 @@ A requirement is not done until a test fails without the change. For this panel 
 5. **Is the drag handle staying?** Photoshop's row is the drag handle
    ([§3](#3-layer-row-anatomy)). Keeping `DragHandleIcon` is a defensible affordance for a row that is
    also a rename target; removing it is more faithful. Nobody has decided.
-6. **The `e2e/OPEN_PROBLEMS.md` filename mismatch — two live lines, and now a routed home.** The
-   file on disk is `e2e/OPEN_PROBLEMS.md` (underscore); a hyphen and an underscore are different
-   characters, so the hyphen path does not resolve on a case-insensitive volume either — it is
-   broken on every platform. `AGENTS.md` no longer contains the hyphen form at all — its
-   §"Known failures and how to read one" and §"Handoff documents" both use the underscore
-   form — and neither does `docs/TESTING.md` (§"E2E failures"). Re-derive the
-   census before editing: `git grep -n 'e2e/OPEN-PROBLEMS' -- .` prints it. What is left is **two**
-   tracked lines — the `captureCanvasScreenshot` drift note in `TEST-FLAKES.md` §12, and the
-   SKIPPED-BY-DECISION comment above the
-   `test('line stays under cursor after window resize (normal, wide and narrow)')` case in
-   `e2e/viewport-drawing.spec.ts` — and the earlier
-   record, `HANDOFF.md` §96, has gone stale on its own citations, so it is a second place to check
-   rather than a shortcut. The route-by-scope rule is the "Where a finding goes" table under
-   `docs/DOCUMENTATION.md` §"The single-home rule", and it settles
-   the "no routed home" question this item used to leave open: the spec line is a defect in the e2e
-   suite's own code, so it is filed in `e2e/OPEN_PROBLEMS.md`. Fix both lines, file that one there,
-   then delete this item.
 
 ---
 
