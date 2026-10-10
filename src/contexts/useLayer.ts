@@ -884,7 +884,27 @@ export const useLayers = () => {
       return true;
     }
 
-    const bitmap = layer.tmpCanvas ?? layer.bitmap;
+    const preview = previewLayersRef.current[id];
+    const currentPoints = Array.isArray((toolArgs as { points?: unknown }).points)
+      ? (toolArgs as { points: Array<{ x: number; y: number }> }).points
+      : null;
+    const previousPoints = Array.isArray((preview?.toolArgs as { points?: unknown } | undefined)?.points)
+      ? (preview!.toolArgs as { points: Array<{ x: number; y: number }> }).points
+      : null;
+    const canAppendStroke = Boolean(
+      preview?.layer.tmpCanvas &&
+      preview.toolArgs?.toolName === toolArgs.toolName &&
+      currentPoints &&
+      previousPoints &&
+      currentPoints.length >= previousPoints.length &&
+      previousPoints.every((point, index) => point.x === currentPoints[index].x && point.y === currentPoints[index].y)
+    );
+    const processorLayer = canAppendStroke ? preview!.layer : layer;
+    const bitmap = canAppendStroke ? preview!.layer.tmpCanvas : (layer.tmpCanvas ?? layer.bitmap);
+    const processorArgs =
+      canAppendStroke && currentPoints && previousPoints
+        ? { ...toolArgs, points: currentPoints.slice(previousPoints.length) }
+        : toolArgs;
     if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
       console.error('No active layer or bitmap to update preview');
       return false;
@@ -899,12 +919,12 @@ export const useLayers = () => {
     let result: ToolResult;
     let input: ReturnType<typeof stageProcessorInput> | null = null;
     try {
-      input = bitmap ? stageProcessorInput(layer, bitmap) : null;
+      input = bitmap ? stageProcessorInput(processorLayer, bitmap) : null;
       result = processor.imageProcessor(
         input
           ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
           : ({ size: layer.pos } as CreatorToolParams)
-      )(toolArgs);
+      )(processorArgs);
     } catch (error) {
       console.error(error);
       return false;
