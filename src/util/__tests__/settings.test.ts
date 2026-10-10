@@ -307,6 +307,8 @@ describe('saveLastSettings', () => {
       color: '#ff0000',
       lineWidth: 2,
       alpha: 1,
+      featherRadius: 0,
+      antiAlias: true,
       fill: false,
       toolName: 'freehand-lasso',
     });
@@ -321,6 +323,8 @@ describe('saveLastSettings', () => {
       color: '#0000ff',
       lineWidth: 4,
       alpha: 0.5,
+      featherRadius: 8,
+      antiAlias: false,
       fill: true,
       toolName: 'polygonal-lasso',
     });
