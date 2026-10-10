@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1619,69 +1619,6 @@ rail, and must NEVER be hidden"
      adjustment-layer question is §172. The label question was §170; it is resolved and
      implemented, so it is deleted, and the rule it settled now lives in
      `docs/TOOLS-TOO-HARD.md`'s enabled-items entry. -->
-
-## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
-
-`src/tools/toolProcessors.ts` registers all three against the same rasteriser — `buildDrawArgs()` and
-the `brush` and `pencil` entries below it. **The coordinates in that fence are historical, kept as
-the quoted record only; they no longer point at the quoted code**, and the current locations are
-`buildDrawArgs()` and those two entries' `creator` bodies:
-
-```
- 96: const buildDrawArgs = (args, penType: 'pen' | 'spray', lineWidth?) => …
- 259-262: brush   → draw({…})(buildDrawArgs(args, 'pen'))
- 267-275: pencil  → draw({…})(buildDrawArgs(args, 'pen', lineWidth))
-```
-
-So `brush ≡ pencil ≡ draw` at the pixel level. They differ by nothing a user can see except the
-preset list (`src/tools/brush.ts` — `PAINT_PRESETS`) and the tool name carried into history.
-`src/components/ToolbarsRight/Brush/Brush.tsx` and `Pencil/Pencil.tsx` are both three-line
-`createPaintToolbar('brush' | 'pencil')` calls over one shared bar.
-
-**The constraint that makes this correct rather than a duplication bug has no surviving copy
-anywhere.** The rule was written into `AGENTS.md`; `git log -S 'PaintToolName' -- AGENTS.md` names
-`f0f7e548` (which added it), `ef85d3ab` and `1e82da20` (which removed it) — and all three are on
-`main`, so the removal landed with the rule and no ref carries it either. An earlier version of this
-entry named `fix/stale-reclaim-skill` as its home; `git rev-parse fix/stale-reclaim-skill` fails and
-the only refs matching `*reclaim*` are four under `refs/keep/disposed/`, none of which has an
-`AGENTS.md` carrying the rule. The only place the text survives is the quotation below:
-
-> "`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
-> SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
-> them — sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a
-> tool that left the paint panel must not be widened back for a new bar. Corollary: a group that
-> persists one key may not absorb a tool that has more than one."
-
-The corollary's original pointer (`HANDOFF.md` §70, "a tool whose settings do not fit a shared arm")
-is gone — that defect was fixed, and the rule it recorded is the sentence above. `grep -c
-PaintToolName AGENTS.md` on `main` returns **0**, and no branch's `AGENTS.md` carries it either.
-`git grep -ln PaintToolName -- '*.md'` returns two files — `.skills/photoshop-tool-creation.md` and
-this one — and the skill file uses the name only inside a code sample and the `createPaintToolbar()`
-factory discussion, never as a boundary rule. `grep -rn "SUBSTITUTES pixels" --exclude-dir=node_modules
---exclude-dir=.git .` matches the fence below and nothing else, so the quoted paragraph **is the only
-copy of the rule in the repository.** The type exists and is enforced in
-code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts` —
-`paintToolNames`) — but the sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not
-an accident exists nowhere else: the entry that used to hold it is deleted, correctly, because its
-own defect was fixed, and the file that carried it was shortened in a commit already on `main`.
-
-**Why it matters for the dead-tool question this surfaced.** Three tools sharing one rasteriser
-is exactly the shape that reads as dead-code duplication, and the correct deletion — merging
-`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md` — "Open violations",
-its "No invented tools" bullet — orders would
-be a real regression for anyone who has not read the rule. The rule is what stops it. That is
-also the general lesson: **a rule can outlive the entry that recorded it, and deleting the entry
-does not delete the rule** — so a rule with no home is a defect in itself.
-
-**Fix.** Write the quoted `PaintToolName` paragraph into `AGENTS.md`'s **Architecture status**
-section, next to the history-authority paragraph it constrains. It is a boundary rule of the same
-kind. An earlier version of this entry proposed moving it "out of the branch's `AGENTS.md`"; there
-is no branch left to move it out of, so it must be **written**, not moved — and until it is, the
-rule exists only as a quotation inside this entry.
-
-**Files.** `src/tools/toolProcessors.ts` — `buildDrawArgs()`, the `'clone-stamp'` entry and the
-`brush` entry; `src/tools/brush.ts` — `PAINT_PRESETS`; `AGENTS.md` §Architecture status;
-`docs/PHOTOSHOP-UX.md` — "Open violations"
 
 ## 119. The Draw tool is bound to no key at all, and whether it should be is a decision nobody has taken
 
@@ -3337,44 +3274,6 @@ contribution is the boundary and not the shape.
 **Provenance.** Fixed 2026-10-04 on `fix/levels-proportionate-curve`: the proportionate curve, Adobe's
 travels, the non-clipping negative half and the exact-black `brightness(0%)` endpoint all landed there.
 This entry is only the part that did not.
-
-## 202. `docs/DOCUMENTATION.md` states the presentation-cache rule more strongly than the reducer enforces it
-
-**The problem.** `docs/DOCUMENTATION.md` — the section on a documented constraint beating a
-cleaner design — says that if `docs/` says the presentation cache is published through a typed
-action, then a refactor that promotes a cache outside reducer publication "has not improved
-the code — it has broken a rule that exists for a stated reason". Read literally that makes
-`PROMOTE_LAYER_PRESENTATIONS` the violation it names, because promotion does not go through
-publication.
-
-**What the code actually does.** Two reducer arms write the presentation cache, and each has
-its own guard. `PROMOTE_LAYER_PRESENTATIONS` re-checks `isSamePresentationCanvas` per record
-and rewrites only the records that differ. `PUBLISH_RUNTIME_PRESENTATION` replaces `layers`
-wholesale, and `dispatchAction` refuses that arm unless `layersDifferOnlyByPresentation`
-proves the publication moved no durable layer state. The whole-tree guard is applied on the
-publication path and NOT on the promotion path — so the guarantee "a publication cannot move
-durable state" is enforced, and the guarantee "promotion cannot silently drop durable state"
-is enforced per record by a different, weaker check. Nothing enforces a rule about promoting
-outside the reducer, because `PROMOTE_LAYER_PRESENTATIONS` is itself a reducer action.
-
-`AGENTS.md` carried the correction in its architecture-status section until 2026-10-04, when
-that section was cut for duplication with `docs/ARCHITECTURE.md` and
-`docs/ARCHITECTURE.md` §"The presentation cache". Cutting the paragraph removed the only
-document that said the documented rule was stronger than the code, which is why the finding
-is filed here rather than left to the next reader of `docs/DOCUMENTATION.md`.
-
-**What would close it.** Reword `docs/DOCUMENTATION.md` so the constraint names the guard
-rather than the shape: the rule is that a publication must be refused unless
-`layersDifferOnlyByPresentation` holds, and promotion must re-check
-`isSamePresentationCanvas` per record. Whether that is the intended invariant, or whether
-`PROMOTE_LAYER_PRESENTATIONS` should also carry the whole-tree guard, is an architecture
-judgement and belongs to the operator.
-
----
-
----
-
----
 
 ## 214. An interrupted merge with no `MERGE_HEAD` is never detected or anchored, so its conflicted paths exist only in a working tree
 
