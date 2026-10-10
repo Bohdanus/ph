@@ -388,6 +388,7 @@ function resolveSymlinksBestEffort(path) {
   const parts = String(path).split('/');
   for (let index = parts.length - 1; index > 0; index -= 1) {
     const candidate = parts.slice(0, index).join('/');
+    if (candidate === '') continue;
     try {
       // Everything from `index` onwards is the part that does not exist yet, so
       // it is re-attached verbatim. Building a tail by hand here lost the
@@ -404,6 +405,19 @@ function resolveSymlinksBestEffort(path) {
 
 function isMissingPath(error) {
   return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+/**
+ * True when a normalised path is NOT inside any worktree of this repository.
+ *
+ * Two forms escape the repo: a Unix absolute path (`/…`) and a relative one
+ * that climbs out (`…`). On Windows, a drive-absolute path (`C:\…` after
+ * backslash conversion, or `C:…`) is a third form that must also be refused,
+ * because `normalizePaths` leaves such paths untouched when no worktree prefix
+ * matches.
+ */
+function isOutsideRepoPath(path) {
+  return path.startsWith('/') || path.startsWith('..') || /^[a-z]:\//i.test(path);
 }
 
 /**
@@ -1536,7 +1550,7 @@ export class Board {
     // Both ways of naming a file outside this repository: an absolute path that
     // no worktree prefix matched, and a relative one that climbs out of the
     // worktree root. Either way there is no lock it could ever collide with.
-    const outside = list.filter((path) => path.startsWith('/') || path.startsWith('..'));
+    const outside = list.filter((path) => isOutsideRepoPath(path));
     if (outside.length > 0) {
       throw new BoardError(
         `not inside this repository: ${outside.join(', ')}. Locks cover this repository's files; ` +
@@ -2006,7 +2020,7 @@ export class Board {
     // free — `hold` refuses such a path outright, and `check` answering "free"
     // where `hold` answers "no" is the disagreement that lets a shell gate on
     // the wrong one.
-    if (normalized.startsWith('/') || normalized.startsWith('..')) {
+    if (isOutsideRepoPath(normalized)) {
       // `issues: []` on every early return, not just here: this object is what
       // the CLI renders, and a consumer that reads `.issues` must never have to
       // guard for the key being absent on one of three paths.

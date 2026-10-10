@@ -124,6 +124,7 @@ beforeEach(() => {
   git(['config', 'user.email', 'test@example.com']);
   git(['config', 'user.name', 'test']);
   git(['config', 'commit.gpgsign', 'false']);
+  git(['config', 'core.autocrlf', 'false']);
 });
 
 afterEach(() => {
