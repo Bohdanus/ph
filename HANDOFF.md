@@ -3295,43 +3295,6 @@ nothing" that is not `mustNotPrune`, which is what all three branches need. Unti
 `kilo.jsonc`, and defeating that gate is not the answer — which leaves the operator as the only party
 who can retire them.
 
-## 183. A fresh document opens the paint bar on `Custom`, because the seeded brush matches no preset
-
-**Problem.** `defaultSettings.brush` is `alpha: 0.9`, `lineWidth: 10`,
-`smoothing: PAINT_SMOOTHING_DEFAULT` (10) and `blendMode: 'source-over'`. The `Hard Round` preset is
-`lineWidth: 10`, `alpha: 1`, `smoothing: 0`, `blendMode: 'source-over'`. `matchPaintPreset()`
-compares all four fields, so the seeded bar matches nothing and returns the empty string, which
-`Paint.tsx`'s preset picker renders as its `Custom` row. The user opens a blank document, picks the
-Brush, and is told their tip is a hand-tuned one they have not tuned.
-
-`matchPaintPreset()` is right and `brush.test.ts` — the `it.each(mismatches)` case — pins it
-correctly: an empty string is the honest answer for a bar that is not a named tip. The defect is
-that the SEED is not a named tip, and it is not obviously which of the two numbers is wrong:
-
-- `settings.ts`'s own comment argues `smoothing: 10` is deliberate, being "Photoshop's own default",
-  and that it is what makes a brush stroke smoothed where the legacy `draw` tool was not.
-- On that reading the mismatch is `alpha: 0.9`. Photoshop's default brush opacity is 100%, and
-  `Hard Round`'s `alpha: 1` agrees with Adobe while the seed does not.
-- On the other reading the mismatch is the preset: if smoothing 10 is the app's intended default
-  stroke, then the tip that means "the default" is `Hard Round` at smoothing 0, and no preset
-  describes what a new document actually starts with.
-
-**Affected.** `src/tools/settings.ts` (`defaultSettings.brush`),
-`src/tools/brush.ts` (`PAINT_PRESETS` and `matchPaintPreset()`), and the `Custom` row's render in
-`Paint.tsx`'s preset picker. Pinned, correctly, by `src/tools/__tests__/brush.test.ts` — the
-`it('reads a freshly seeded paint bar as Custom')` case asserts the current answer, so a fix that
-moves the seed must move that assertion with it, and one that moves a preset must not.
-
-**What would close it.** A decision on which field is wrong, then a test that asserts a freshly
-seeded bar resolves to a preset label. Do not add a fourth field to the comparison to make the seed
-match: the four are the tip's identity, and a field that exists only to be permissive is how a bar
-ends up claiming a tip it is not.
-
-**Provenance.** This entry's predecessor lived only on the `brush-toolbar` branch, which is in no
-ref of this repository; `.skills/photoshop-tool-creation.md` records that the underlying material
-has since landed and that these claims are mainline. The finding outlived the branch, and the
-branch's own entry died with it, which is how it came to have no entry at all.
-
 ## 185. The Magic Wand discards every matched region except the largest, on every click
 
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
