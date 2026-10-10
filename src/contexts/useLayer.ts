@@ -47,6 +47,7 @@ import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { EraserToolArgs } from '../tools/eraser.ts';
 import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
+import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
@@ -269,6 +270,45 @@ function getIncrementalDodgeBurnArgs(prevArgs: ToolArgs | undefined, currArgs: T
 
 function isDodgeBurnToolArgs(args: ToolArgs): args is DodgeBurnToolArgs {
   return args.toolName === 'dodge' || args.toolName === 'burn';
+}
+
+/**
+ * Returns the appended Sponge args only when tool name, mode, flow, vibrance, size, hardness, and
+ * the exact point prefix are unchanged. The shared endpoint is preserved to maintain continuity.
+ */
+function getIncrementalSpongeArgs(prevArgs: ToolArgs | undefined, currArgs: ToolArgs): SpongeToolArgs | null {
+  if (!prevArgs || prevArgs.toolName !== currArgs.toolName) return null;
+  if (currArgs.toolName !== 'sponge') return null;
+
+  const prev = prevArgs as SpongeToolArgs;
+  const curr = currArgs as SpongeToolArgs;
+
+  if (prev.mode !== curr.mode) return null;
+  if (prev.flow !== curr.flow) return null;
+  if (prev.vibrance !== curr.vibrance) return null;
+  if (prev.size !== curr.size) return null;
+  if (prev.hardness !== curr.hardness) return null;
+
+  const prevPoints = prev.points;
+  const currPoints = curr.points;
+
+  if (!Array.isArray(prevPoints) || !Array.isArray(currPoints)) return null;
+  if (prevPoints.length === 0) return null;
+
+  // Current points must start with the previous points as a prefix
+  if (currPoints.length <= prevPoints.length) return null;
+
+  // Check exact point prefix match
+  for (let i = 0; i < prevPoints.length; i++) {
+    const pp = prevPoints[i];
+    const cp = currPoints[i];
+    if (pp.x !== cp.x || pp.y !== cp.y) return null;
+  }
+
+  // Preserve shared endpoint: last point of prev === first new point of curr
+  // This is already enforced by the prefix check above since the prefix includes the last point
+
+  return { ...curr, points: currPoints.slice(prevPoints.length - 1) };
 }
 
 // A frame allocates SIX surfaces at its own size — the staging canvas `drawLayersToCanvas`
@@ -1053,9 +1093,25 @@ export const useLayers = () => {
     }
     const canIncrementalDodgeBurn = incrementalDodgeBurnArgs !== null;
 
-    const processorLayer = canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn ? preview!.layer : layer;
+    // Check for incremental sponge
+    let incrementalSpongeArgs: SpongeToolArgs | null = null;
+    if (
+      !canAppendStroke &&
+      !canIncrementalEraser &&
+      !canIncrementalDodgeBurn &&
+      toolArgs.toolName === 'sponge' &&
+      preview?.layer.tmpCanvas
+    ) {
+      incrementalSpongeArgs = getIncrementalSpongeArgs(preview.toolArgs, toolArgs);
+    }
+    const canIncrementalSponge = incrementalSpongeArgs !== null;
+
+    const processorLayer =
+      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
+        ? preview!.layer
+        : layer;
     const bitmap =
-      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn
+      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
         ? preview!.layer.tmpCanvas
         : (layer.tmpCanvas ?? layer.bitmap);
     if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
@@ -1084,8 +1140,12 @@ export const useLayers = () => {
       if (canIncrementalDodgeBurn && preview?.layer.tmpCanvas) {
         (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
       }
+      // Pass previousCanvas for incremental sponge
+      if (canIncrementalSponge && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
       result = processor.imageProcessor(processorParams)(
-        processorArgs ?? incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? toolArgs
+        processorArgs ?? incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? incrementalSpongeArgs ?? toolArgs
       );
     } catch (error) {
       console.error(error);
