@@ -32,6 +32,7 @@ import { transform } from './transform.ts';
 export type ProcessorToolParams = {
   size: Size;
   bitmap: BitmapSource;
+  previousCanvas?: BitmapSource;
 };
 
 export type CreatorToolParams = {
