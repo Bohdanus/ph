@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KeyboardEventsProvider, useKeyDownShortcut } from '../../../hooks/useKeyboardEvents.tsx';
 import SaveDialog from '../SaveDialog.tsx';
+import type { ImageSaveResponse } from '@/contexts/useFile';
 
 afterEach(cleanup);
 
@@ -11,8 +12,8 @@ describe('SaveDialog asynchronous save', () => {
     let finish!: () => void;
     const onSave = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
+        new Promise<ImageSaveResponse | null>((resolve) => {
+          finish = () => resolve({ fileName: 'test.png', format: 'image/png' });
         })
     );
     const onClose = vi.fn();
@@ -46,7 +47,7 @@ describe('SaveDialog asynchronous save', () => {
   });
 
   it('exposes JPEG quality and sends the selected value with the save request', async () => {
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     const onClose = vi.fn();
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
 
@@ -98,7 +99,7 @@ describe('SaveDialog filename handling', () => {
   });
 
   it('re-enables the save button as soon as a non-blank name is typed', () => {
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={vi.fn()} />);
 
     fireEvent.change(filenameInput(), { target: { value: '  ' } });
@@ -112,7 +113,7 @@ describe('SaveDialog filename handling', () => {
   });
 
   it('does not save a whitespace-only name even when the click is forced', () => {
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={vi.fn()} />);
 
     fireEvent.change(filenameInput(), { target: { value: '  ' } });
@@ -166,7 +167,7 @@ describe('SaveDialog format options', () => {
   });
 
   it('omits the quality field for non-JPEG formats even after the slider was used', async () => {
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={vi.fn()} />);
 
     fireEvent.change(formatSelect(), { target: { value: 'image/jpeg' } });
@@ -184,7 +185,7 @@ describe('SaveDialog format options', () => {
 describe('SaveDialog cancel and close paths', () => {
   it('closes through the Cancel button', () => {
     const onClose = vi.fn();
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -220,7 +221,7 @@ describe('SaveDialog failure handling', () => {
   // contract under test here is the component boundary a rejecting caller crosses.
   it('restores the controls when onSave resolves', async () => {
     const onClose = vi.fn();
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
 
     await act(async () => {
@@ -235,7 +236,13 @@ describe('SaveDialog failure handling', () => {
 
   it('leaves closure to the caller after a successful save', async () => {
     const onClose = vi.fn();
-    render(<SaveDialog proposedName="design" onSave={() => Promise.resolve()} onClose={onClose} />);
+    render(
+      <SaveDialog
+        proposedName="design"
+        onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+        onClose={onClose}
+      />
+    );
 
     await act(async () => {
       fireEvent.click(saveButton());
@@ -243,6 +250,109 @@ describe('SaveDialog failure handling', () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
+  });
+
+  it('shows inline error when onSave resolves with null (production failure path)', async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(null);
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Saving\.\.\.)$/ }));
+    });
+    await waitFor(() => expect(screen.getByTestId('save-dialog-error')).toBeInTheDocument());
+
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ fileName: 'design', format: 'image/png' });
+    expect(screen.getByTestId('save-dialog-error')).toHaveTextContent(
+      'Export failed. Please check your settings and try again.'
+    );
+    expect(screen.getByTestId('save-dialog-error-dismiss')).toBeInTheDocument();
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('clears inline error when user edits filename after a failed save', async () => {
+    const onClose = vi.fn();
+    let callCount = 0;
+    const onSave = vi.fn(() => {
+      callCount += 1;
+      return Promise.resolve(callCount === 1 ? null : { fileName: 'retry.png', format: 'image/png' });
+    });
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Saving\.\.\.)$/ }));
+    });
+    await waitFor(() => expect(screen.getByTestId('save-dialog-error')).toBeInTheDocument());
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Filename'), { target: { value: 'retry' } });
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('save-dialog-error')).toBeNull());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Saving\.\.\.)$/ }));
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave).toHaveBeenLastCalledWith({ fileName: 'retry', format: 'image/png' });
+    expect(screen.queryByTestId('save-dialog-error')).toBeNull();
+  });
+
+  it('clears inline error when user changes format after a failed save', async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(null);
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Saving\.\.\.)$/ }));
+    });
+    await waitFor(() => expect(screen.getByTestId('save-dialog-error')).toBeInTheDocument());
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('save-dialog-error')).toBeNull());
+  });
+
+  it('clears inline error when user adjusts JPEG quality after a failed save', async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(null);
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Saving\.\.\.)$/ }));
+    });
+    await waitFor(() => expect(screen.getByTestId('save-dialog-error')).toBeInTheDocument());
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('JPEG quality'), { target: { value: '0.5' } });
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('save-dialog-error')).toBeNull());
+  });
+
+  it('dismisses inline error when dismiss button is clicked', async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(null);
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^(Save|Saving\.\.\.)$/ }));
+    });
+    await waitFor(() => expect(screen.getByTestId('save-dialog-error')).toBeInTheDocument());
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('save-dialog-error-dismiss'));
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('save-dialog-error')).toBeNull());
   });
 });
 
@@ -340,7 +450,7 @@ describe('SaveDialog rejected save', () => {
   });
 
   it('shows no failure feedback when the save resolves', async () => {
-    const onSave = vi.fn(() => Promise.resolve());
+    const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={vi.fn()} />);
 
     await act(async () => {
@@ -366,7 +476,7 @@ const jpegQuality = () => screen.getByTestId('save-dialog-jpeg-quality') as HTML
 
 function renderDialog({ proposedName = 'design' }: { proposedName?: string } = {}) {
   const onClose = vi.fn();
-  const onSave = vi.fn(() => Promise.resolve());
+  const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
   const view = render(<SaveDialog proposedName={proposedName} onSave={onSave} onClose={onClose} />);
   return { onClose, onSave, ...view };
 }
@@ -384,7 +494,11 @@ function SaveDialogHarness() {
         Save As
       </button>
       {open && (
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={() => setOpen(false)} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
@@ -499,7 +613,11 @@ describe('SaveDialog focus ownership', () => {
     render(
       <KeyboardEventsProvider>
         <UndoProbe onKeyDown={onKeyDown} />
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={vi.fn()}
+        />
       </KeyboardEventsProvider>
     );
 
@@ -523,7 +641,11 @@ describe('SaveDialog focus ownership', () => {
     render(
       <KeyboardEventsProvider>
         <UndoProbe onKeyDown={onKeyDown} />
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={vi.fn()}
+        />
       </KeyboardEventsProvider>
     );
 
@@ -585,7 +707,11 @@ describe('SaveDialog focus ownership', () => {
           outside
         </button>
         <UndoProbe onKeyDown={onKeyDown} />
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={vi.fn()}
+        />
       </KeyboardEventsProvider>
     );
     const panel = screen.getByTestId('save-dialog');
@@ -611,7 +737,11 @@ describe('SaveDialog focus ownership', () => {
     render(
       <KeyboardEventsProvider>
         <UndoProbe onKeyDown={onKeyDown} />
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={vi.fn()}
+        />
       </KeyboardEventsProvider>
     );
     const panel = screen.getByTestId('save-dialog');
@@ -652,7 +782,11 @@ describe('SaveDialog focus ownership', () => {
         <button type="button" data-testid="outside-control">
           outside
         </button>
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={vi.fn()}
+        />
       </>
     );
     const panel = screen.getByTestId('save-dialog');
@@ -668,7 +802,11 @@ describe('SaveDialog focus ownership', () => {
         <button type="button" data-testid="outside-control">
           outside
         </button>
-        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+        <SaveDialog
+          proposedName="design"
+          onSave={vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' })}
+          onClose={vi.fn()}
+        />
       </>
     );
     const panel = screen.getByTestId('save-dialog');
@@ -702,8 +840,8 @@ describe('SaveDialog focus ownership', () => {
     let finish!: () => void;
     const onSave = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
+        new Promise<ImageSaveResponse | null>((resolve) => {
+          finish = () => resolve({ fileName: 'test.png', format: 'image/png' });
         })
     );
     render(
