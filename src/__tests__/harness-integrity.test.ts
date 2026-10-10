@@ -635,7 +635,7 @@ const matchSegments = (pattern: string[], value: string[]): boolean => {
 };
 
 const matchesGlob = (pattern: string, repoRelativePath: string) =>
-  matchSegments(pattern.split('/'), repoRelativePath.split('/'));
+  matchSegments(pattern.split('/'), repoRelativePath.split(/[/\\]/));
 
 const hasExactEntries = (actual: readonly string[] | undefined, expected: readonly string[]) =>
   actual !== undefined &&

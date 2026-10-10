@@ -109,6 +109,7 @@ describe('pre-push stale branch detection', () => {
   it('runs before the final push-test gate in the tracked hook', () => {
     const hook = readFileSync(resolve(import.meta.dirname, '../../.husky/pre-push'), 'utf8')
       .trim()
+      .replace(/\r\n/g, '\n')
       .split('\n');
 
     expect(hook).toContain('node scripts/stale-branch-files.mjs');

@@ -9,7 +9,7 @@ import { renderToolDocs, renderTooltips } from '../generate-tool-docs.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-const readRepoFile = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8');
+const readRepoFile = (path) => readFileSync(resolve(REPO_ROOT, path), 'utf8').replace(/\r\n/g, '\n');
 
 const FAMILIES = [
   'selection',
