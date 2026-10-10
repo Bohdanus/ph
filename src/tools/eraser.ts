@@ -10,6 +10,7 @@ import {
   type BrushTipSettings,
 } from '../util/brush-engine.ts';
 import { pixelIndex } from '../util/pixels.ts';
+import { createSelectionAlphaMask } from '../util/selection.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 import type { Point, Size } from '../contexts/general-types.ts';
 import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
@@ -64,6 +65,12 @@ export type EraserToolArgs = {
    */
   color: string;
   points: Point[];
+  /** The committed selection snapshot that clips this stroke during replay. */
+  selection?: {
+    points: Point[];
+    featherRadius: number;
+    antiAlias: boolean;
+  };
 
   toolName: 'eraser';
 };
@@ -201,7 +208,12 @@ export const eraser =
 
     if ('bitmap' in params) ctx.drawImage(params.bitmap, 0, 0, size.width, size.height);
 
-    const { mode } = args as unknown as EraserToolArgs;
+    const eraserArgs = args as unknown as EraserToolArgs;
+    const { mode } = eraserArgs;
+    const selectionMask = eraserArgs.selection
+      ? createSelectionAlphaMask(eraserArgs.selection.points, size, eraserArgs.selection)
+      : null;
+    const original = selectionMask ? ctx.getImageData(0, 0, size.width, size.height) : null;
 
     // `setupDrawCtx` writes the composite operator, stroke and alpha and deliberately leaves them on
     // the context, so the caller owns the bracket — the same contract `draw()` and `shape()` honour.
@@ -223,6 +235,23 @@ export const eraser =
         const strokeArgs = buildEraseArgs(args);
         setupDrawCtx(ctx, strokeArgs);
         drawLine({ args: strokeArgs, ctx });
+      }
+
+      if (selectionMask && original) {
+        const image = ctx.getImageData(0, 0, size.width, size.height);
+        for (let index = 0; index < selectionMask.length; index++) {
+          const offset = index * 4;
+          const coverage = selectionMask[index] / 255;
+          const erasedAlpha = original.data[offset + 3] - image.data[offset + 3];
+          image.data[offset + 3] = Math.round(original.data[offset + 3] - erasedAlpha * coverage);
+          if (coverage === 0) {
+            image.data[offset] = original.data[offset];
+            image.data[offset + 1] = original.data[offset + 1];
+            image.data[offset + 2] = original.data[offset + 2];
+            image.data[offset + 3] = original.data[offset + 3];
+          }
+        }
+        ctx.putImageData(image, 0, 0);
       }
     } finally {
       ctx.restore();
