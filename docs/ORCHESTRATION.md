@@ -620,8 +620,8 @@ It refuses, and says which signal refused, unless all of these hold:
   **not in the future and no more than 15 minutes old**, and it calls this
   worktree `action: "dispose"` — or `action: "legacy"`, which permits removing
   the worktree while keeping the branch. `--keep-branch` explicitly allows an
-  operator to remove a freshly inventoried `action: "at-risk"` worktree while
-  retaining its branch;
+  operator to remove a freshly inventoried `action: "at-risk"` or `action: "land"`
+  worktree while retaining its branch;
 - it is not the base branch, even when the repository uses a bare primary
   worktree and checks out the base branch in a linked worktree;
 - **no board claim, no board file lock and no live board agent** names it;
@@ -667,9 +667,9 @@ are released by the agent that took them, not taken from it"_, or a `derived-liv
 finding naming the chats that wrote inside the live window — which includes yours.
 
 **There is no generic escape from inside the agent.** No `--force` exists — the CLI rejects the flag.
-`--keep-branch` is narrower: it only accepts a freshly inventoried `at-risk` action, archives
-tracked and untracked edits, clears them only after the archive succeeds, and keeps the branch
-ref. It does not override `mustNotPrune`,
+`--keep-branch` is narrower: it only accepts a freshly inventoried `at-risk` or
+`land` action, archives tracked and untracked edits, clears them only after the
+archive succeeds, and keeps the branch ref. It does not override `mustNotPrune`,
 unreadable worktree state, ignored content, active ownership or in-progress operations.
 `undecided` is never eligible. `--max-age-minutes` is ceiling-clamped to the same 15 minutes the
 inventory-freshness check imposes. These options do not change ownership policy: board and session

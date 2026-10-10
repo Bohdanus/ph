@@ -98,6 +98,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { ACTION, LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
@@ -513,7 +514,8 @@ export function preflight({
       // a live, dirty or in-flight worktree applies to it unchanged; the only
       // thing that differs is whether the BRANCH goes with the directory, and
       // `dispose()` answers that.
-      const staleBranchRemoval = preserveBranch && inventory.record.action === ACTION.AT_RISK;
+      const staleBranchRemoval =
+        preserveBranch && (inventory.record.action === ACTION.AT_RISK || inventory.record.action === ACTION.LAND);
       if (
         inventory.record.action !== ACTION.DISPOSE &&
         inventory.record.action !== ACTION.LEGACY &&
@@ -1110,7 +1112,9 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
   const evaluationAt = doc.ownership?.asOf ?? null;
   const evaluationAtMs = Date.parse(evaluationAt);
   const record =
-    (doc.worktrees ?? []).find((w) => realpathIfExists(w.absolutePath ?? w.path) === gitState.absolutePath) ?? null;
+    (doc.worktrees ?? []).find(
+      (w) => realpathIfExists(w.absolutePath ?? w.path) === realpathIfExists(gitState.absolutePath)
+    ) ?? null;
   return {
     ok: true,
     reason: null,
@@ -1640,7 +1644,7 @@ const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [
 
 For a registered worktree, refuses unless the generated inventory calls it
 \`action: "dispose"\` or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects
-an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
+an \`at-risk\` or \`land\` worktree. No board claim, lock or live agent may name it, no session
 may have it as its directory inside the live window, and ignored content or Git
 operations in progress always refuse removal.
 
@@ -1660,11 +1664,11 @@ with no worktree, so the directory, its node_modules and its dist/ go while the
 ref survives. No anchor ref is written, because the branch is the copy being
 kept. See docs/ORCHESTRATION.md.
 
-\`--keep-branch\` explicitly permits a freshly inventoried \`action: "at-risk"\`
-worktree to be removed while retaining its branch. Tracked edits and untracked
-files are archived under the common git directory first. It still refuses live
-ownership, unreadable state, ignored content, operations in progress,
-\`mustNotPrune\`, and \`undecided\` worktrees. Review with \`--dry-run\` first.
+\`--keep-branch\` explicitly permits a freshly inventoried \`action: "at-risk"\` or
+\`action: "land"\` worktree to be removed while retaining its branch. Tracked edits
+and untracked files are archived under the common git directory first. It still
+refuses live ownership, unreadable state, ignored content, operations in
+progress, \`mustNotPrune\`, and \`undecided\` worktrees. Review with \`--dry-run\` first.
 `;
 
 function main(argv) {
@@ -1930,6 +1934,6 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
   return `-g${hash}`;
 }
 
-if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(fileURLToPath(import.meta.url))) {
   process.exitCode = main(process.argv);
 }

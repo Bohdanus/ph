@@ -170,6 +170,25 @@ describe('dispose preflight', () => {
     expect(verdict.keepBranch).toBe(true);
   });
 
+  it('permits an explicitly selected land worktree with --keep-branch, preserving the branch for later merge', () => {
+    const verdict = green({
+      preserveBranch: true,
+      gitState: greenState({ modified: 0, untracked: 0 }),
+      inventory: greenInventory({
+        record: {
+          action: ACTION.LAND,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(verdict.failures).toEqual([]);
+    expect(verdict.ok).toBe(true);
+    expect(verdict.keepBranch).toBe(true);
+  });
+
   it('does not let branch-preserving removal decide an undecided worktree', () => {
     const verdict = green({
       preserveBranch: true,
