@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-106, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-114, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1477,37 +1477,6 @@ are behaviour the live panels do not document, so carry them across too.
 `src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
 `src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts` — the three
 lasso defaults
-
-## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
-
-`docs/TOOLS-TOO-HARD.md` §"The Pen family":
-
-> "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
-> Photoshop grouping and naming are the specification, and the stub bar is the debt."
-
-`grep -rn "grouping and naming are the specification" --include='*.md'` returns three hits — the
-same paragraph in `docs/TOOLS-TOO-HARD.md` §"The Pen family" and `docs/PHOTOSHOP-UX.md` §"Open
-violations", plus this entry's own quotation of it. `AGENTS.md` states no such policy:
-`grep -cE 'specification|grouping|stub bar' AGENTS.md` is **0**, its two `_placeholder_` matches
-being the `‹line›` placeholder wording of the citation rule rather than a placeholder-tool policy,
-and the whole file is short enough to read (`wc -l AGENTS.md` — 256 lines at the time of writing),
-so this is an absent policy rather than one the grep missed.
-
-The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md` §"Open violations" — _"A
-tool the
-app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
-because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
-— the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
-specification; the stub bar is the debt."_
-
-**Why this matters beyond a citation.** Six of the seven placeholder tools were audited for
-deletion this week and every one came back "keep" **because of that policy**. An agent
-reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
-conclusion from a missing policy is that no policy was ever written down.
-
-**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md` §"Open violations" in that one sentence.
-
-**Files.** `docs/TOOLS-TOO-HARD.md` §"The Pen family", `docs/PHOTOSHOP-UX.md` §"Open violations"
 
 ## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
 
