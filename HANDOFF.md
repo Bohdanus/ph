@@ -1876,33 +1876,6 @@ addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs an
 `src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
 `src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
-## 123. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
-
-**Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress, and the
-pointer-move path reads the bitmap from the hook closure rather than from the canvas the previous
-move wrote:
-
-```
-src/contexts/useLayer.ts:584   previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
-src/contexts/useLayer.ts:585   drawAllLayers();
-src/contexts/useLayer.ts:589   const bitmap = layer.tmpCanvas ?? layer.bitmap;
-```
-
-`previewLayersRef.current[id]` is written and never read back as the next invocation's input, so each
-move redoes the work for the entire region the stroke has touched so far. A short stroke is cheap; a
-long drag over a large canvas is quadratic in the distance travelled, and it gets worse the longer
-the stroke runs.
-
-**Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
-per event grows with the bounding box covered SO FAR, not with the delta.
-
-**Fix.** Either accumulate across the stroke, or document the cost as a known limit. A persistent
-canvas handle in the processor contract would work, but it must NOT go in `args`: the durable
-conversion whitelists the tool-arg shape, and a canvas in `args` would either void the document or
-require a migration. Put it outside `args`.
-
-**Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()`
-
 ## 124. An ordinary tool commit can move the document's size, and a mid-document bedrock blank layer is the production trigger
 
 **Problem.** A tool commit is supposed to change pixels, not the document. A reproduction harness
