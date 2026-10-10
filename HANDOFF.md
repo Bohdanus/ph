@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 190-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1570,36 +1570,6 @@ unreachable-config list changes and that test moves with it.
 `src/tools/settings.ts` — the five figure settings buckets, `docs/PHOTOSHOP-UX.md` §"Open violations",
 `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
-## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
-
-`src/tools/settings.ts` — its `'rectangular-selection'` default — declares
-`'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
-while the same file's `'elliptical-selection'` default gives it `style`, `fixedRatio`, `fixedWidth`
-and `fixedHeight`, implemented in full in `ellipticalSelection.ts` — its `MarqueeStyle` type, its
-`MARQUEE_STYLES` and `isMarqueeStyle()` exports and the `MARQUEE_RATIO_MIN`/`MAX` and
-`MARQUEE_SIZE_MIN`/`MAX` bounds.
-
-`RectangularSelection.tsx` is, in full, the literal string
-`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
-
-Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
-`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
-already records them
-as absent. Since `docs/PHOTOSHOP-UX.md` §"Open violations" makes the rendered bar the contract, this
-is debt
-on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
-(its entry in `toolbar-mapping.ts`'s marquee group) with the `M` shortcut.
-
-**Fix.** Give `RectangularSelectionToolArgs` the same `MarqueeStyle` field the ellipse uses,
-extract `ellipticalSelection.ts`'s `applyMarqueeRatio` as a shared ratio helper, and render
-the four controls.
-
-**Files.** `src/tools/settings.ts` — the `'rectangular-selection'` and `'elliptical-selection'`
-defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`,
-`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx` — the whole component's
-rendered body, `src/tools/ellipticalSelection.ts` — `applyMarqueeRatio()`,
-`src/tools/descriptions/selection.notes.md` §"What is true of all seven"
-
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
 `AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so
@@ -1939,27 +1909,25 @@ addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs an
 `src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
 `src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
-## 123. Every pointer move of a stroke re-rasterizes the stroke's whole bounding box
+## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 
-**Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress, and the
-pointer-move path reads the bitmap from the hook closure rather than from the canvas the previous
-move wrote:
+**Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress. The
+stroked `draw` pen path now appends from the previous endpoint, but spray, block strokes, and every
+other processor still read the bitmap from the hook closure rather than accumulating a safe delta:
 
-```
-src/contexts/useLayer.ts:584   previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
-src/contexts/useLayer.ts:585   drawAllLayers();
-src/contexts/useLayer.ts:589   const bitmap = layer.tmpCanvas ?? layer.bitmap;
-```
+`src/contexts/useLayer.ts` now calls `getIncrementalStrokeArgs` for the safe stroked-pen case; the
+remaining processors take the full argument list on every move.
 
-`previewLayersRef.current[id]` is written and never read back as the next invocation's input, so each
-move redoes the work for the entire region the stroke has touched so far. A short stroke is cheap; a
-long drag over a large canvas is quadratic in the distance travelled, and it gets worse the longer
-the stroke runs.
+For those remaining paths, `previewLayersRef.current[id]` is written but not read back as the next
+invocation's input, so each move redoes the work for the entire region the stroke has touched so far.
+A short stroke is cheap; a long drag over a large canvas is quadratic in the distance travelled, and it
+gets worse the longer the stroke runs.
 
 **Reproduce.** Drag one continuous stroke across a large canvas and profile `tempUpdateLayer`. Cost
 per event grows with the bounding box covered SO FAR, not with the delta.
 
-**Fix.** Either accumulate across the stroke, or document the cost as a known limit. A persistent
+**Fix.** Extend the same processor-specific accumulation contract to the remaining paths, or document
+the cost as a known limit. A persistent
 canvas handle in the processor contract would work, but it must NOT go in `args`: the durable
 conversion whitelists the tool-arg shape, and a canvas in `args` would either void the document or
 require a migration. Put it outside `args`.
@@ -3263,77 +3231,6 @@ reduction; `classifyBoundaryLoops()` is what separates outer contours from holes
 selection to hold more than one loop — the representation `docs/FEATURES.md` — Selection already
 declines. The options-bar warning is an interim mitigation; keep this entry open until the selected
 geometry can represent and commit every matching region.
-
-## 187. The Brush's `Mode` row promises 29 blend modes and the bar renders 16
-
-**Problem.** The Brush's `Mode` row in `src/tools/descriptions/paint.ts` describes what the bar offers
-as "the 27 layer blend modes — Dissolve among them — plus the two the painting tools add, Behind and
-Clear". That is twenty-nine. `Paint.tsx` renders `{PAINT_BLEND_MODES.map(...)}`, and
-`PAINT_BLEND_MODES` in `src/tools/brush.ts` holds sixteen. So the row states the app offers thirteen
-values it does not, and the row is data — `npm run docs:tools` renders it into `docs/TOOLS.md`, so the
-generated per-tool specification carries the overcount as the app's own description of its bar.
-
-**The comment on `PAINT_BLEND_MODES` states the counts and names all thirteen, and nothing checks
-them.** It is a comment, so `brush.test.ts` — which pins the sixteen values exhaustively — cannot see
-it, and a mode added to the array would leave the comment quietly wrong. The array is a closed literal
-union precisely because `src/contexts/layer-utils.ts` reads a value back off stored history, but
-nothing requires a new member to be one Photoshop lists or one a canvas can express. That gap is the
-whole of what is left on this side, and it is a documentation check rather than a code one.
-
-One of the thirteen needs a caveat a future editor could get wrong. `plus-lighter` **is** a canvas
-value, and for opaque pixels it computes `src + dst`, which is what Linear Dodge (Add) does — it
-diverges only for translucent strokes. The comment's claim is that there is no _exact_ equivalent,
-which holds; a reader who takes it as "no such value exists" would be wrong.
-
-**What is already right.** The Brush's `appNotes` in the same file state the shortfall correctly —
-"sixteen canvas compositing operations rather than Photoshop's 29 for this tool" — and the reasoning
-beside the comment is sound: the canvas compositing set has no equivalent for the rest, and offering one
-would ship a dead option.
-
-**Owned, so recorded not fixed: the four blend-mode `Mode` rows.** `src/tools/descriptions/paint.ts`
-carries the twenty-seven phrasing in four rows — the Brush, the Pencil, the Paint Bucket and the Clone
-Stamp — and each states what Photoshop offers while the two rows beside it in the same file state
-what the bar renders.
-
-**The two halves need different fixes, and only two of the four rows have a control to describe.**
-`PaintBucket.tsx` and `CloneStamp.tsx` contain no `blendMode` reference at all; their rows are
-`status: 'missing'` and their own `appNotes` say the control is absent outright. Writing "the sixteen
-the component renders" into those two would be a new falsehood in a data file. Their rows are already
-right about Photoshop and already say the control is missing, so what they need is the twenty-seven
-sentence marked as Adobe's rather than read as the app's — the same fix as the `status` field, not a
-new count.
-
-The Brush and the Pencil are the two that render a control, because both live in `Paint.tsx`, which
-maps `PAINT_BLEND_MODES`. Each row overcounts — the Brush's says twenty-nine and the Pencil's
-twenty-eight — and each is contradicted by its own `appNotes` in the same file, which already states
-sixteen correctly. Those two are the whole of the correction: state the sixteen the component renders
-and keep `appNotes` as the statement of the shortfall.
-
-**That is filed rather than fixed because the row is data and the generated file is spoken for.**
-`npm run docs:tools` renders these rows into `docs/TOOLS.md`, and both files are claimed by work in
-flight — `src/tools/descriptions/paint.ts` by `fix/rail-drop-draw`. Editing the source without
-regenerating leaves the two inconsistent, and regenerating rewrites a file another branch is editing.
-
-**Related, and the same phrase in a third file.** `src/tools/descriptions/paint.notes.md` cites the UXP
-`BlendMode` enum to establish that Dissolve is one of the twenty-seven, and writes it as "`DISSOLVE` in
-the list at the UXP constants reference, alongside `PASSTHROUGH` and the 25 others". The enum has
-**twenty-eight** members — the twenty-seven real modes plus `PASSTHROUGH`, which the Layers panel lists
-separately — so "the 25 others" is twenty-six. The same file gets the count right further down, where
-it calls `PASSTHROUGH` "a twenty-eighth entry", so the file contradicts itself. The four rows above
-are not what propagates it — they are being told to state sixteen and stop citing a Photoshop census —
-so this is a fix to that file alone. `docs/luna-psd-currency` claims it.
-
-**Affected.** `src/tools/descriptions/paint.ts` — the Brush, Pencil, Paint Bucket and Clone Stamp
-`Mode` rows; `src/tools/descriptions/paint.notes.md` — the enum citation; `docs/TOOLS.md`, which
-regenerates from the first; `src/tools/brush.ts` — the doc comment on `PAINT_BLEND_MODES`, whose
-counts and enumeration no gate checks.
-
-**What would close the `brush.ts` half.** A source-reading test that asserts the comment's counts and
-names against `PAINT_BLEND_MODES` — the same technique the three `readFileSync` tests under
-`src/contexts/__tests__/` already use — so a member added to the array that is neither on Photoshop's
-list nor a canvas value fails instead of quietly making the comment wrong. That is a check on prose,
-which is unusual, and it is worth it only because the alternative is a comment whose whole value is
-that a reader can trust its count.
 
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 

@@ -356,19 +356,13 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await expect(flyout).toContainText('Magic Wand Tool');
   });
 
-  test.skip('right-click does not open flyout for single-tool groups', async ({ page }) => {
-    // Draw is a single tool (no group)
-    //
-    // KNOWN SKIP, recorded rather than justified here. The seven-line block this replaced
-    // argued from "business value unclear" and cited `dd774cd` — a commit that does not
-    // resolve in this checkout (`git cat-file -t dd774cd` is `Not a valid object name`), so
-    // the one thing it offered as evidence for why the skip exists pointed at nothing. The
-    // entry that does record it is `e2e/OPEN_PROBLEMS.md`, under `## Known-skip tests`, and
-    // this is the second of the two `test.skip` declarations it lists.
-    const drawButton = page.getByTestId('tool-button-draw');
-    await expect(drawButton).toBeVisible();
+  test('right-click does not open flyout for single-tool groups', async ({ page }) => {
+    // Move is a single tool (no group) and is the first tile, so it remains visible at the
+    // default viewport even when the rail collapses its suffix into More Tools.
+    const moveButton = page.getByTestId('tool-button-reposition');
+    await expect(moveButton).toBeVisible();
 
-    await drawButton.click({ button: 'right' });
+    await moveButton.click({ button: 'right' });
 
     // Flyout should not appear
     await expect(page.getByRole('menu')).toBeHidden();

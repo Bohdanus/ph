@@ -381,13 +381,11 @@ derived tolerance stays below 25 so a later edit cannot silently re-widen it.
 
 ## Known-skip tests
 
-Three specs are `test.skip` by declaration:
+Two specs are `test.skip` by declaration:
 
 - `e2e/export/photopea.spec.ts` — its `test.skip('exports to PSD and verifies in Photopea')`
   declaration. Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/sidebar-flyout.spec.ts` — its
-  `test.skip('right-click does not open flyout for single-tool groups')` declaration.
 - `e2e/viewport-drawing.spec.ts` — its unconditional `test.skip(true, …)` on the test
   titled `line stays under cursor after window resize (normal, wide and narrow)`. Its
   declaration's own reason is the intermittent CDP capture drift that `TEST-FLAKES.md`
