@@ -74,9 +74,6 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
      * overlay over their box and keep the straddling grip this repository documents for them.
      */
     handlesOutside: true,
-    rotationEnabled: true,
-    rotation: args.angle ?? 0,
-    onRotationChange: (angle: number) => setToolArgs({ ...argsRef.current, angle }),
     onRepaint: redrawDraftChrome,
     onChangeEnd: (rect: RectXYSorted) => {
       // Whether this press PLACED a box or merely acted on one that was already there. A press that
@@ -276,5 +273,5 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     if (overflow) drawOverflowIndicator(ctx as Ctx2D, rect as RectXYSorted, style.color);
   }
 
-  return <div className={`${className} cursor-text`} data-rotation={args.angle ?? 0} {...trackedPointerHandlers} />;
+  return <div className={`${className} cursor-text`} {...trackedPointerHandlers} />;
 };

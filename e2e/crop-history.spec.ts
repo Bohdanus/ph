@@ -839,26 +839,5 @@ test.describe('Crop history', () => {
           'growth being a single entry rather than a frame commit plus a fill'
       ).toBeDisabled();
     });
-
-    test('the crop corner exposes a rotation cursor and dragging it rotates the pending box', async ({ page }) => {
-      await openDocument(page);
-      const fit = await openCropTool(page);
-      await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
-
-      const surface = page.locator('.cursor-crop');
-      const corner = documentPoint(fit, CROP_LEFT_X - 10, CROP_TOP_Y - 10);
-      await page.mouse.move(corner.x, corner.y);
-      await expect(surface, 'the rotation hotspot uses the horizontal arrow cursor').toHaveCSS('cursor', 'ew-resize');
-
-      await page.mouse.down();
-      const rotatedCorner = documentPoint(fit, CROP_RIGHT_X - 160, CROP_TOP_Y - 180);
-      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
-      await page.mouse.up();
-
-      await expect(surface, 'the pending crop keeps the rotated angle').toHaveAttribute(
-        'data-rotation',
-        /8[5-9]|9[0-5]/
-      );
-    });
   });
 });

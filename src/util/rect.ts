@@ -10,7 +10,7 @@ import {
 } from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
-import type { Ctx2D, Point, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
+import type { Ctx2D, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
@@ -135,23 +135,6 @@ export function sortRoundRect(rect: RectXY): Pos {
   const { x1, y1, x2, y2 } = sortRect(rect);
 
   return roundedPos(x1, y1, x2, y2);
-}
-
-export function rectCenter(rect: RectXY): Point {
-  return { x: (rect.x1 + rect.x2) / 2, y: (rect.y1 + rect.y2) / 2 };
-}
-
-export function rotatePointAround(point: Point, center: Point, degrees: number): Point {
-  const radians = (degrees * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  const x = point.x - center.x;
-  const y = point.y - center.y;
-  return { x: center.x + x * cos - y * sin, y: center.y + x * sin + y * cos };
-}
-
-export function angleFromCenter(center: Point, point: Point): number {
-  return (Math.atan2(point.y - center.y, point.x - center.x) * 180) / Math.PI;
 }
 
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {

@@ -10,25 +10,10 @@ import {
   posToSortedRect,
   hexToRgb,
   calculateNewRect,
-  angleFromCenter,
-  rectCenter,
-  rotatePointAround,
 } from '../rect.ts';
 import type { RectXY, RectXYSorted, Pos, Size } from '../../contexts/general-types.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
 import { TEXT_PADDING } from '../constants.ts';
-
-describe('rectangle rotation helpers', () => {
-  it('rotates a point around the rectangle centre and reports its angle', () => {
-    const rect = { x1: 0, y1: 0, x2: 100, y2: 100 };
-    const center = rectCenter(rect);
-    const rotated = rotatePointAround({ x: 100, y: 50 }, center, 90);
-
-    expect(rotated.x).toBeCloseTo(50);
-    expect(rotated.y).toBeCloseTo(100);
-    expect(angleFromCenter(center, rotated)).toBeCloseTo(90);
-  });
-});
 
 describe('sortRect', () => {
   it('returns the rect unchanged when already sorted', () => {

@@ -126,13 +126,7 @@ function dropOptionalStyleFields() {
  * than the DOM: the mocked store hands back the same object until something republishes it, so a
  * test that re-read `toolArgs` would be reading back its own fixture.
  */
-const lastToolArgs = () =>
-  mockSetToolArgs.mock.lastCall?.[0] as {
-    rect?: { x1: number; y1: number; x2: number; y2: number };
-    bold?: boolean;
-    underline?: boolean;
-    [key: string]: unknown;
-  };
+const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
 
 /**
  * A range input does not move under an arrow key in jsdom, so the value is stepped by hand and
