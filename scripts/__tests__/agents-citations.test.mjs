@@ -668,11 +668,10 @@ describe("maintained guidance's code claims resolve against the program", () => 
     const live = [...liveHandoffNumbers(handoff)];
     expect(live).not.toContain('127');
 
-    // A live section resolves and is not reported. `134` and `146` are live, with
-    // `127-133` and `144-145` retired between them, so a retired number is still
-    // flanked by live neighbours — which is what makes the assertion worth
+    // A live section resolves and is not reported. `135` and `146` are live, with
+    // `136-145` retired between them — which is what makes the assertion worth
     // having: a parser that stopped matching `## N.` headings would report them too.
-    expect(staleHandoffRefs('see §134 and §146', handoff)).toEqual([]);
+    expect(staleHandoffRefs('see §135 and §146', handoff)).toEqual([]);
     // The retired one, and one that never existed, are both reported and named differently,
     // because only the second can be fixed by repointing.
     const retired = staleHandoffRefs('see §127', handoff);
