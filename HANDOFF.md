@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-106, 111-112, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1211,45 +1211,6 @@ Both have since landed on `main` by other routes (the `publishedEntryIds` check 
 absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 conflicting files,
 `StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
 source, and re-derive from this entry rather than from its copy.
-
-## 96. Two tracked lines still carry the `e2e/OPEN-PROBLEMS.md` hyphen path, and the spec one has no routed home
-
-**Problem.** The file on disk is `e2e/OPEN_PROBLEMS.md`. The hyphen form `e2e/OPEN-PROBLEMS.md` names a
-path that does not resolve — and that is not a macOS-only hazard, because a hyphen and an underscore
-are different characters, so it is broken on a case-insensitive volume too.
-
-**Two occurrences of it are live defects, and they route differently.**
-The `captureCanvasScreenshot` drift note in `TEST-FLAKES.md` §12 is prose, so this entry is its routed
-home. The SKIPPED-BY-DECISION comment above the
-`test('line stays under cursor after window resize (normal, wide and narrow)')` case in
-`e2e/viewport-drawing.spec.ts` is a comment inside a Playwright spec, so by the routing table in
-`docs/DOCUMENTATION.md` §"The single-home rule" it belongs in `e2e/OPEN_PROBLEMS.md` — **and no such
-entry exists** (`grep -in 'OPEN-PROBLEMS' e2e/OPEN_PROBLEMS.md` returns nothing). A fix confined to
-the prose file leaves the spec comment standing, which is almost certainly how it has survived every
-earlier pass.
-
-A third tracked file matches a search for the string — `docs/LAYERS-PANEL.md`, whose §20 item 6 quotes
-the census command itself — so re-derive the count with `git grep -n 'e2e/OPEN-PROBLEMS' -- .` rather
-than trusting any tally recorded here, including this one.
-
-**`docs/LAYERS-PANEL.md` §20 item 6 no longer asserts what this entry used to report of it.** It has
-been rewritten: it no longer claims "only two files, five lines", no longer cites `AGENTS.md` at all,
-and no longer carries a line-numbered census. It now counts **two** tracked lines, records that
-`AGENTS.md` and `docs/TESTING.md` already hold the underscore form, points at the route-by-scope rule
-where it now lives, and says to fix both lines, file the spec one in `e2e/OPEN_PROBLEMS.md`, then
-delete the item. It also names this entry as having gone stale on its own citations. So the
-`AGENTS.md` premise this entry argued from is gone and its half of the census is fixed; what is left
-is the two lines and the missing routed home.
-
-**Fix.** Correct both surviving lines to the underscore form, filing the
-`e2e/viewport-drawing.spec.ts` comment occurrence in `e2e/OPEN_PROBLEMS.md` rather than here. Then
-delete `docs/LAYERS-PANEL.md` §20 item 6, which by its own text is to be deleted once the two lines
-are fixed. Re-derive the remaining references from the prose at the time of the fix: `AGENTS.md` is
-the file every agent reads first, so a citation into it silently rots, and its own rule says as much.
-
-**Files.** `TEST-FLAKES.md` §12, `e2e/viewport-drawing.spec.ts` — the SKIPPED-BY-DECISION comment
-named above, `e2e/OPEN_PROBLEMS.md` — the entry that does not exist yet,
-`docs/LAYERS-PANEL.md` §20 item 6, `docs/DOCUMENTATION.md` §"The single-home rule"
 
 ---
 
