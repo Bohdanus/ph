@@ -770,6 +770,14 @@ named, and the time it happened
 (`scripts/lib/worktree-inventory/writes.mjs`). It is in **three separate
 structures, because they have three different lifetimes**:
 
+The generator never runs these JSON-heavy audits against the live Kilo database.
+`scripts/lib/worktree-inventory/session-db-snapshot.mjs` uses SQLite's incremental
+online backup API to create a temporary snapshot first; both audits read that same
+snapshot and it is removed after assembly. If the snapshot cannot be created, the
+audits report the session source as unavailable rather than falling back to a live
+read. This is deliberate: a slower inventory is safe, while a long-lived read
+transaction on the operational database can block every chat writer.
+
 | Field          | Tools                                           | Retention                                                                           |
 | -------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **last 3 days** — enough to establish live ownership without an all-history DB scan |

@@ -398,8 +398,13 @@ export function buildInventory({
     dataSources: {
       git: { ok: worktrees.length > 0, root, base },
       sessions: chatAudit.available
-        ? { ok: true, path: chatAudit.dbPath, sessions: chatAudit.total }
-        : { ok: false, reason: 'no Kilo session database at the expected path' },
+        ? {
+            ok: true,
+            path: chatAudit.dbPath,
+            sessions: chatAudit.total,
+            ...(chatAudit.snapshot ? { snapshot: true } : {}),
+          }
+        : { ok: false, reason: chatAudit.reason ?? 'no Kilo session database at the expected path' },
       board: board.available
         ? { ok: true, path: board.dbPath, issues: board.issues.length }
         : { ok: false, reason: 'no agent-board database at the expected path' },
@@ -440,6 +445,7 @@ export function buildInventory({
         ? {
             ok: true,
             path: writeAudit.dbPath,
+            ...(writeAudit.snapshot ? { snapshot: true } : {}),
             write: {
               total: writeAudit.totalWriteCalls,
               attributed: writeAudit.attributedWriteCalls,
@@ -449,7 +455,7 @@ export function buildInventory({
             shell: { total: writeAudit.totalShellCalls, unmapped: writeAudit.unmapped.shell },
             unmappedBuckets: writeAudit.unmappedBuckets,
           }
-        : { ok: false, reason: 'no Kilo session database at the expected path' },
+        : { ok: false, reason: writeAudit?.reason ?? 'no Kilo session database at the expected path' },
     },
     // Read these first. They are the answers; `worktrees` is the evidence.
     readyToLand,
