@@ -3011,67 +3011,6 @@ and their doc comments, and the five menu triggers), `src/util/selection.ts`,
 `src/contexts/psd-utils.ts` (the unsupported-key warning list),
 `docs/TOOLS-TOO-HARD.md` (the Select and Mask and Select ▸ Modify entries), `docs/FEATURES.md`
 
-## 171. `color`'s and `levels`' `imageProcessor` is unreachable from every production call site, which leaves two files maintained on a path nothing runs
-
-**Problem.** `src/tools/colors.ts` and `src/tools/levels.ts` export only an `imageProcessor`, and both
-tools declare `commit: 'layer-operation'` (the `color` and `levels` entries in
-`src/tools/toolProcessors.ts`). This entry existed to
-record that the reachability claim was UNPROVEN, because it had been derived from the single call site in
-`useLayer` and five others had not been traced. All six are traced now, and the claim holds for these two
-tools:
-
-- `useLayer.ts` — closed by the `commit === 'layer-operation'` arm of `tempUpdateLayer()`, which
-  appends the
-  retained operation, redraws and returns.
-- `useHistory.ts`'s `applyRasterTool` dependency — closed by replay: the
-  `commit === 'layer-operation'` arm in `history-replay.ts` re-appends the
-  retained operation for a `layer-operation` tool and `continue`s, so the raster branch is never taken for
-  either id.
-- `materialization.ts`'s creator path — closed by `sourceBitmap()`'s `processor?.creator` refusal, which
-  neither tool satisfies. **This module is mounted**, and its mount is why that refusal is load-bearing
-  rather than decorative: `durable-compositor.ts` is its sole non-test importer, and `StoreContext.tsx`
-  is `durable-compositor.ts`'s, through `composeDurableDocument()` in
-  `publishDurableNavigationPresentation()`. Two gates precede the creator call, not one.
-  `durableSourceKindForTool()` (`history-adapter.ts`) returns `null` for `color` and `levels`, so a
-  layer source for either stays `legacy-tool`; `sourceBitmap()` throws on that kind outright, and
-  `publishDurableNavigationPresentation()` refuses the whole document before materialization runs.
-  Relaxing either gate without the other still cannot reach the call.
-- `materialization.ts`'s raster-operation application — reached only by an `apply-raster-processor`
-  operation, and
-  the `commit === 'layer-operation'` arm of `history-adapter.ts` maps every `layer-operation` tool to
-  `apply-filter`, whitelisting exactly
-  `['blur', 'color', 'levels']`.
-- `layer-utils.ts`'s `createLayerFromTool()` — needs a `tool` layer source, and `createLayerFromTool`'s
-  callers are the text,
-  draw and shape paths.
-- `layer-renderer.ts`'s `getLayerBitmap()` — gated by `isVectorSource`, whose set is the six shape ids.
-
-**`transform` is not in this class and must not be lumped with them.** It is `commit: 'affine-operation'`
-(the `transform` entry in `src/tools/toolProcessors.ts`), which falls past that early return: the
-trapezoid path calls
-`applyRasterTool` at replay time, and the trapezoid arm of `history-adapter.ts` emits
-`apply-raster-processor` with
-`processorId: 'transform'`. Its processor runs.
-
-**Why it matters.** If a processor is unreachable then the CSS-filter string (`buildColorsFilter` /
-`buildLevelsFilter`, the two functions in `src/tools/functions.ts`) is the whole of the capability, and the
-`OffscreenCanvas` work in both files is maintenance on a path nothing runs. That is worth knowing before a
-real Levels and a real Black and White are built on top of either.
-
-**Fix.** Decide, and record the decision where the next session reads it: either delete the two
-processors and their `imageProcessor` entries, since replay and materialization are both closed, or keep
-them and say in `docs/TOOLS-TOO-HARD.md` that they are the raster implementations waiting behind the
-canvas-filter requirement, so the two files are not later mistaken for dead code. Do not delete
-`transform`'s processor: it runs.
-
-**Files.** `src/tools/colors.ts`, `src/tools/levels.ts`, `src/tools/toolProcessors.ts` (the
-`color`/`levels`/`transform` entries), `src/contexts/useLayer.ts` (`tempUpdateLayer()`),
-`src/contexts/history-replay.ts` (its `layer-operation` arm),
-`src/contexts/history-adapter.ts` (its `layer-operation` and trapezoid arms),
-`src/contexts/materialization.ts` (`sourceBitmap()` and the raster-operation application),
-`src/contexts/layer-utils.ts` (`createLayerSource()`),
-`src/contexts/layer-renderer.ts` (`getLayerBitmap()`, `vectorToolNames`), `docs/TOOLS-TOO-HARD.md`
-
 ## 172. Whether `Image ▸ Adjustments` bakes pixels or creates adjustment layers is unanswered, and it changes the durable schema
 
 **Problem.** The operator signalled on 2026-10-01 that Levels, Colors and the other

@@ -431,6 +431,12 @@ implementation happens to use, which is exactly what a per-hue conversion replac
 constrains. What survives the rewrite is Adobe's six-sextant behaviour, which is the product
 requirement and is unchanged by anything an agent decides about the mechanism.
 
+The retained `src/tools/colors.ts` and `src/tools/levels.ts` processors are the future raster
+implementations behind that canvas-filter limitation. They remain intentionally registered for
+replay and materialization, even though the current production adjustment path uses CSS filters;
+do not delete them as dead code or wire them into a different tool until the adjustment rendering
+contract is specified.
+
 ### Real Levels — the three-point remap, the histogram and the channel selector
 
 **What Photoshop does.** The Levels adjustment "correct[s] the tonal range and color balance of an
