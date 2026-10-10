@@ -206,7 +206,14 @@ export const eraser =
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
-    if ('bitmap' in params) ctx.drawImage(params.bitmap, 0, 0, size.width, size.height);
+    // Use previousCanvas for incremental eraser brush-mode, otherwise fall back to bitmap
+    const sourceBitmap =
+      'previousCanvas' in params && params.previousCanvas
+        ? params.previousCanvas
+        : 'bitmap' in params
+          ? params.bitmap
+          : null;
+    if (sourceBitmap) ctx.drawImage(sourceBitmap, 0, 0, size.width, size.height);
 
     const eraserArgs = args as unknown as EraserToolArgs;
     const { mode } = eraserArgs;
