@@ -3383,49 +3383,6 @@ list nor a canvas value fails instead of quietly making the comment wrong. That 
 which is unusual, and it is worth it only because the alternative is a comment whose whole value is
 that a reader can trust its count.
 
-## 189. Three fields on a tool's replay declaration are read by tests and by nothing else
-
-**Problem.** `ToolProcessorDefinition` in `src/tools/toolProcessors.ts` gives every tool a `replay`
-descriptor carrying a kind, a determinism flag, a raster requirement and a version. Across the whole
-repository the first three have **zero production reads**. Every read of them is in
-`src/tools/__tests__/tool-processors.test.ts`, in `color-replacement.test.ts`, or in the fixture
-literal at `src/contexts/__tests__/durable-replay.layer-operations.test.ts`. Production reads only the
-version, at seven sites across three files, through `operationForTool()` in `history-adapter.ts` and
-the version guards in `history-append.ts` and `materialization.ts`.
-
-The unimplemented kind is a declared member of both the commit-kind and the replay-kind unions, and
-no production branch compares either field against it. An unimplemented tool reaches production only
-by falling through to the shared throw, which the
-`it('rejects an unimplemented tool with an unsupported-history-feature diagnostic')` title pins. So
-a tool that declares itself deterministic when it is not, or declares that it does not need
-rasterising when it does, is not detected by anything that runs in a browser.
-
-**Why the blast radius is bounded, and why it still matters.** Production re-derives pixels by
-re-running the processor rather than by trusting the flag, and the route is chosen by the commit
-kind, so a wrong flag does not by itself corrupt an export today. What it removes is the only
-non-test enforcement of a set of claims the project states as truth. The single enforcement point is
-the rosters in `tool-processors.test.ts` — the
-`it('keeps the %s replay kind aligned with its commit kind')` title among them — so a determinism
-flag set on a wall-clock tool ships as a silently irreproducible commit with a green suite.
-
-The gap is specific to these three fields, and that is what makes it a defect rather than a
-convention: the sibling declaration fields on the same type _are_ read in production.
-`requiresCanvasFilter` gates five production sites, `compositesOntoInput` is read on the raster path in
-`history-append.ts`, `commit` is read at roughly twenty, and `creator` is what `materialization.ts` — the
-refusal in `sourceBitmap()` — checks before it will render a vector source. Four fields enforced,
-three not, with nothing recording the difference.
-
-**Affected.** `src/tools/toolProcessors.ts` — the `replay` descriptor on
-`ToolProcessorDefinition`; `src/contexts/history-adapter.ts` — `operationForTool()`, which is where a
-version is already read and where one assertion would go; `src/contexts/materialization.ts`, which
-already refuses on `creator` and could refuse on the raster requirement the same way.
-
-**What would close it.** One production assertion at the durable write point in `operationForTool()`,
-rejecting an unimplemented replay kind — it needs no schema change, because the commit kind is already
-in scope there. The raster requirement is not fixable this way: it is recorded nowhere, so there is no
-stored value to refuse against. Enforcing it means first deciding that the durable operation should
-carry the flag, which is a schema decision rather than an assertion.
-
 ## 190. The triangle's geometry is recorded but under-pinned, and the one pin that exists will move with any fix
 
 **Problem.** `drawShape()` in `src/tools/shape.ts` places the triangle's vertices from the drag box's
