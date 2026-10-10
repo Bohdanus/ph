@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 190-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -3382,51 +3382,6 @@ names against `PAINT_BLEND_MODES` — the same technique the three `readFileSync
 list nor a canvas value fails instead of quietly making the comment wrong. That is a check on prose,
 which is unusual, and it is worth it only because the alternative is a comment whose whole value is
 that a reader can trust its count.
-
-## 190. The triangle's geometry is recorded but under-pinned, and the one pin that exists will move with any fix
-
-**Problem.** `drawShape()` in `src/tools/shape.ts` places the triangle's vertices from the drag box's
-two half-extents with an even angular step, so the result is a regular three-sided polygon only when
-the box is square, and `normalizeShapeGeometry()` squares that box when Shift is held rather than
-forcing an equilateral result. Both halves are already recorded — `src/tools/descriptions/shape.ts`,
-the `triangle` entry's `appNotes`, and `src/tools/descriptions/shape.notes.md`. What is not recorded is
-how little stands
-behind them.
-
-**What is pinned, and what is not.** `shape.test.ts` — the
-`it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures')` case —
-asserts both halves of `normalizeShapeGeometry()` for the triangle: the unconstrained drag passes
-through unchanged, and Shift squares the box. So a fix to the squaring **will** turn that case red and it
-has to move with the behaviour. What is not pinned is anything about _where the vertices land_.
-
-Everything that touches what is rendered measures the other three figures and only counts the
-triangle. `paint-tools.test.ts` — the
-`it('draws the figure each geometry variant is registered for, not a generic shape')` title — asserts
-`strokeRect` called with real coordinates for the rectangle, `ellipse` with real coordinates for the
-oval, and `moveTo`/`lineTo` with real coordinates for the line, then asserts only call counts for the
-triangle and the polygon. The asymmetry is inside a single test, so it is not a matter of which file
-someone chose to extend. `shape.test.ts` — the `it.each` pairing triangle with three vertices, and the
-`it('leaves the triangle at three whatever the field says')` case — likewise assert counts.
-
-**And nothing watches from outside.** `e2e/keyboard-shortcuts.spec.ts` cycles the bar's figure readout
-with `Shift+u` and asserts it passes through Triangle and Polygon, so both figures are reachable
-end-to-end. It asserts the figure's _name_; it never draws one, and no other spec under `e2e/` draws a
-polygon or a triangle at all — the polygonal lasso is a different tool. A regression in the inscribed
-placement would reach a user with the whole suite green.
-
-**Affected.** `src/tools/shape.ts` — the `figure === 'triangle' || figure === 'polygon'` branch of
-`drawShape()` and the `shiftKey` arm of `normalizeShapeGeometry()`;
-`src/tools/__tests__/shape.test.ts` — the `it.each` case that pins the squaring for triangle and
-polygon, and the two vertex-count cases; `src/tools/__tests__/paint-tools.test.ts` — the
-figure-dispatch case.
-
-**What would close it.** Fix the placement, move the squaring assertion with it, and give the triangle
-the coordinate assertion its three siblings in that test already have. An e2e path that draws the
-figure is the stronger version of the same coverage and is proportionate to a figure the suite can
-currently only cycle by name.
-
-A branch named `fix/shape-truth` exists and is ahead of `main`; read its diff before starting, since
-it may already carry part of this.
 
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 
