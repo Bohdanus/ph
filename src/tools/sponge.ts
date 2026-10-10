@@ -356,12 +356,19 @@ const scalePaintedChroma = (
  * Smudge (`docs/TOOLS-TOO-HARD.md`), and it is why the description files this tool
  * `partial` rather than `implemented`.
  */
-const applySponge = (bitmap: BitmapSource, size: Size, args: SpongeToolArgs): ToolResult => {
+const applySponge = (
+  bitmap: BitmapSource,
+  size: Size,
+  args: SpongeToolArgs,
+  previousCanvas?: BitmapSource
+): ToolResult => {
   const canvas = new OffscreenCanvas(size.width, size.height);
   const ctx = canvas.getContext('2d');
   if (!ctx) return [canvas];
 
-  ctx.drawImage(bitmap, 0, 0);
+  // Use previousCanvas as the source for incremental rendering, otherwise use the layer bitmap
+  const source = previousCanvas ?? bitmap;
+  ctx.drawImage(source, 0, 0);
 
   // A reduced canvas environment has no read-back at all (`src/test/setup.ts:185`
   // documents that the global mock deliberately omits it, and production guards on
@@ -390,6 +397,6 @@ const applySponge = (bitmap: BitmapSource, size: Size, args: SpongeToolArgs): To
  * is a third operation with a third curve.
  */
 export const sponge =
-  ({ bitmap, size }: ProcessorToolParams) =>
+  ({ bitmap, size, previousCanvas }: ProcessorToolParams) =>
   (args: SpongeToolArgs): ToolResult =>
-    applySponge(bitmap, size, args);
+    applySponge(bitmap, size, args, previousCanvas);
