@@ -381,12 +381,16 @@ async function runAsyncMain(opts) {
   }).trim();
 
   // Never run the expensive JSON audits against the live Kilo database. The
-  // online backup yields between SQLite page steps, and both audits then read
-  // the same consistent temporary snapshot without holding a lock on Kilo's DB.
+  // snapshot helper copies only the bounded recent session/part projection and
+  // yields between source batches, so a huge historical database is not copied
+  // before the inventory can produce a result.
   // If the backup cannot be made, pass a null path so both audits fail closed;
   // falling back to the live path would recreate the outage this guard prevents.
   const liveSessionDbPath = resolveSessionDb();
-  const sessionDbSnapshot = await createSessionDbSnapshot(liveSessionDbPath);
+  const sessionDbSnapshot = await createSessionDbSnapshot(liveSessionDbPath, {
+    sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
+    nowMs,
+  });
   const sessionDbPath = sessionDbSnapshot?.dbPath ?? null;
   let chatAudit;
   let writeAudit;
