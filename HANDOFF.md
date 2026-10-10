@@ -1611,69 +1611,6 @@ rail, and must NEVER be hidden"
      implemented, so it is deleted, and the rule it settled now lives in
      `docs/TOOLS-TOO-HARD.md`'s enabled-items entry. -->
 
-## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
-
-`src/tools/toolProcessors.ts` registers all three against the same rasteriser — `buildDrawArgs()` and
-the `brush` and `pencil` entries below it. **The coordinates in that fence are historical, kept as
-the quoted record only; they no longer point at the quoted code**, and the current locations are
-`buildDrawArgs()` and those two entries' `creator` bodies:
-
-```
- 96: const buildDrawArgs = (args, penType: 'pen' | 'spray', lineWidth?) => …
- 259-262: brush   → draw({…})(buildDrawArgs(args, 'pen'))
- 267-275: pencil  → draw({…})(buildDrawArgs(args, 'pen', lineWidth))
-```
-
-So `brush ≡ pencil ≡ draw` at the pixel level. They differ by nothing a user can see except the
-preset list (`src/tools/brush.ts` — `PAINT_PRESETS`) and the tool name carried into history.
-`src/components/ToolbarsRight/Brush/Brush.tsx` and `Pencil/Pencil.tsx` are both three-line
-`createPaintToolbar('brush' | 'pencil')` calls over one shared bar.
-
-**The constraint that makes this correct rather than a duplication bug has no surviving copy
-anywhere.** The rule was written into `AGENTS.md`; `git log -S 'PaintToolName' -- AGENTS.md` names
-`f0f7e548` (which added it), `ef85d3ab` and `1e82da20` (which removed it) — and all three are on
-`main`, so the removal landed with the rule and no ref carries it either. An earlier version of this
-entry named `fix/stale-reclaim-skill` as its home; `git rev-parse fix/stale-reclaim-skill` fails and
-the only refs matching `*reclaim*` are four under `refs/keep/disposed/`, none of which has an
-`AGENTS.md` carrying the rule. The only place the text survives is the quotation below:
-
-> "`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
-> SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
-> them — sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a
-> tool that left the paint panel must not be widened back for a new bar. Corollary: a group that
-> persists one key may not absorb a tool that has more than one."
-
-The corollary's original pointer (`HANDOFF.md` §70, "a tool whose settings do not fit a shared arm")
-is gone — that defect was fixed, and the rule it recorded is the sentence above. `grep -c
-PaintToolName AGENTS.md` on `main` returns **0**, and no branch's `AGENTS.md` carries it either.
-`git grep -ln PaintToolName -- '*.md'` returns two files — `.skills/photoshop-tool-creation.md` and
-this one — and the skill file uses the name only inside a code sample and the `createPaintToolbar()`
-factory discussion, never as a boundary rule. `grep -rn "SUBSTITUTES pixels" --exclude-dir=node_modules
---exclude-dir=.git .` matches the fence below and nothing else, so the quoted paragraph **is the only
-copy of the rule in the repository.** The type exists and is enforced in
-code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts` —
-`paintToolNames`) — but the sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not
-an accident exists nowhere else: the entry that used to hold it is deleted, correctly, because its
-own defect was fixed, and the file that carried it was shortened in a commit already on `main`.
-
-**Why it matters for the dead-tool question this surfaced.** Three tools sharing one rasteriser
-is exactly the shape that reads as dead-code duplication, and the correct deletion — merging
-`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md` — "Open violations",
-its "No invented tools" bullet — orders would
-be a real regression for anyone who has not read the rule. The rule is what stops it. That is
-also the general lesson: **a rule can outlive the entry that recorded it, and deleting the entry
-does not delete the rule** — so a rule with no home is a defect in itself.
-
-**Fix.** Write the quoted `PaintToolName` paragraph into `AGENTS.md`'s **Architecture status**
-section, next to the history-authority paragraph it constrains. It is a boundary rule of the same
-kind. An earlier version of this entry proposed moving it "out of the branch's `AGENTS.md`"; there
-is no branch left to move it out of, so it must be **written**, not moved — and until it is, the
-rule exists only as a quotation inside this entry.
-
-**Files.** `src/tools/toolProcessors.ts` — `buildDrawArgs()`, the `'clone-stamp'` entry and the
-`brush` entry; `src/tools/brush.ts` — `PAINT_PRESETS`; `AGENTS.md` §Architecture status;
-`docs/PHOTOSHOP-UX.md` — "Open violations"
-
 ## 119. The Draw tool is bound to no key at all, and whether it should be is a decision nobody has taken
 
 **Problem.** `toolbar-mapping.ts`'s `toolbarMap` declares the Brush with `shortcut: 'B'` and declares
