@@ -44,6 +44,7 @@ import {
   MAX_SESSION_DB_WINDOW_HOURS,
   MAX_SESSION_DB_WINDOW_MS,
 } from './lib/worktree-inventory/session-audit-limits.mjs';
+import { createSessionDbSnapshot } from './lib/worktree-inventory/session-db-snapshot.mjs';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
@@ -379,19 +380,45 @@ async function runAsyncMain(opts) {
     encoding: 'utf8',
   }).trim();
 
-  const chatAudit = auditChats({ sinceMs: nowMs - windowMs, nowMs, existingPaths });
-  // The write audit is a SECOND pass over the same database. It is deliberately
-  // bounded to the same three-day safety window: no worktree can be live beyond
-  // that window, and scanning older calls only creates lock and I/O pressure on
-  // the live Kilo database without changing a disposal decision.
-  const writeAudit = auditWrites({
-    dbPath: resolveSessionDb(),
-    root,
-    worktreePaths: worktrees.map((w) => w.path),
-    nowMs,
-    liveWindowMs: LIVE_WINDOW_MS,
-    sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
-  });
+  // Never run the expensive JSON audits against the live Kilo database. The
+  // online backup yields between SQLite page steps, and both audits then read
+  // the same consistent temporary snapshot without holding a lock on Kilo's DB.
+  // If the backup cannot be made, pass a null path so both audits fail closed;
+  // falling back to the live path would recreate the outage this guard prevents.
+  const liveSessionDbPath = resolveSessionDb();
+  const sessionDbSnapshot = await createSessionDbSnapshot(liveSessionDbPath);
+  const sessionDbPath = sessionDbSnapshot?.dbPath ?? null;
+  let chatAudit;
+  let writeAudit;
+  try {
+    chatAudit = auditChats({ dbPath: sessionDbPath, sinceMs: nowMs - windowMs, nowMs, existingPaths });
+    // The write audit is a SECOND pass over the same snapshot. It is deliberately
+    // bounded to the same three-day safety window: no worktree can be live beyond
+    // that window, and scanning older calls only creates I/O pressure without
+    // changing a disposal decision.
+    writeAudit = auditWrites({
+      dbPath: sessionDbPath,
+      root,
+      worktreePaths: worktrees.map((w) => w.path),
+      nowMs,
+      liveWindowMs: LIVE_WINDOW_MS,
+      sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
+    });
+  } finally {
+    await sessionDbSnapshot?.cleanup();
+  }
+  if (sessionDbSnapshot) {
+    // Keep the source path in the generated report; the temporary snapshot path
+    // is intentionally gone by the time the inventory is written.
+    chatAudit.dbPath = sessionDbSnapshot.sourcePath;
+    chatAudit.snapshot = true;
+    writeAudit.dbPath = sessionDbSnapshot.sourcePath;
+    writeAudit.snapshot = true;
+  } else {
+    const reason = 'session database snapshot unavailable; the live database was not queried';
+    chatAudit.reason = reason;
+    writeAudit.reason = reason;
+  }
   const board = readBoard(root, { nowMs });
   // The read audit is a human pass over transcripts, so it is NOT filtered by
   // the window: it is a fixed record of what those sessions were found to be
