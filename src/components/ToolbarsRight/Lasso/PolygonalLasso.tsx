@@ -8,9 +8,17 @@ const PolygonalLasso: React.FC<{}> = () => {
   if (!args) return null;
 
   const isFill = args.fill;
+  const lineWidth = args.lineWidth ?? 3;
+  const alpha = args.alpha ?? 1;
+  const featherRadius = args.featherRadius ?? 0;
+  const antiAlias = args.antiAlias ?? true;
 
   const handleFillToggle = () => {
     patchToolArgs('polygonal-lasso', { fill: !isFill });
+  };
+
+  const handleNumberChange = (key: 'lineWidth' | 'alpha' | 'featherRadius', value: number) => {
+    patchToolArgs('polygonal-lasso', { [key]: value });
   };
 
   return (
@@ -29,8 +37,68 @@ const PolygonalLasso: React.FC<{}> = () => {
         </button>
       </div>
 
+      <label
+        htmlFor="polygonal-lasso-size"
+        className="flex flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300"
+      >
+        Size <span>{lineWidth}px</span>
+        <input
+          id="polygonal-lasso-size"
+          type="range"
+          min="1"
+          max="100"
+          value={lineWidth}
+          onChange={(event) => handleNumberChange('lineWidth', Number(event.target.value))}
+        />
+      </label>
+
+      <label
+        htmlFor="polygonal-lasso-opacity"
+        className="flex flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300"
+      >
+        Opacity <span>{Math.round(alpha * 100)}%</span>
+        <input
+          id="polygonal-lasso-opacity"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={alpha}
+          onChange={(event) => handleNumberChange('alpha', Number(event.target.value))}
+        />
+      </label>
+
+      <label
+        htmlFor="polygonal-lasso-feather"
+        className="flex flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300"
+      >
+        Feather <span>{featherRadius}px</span>
+        <input
+          id="polygonal-lasso-feather"
+          type="range"
+          min="0"
+          max="250"
+          value={featherRadius}
+          onChange={(event) => handleNumberChange('featherRadius', Number(event.target.value))}
+        />
+      </label>
+
+      <label
+        htmlFor="polygonal-lasso-antialias"
+        className="flex items-center gap-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+      >
+        <input
+          id="polygonal-lasso-antialias"
+          type="checkbox"
+          checked={antiAlias}
+          onChange={(event) => patchToolArgs('polygonal-lasso', { antiAlias: event.target.checked })}
+        />
+        Anti-alias
+      </label>
+
       <div className="text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 max-w-xs">
         <div>Click to add corners • Double-click to close</div>
+        <div className="text-[9px] mt-1 opacity-75">Backspace removes anchor • Enter finishes • Esc cancels</div>
         <div className="text-[9px] mt-1 opacity-75">Right-click also finishes the selection</div>
       </div>
     </div>

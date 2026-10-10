@@ -139,6 +139,8 @@ export const defaultSettings = {
   'polygonal-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -147,6 +149,8 @@ export const defaultSettings = {
   'freehand-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
