@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-114, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-212, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1212,6 +1212,47 @@ absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 c
 `StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
 source, and re-derive from this entry rather than from its copy.
 
+## 96. Two tracked lines still carry the `e2e/OPEN-PROBLEMS.md` hyphen path, and the spec one has no routed home
+
+**Problem.** The file on disk is `e2e/OPEN_PROBLEMS.md`. The hyphen form `e2e/OPEN-PROBLEMS.md` names a
+path that does not resolve — and that is not a macOS-only hazard, because a hyphen and an underscore
+are different characters, so it is broken on a case-insensitive volume too.
+
+**Two occurrences of it are live defects, and they route differently.**
+The `captureCanvasScreenshot` drift note in `TEST-FLAKES.md` §12 is prose, so this entry is its routed
+home. The SKIPPED-BY-DECISION comment above the
+`test('line stays under cursor after window resize (normal, wide and narrow)')` case in
+`e2e/viewport-drawing.spec.ts` is a comment inside a Playwright spec, so by the routing table in
+`docs/DOCUMENTATION.md` §"The single-home rule" it belongs in `e2e/OPEN_PROBLEMS.md` — **and no such
+entry exists** (`grep -in 'OPEN-PROBLEMS' e2e/OPEN_PROBLEMS.md` returns nothing). A fix confined to
+the prose file leaves the spec comment standing, which is almost certainly how it has survived every
+earlier pass.
+
+A third tracked file matches a search for the string — `docs/LAYERS-PANEL.md`, whose §20 item 6 quotes
+the census command itself — so re-derive the count with `git grep -n 'e2e/OPEN-PROBLEMS' -- .` rather
+than trusting any tally recorded here, including this one.
+
+**`docs/LAYERS-PANEL.md` §20 item 6 no longer asserts what this entry used to report of it.** It has
+been rewritten: it no longer claims "only two files, five lines", no longer cites `AGENTS.md` at all,
+and no longer carries a line-numbered census. It now counts **two** tracked lines, records that
+`AGENTS.md` and `docs/TESTING.md` already hold the underscore form, points at the route-by-scope rule
+where it now lives, and says to fix both lines, file the spec one in `e2e/OPEN_PROBLEMS.md`, then
+delete the item. It also names this entry as having gone stale on its own citations. So the
+`AGENTS.md` premise this entry argued from is gone and its half of the census is fixed; what is left
+is the two lines and the missing routed home.
+
+**Fix.** Correct both surviving lines to the underscore form, filing the
+`e2e/viewport-drawing.spec.ts` comment occurrence in `e2e/OPEN_PROBLEMS.md` rather than here. Then
+delete `docs/LAYERS-PANEL.md` §20 item 6, which by its own text is to be deleted once the two lines
+are fixed. Re-derive the remaining references from the prose at the time of the fix: `AGENTS.md` is
+the file every agent reads first, so a citation into it silently rots, and its own rule says as much.
+
+**Files.** `TEST-FLAKES.md` §12, `e2e/viewport-drawing.spec.ts` — the SKIPPED-BY-DECISION comment
+named above, `e2e/OPEN_PROBLEMS.md` — the entry that does not exist yet,
+`docs/LAYERS-PANEL.md` §20 item 6, `docs/DOCUMENTATION.md` §"The single-home rule"
+
+---
+
 ## 98. The console log is the app's whole error channel, by decision
 
 **Decided 2026-09-30: the app gets no user-facing error surface.** Swallowing a failure is acceptable
@@ -1333,6 +1374,93 @@ The append-boundary test citations were a separate drift cluster, not part of th
 outstanding.
 
 ---
+
+## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
+
+**Problem.** The dispatcher's `REPLACE_DOCUMENT` arm in `StoreContext.tsx` intercepts `REPLACE_DOCUMENT`
+before it
+reaches the reducer. It recomputes seven fields the reducer's own `REPLACE_DOCUMENT` arm
+also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
+`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` in
+that arm's own pre-write, and then calls `rawDispatch`, so the reducer runs anyway and React state is
+recomputed
+from the reducer chain. The two copies are related by nothing but a comment.
+
+**Measured 2026-09-30, one field at a time, against the real provider** with
+`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green). Each row mutates one of the
+seven assignments in the fast path's pre-write — named by its field below, since they all live in that
+one arm — plus the disposal guard beside it:
+
+| fast-path site     | field              | mutated to                      | result                                                                           |
+| ------------------ | ------------------ | ------------------------------- | -------------------------------------------------------------------------------- |
+| the seed           | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                     |
+| the seed           | `totalSize`        | `currentState.totalSize`        | **survives**                                                                     |
+| the seed           | `documentId`       | `currentState.documentId`       | **survives**                                                                     |
+| the seed           | `documentRevision` | `currentState.documentRevision` | **survives**                                                                     |
+| the seed           | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                     |
+| the seed           | `history`          | appended instead of replaced    | **survives**                                                                     |
+| the seed           | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                     |
+| the disposal guard | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx`, not by any other suite |
+
+Seven of eight survive, and the reason is structural rather than incidental: the pre-write lands in
+`latestStateRef`, which the next dispatch reads as its `currentState`, and that value is used only to
+(a) decide document disposal and (b) seed the _next_ fast path. It never reaches `useReducer`, so no
+React state and no exported value can observe it. The one append that reads a cursor —
+`updateHistoryTimeline` — clamps it, so even a stale `historyIndex` yields the same timeline.
+
+**Why it matters.** The duplication is a real correctness surface, not dead code: `currentState` is
+read by the disposal guard, so a wrong `documentId` in the fast path's seed would dispose the wrong
+document's
+assets — and that is precisely the one field whose divergence is currently caught by a different
+suite, which is luck rather than design. Nothing binds the two copies together, so an edit to the
+reducer arm that is not mirrored in the fast path's pre-write is invisible, and an edit to the fast
+path that is
+not mirrored in the reducer is invisible too.
+
+**Fix.** Two options, and the second is the real one. Either expose the fast path's pre-write to a
+test — `latestStateRef` is already in the provider's value, so a store test can assert the seven
+fields directly and pin the two copies against each other. Or delete the fast path and let the
+reducer be the only writer; the pre-write exists to make same-batch dispatches see the new document,
+which `useSetSelectionFromHistory` and the append path need, so deletion is not free and the first
+option is the cheaper correct move. Whichever is chosen, the seven seeds in the table above are the
+list.
+
+**Files.** `src/contexts/StoreContext.tsx` — the dispatcher's `REPLACE_DOCUMENT` arm and the reducer
+case of the same name,
+`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx` — the `it('keeps unavailable rather
+than downgrading to stale when a selection commits after a failure')` title
+
+## 106. `docs/TOOLS-RESEARCH-BRIEF.md` cites four numbers for one file, and all four are stale
+
+```bash
+wc -l .skills/photoshop-tool-creation.md       # 4,455
+grep -n '^## Photoshop shape tools\|^## The tool backlog\|^## Appendix A' \
+  .skills/photoshop-tool-creation.md
+```
+
+which prints `373:## Photoshop shape tools`, `3879:## The tool backlog — what to build next` and
+`4094:## Appendix A — the trap list`.
+
+`docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching" said "a 4,371-line
+playbook", and gave each of the three sections it names as a line range:
+
+```
+its `## Photoshop shape tools` section is `:357-846`
+its `## The tool backlog` is `:3797`
+its `## Appendix A` is `:4012`
+```
+
+Every one of those points at content that has since moved. This is the citation-staleness
+defect `.skills/photoshop-tool-creation.md` phase 9 exists to catch, in the one document that tells
+an agent what to read before writing a tool — and the drift is in the count as well as the anchors,
+which is the case a `grep` cannot see.
+
+**Fix.** Re-derive all four from `wc -l` and `grep -n` at the moment of writing, and consider naming
+the sections by heading rather than by line, since a heading survives a merge and a line number
+does not.
+
+**Files.** `docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching",
+`.skills/photoshop-tool-creation.md`
 
 ## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
 
@@ -1478,6 +1606,37 @@ are behaviour the live panels do not document, so carry them across too.
 `src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts` — the three
 lasso defaults
 
+## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
+
+`docs/TOOLS-TOO-HARD.md` §"The Pen family":
+
+> "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
+> Photoshop grouping and naming are the specification, and the stub bar is the debt."
+
+`grep -rn "grouping and naming are the specification" --include='*.md'` returns three hits — the
+same paragraph in `docs/TOOLS-TOO-HARD.md` §"The Pen family" and `docs/PHOTOSHOP-UX.md` §"Open
+violations", plus this entry's own quotation of it. `AGENTS.md` states no such policy:
+`grep -cE 'specification|grouping|stub bar' AGENTS.md` is **0**, its two `_placeholder_` matches
+being the `‹line›` placeholder wording of the citation rule rather than a placeholder-tool policy,
+and the whole file is short enough to read (`wc -l AGENTS.md` — 256 lines at the time of writing),
+so this is an absent policy rather than one the grep missed.
+
+The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md` §"Open violations" — _"A
+tool the
+app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
+because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
+— the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
+specification; the stub bar is the debt."_
+
+**Why this matters beyond a citation.** Six of the seven placeholder tools were audited for
+deletion this week and every one came back "keep" **because of that policy**. An agent
+reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
+conclusion from a missing policy is that no policy was ever written down.
+
+**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md` §"Open violations" in that one sentence.
+
+**Files.** `docs/TOOLS-TOO-HARD.md` §"The Pen family", `docs/PHOTOSHOP-UX.md` §"Open violations"
+
 ## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
 
 `toolbar-mapping.ts` — its five `shape`-named toolbox entries — gives the toolbox entries
@@ -1530,6 +1689,36 @@ unreachable-config list changes and that test moves with it.
 `src/tools/settings.ts` — the five figure settings buckets, `docs/PHOTOSHOP-UX.md` §"Open violations",
 `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
+## 115. The rectangular marquee ships no options bar at all, while the elliptical marquee beside it ships four controls
+
+`src/tools/settings.ts` — its `'rectangular-selection'` default — declares
+`'rectangular-selection': { toolName: 'rectangular-selection' }` — **no settings whatsoever** —
+while the same file's `'elliptical-selection'` default gives it `style`, `fixedRatio`, `fixedWidth`
+and `fixedHeight`, implemented in full in `ellipticalSelection.ts` — its `MarqueeStyle` type, its
+`MARQUEE_STYLES` and `isMarqueeStyle()` exports and the `MARQUEE_RATIO_MIN`/`MAX` and
+`MARQUEE_SIZE_MIN`/`MAX` bounds.
+
+`RectangularSelection.tsx` is, in full, the literal string
+`'Draw a rectangle and copy selected bitmap area.'` plus Copy / Paste / Clear.
+
+Photoshop's rectangular marquee carries the same four combination modes, `Style` and the
+`Width`/`Height` pair, and `src/tools/descriptions/selection.notes.md` §"What is true of all seven"
+already records them
+as absent. Since `docs/PHOTOSHOP-UX.md` §"Open violations" makes the rendered bar the contract, this
+is debt
+on a **shipped, working, reachable** tool — the rectangular marquee is a rail tile
+(its entry in `toolbar-mapping.ts`'s marquee group) with the `M` shortcut.
+
+**Fix.** Give `RectangularSelectionToolArgs` the same `MarqueeStyle` field the ellipse uses,
+extract `ellipticalSelection.ts`'s `applyMarqueeRatio` as a shared ratio helper, and render
+the four controls.
+
+**Files.** `src/tools/settings.ts` — the `'rectangular-selection'` and `'elliptical-selection'`
+defaults, `src/tools/rectangularSelection.ts` — `RectangularSelectionToolArgs`,
+`src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx` — the whole component's
+rendered body, `src/tools/ellipticalSelection.ts` — `applyMarqueeRatio()`,
+`src/tools/descriptions/selection.notes.md` §"What is true of all seven"
+
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
 `AppKeyboardShortcuts.tsx` — `penGroup` — is `['pen', 'freeform-pen', 'curvature-pen']`, so
@@ -1579,6 +1768,69 @@ rail, and must NEVER be hidden"
      adjustment-layer question is §172. The label question was §170; it is resolved and
      implemented, so it is deleted, and the rule it settled now lives in
      `docs/TOOLS-TOO-HARD.md`'s enabled-items entry. -->
+
+## 118. `brush`, `pencil` and `draw` are one rasteriser behind three tool names, and the rule that keeps them apart is not on `main`
+
+`src/tools/toolProcessors.ts` registers all three against the same rasteriser — `buildDrawArgs()` and
+the `brush` and `pencil` entries below it. **The coordinates in that fence are historical, kept as
+the quoted record only; they no longer point at the quoted code**, and the current locations are
+`buildDrawArgs()` and those two entries' `creator` bodies:
+
+```
+ 96: const buildDrawArgs = (args, penType: 'pen' | 'spray', lineWidth?) => …
+ 259-262: brush   → draw({…})(buildDrawArgs(args, 'pen'))
+ 267-275: pencil  → draw({…})(buildDrawArgs(args, 'pen', lineWidth))
+```
+
+So `brush ≡ pencil ≡ draw` at the pixel level. They differ by nothing a user can see except the
+preset list (`src/tools/brush.ts` — `PAINT_PRESETS`) and the tool name carried into history.
+`src/components/ToolbarsRight/Brush/Brush.tsx` and `Pencil/Pencil.tsx` are both three-line
+`createPaintToolbar('brush' | 'pencil')` calls over one shared bar.
+
+**The constraint that makes this correct rather than a duplication bug has no surviving copy
+anywhere.** The rule was written into `AGENTS.md`; `git log -S 'PaintToolName' -- AGENTS.md` names
+`f0f7e548` (which added it), `ef85d3ab` and `1e82da20` (which removed it) — and all three are on
+`main`, so the removal landed with the rule and no ref carries it either. An earlier version of this
+entry named `fix/stale-reclaim-skill` as its home; `git rev-parse fix/stale-reclaim-skill` fails and
+the only refs matching `*reclaim*` are four under `refs/keep/disposed/`, none of which has an
+`AGENTS.md` carrying the rule. The only place the text survives is the quotation below:
+
+> "`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
+> SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
+> them — sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a
+> tool that left the paint panel must not be widened back for a new bar. Corollary: a group that
+> persists one key may not absorb a tool that has more than one."
+
+The corollary's original pointer (`HANDOFF.md` §70, "a tool whose settings do not fit a shared arm")
+is gone — that defect was fixed, and the rule it recorded is the sentence above. `grep -c
+PaintToolName AGENTS.md` on `main` returns **0**, and no branch's `AGENTS.md` carries it either.
+`git grep -ln PaintToolName -- '*.md'` returns two files — `.skills/photoshop-tool-creation.md` and
+this one — and the skill file uses the name only inside a code sample and the `createPaintToolbar()`
+factory discussion, never as a boundary rule. `grep -rn "SUBSTITUTES pixels" --exclude-dir=node_modules
+--exclude-dir=.git .` matches the fence below and nothing else, so the quoted paragraph **is the only
+copy of the rule in the repository.** The type exists and is enforced in
+code (`src/tools/draw.ts`, asserted at `src/tools/__tests__/paint-tools.test.ts` —
+`paintToolNames`) — but the sentence that explains _why_ `'brush' | 'pencil'` is a narrowing and not
+an accident exists nowhere else: the entry that used to hold it is deleted, correctly, because its
+own defect was fixed, and the file that carried it was shortened in a commit already on `main`.
+
+**Why it matters for the dead-tool question this surfaced.** Three tools sharing one rasteriser
+is exactly the shape that reads as dead-code duplication, and the correct deletion — merging
+`brush` and `pencil` into `draw`, or deleting `draw` as `docs/PHOTOSHOP-UX.md` — "Open violations",
+its "No invented tools" bullet — orders would
+be a real regression for anyone who has not read the rule. The rule is what stops it. That is
+also the general lesson: **a rule can outlive the entry that recorded it, and deleting the entry
+does not delete the rule** — so a rule with no home is a defect in itself.
+
+**Fix.** Write the quoted `PaintToolName` paragraph into `AGENTS.md`'s **Architecture status**
+section, next to the history-authority paragraph it constrains. It is a boundary rule of the same
+kind. An earlier version of this entry proposed moving it "out of the branch's `AGENTS.md`"; there
+is no branch left to move it out of, so it must be **written**, not moved — and until it is, the
+rule exists only as a quotation inside this entry.
+
+**Files.** `src/tools/toolProcessors.ts` — `buildDrawArgs()`, the `'clone-stamp'` entry and the
+`brush` entry; `src/tools/brush.ts` — `PAINT_PRESETS`; `AGENTS.md` §Architecture status;
+`docs/PHOTOSHOP-UX.md` — "Open violations"
 
 ## 119. The Draw tool is bound to no key at all, and whether it should be is a decision nobody has taken
 
@@ -3201,6 +3453,43 @@ nothing" that is not `mustNotPrune`, which is what all three branches need. Unti
 `kilo.jsonc`, and defeating that gate is not the answer — which leaves the operator as the only party
 who can retire them.
 
+## 183. A fresh document opens the paint bar on `Custom`, because the seeded brush matches no preset
+
+**Problem.** `defaultSettings.brush` is `alpha: 0.9`, `lineWidth: 10`,
+`smoothing: PAINT_SMOOTHING_DEFAULT` (10) and `blendMode: 'source-over'`. The `Hard Round` preset is
+`lineWidth: 10`, `alpha: 1`, `smoothing: 0`, `blendMode: 'source-over'`. `matchPaintPreset()`
+compares all four fields, so the seeded bar matches nothing and returns the empty string, which
+`Paint.tsx`'s preset picker renders as its `Custom` row. The user opens a blank document, picks the
+Brush, and is told their tip is a hand-tuned one they have not tuned.
+
+`matchPaintPreset()` is right and `brush.test.ts` — the `it.each(mismatches)` case — pins it
+correctly: an empty string is the honest answer for a bar that is not a named tip. The defect is
+that the SEED is not a named tip, and it is not obviously which of the two numbers is wrong:
+
+- `settings.ts`'s own comment argues `smoothing: 10` is deliberate, being "Photoshop's own default",
+  and that it is what makes a brush stroke smoothed where the legacy `draw` tool was not.
+- On that reading the mismatch is `alpha: 0.9`. Photoshop's default brush opacity is 100%, and
+  `Hard Round`'s `alpha: 1` agrees with Adobe while the seed does not.
+- On the other reading the mismatch is the preset: if smoothing 10 is the app's intended default
+  stroke, then the tip that means "the default" is `Hard Round` at smoothing 0, and no preset
+  describes what a new document actually starts with.
+
+**Affected.** `src/tools/settings.ts` (`defaultSettings.brush`),
+`src/tools/brush.ts` (`PAINT_PRESETS` and `matchPaintPreset()`), and the `Custom` row's render in
+`Paint.tsx`'s preset picker. Pinned, correctly, by `src/tools/__tests__/brush.test.ts` — the
+`it('reads a freshly seeded paint bar as Custom')` case asserts the current answer, so a fix that
+moves the seed must move that assertion with it, and one that moves a preset must not.
+
+**What would close it.** A decision on which field is wrong, then a test that asserts a freshly
+seeded bar resolves to a preset label. Do not add a fourth field to the comparison to make the seed
+match: the four are the tip's identity, and a field that exists only to be permissive is how a bar
+ends up claiming a tip it is not.
+
+**Provenance.** This entry's predecessor lived only on the `brush-toolbar` branch, which is in no
+ref of this repository; `.skills/photoshop-tool-creation.md` records that the underlying material
+has since landed and that these claims are mainline. The finding outlived the branch, and the
+branch's own entry died with it, which is how it came to have no entry at all.
+
 ## 185. The Magic Wand discards every matched region except the largest, on every click
 
 **Problem.** `createMagicWandSelectionFromImageData()` in `src/util/magicWand.ts` traces boundary
@@ -3350,6 +3639,51 @@ in scope there. The raster requirement is not fixable this way: it is recorded n
 stored value to refuse against. Enforcing it means first deciding that the durable operation should
 carry the flag, which is a schema decision rather than an assertion.
 
+## 190. The triangle's geometry is recorded but under-pinned, and the one pin that exists will move with any fix
+
+**Problem.** `drawShape()` in `src/tools/shape.ts` places the triangle's vertices from the drag box's
+two half-extents with an even angular step, so the result is a regular three-sided polygon only when
+the box is square, and `normalizeShapeGeometry()` squares that box when Shift is held rather than
+forcing an equilateral result. Both halves are already recorded — `src/tools/descriptions/shape.ts`,
+the `triangle` entry's `appNotes`, and `src/tools/descriptions/shape.notes.md`. What is not recorded is
+how little stands
+behind them.
+
+**What is pinned, and what is not.** `shape.test.ts` — the
+`it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures')` case —
+asserts both halves of `normalizeShapeGeometry()` for the triangle: the unconstrained drag passes
+through unchanged, and Shift squares the box. So a fix to the squaring **will** turn that case red and it
+has to move with the behaviour. What is not pinned is anything about _where the vertices land_.
+
+Everything that touches what is rendered measures the other three figures and only counts the
+triangle. `paint-tools.test.ts` — the
+`it('draws the figure each geometry variant is registered for, not a generic shape')` title — asserts
+`strokeRect` called with real coordinates for the rectangle, `ellipse` with real coordinates for the
+oval, and `moveTo`/`lineTo` with real coordinates for the line, then asserts only call counts for the
+triangle and the polygon. The asymmetry is inside a single test, so it is not a matter of which file
+someone chose to extend. `shape.test.ts` — the `it.each` pairing triangle with three vertices, and the
+`it('leaves the triangle at three whatever the field says')` case — likewise assert counts.
+
+**And nothing watches from outside.** `e2e/keyboard-shortcuts.spec.ts` cycles the bar's figure readout
+with `Shift+u` and asserts it passes through Triangle and Polygon, so both figures are reachable
+end-to-end. It asserts the figure's _name_; it never draws one, and no other spec under `e2e/` draws a
+polygon or a triangle at all — the polygonal lasso is a different tool. A regression in the inscribed
+placement would reach a user with the whole suite green.
+
+**Affected.** `src/tools/shape.ts` — the `figure === 'triangle' || figure === 'polygon'` branch of
+`drawShape()` and the `shiftKey` arm of `normalizeShapeGeometry()`;
+`src/tools/__tests__/shape.test.ts` — the `it.each` case that pins the squaring for triangle and
+polygon, and the two vertex-count cases; `src/tools/__tests__/paint-tools.test.ts` — the
+figure-dispatch case.
+
+**What would close it.** Fix the placement, move the squaring assertion with it, and give the triangle
+the coordinate assertion its three siblings in that test already have. An e2e path that draws the
+figure is the stronger version of the same coverage and is proportionate to a figure the suite can
+currently only cycle by name.
+
+A branch named `fix/shape-truth` exists and is ahead of `main`; read its diff before starting, since
+it may already carry part of this.
+
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 
 **Problem.** `calculateNewRect`'s paragraph arm returns `trimRect2(newRect, imageSize)`, so every
@@ -3493,25 +3827,6 @@ judgement and belongs to the operator.
 ---
 
 ---
-
-## 213. `type-crop.ts`'s `appRef` line numbers are 60–110 lines off and reach a generated document
-
-**Problem.** `docs/TOOLS.md`'s "In this app" column carries five `Text.tsx` line numbers, every one wrong
-by 60–110 lines: the row labelled "Font family" resolves to a comment about tool switching, and the row
-labelled "Commit / Cancel" resolves to the start of a `{/*` comment. They come from the
-`appRef` values in `src/tools/descriptions/type-crop.ts`, so editing `docs/TOOLS.md` is wrong — the data
-is the fix, then `npm run docs:tools`. `tool-descriptions.test.mjs` only fails when a line is PAST EOF,
-which is why a citation that drifted by a hundred lines cannot fail any gate.
-
-**Affected.** `src/tools/descriptions/type-crop.ts` — the seven `appRef` values; the generated
-`docs/TOOLS.md` follows from them.
-
-**What would close it.** Re-derive each `appRef` from the current `Text.tsx`, or relax `appRef` to accept
-a unit citation the way the rest of the documentation rules do. There is a rule conflict behind this and
-it is the operator's to settle: `AGENTS.md` bans `file.ext:‹line›` in every tracked document,
-`tool-descriptions.test.mjs` documents `REF_PATTERN` as the only form `appRef` accepts, and
-`docs/TOOLS.md` is excluded from the citation check because it is generated — so the banned form is
-enforced nowhere the form is mandatory.
 
 ## 214. An interrupted merge with no `MERGE_HEAD` is never detected or anchored, so its conflicted paths exist only in a working tree
 

@@ -25,7 +25,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A combo box showing every font available to Photoshop in a WYSIWYG list, each entry rendered in its own face so the list previews the fonts.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:251',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:256',
       },
       {
         control: 'Font Style',
@@ -38,21 +38,21 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The type size, entered in points by default and accepting a unit suffix. `TypeUnits` is `MILLIMETERS / PIXELS / POINTS`.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:288',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:277',
       },
       {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:356',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:361',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:367',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:372',
       },
       {
         control: 'Toggle the type on a path',
@@ -83,7 +83,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The check mark and the cancel cross, which appear only while a type layer is in edit mode — Adobe\'s own test for edit mode is that they are there: "look in the options bar — if you see the Commit button and the Cancel button, the type tool is in edit mode." Commit also fires on the numeric keypad\'s Enter and on Ctrl+Enter (Windows) or Command+Return (Mac OS). Esc commits by default, and the Use Esc key to commit text preference that flips it to cancel moved from Edit > Preferences > Type to Settings > Type in 23.0.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:472',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:484',
       },
     ],
     modifiers: [],
