@@ -90,9 +90,17 @@ export function resolveSessionDb(home = process.env.HOME) {
  * `dataSources` entry saying why.
  */
 function openDb(dbPath) {
+  let db;
   try {
-    return new DatabaseSync(dbPath, { readOnly: true });
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    db.exec('PRAGMA query_only = 1;');
+    return db;
   } catch {
+    if (db) {
+      try {
+        db.close();
+      } catch {}
+    }
     return null;
   }
 }
