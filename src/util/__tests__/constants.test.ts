@@ -20,6 +20,7 @@ import {
   type ActionType,
 } from '../constants.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
+import { toolsMap } from '../../tools/toolsMap.ts';
 import { THROTTLE_DRAW, THROTTLE_TIME } from '../../constants/index.ts';
 
 describe('action type constants', () => {
@@ -105,40 +106,9 @@ describe('handle and padding constants', () => {
 
 describe('DEFAULT_TOOL', () => {
   it('names a tool that exists in the tool registry', () => {
-    const toolNames: readonly string[] = [
-      'reposition',
-      'blur',
-      'color',
-      'levels',
-      'transform',
-      'crop',
-      'draw',
-      'shape',
-      'text',
-      'polygonal-lasso',
-      'freehand-lasso',
-      'feather-magnetic-lasso',
-      'magic-wand',
-      'rectangular-selection',
-      'brush',
-      'pencil',
-      'color-replacement',
-      'pen',
-      'freeform-pen',
-      'curvature-pen',
-      'add-anchor-point',
-      'delete-anchor-point',
-      'convert-point',
-      'rectangle',
-      'ellipse',
-      'triangle',
-      'polygon',
-      'line',
-      'custom-shape',
-    ];
-
+    const registeredToolNames = Object.keys(toolsMap);
     const name: ToolName = DEFAULT_TOOL;
-    expect(toolNames).toContain(name);
+    expect(registeredToolNames).toContain(name);
   });
 });
 
