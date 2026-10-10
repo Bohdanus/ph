@@ -6,6 +6,7 @@ import {
   drawEvaluatedPresentation,
   evaluatePresentation,
   getPresentationFilter,
+  scaleTextArgs,
   scaleVectorArgs,
   type PresentationOperation,
 } from '../presentation-evaluator.ts';
@@ -125,6 +126,30 @@ describe('presentation evaluator parity', () => {
     expect(scaled.start).toEqual({ x: 2, y: 4 });
     expect(scaled.end).toEqual({ x: 10, y: 16 });
     expect(scaled).not.toHaveProperty('lineWidth');
+  });
+
+  it('scales retained text geometry without changing text styling fields', () => {
+    const args = {
+      toolName: 'text' as const,
+      text: 'hello',
+      fontSize: 32,
+      rect: { x1: 10, y1: 20, x2: 50, y2: 60 },
+      align: 'left' as const,
+      color: '#000000',
+    };
+    const scaled = scaleTextArgs(args, { x: 0, y: 0, width: 100, height: 50 }, { x: 0, y: 0, width: 200, height: 100 });
+
+    expect(scaled.fontSize).toBe(64);
+    expect(scaled.rect).toEqual({ x1: 20, y1: 40, x2: 100, y2: 120 });
+    expect(scaled.text).toBe('hello');
+    expect(scaled.align).toBe('left');
+  });
+
+  it('passes text arguments through when the source rectangle is unusable', () => {
+    const args = { toolName: 'text' as const, fontSize: 32, rect: { x1: 10, y1: 20, x2: 50, y2: 60 } };
+    const scaled = scaleTextArgs(args, { x: 0, y: 0, width: 0, height: 50 }, { x: 0, y: 0, width: 200, height: 100 });
+
+    expect(scaled).toBe(args);
   });
 
   it('rejects a zero-size presentation before raster evaluation', () => {

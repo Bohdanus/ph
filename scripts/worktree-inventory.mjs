@@ -40,6 +40,11 @@ import { collectWorktrees, findMissingWorktrees, resolveBaseRef } from './lib/wo
 import { auditChats, resolveSessionDb } from './lib/worktree-inventory/chats.mjs';
 import { LIVE_WINDOW_MS } from './lib/worktree-inventory/classify.mjs';
 import { auditWrites } from './lib/worktree-inventory/writes.mjs';
+import {
+  MAX_SESSION_DB_WINDOW_HOURS,
+  MAX_SESSION_DB_WINDOW_MS,
+} from './lib/worktree-inventory/session-audit-limits.mjs';
+import { createSessionDbSnapshot } from './lib/worktree-inventory/session-db-snapshot.mjs';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
 import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
@@ -50,7 +55,7 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   --check             exit 1 if WORKTREES.json is missing or stale, write nothing
   --stdout            print the inventory instead of writing it
   --base <branch>     compare against <branch> (default: main)
-  --window-hours <n>  chat window in hours (default: 24)
+  --window-hours <n>  chat window in hours (default: 24, maximum: 72; the session database is never read older than 3 days)
   --now <ms>          pin recency evaluation; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
   --no-live-writers   declare that NO chat is writing to any worktree right now,
@@ -108,6 +113,11 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(opts.windowHours) || opts.windowHours <= 0) {
     throw new Error('--window-hours must be a positive number');
+  }
+  if (opts.windowHours > MAX_SESSION_DB_WINDOW_HOURS) {
+    throw new Error(
+      `--window-hours cannot exceed ${MAX_SESSION_DB_WINDOW_HOURS} (the session database safety limit is 3 days)`
+    );
   }
   return opts;
 }
@@ -370,20 +380,49 @@ async function runAsyncMain(opts) {
     encoding: 'utf8',
   }).trim();
 
-  const chatAudit = auditChats({ sinceMs: nowMs - windowMs, nowMs, existingPaths });
-  // The write audit is a SECOND pass over the same database and costs ~14s on
-  // this machine's 428k-row `part` table. It is not windowed, so it cannot be
-  // folded into `auditChats`' query, and it answers a different question: not
-  // who is here now but who ever was. Skipped entirely for `--check` is
-  // deliberately NOT done — a stale write history is exactly the drift
-  // `--check` exists to catch.
-  const writeAudit = auditWrites({
-    dbPath: resolveSessionDb(),
-    root,
-    worktreePaths: worktrees.map((w) => w.path),
+  // Never run the expensive JSON audits against the live Kilo database. The
+  // snapshot helper copies only the bounded recent session/part projection and
+  // yields between source batches, so a huge historical database is not copied
+  // before the inventory can produce a result.
+  // If the backup cannot be made, pass a null path so both audits fail closed;
+  // falling back to the live path would recreate the outage this guard prevents.
+  const liveSessionDbPath = resolveSessionDb();
+  const sessionDbSnapshot = await createSessionDbSnapshot(liveSessionDbPath, {
+    sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
     nowMs,
-    liveWindowMs: LIVE_WINDOW_MS,
   });
+  const sessionDbPath = sessionDbSnapshot?.dbPath ?? null;
+  let chatAudit;
+  let writeAudit;
+  try {
+    chatAudit = auditChats({ dbPath: sessionDbPath, sinceMs: nowMs - windowMs, nowMs, existingPaths });
+    // The write audit is a SECOND pass over the same snapshot. It is deliberately
+    // bounded to the same three-day safety window: no worktree can be live beyond
+    // that window, and scanning older calls only creates I/O pressure without
+    // changing a disposal decision.
+    writeAudit = auditWrites({
+      dbPath: sessionDbPath,
+      root,
+      worktreePaths: worktrees.map((w) => w.path),
+      nowMs,
+      liveWindowMs: LIVE_WINDOW_MS,
+      sinceMs: nowMs - MAX_SESSION_DB_WINDOW_MS,
+    });
+  } finally {
+    await sessionDbSnapshot?.cleanup();
+  }
+  if (sessionDbSnapshot) {
+    // Keep the source path in the generated report; the temporary snapshot path
+    // is intentionally gone by the time the inventory is written.
+    chatAudit.dbPath = sessionDbSnapshot.sourcePath;
+    chatAudit.snapshot = true;
+    writeAudit.dbPath = sessionDbSnapshot.sourcePath;
+    writeAudit.snapshot = true;
+  } else {
+    const reason = 'session database snapshot unavailable; the live database was not queried';
+    chatAudit.reason = reason;
+    writeAudit.reason = reason;
+  }
   const board = readBoard(root, { nowMs });
   // The read audit is a human pass over transcripts, so it is NOT filtered by
   // the window: it is a fixed record of what those sessions were found to be

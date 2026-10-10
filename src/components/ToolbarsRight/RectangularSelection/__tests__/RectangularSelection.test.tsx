@@ -10,6 +10,14 @@ const sourceCanvas = vi.hoisted(() => document.createElement('canvas'));
 const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 const hasSelectionClipboard = vi.hoisted(() => ({ current: true }));
+const patchToolArgsMock = vi.hoisted(() => vi.fn());
+const rectangularToolArgs = vi.hoisted(() => ({
+  style: 'normal' as 'normal' | 'fixed-ratio' | 'fixed-size',
+  fixedRatio: 1,
+  fixedWidth: 100,
+  fixedHeight: 100,
+  toolName: 'rectangular-selection' as const,
+}));
 
 const storeState = vi.hoisted((): { selections: Selection[]; activeSelectionId: string | null } => ({
   selections: [],
@@ -45,6 +53,13 @@ vi.mock('../../../../contexts/useSelectionClipboard.ts', () => ({
     copyActiveSelection: copyActiveSelectionMock,
     hasSelectionClipboard: hasSelectionClipboard.current,
     pasteSelectionClipboard: pasteSelectionClipboardMock,
+  }),
+}));
+
+vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => ({
+    getToolArgs: () => rectangularToolArgs,
+    patchToolArgs: patchToolArgsMock,
   }),
 }));
 
@@ -105,6 +120,11 @@ describe('RectangularSelection toolbar', () => {
     // that never happened.
     copyActiveSelectionMock.mockReturnValue(true);
     pasteSelectionClipboardMock.mockClear();
+    patchToolArgsMock.mockClear();
+    rectangularToolArgs.style = 'normal';
+    rectangularToolArgs.fixedRatio = 1;
+    rectangularToolArgs.fixedWidth = 100;
+    rectangularToolArgs.fixedHeight = 100;
     hasSelectionClipboard.current = true;
     storeState.activeSelectionId = 'selection-1';
     storeState.selections = [
@@ -150,6 +170,20 @@ describe('RectangularSelection toolbar', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('renders the fixed-ratio marquee control and patches its constraint', () => {
+    rectangularToolArgs.style = 'fixed-ratio';
+    render(<RectangularSelection />);
+
+    const ratio = screen.getByLabelText('Ratio') as HTMLInputElement;
+    expect(ratio).toHaveValue(1);
+    expect(ratio).toHaveAttribute('min', '0.05');
+    expect(ratio).toHaveAttribute('max', '20');
+
+    fireEvent.change(ratio, { target: { value: '1.5' } });
+
+    expect(patchToolArgsMock).toHaveBeenCalledExactlyOnceWith('rectangular-selection', { fixedRatio: 1.5 });
   });
 
   it('reports a copy that returns false, which is not the throwing path', () => {
@@ -404,6 +438,8 @@ describe('RectangularSelection toolbar', () => {
       expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'Deselect' })).toBeDisabled();
 
+      await user.tab();
+      expect(document.activeElement).toBe(screen.getByLabelText('Style'));
       await user.tab();
       expect(document.activeElement).toBe(document.body);
     });

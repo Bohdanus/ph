@@ -720,6 +720,10 @@ describe('useLayers applyDocumentCrop', () => {
     // re-anchored at 100,50.
     expect(store.documentFrame).toEqual({ x: 100, y: 50, width: 800, height: 600 });
     expect(store.totalSize).toEqual({ width: 800, height: 600 });
+    // Layer positions are world-space coordinates. The renderer and export path subtract the
+    // document-frame origin when composing, so changing the frame must not translate the layer
+    // record itself or a crop would move pixels twice.
+    expect(store.layers.edited?.pos).toEqual({ x: 0, y: 0, width: 40, height: 20 });
     expect(store.history.at(-1)).toMatchObject({
       actionName: SET_DOCUMENT_FRAME_ACTION,
       layerId: 'document',

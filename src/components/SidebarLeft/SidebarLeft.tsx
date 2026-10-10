@@ -19,10 +19,6 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
-import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
-import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
-import { useDockDrag } from '../../hooks/useDockDrag.ts';
-import { edgePlacement } from '../../util/edge-placement.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -197,38 +193,6 @@ const OVERFLOW_GROUP_KEY = 'overflow';
  */
 const OVERFLOW_IDENTITY: ToolGroupIdentity = { label: MORE_TOOLS_LABEL, Icon: MoreToolsIcon };
 
-/** How far toward the opposite edge the rail has to travel before the dock will swap with it. */
-const RE_DOCK_ZONE = 0.25;
-
-/**
- * The grip that drags the rail to the other edge.
- *
- * Adobe's Photoshop training material describes exactly this control: "the Tool bar can be
- * relocated and even 'docked' to the panels on the right side of the screen. Simply drag it by
- * the grabber handle — when you see the solid blue line next to your panels on the right,
- * release the cursor to 'dock' the panel." (Adobe, Photoshop training: re-locating the tool
- * bar.) So the grip is not an invention, and an earlier version of this comment saying
- * Photoshop has no such control was simply wrong.
- *
- * What the app lacks is the TITLE BAR the gesture starts from — a rail of forty tool tiles with
- * no panel header to drag. Inventing one would put a row of chrome above the tools, which is a
- * different rail from Photoshop's. So the grip goes in the row that already exists for the
- * one/two-column toggle: that is where a user already goes to change the rail's shape, the row
- * keeps its height either way, and the blue drop line is the one the quote describes.
- */
-const RailGripIcon = () => (
-  <span aria-hidden="true" className="flex flex-col gap-[2px]">
-    <span className="flex gap-[2px]">
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-    </span>
-    <span className="flex gap-[2px]">
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-      <span className="h-[2px] w-[10px] rounded-full bg-current" />
-    </span>
-  </span>
-);
-
 const toolbarGroups = toolbarMap.flat();
 
 /**
@@ -262,8 +226,6 @@ const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { toolsSide, dockSide, setToolsSide } = usePanelLayout();
-  const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
@@ -521,76 +483,8 @@ const SidebarLeft = () => {
     [flyoutAnchor]
   );
 
-  // Re-docking the rail. "You can dock the Tools panel to either the right or left sides of
-  // the application window" (teachucomp; the CC-era Adobe book says the same by its title bar).
-  // The drop target is a blue line at the edge being thrown at, drawn before the release, which
-  // is the affordance Adobe documents for every panel move.
-  //
-  // `overlaySide` is the same fact as `toolsSide` seen from the rail: a rail on the right edge
-  // opens its flyout to the left, because "the anchor's trailing edge" is off-screen there.
-  const overlaySide: 'left' | 'right' = toolsSide === 'right' ? 'left' : 'right';
-  const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
-  const reDockOriginXRef = useRef(0);
-  const reDockTargetRef = useRef<'left' | 'right' | null>(null);
-  /** Whether the last press turned into a drag, so its synthesised click is not also a swap. */
-  const railDragMovedRef = useRef(false);
-
-  const onRailDragStart = useCallback(
-    (event: React.PointerEvent<HTMLElement>) => {
-      reDockOriginXRef.current = event.clientX;
-      railDragMovedRef.current = false;
-      reDockTargetRef.current = null;
-      setReDockTarget(null);
-      // A rail that moves with a flyout open takes the portal's anchor with it, and the
-      // overlay re-measures against a tile that is no longer where the user aimed.
-      closeFlyout();
-    },
-    [closeFlyout]
-  );
-
-  // The current target is ALSO held in a ref, because the commit below reads it. A
-  // `setReDockTarget` updater is the wrong place to put a side effect: React may call it more
-  // than once for the same update, and a `setDockOnLeft` inside one commits the workspace move
-  // an unpredictable number of times — or, in the case that was actually observed, not at all,
-  // because the updater's return value is the only thing React is guaranteed to use.
-  const onRailDrag = useCallback(
-    ({ dx }: { dx: number }) => {
-      // 3px, the same threshold `PanelGroup` uses for its own drag. Below it the press is a
-      // click, and a click here is a swap, so the flag has to be set before the drop target is
-      // or a twitch at the origin reads as a completed re-dock.
-      if (Math.abs(dx) > 3) railDragMovedRef.current = true;
-      const viewportWidth = document.documentElement.clientWidth;
-      const pointerX = reDockOriginXRef.current + dx;
-      // Toward the edge the rail is NOT on. A rail in the left column swaps by going RIGHT,
-      // which is the mirror of the dock's own test in `SidebarRight` — that one is a dock in
-      // the right column swapping by going LEFT. Reading either as "the low edge" is how this
-      // shipped inverted once and passed a unit test written to match it: a rail dragged left
-      // would have reported a drop target for the edge it was already against.
-      const wantsSwap =
-        toolsSide === 'left' ? pointerX > viewportWidth * (1 - RE_DOCK_ZONE) : pointerX < viewportWidth * RE_DOCK_ZONE;
-      const target = wantsSwap ? (toolsSide === 'left' ? 'right' : 'left') : null;
-      reDockTargetRef.current = target;
-      setReDockTarget(target);
-    },
-    [toolsSide]
-  );
-
-  // Honouring the cancel is the point of having one: the rail moves to the OPPOSITE edge, and a
-  // user who presses Escape has said something. Committing anyway is the one result Escape must
-  // never produce.
-  const onRailDragEnd = useCallback(
-    (cancelled: boolean) => {
-      const target = reDockTargetRef.current;
-      reDockTargetRef.current = null;
-      setReDockTarget(null);
-      // The rail moves to its OWN destination — no inversion. `setToolsSide` writes the rail's
-      // edge directly, so the target IS the edge the rail was thrown at.
-      if (target !== null && !cancelled) setToolsSide(target);
-    },
-    [setToolsSide]
-  );
-
-  const railDrag = useDockDrag({ onStart: onRailDragStart, onMove: onRailDrag, onEnd: onRailDragEnd });
+  // The rail is permanently pinned to the left edge. Its flyouts always open toward the canvas.
+  const overlaySide: 'left' | 'right' = 'right';
 
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
@@ -1148,8 +1042,6 @@ const SidebarLeft = () => {
     ...(overflowPlan.showOverflowTile ? [{ kind: 'overflow' as const }] : []),
   ];
 
-  const railPlacement = edgePlacement(toolsSide, isRightPanelOpen && toolsSide === dockSide ? 'top' : 'full');
-
   return (
     <aside
       // The other `complementary` landmark. Unnamed, a screen reader announces two
@@ -1159,11 +1051,7 @@ const SidebarLeft = () => {
       // on either edge: `overflow-y: auto` computes `overflow-x` to `auto` and the border
       // always sits outside the content box, so the border belongs on whichever side faces the
       // canvas — and the grid area follows from the same fact.
-      className={`scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
-        toolsSide === 'left'
-          ? 'border-r border-gray-300 dark:border-gray-700 justify-self-start'
-          : 'border-l border-gray-300 dark:border-gray-700 justify-self-end'
-      } ${railPlacement}`}
+      className="scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
       ref={setRailElement}
       style={{ width: toolbarWidth }}
@@ -1173,13 +1061,6 @@ const SidebarLeft = () => {
           it — the same reason the flyout has to be portalled but this does not, and the
           difference is absolute vs fixed. Rendered as a second child of the `<aside>` rather
           than a sibling in the grid, so the shell's region list stays what it has always been. */}
-      {reDockTarget !== null && (
-        <div
-          aria-hidden="true"
-          className={`pointer-events-none fixed inset-y-0 z-[60] w-1 bg-blue-500 ${reDockTarget === 'left' ? 'left-0' : 'right-0'}`}
-          data-testid="rail-drop-line"
-        />
-      )}
       {/* `h-full`, and that is the change that makes the fit possible. A flex column sized by
           its CONTENT has no height for `flex-1` to divide: the tools slot would be handed
           whatever the tools happened to need, so the fit would measure its own output and
@@ -1224,36 +1105,6 @@ const SidebarLeft = () => {
           the fit subtracts separately, and this change takes 14px off THAT one as well. */}
       <div className="flex h-full flex-col items-center py-2">
         <div className="mb-1 flex w-full shrink-0 items-center justify-between">
-          {!isTablet && (
-            <button
-              {...railDrag.handleProps}
-              aria-label="Move the toolbar to the other side"
-              className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
-              // The keyboard path, and the reason this is a `<button>` at all rather than a
-              // decorative `<div>`. Dragging needs a pointer; this control is announced, sits in
-              // the tab order, and is next to a sibling that works on click — so a button with no
-              // activation is a promise it does not keep. It was dead for a MOUSE user too, not
-              // only a keyboard one: `onRailDragEnd` only commits once the pointer has moved, so a
-              // plain click on the grip did nothing.
-              //
-              // `railDragMovedRef` keeps a drag from also counting as a click. A `<button>`
-              // synthesises a click from any pointerdown+pointerup on it, including one that
-              // travelled to the opposite edge, so without this a completed drag swapped on the
-              // release and then swapped again on the click — landing the rail where it started.
-              onClick={() => {
-                if (railDragMovedRef.current) {
-                  railDragMovedRef.current = false;
-                  return;
-                }
-                setToolsSide(toolsSide === 'left' ? 'right' : 'left');
-              }}
-              title="Drag to the other side, or press Enter"
-              type="button"
-              data-testid="rail-re-dock-handle"
-            >
-              <RailGripIcon />
-            </button>
-          )}
           {!isTablet && (
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}

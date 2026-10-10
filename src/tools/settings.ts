@@ -139,6 +139,8 @@ export const defaultSettings = {
   'polygonal-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -147,6 +149,8 @@ export const defaultSettings = {
   'freehand-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -170,16 +174,19 @@ export const defaultSettings = {
     contiguous: true,
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
-  'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
-  // No settings at all, which is a statement about Photoshop and not a shortcut: the
-  // options bar for both of these carries no Style, no Width/Height and no Anti-alias,
-  // because Adobe scopes all three to the Rectangular and Elliptical Marquees by name.
+  'rectangular-selection': {
+    style: 'normal',
+    fixedRatio: 1,
+    fixedWidth: 100,
+    fixedHeight: 100,
+    toolName: 'rectangular-selection',
+  } satisfies RectangularSelectionToolArgs,
   'single-row-marquee': { toolName: 'single-row-marquee' } satisfies SingleRowMarqueeToolArgs,
   'single-column-marquee': {
     toolName: 'single-column-marquee',
   } satisfies SingleColumnMarqueeToolArgs,
   brush: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 10,

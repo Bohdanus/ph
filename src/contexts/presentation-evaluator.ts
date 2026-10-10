@@ -86,6 +86,38 @@ export function scaleVectorArgs<T extends Record<string, unknown>>(
 }
 
 /**
+ * Scales retained text creator arguments from their recorded source rectangle to the layer's
+ * current presentation rectangle. Text is not a vector tool at runtime, but durable materialization
+ * re-runs its creator and must apply the same geometry contract as vector sources.
+ */
+export function scaleTextArgs<T extends Record<string, unknown>>(
+  args: T,
+  sourcePos: Pos | undefined,
+  position: Pos
+): T {
+  if (!sourcePos || sourcePos.width <= 0 || sourcePos.height <= 0) return args;
+
+  const scaleX = position.width / sourcePos.width;
+  const scaleY = position.height / sourcePos.height;
+  const fontScale = Math.sqrt(Math.abs(scaleX * scaleY));
+  const scaled = { ...args } as T & {
+    fontSize?: number;
+    rect?: { x1: number; y1: number; x2: number; y2: number } | null;
+  };
+
+  if (typeof scaled.fontSize === 'number') scaled.fontSize *= fontScale;
+  if (scaled.rect) {
+    scaled.rect = {
+      x1: scaled.rect.x1 * scaleX,
+      y1: scaled.rect.y1 * scaleY,
+      x2: scaled.rect.x2 * scaleX,
+      y2: scaled.rect.y2 * scaleY,
+    };
+  }
+  return scaled;
+}
+
+/**
  * Reads one numeric field of a filter operation the way a JSON round trip would, and refuses
  * a value that does not become one.
  *

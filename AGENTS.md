@@ -58,6 +58,15 @@ Every merge into `main` must carry `Branch: <source-branch>`.
 Resolve the session ID before the first commit. `ses_…` is the Kilo format; it is accepted by
 the Kilo swarm command when needed, but swarm identity otherwise defaults to the branch.
 
+## Device support boundary
+
+**This product supports desktop and tablet-sized touch devices, including high-DPI/Retina tablets.
+It does not support handheld phone layouts such as iPhone-sized screens.**
+
+Use “tablet/touch” for responsive work and tests. Do not create handheld-mobile features, phone
+breakpoints, or phone-specific interaction models. Tablet touch input must preserve desktop-quality
+tools, panels, and canvas fidelity; Retina/high-DPI rendering is a first-class requirement.
+
 ## Subagents
 
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
@@ -179,6 +188,12 @@ as a **navigation presentation cache**; it remains subordinate to legacy replay,
 export, and logical replay stay legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
+
+`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing: a tool that
+SUBSTITUTES pixels cannot share a processor, args type or options bar with one that STAMPS
+them. Sharing is what let a forced `'spray'` `penType` masquerade as a tool setting, and a tool
+that left the paint panel must not be widened back for a new bar. A group that persists one key
+may not absorb a tool that has more than one.
 
 ## Free subagent models
 

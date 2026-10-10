@@ -12,6 +12,8 @@ import {
   getSelectionRect,
 } from '../../util/selection.ts';
 import { documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import type { RectangularSelectionToolArgs } from '../../tools/rectangularSelection.ts';
 
 type rectangularSelectionToolAreaProps = {
   className?: string;
@@ -24,6 +26,12 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     dispatch,
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
+  const { getToolArgs } = useCurrentTool();
+  const args = getToolArgs('rectangular-selection') as RectangularSelectionToolArgs | null;
+  const style = args?.style ?? 'normal';
+  const fixedRatio = args?.fixedRatio ?? 1;
+  const fixedWidth = args?.fixedWidth ?? 100;
+  const fixedHeight = args?.fixedHeight ?? 100;
   const isEditingCommittedSelectionRef = useRef(false);
   /**
    * The pointer id this component's own claim was taken with, so the release
@@ -66,6 +74,8 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   const { pointerHandlers, pointerState } = useRect({
     imageSize: totalSize,
     initialRect: activeRectangleRect,
+    aspectRatio: style === 'fixed-ratio' ? fixedRatio : null,
+    fixedSize: style === 'fixed-size' ? { width: fixedWidth, height: fixedHeight } : null,
     containerRef,
     overlayRef: toolOverlayRef,
     // Adobe's marquee modifiers. They are asked for here rather than defaulted on in the hook

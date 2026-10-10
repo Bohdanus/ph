@@ -22,6 +22,7 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -126,6 +127,7 @@ const cases: ReadonlyArray<{
       item('hide', HIDE_LAYER_ACTION, layerA),
       item('show', SHOW_LAYER_ACTION, layerA),
       item('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
+      item('opacity', SET_LAYER_OPACITY_ACTION, layerA, { opacity: 0.5 }),
     ],
   },
   {

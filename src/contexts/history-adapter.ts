@@ -657,6 +657,9 @@ export function operationForTool(
   if (!args || typeof args !== 'object' || typeof args.toolName !== 'string') return null;
   const processor = findToolProcessor(args.toolName);
   if (!processor) throw new UnsupportedHistoryFeatureError(`Unknown processor ${args.toolName}`, item.id);
+  if (processor.replay.kind === 'unimplemented') {
+    throw new UnsupportedHistoryFeatureError(`Tool ${args.toolName} cannot be replayed durably`, item.id);
+  }
 
   if (args.toolName === 'transform') {
     const transformCandidate = args as ToolArgs & { transform?: unknown; trapezoid?: number };

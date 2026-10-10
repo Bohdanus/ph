@@ -207,6 +207,13 @@ describe('LayersTab', () => {
     expect(layerDivs[2]).toHaveTextContent('Background');
   });
 
+  it('renders one preview thumbnail for every layer row', () => {
+    render(<LayersTab />);
+
+    expect(screen.getAllByTestId('layer-thumbnail')).toHaveLength(3);
+    expect(screen.getByTestId('layers-list')).toContainElement(screen.getAllByTestId('layer-thumbnail')[0]);
+  });
+
   it('highlights active layer', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
@@ -705,6 +712,30 @@ describe('LayersTab drag and drop guards', () => {
     expect(dataTransfer.setData).not.toHaveBeenCalled();
     expect(dataTransfer.setDragImage).not.toHaveBeenCalled();
     expect(document.body).not.toHaveClass('cursor-grabbing');
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+  });
+
+  it('prevents a locked layer from being dragged or reordered', () => {
+    seed({
+      ...mockLayers,
+      'layer-3': { ...mockLayers['layer-3'], locked: true },
+    });
+    render(<LayersTab />);
+
+    const lockedRow = getListItemFor('Top Layer').querySelector<HTMLElement>('[data-testid="layer-row-content"]')!;
+    const dataTransfer = createDataTransfer();
+    const event = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+
+    expect(lockedRow).toHaveAttribute('draggable', 'false');
+    expect(lockedRow.querySelector('[data-testid="drag-handle"]')).toHaveAttribute('data-disabled', 'true');
+
+    act(() => {
+      fireEvent(lockedRow, event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
     expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
   });
 

@@ -36,6 +36,8 @@ const lassoSettingsKeys: readonly (keyof PolygonSelectionToolSettings)[] = [
   'color',
   'lineWidth',
   'alpha',
+  'featherRadius',
+  'antiAlias',
   'fill',
 ];
 
@@ -100,11 +102,13 @@ describe('polygonSelection type contract', () => {
 
   it('keeps every seeded lasso value inside the range the toolbars expose', () => {
     for (const toolName of lassoToolNames) {
-      const { alpha, lineWidth, fill, points, color } = defaultSettings[toolName];
+      const { alpha, lineWidth, featherRadius, antiAlias, fill, points, color } = defaultSettings[toolName];
 
       expect(alpha, toolName).toBeGreaterThanOrEqual(0);
       expect(alpha, toolName).toBeLessThanOrEqual(1);
       expect(lineWidth, toolName).toBeGreaterThan(0);
+      expect(featherRadius, toolName).toBeGreaterThanOrEqual(0);
+      expect(antiAlias, toolName).toBe(true);
       expect(fill, toolName).toBe(false);
       expect(points, toolName).toEqual([]);
       expect(color, toolName).toMatch(/^#[0-9A-Fa-f]{6}$/);
@@ -123,6 +127,8 @@ describe('polygonSelection type contract', () => {
         color: '#FF0000',
         lineWidth: 3,
         alpha: 1,
+        featherRadius: 0,
+        antiAlias: true,
         fill: false,
       } as unknown as ToolArgs)
     ).toThrow(TypeError);

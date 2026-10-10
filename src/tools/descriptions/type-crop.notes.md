@@ -927,15 +927,15 @@ source in this file supports it, and an unsourced version number is the exact fa
 
 ### Options-bar control census
 
-Fifteen controls. `present` 0 · `partial` 4 · `inert` 0 · `missing` 11.
+Fifteen controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 10.
 
 | #   | Control                         | Status    | `appRef`                                   |
 | --- | ------------------------------- | --------- | ------------------------------------------ |
 | 1   | Tool preset                     | `missing` | —                                          |
 | 2   | Aspect ratio menu               | `partial` | `Crop.tsx` — the `aspect-ratio` `<select>` |
 | 3   | Swap Width and Height values    | `missing` | —                                          |
-| 4   | Clear                           | `missing` | —                                          |
-| 5   | Overlay                         | `missing` | —                                          |
+| 4   | Clear                           | `partial` | `Crop.tsx` — the `Clear` button            |
+| 5   | Overlay                         | `present` | `Crop.tsx` — the `crop-overlay` `<select>` |
 | 6   | Straighten                      | `missing` | —                                          |
 | 7   | Grid                            | `missing` | —                                          |
 | 8   | Settings (gear) menu            | `missing` | —                                          |

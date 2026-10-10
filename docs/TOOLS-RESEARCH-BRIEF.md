@@ -104,7 +104,7 @@ And one boundary, from §10 of `01-photoshop-reference.md` — "No browser was e
 support claim in that corpus derives from caniuse / MDN BCD / the WebKit bug tracker, not from
 runtime measurement.
 
-`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,690-line playbook whose
+`/Users/bkalynovskyi/ph/.skills/photoshop-tool-creation.md` — a 4,689-line playbook whose
 `## Photoshop shape tools` section is a fully worked research digest and the canonical example of
 the expected density. Its `## The tool backlog` and `## Appendix A — the trap list` sections are
 worth reading before writing prose.
