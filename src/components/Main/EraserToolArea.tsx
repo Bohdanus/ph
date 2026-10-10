@@ -8,6 +8,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point } from '../../contexts/general-types.ts';
 import { processorPresentationBounds } from '../../contexts/presentation-evaluator.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
+import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
 
 type EraserToolAreaProps = {
   className?: string;
@@ -32,7 +33,9 @@ type EraserToolAreaProps = {
  * why they cannot drift.
  */
 export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
-  const [{ containerRef, layers, activeLayerId, totalSize, documentFrame: currentFrame }] = useStore();
+  const [
+    { containerRef, layers, activeLayerId, totalSize, documentFrame: currentFrame, selections, activeSelectionId },
+  ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { updateLayerByTool, tempUpdateLayer } = useLayers();
   const { toolArgs } = useCurrentTool();
@@ -56,6 +59,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
    * and a release that then pushed a point back in would erase the end of the line a second time.
    */
   const lineCommittedRef = useRef(false);
+  const selectionSnapshotRef = useRef<EraserToolArgs['selection']>(undefined);
   /**
    * The pointer id this component's own claim was taken with. The cancel handler and the unmount
    * cleanup never see a pointer event, so the id is kept here for every release route to name the
@@ -96,6 +100,26 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
       return { x: document.x - rasterBounds.x, y: document.y - rasterBounds.y };
     });
 
+  const snapshotSelection = (): EraserToolArgs['selection'] => {
+    const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
+    if (!activeSelection) return undefined;
+
+    return {
+      points: getSelectionAbsolutePoints(activeSelection).map((point) => ({
+        x: point.x - rasterBounds.x,
+        y: point.y - rasterBounds.y,
+      })),
+      featherRadius: activeSelection.metadata?.featherRadius ?? 0,
+      antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
+    };
+  };
+
+  const argsWithSelection = (points: Point[]) => ({
+    ...args,
+    points: toLayerPoints(points),
+    ...(selectionSnapshotRef.current ? { selection: selectionSnapshotRef.current } : {}),
+  });
+
   /**
    * One stroke, one write, coalesced into a single animation frame, so a fast drag does not run the
    * flood-and-write pipeline once per pointer event.
@@ -110,7 +134,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
 
     tempUpdateLayer({
       id: activeLayerId!,
-      toolArgs: { ...args, points: toLayerPoints(pointsRef.current) },
+      toolArgs: argsWithSelection(pointsRef.current),
     });
   };
 
@@ -139,6 +163,8 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // this one — or the claim taken above would be held until some unrelated gesture released it.
     if (!isEnabled) return;
 
+    selectionSnapshotRef.current = snapshotSelection();
+
     const coords = getLocalCoords(event);
 
     // Shift-clicking an anchor is the END of a straight line, not the start of a drag. The commit
@@ -150,7 +176,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
       anchorRef.current = null;
       lineCommittedRef.current = true;
       pointsRef.current = [];
-      updateLayerByTool({ toolArgs: { ...args, points: toLayerPoints(line) } });
+      updateLayerByTool({ toolArgs: argsWithSelection(line) });
       return;
     }
 
@@ -197,6 +223,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     if (lineCommittedRef.current) {
       lineCommittedRef.current = false;
       pointsRef.current = [];
+      selectionSnapshotRef.current = undefined;
       return;
     }
 
@@ -213,16 +240,18 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     if (isEnabled && pointsRef.current.length > 0) {
       // `id` is deliberately left to the hook's `= activeLayerId` default: the layer whose `pos`
       // the conversion above used is the one that must receive the edit.
-      updateLayerByTool({ toolArgs: { ...args, points: toLayerPoints(pointsRef.current) } });
+      updateLayerByTool({ toolArgs: argsWithSelection(pointsRef.current) });
     }
 
     pointsRef.current = [];
+    selectionSnapshotRef.current = undefined;
   };
 
   const handlePointerCancel = () => {
     // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
     // so a claim left open here would gate every later keystroke for a stroke that does not exist.
     releaseDocumentClaim();
+    selectionSnapshotRef.current = undefined;
   };
 
   useEffect(() => {
@@ -230,6 +259,7 @@ export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
     // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
     return () => {
       releaseDocumentClaim();
+      selectionSnapshotRef.current = undefined;
 
       // A frame left pending across an unmount would write to a layer this component no longer
       // owns, so it is cancelled rather than left to run.

@@ -94,7 +94,9 @@ const eraserArgs = (overrides: Partial<EraserToolArgs> = {}): ToolArgs =>
 const erasedAlpha = (args: ToolArgs): Uint8ClampedArray => {
   RecordingOffscreenCanvas.instances = [];
   eraser({ size: SIZE, bitmap: opaqueSource(SIZE.width, SIZE.height) })(args);
-  const pixels = RecordingOffscreenCanvas.instances.at(-1)!.pixels;
+  // A selection snapshot rasterizes through a second canvas; the processor's returned canvas is
+  // always the first allocation in this harness.
+  const pixels = RecordingOffscreenCanvas.instances[0]!.pixels;
   const alpha = new Uint8ClampedArray(SIZE.width * SIZE.height);
   for (let i = 0, a = 3; a < pixels.length; i++, a += 4) alpha[i] = pixels[a];
   return alpha;
@@ -172,6 +174,42 @@ describe('the Brush eraser tip', () => {
     const alpha = erasedAlpha(eraserArgs({ mode: 'brush', lineWidth: 21, points: [{ x: CENTRE, y: CENTRE }] }));
 
     expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(0);
+  });
+
+  it('clips the erase to the selection snapshot carried by the stroke', () => {
+    const originalGetContext = RecordingOffscreenCanvas.prototype.getContext;
+    const getContextSpy = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockImplementation(function (
+      this: RecordingOffscreenCanvas
+    ) {
+      if (RecordingOffscreenCanvas.instances.length > 1) return null as unknown as CanvasRenderingContext2D;
+      return originalGetContext.call(this);
+    });
+
+    let alpha = new Uint8ClampedArray(0) as ReturnType<typeof erasedAlpha>;
+    try {
+      alpha = erasedAlpha(
+        eraserArgs({
+          mode: 'brush',
+          lineWidth: 21,
+          hardness: BRUSH_HARDNESS_MAX,
+          selection: {
+            points: [
+              { x: 12, y: 12 },
+              { x: 28, y: 12 },
+              { x: 28, y: 28 },
+              { x: 12, y: 28 },
+            ],
+            featherRadius: 0,
+            antiAlias: false,
+          },
+        })
+      );
+    } finally {
+      getContextSpy.mockRestore();
+    }
+
+    expect(alphaAt(alpha, CENTRE, CENTRE)).toBe(0);
+    expect(alphaAt(alpha, 6, CENTRE)).toBe(255);
   });
 
   it('softens a whole stroke, not just its first dab', () => {
