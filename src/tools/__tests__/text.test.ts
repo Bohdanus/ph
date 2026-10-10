@@ -708,6 +708,16 @@ describe('layoutText', () => {
 });
 
 describe('renderText', () => {
+  it('rotates text around the centre of its box', () => {
+    const ctx = makeTextCtx();
+
+    renderText(ctx, { ...baseArgs, angle: 30 });
+
+    expect(ctx.translate).toHaveBeenNthCalledWith(1, 100, 60);
+    expect(ctx.rotate).toHaveBeenCalledWith((30 * Math.PI) / 180);
+    expect(ctx.translate).toHaveBeenNthCalledWith(2, -100, -60);
+  });
+
   describe('the guard on a draft with nothing to draw', () => {
     it('draws nothing at all for an empty string', () => {
       // The guard is `!text`, so an empty draft returns before `resetOverlayAlpha` and before any

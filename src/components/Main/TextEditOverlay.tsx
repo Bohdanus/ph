@@ -410,6 +410,8 @@ export const TextEditOverlay = () => {
         top: `${(fit?.offsetY ?? 0) + rect.y1 * scale}px`,
         width: `${(rect.x2 - rect.x1) * scale}px`,
         height: `${(rect.y2 - rect.y1) * scale}px`,
+        transform: args.angle ? `rotate(${args.angle}deg)` : undefined,
+        transformOrigin: 'center center',
         boxSizing: 'border-box',
         margin: 0,
         border: 'none',
