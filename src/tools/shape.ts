@@ -85,6 +85,7 @@ export type ShapeGeometry = {
 };
 
 const LINE_ANGLE_STEP = Math.PI / 4;
+const EQUILATERAL_TRIANGLE_HEIGHT_RATIO = Math.sqrt(3) / 2;
 
 const snapLineGeometry = (anchor: Point, pointer: Point, altKey: boolean, shiftKey: boolean): ShapeGeometry => {
   if (!shiftKey) {
@@ -107,6 +108,29 @@ const snapLineGeometry = (anchor: Point, pointer: Point, altKey: boolean, shiftK
   };
 };
 
+const equilateralBox = (width: number, height: number): { width: number; height: number } =>
+  width >= height
+    ? { width, height: width * EQUILATERAL_TRIANGLE_HEIGHT_RATIO }
+    : { width: height / EQUILATERAL_TRIANGLE_HEIGHT_RATIO, height };
+
+const triangleGeometry = (anchor: Point, pointer: Point, altKey: boolean, equilateral: boolean): ShapeGeometry => {
+  const directionX = Math.sign(pointer.x - anchor.x) || 1;
+  const directionY = Math.sign(pointer.y - anchor.y) || 1;
+  const span = altKey ? 2 : 1;
+  const rawWidth = Math.abs(pointer.x - anchor.x) * span;
+  const rawHeight = Math.abs(pointer.y - anchor.y) * span;
+  const { width, height } = equilateral ? equilateralBox(rawWidth, rawHeight) : { width: rawWidth, height: rawHeight };
+
+  return {
+    start: altKey
+      ? { x: anchor.x - directionX * (width / 2), y: anchor.y - directionY * (height / 2) }
+      : { x: anchor.x, y: anchor.y },
+    end: altKey
+      ? { x: anchor.x + directionX * (width / 2), y: anchor.y + directionY * (height / 2) }
+      : { x: anchor.x + directionX * width, y: anchor.y + directionY * height },
+  };
+};
+
 /**
  * Single source of truth for shape drag geometry.
  *
@@ -125,6 +149,7 @@ export const normalizeShapeGeometry = (
   const { shiftKey, altKey } = constraints;
 
   if (figure === 'line') return snapLineGeometry(anchor, pointer, altKey, shiftKey);
+  if (figure === 'triangle') return triangleGeometry(anchor, pointer, altKey, shiftKey);
 
   if (shiftKey) {
     // Measure half-extents from the anchor, which is the shape center when
@@ -260,12 +285,24 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
     ctx.stroke();
-  } else if (figure === 'triangle' || figure === 'polygon' || figure === 'star') {
+  } else if (figure === 'triangle') {
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+    if (hasFill) ctx.fill();
+    ctx.stroke();
+  } else if (figure === 'polygon' || figure === 'star') {
     const centerX = (start.x + end.x) / 2;
     const centerY = (start.y + end.y) / 2;
     const radiusX = Math.abs(end.x - start.x) / 2;
     const radiusY = Math.abs(end.y - start.y) / 2;
-    const sides = figure === 'triangle' ? 3 : polygonSides(args.sides);
+    const sides = polygonSides(args.sides);
     const vertexCount = figure === 'star' ? sides * 2 : sides;
     const innerRatio = figure === 'star' ? starRatio(args.starRatio) / 100 : 1;
     const angleStep = figure === 'star' ? Math.PI / sides : (Math.PI * 2) / sides;
