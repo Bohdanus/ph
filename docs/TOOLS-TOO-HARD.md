@@ -224,8 +224,8 @@ rasterised polygon — so the Pen family is not six tools to implement but a doc
 and the Path Type entry below is the same work seen from the shape tools.
 
 **What the app does instead.** The six tools are in the rail under Adobe's names and mount a stub
-options bar. `AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
-Photoshop grouping and naming are the specification, and the stub bar is the debt.
+options bar. `docs/PHOTOSHOP-UX.md` §"Open violations" is explicit that this is the correct state for a tool
+the app cannot do: the Photoshop grouping and naming are the specification, and the stub bar is the debt.
 
 ### Custom Shape
 
