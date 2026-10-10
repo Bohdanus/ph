@@ -3481,51 +3481,6 @@ in scope there. The raster requirement is not fixable this way: it is recorded n
 stored value to refuse against. Enforcing it means first deciding that the durable operation should
 carry the flag, which is a schema decision rather than an assertion.
 
-## 190. The triangle's geometry is recorded but under-pinned, and the one pin that exists will move with any fix
-
-**Problem.** `drawShape()` in `src/tools/shape.ts` places the triangle's vertices from the drag box's
-two half-extents with an even angular step, so the result is a regular three-sided polygon only when
-the box is square, and `normalizeShapeGeometry()` squares that box when Shift is held rather than
-forcing an equilateral result. Both halves are already recorded — `src/tools/descriptions/shape.ts`,
-the `triangle` entry's `appNotes`, and `src/tools/descriptions/shape.notes.md`. What is not recorded is
-how little stands
-behind them.
-
-**What is pinned, and what is not.** `shape.test.ts` — the
-`it.each(['triangle', 'polygon'] as const)('keeps %s geometry consistent with the other figures')` case —
-asserts both halves of `normalizeShapeGeometry()` for the triangle: the unconstrained drag passes
-through unchanged, and Shift squares the box. So a fix to the squaring **will** turn that case red and it
-has to move with the behaviour. What is not pinned is anything about _where the vertices land_.
-
-Everything that touches what is rendered measures the other three figures and only counts the
-triangle. `paint-tools.test.ts` — the
-`it('draws the figure each geometry variant is registered for, not a generic shape')` title — asserts
-`strokeRect` called with real coordinates for the rectangle, `ellipse` with real coordinates for the
-oval, and `moveTo`/`lineTo` with real coordinates for the line, then asserts only call counts for the
-triangle and the polygon. The asymmetry is inside a single test, so it is not a matter of which file
-someone chose to extend. `shape.test.ts` — the `it.each` pairing triangle with three vertices, and the
-`it('leaves the triangle at three whatever the field says')` case — likewise assert counts.
-
-**And nothing watches from outside.** `e2e/keyboard-shortcuts.spec.ts` cycles the bar's figure readout
-with `Shift+u` and asserts it passes through Triangle and Polygon, so both figures are reachable
-end-to-end. It asserts the figure's _name_; it never draws one, and no other spec under `e2e/` draws a
-polygon or a triangle at all — the polygonal lasso is a different tool. A regression in the inscribed
-placement would reach a user with the whole suite green.
-
-**Affected.** `src/tools/shape.ts` — the `figure === 'triangle' || figure === 'polygon'` branch of
-`drawShape()` and the `shiftKey` arm of `normalizeShapeGeometry()`;
-`src/tools/__tests__/shape.test.ts` — the `it.each` case that pins the squaring for triangle and
-polygon, and the two vertex-count cases; `src/tools/__tests__/paint-tools.test.ts` — the
-figure-dispatch case.
-
-**What would close it.** Fix the placement, move the squaring assertion with it, and give the triangle
-the coordinate assertion its three siblings in that test already have. An e2e path that draws the
-figure is the stronger version of the same coverage and is proportionate to a figure the suite can
-currently only cycle by name.
-
-A branch named `fix/shape-truth` exists and is ahead of `main`; read its diff before starting, since
-it may already carry part of this.
-
 ## 193. A paragraph box whose type outgrows the document commits the overflow as cropped pixels
 
 **Problem.** `calculateNewRect`'s paragraph arm returns `trimRect2(newRect, imageSize)`, so every
