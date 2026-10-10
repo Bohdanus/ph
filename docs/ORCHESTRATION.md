@@ -6,7 +6,9 @@ touch — and this file is the detail behind it.
 
 ## Find the trap you are in
 
-Start from the symptom. Every row is a trap that has
+This file is over a thousand lines and **97 of 3,244 sessions — 3.0% — have ever opened it
+with a real read**, so reading it front to back is not a strategy and arriving at the right
+section by scrolling is not either. Start from the symptom. Every row is a trap that has
 actually cost time in this repository, and the right-hand column is the paragraph that will
 save you the next one.
 
@@ -40,20 +42,12 @@ read-only investigation that changes nothing, a single-line doc fix **the
 operator explicitly asked for on `main`**, and a hotfix the operator asked for on
 `main` by name.
 
-- **A chat can start in the bare repository, where worktree-only commands fail.**
-  Begin with `git -C "$PWD" worktree list --porcelain`, which works from that
-  location.
-  Find the entry with branch `refs/heads/main` rather than assuming the first
-  entry is a checkout; the first can be bare. Then run
-  `git -C "$MAIN" rev-parse --show-toplevel` and use `git -C "$MAIN"` for Git
-  commands until you have explicitly changed into a worktree. Do not run
-  `git status` or `git rev-parse --show-toplevel` in the bare startup directory.
-- **Before editing tracked files, verify the selected working directory with
-  `git rev-parse --show-toplevel`.** It distinguishes "I am in my worktree" from
-  "I believe I am in my worktree". `main`'s checkout path is not proof — an
-  Agent Manager worktree session, a `cd` in a previous tool call, or a session
-  started in the root checkout and driven into a task worktree all leave you
-  somewhere other than where you think.
+- **Before editing tracked files, run `git rev-parse --show-toplevel`.** It is
+  the only thing that distinguishes "I am in my worktree" from "I believe I am in
+  my worktree". `main`'s checkout path is not proof — an Agent Manager worktree
+  session, a `cd` in a previous tool call, or a session started in the root
+  checkout and driven into a task worktree all leave you somewhere other than
+  where you think.
 - **A `task` subagent inherits the caller's working directory, so the worktree has
   to exist before the fan-out and not after it.** `task` creates no session and no
   worktree, and `agent_manager`'s `mode: 'local'` deliberately runs in the caller's
@@ -134,9 +128,8 @@ Three things stay allowed, each deliberately:
   broken environment, not a decision, and blocking there would trade a real gate
   for a phantom one.
 
-## Landing
+### Landing
 
-- **Merge only work you are confident is complete and ready:** the requested scope is met, behavior is verified, and required gates pass. If any is uncertain or blocked, leave it unmerged and report why.
 - **The main worktree is a landing, not a negotiation.** A branch merges into
   `main` only after `main` has already been merged or rebased **into the branch,
   in the branch's own worktree**, and the gates re-run there. The merge into
@@ -209,12 +202,6 @@ status` and `git diff` before staging.
   nothing at all, so a branch's added files vanish too, and a scan over HEAD's changes
   finds only the contested subset and reports the rest of a dropped commit as clean.
 
-  A modify/delete conflict explicitly resolved with `git rm` is not the same as a silent
-  `-s ours` discard, even though both leave HEAD and the result without a path. Git's
-  resolve-undo index records stages 1 and 3 for the resolved conflict, but no stage 2;
-  the guard accepts that explicit deletion. A `-s ours` merge leaves no resolve-undo
-  record, so its discarded incoming change is still refused.
-
   All three shapes are measured the same way — by asking whether a line the losing side
   committed is **absent** from the result, not by counting a diff. `--numstat` bills a
   moved line as one deletion plus one insertion, so a result that is a superset in content
@@ -237,8 +224,8 @@ status` and `git diff` before staging.
   **Seven shapes it used to pass, found by adversarial review and measured, not reasoned
   about.** Each was reproduced against the guard as it stood: a real merge in a throwaway
   repository, driven through `findTakeovers` with the real index. All seven destroyed
-  committed work and reported success. **Replayed over the 407 merges on `main` before and
-  after the fixes, the same 36 merges are refused, with the same kinds and the same paths** —
+  committed work and reported success. **Replayed over every merge on `main` before and after
+  the fixes, the same merges are refused, with the same kinds and the same paths** —
   every change was a shape that was _invisible_, never a verdict that moved:
 
   | Shape                                              | What it destroyed                                   | How it slipped through                                                                                                                                                                                           |
@@ -266,20 +253,35 @@ status` and `git diff` before staging.
   guard: it stages the real merge result. The fix belongs in a `pre-push` check, where a
   branch's own diff against `main` has two sides to compare.
 
-  `.husky/pre-push` runs `scripts/stale-branch-files.mjs` before the full app suite. For each
-  pushed local branch other than `main`, it compares changed file blobs with history before the
-  merge base against local `main`. A matching older blob is reported and blocks the push;
-  branches whose first-parent history since the merge base contains a merge commit are skipped.
-  This is a stale-snapshot warning, not proof of intent: an intentional restoration of old file
-  content can match too, and should be reviewed rather than automatically rewritten.
-
   **It only sees a merge that is being COMMITTED.** A merge or rebase that stops on a
   conflict runs no hook at all, so an operation left open is invisible to it — which is how
   `integration/sweep-land` sat for a day holding a resolved, compiling, silently-reverting
-  merge that this guard would have refused the moment anyone ran `git commit`. Nothing else
-  detects that state either: `scripts/worktree-inventory.mjs` has no notion of an operation
-  in progress, and no hook, script or CI job regenerates its output. The guard is the floor
-  under the rule, not a substitute for noticing.
+  merge that this guard would have refused the moment anyone ran `git commit`. `npm run
+repo:state` is what reports an operation in progress, and it separates the two states that
+  share one `action`: unmerged paths mean git still holds every side and nothing has been
+  decided, while **none** mean a resolution is staged in no commit, which `git merge --abort`
+  discards. Nothing else in the tree can see that state, which is why it is a command and not
+  a field.
+
+  **A hand edit to a file git merged CLEANLY, which is a shape with no conflict marker in it
+  anywhere.** Counting `remerge CONFLICT` lines does not measure hand-written merge work, and
+  the gap is not small: on the history `findHandResolutions` in
+  `scripts/merge-takeover-guard.mjs` was measured over, more paths were hand-edited on a merge
+  git had already resolved cleanly than were resolved as conflicts. That function's JSDoc holds
+  the rules, the figures, and how to re-derive them; the figures move as `main` grows, so they
+  are not held here. What it enforces, in three lines:
+
+  - a path changed after a **clean** merge is **reported** with the count of lines git's merged
+    result had and the staged result does not. Refusing those would train every agent to reach
+    for `--no-verify`, which is how the three whole-file shapes above were nearly lost once.
+  - a **test** file that git's merge produced and the result does not contain is **refused**,
+    UNLESS a side's own commit had already deleted it, which includes every `modify/delete`
+    conflict — deleting the file there is git's own recommendation and was reviewed where it was
+    written. A path that was renamed is reported as a rename, because rename detection on hides
+    the erasure and rename detection off refuses a legitimate rename.
+  - a merge run with `-X`/`-s` **cannot be detected and cannot cause the refusal**: git records
+    a merge's result in its reflog action, not the invocation, so no hook can read the flag; a
+    strategy option resolves a hunk and never removes a path, so its cost is report lines.
 
   The `comm -13` recipe that used to live here is **retired and was wrong twice over**: it
   reported hundreds of innocent paths when run at the only moment it could act (before the
@@ -318,9 +320,22 @@ status` and `git diff` before staging.
 -A` also tried to sweep a third agent's in-flight tests into the commit — which
   is the previous bullet, one hour later, in the same worktree.
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
-MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
+ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
   and `git commit` then lands a single-parent commit that reads as a resolution.
+- **Whenever a `git pull` (or `git fetch` + `git merge`) brings new commits into
+  the main worktree, record the incoming commits in `docs/INCOMING_COMMITS.md`.**
+  Each entry must include: the date, the source remote/branch, the commit SHAs
+  (short and full), the commit subjects, and the author. This document is the
+  audit trail for what landed on `main` from outside. The file is tracked and
+  committed alongside the merge. Example entry format:
+  ```
+  ## 2026-10-10 — origin/main (fetch + merge)
+  - a1b2c3d (a1b2c3d4e5f6...) "Fix: handle empty selection in crop tool" — Author Name
+  - f6e5d4c (f6e5d4c3b2a1...) "feat: add new levels adjustment" — Author Name
+  ```
+  If the pull is a fast-forward, the same recording applies — the commits that
+  moved `main` forward are still incoming from the remote.
 
 ### Four traps that cost real debugging time
 
@@ -390,26 +405,72 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
     per-run folder would leave it with nothing to open.
 
-## Branches nobody holds
+## What git is doing right now
 
-`npm run branches:orphan` reports every branch `main` does not contain that no worktree
-holds, with its behind-count, the commits `main` lacks, and its number of merge-conflicting
-paths. It is `scripts/orphan-branches.mjs`, and it exits non-zero when it could not read the
-repository rather than answering with an empty list.
+A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
+git directory — `.git/worktrees/<name>/` for a linked worktree, `.git/` for the
+primary. **No commit records it, no branch name carries it, and `git status` in the
+main checkout cannot see it.** `MERGE-INTEGRITY-AUDIT.md` calls this the whole
+hazard class in one place, and it is right: on 2026-10-04 a worktree in this
+repository held an eight-path unresolved merge for hours, and the only reason
+anybody knew was that a person ran the audit's `find` by hand.
 
-The inventory enumerates worktrees, `npm run repo:state` reads operations in each worktree,
-and `npm run dispose` acts on a named worktree. An unmerged branch whose worktree is gone
-is invisible to those worktree-based reports even though Git retains its ref; it can keep
-falling behind `main` and accruing conflicts. `git branch --no-merged` appears in no other
-script here.
+`npm run repo:state` reports it. It is `scripts/repo-state-gate.mjs`, and it reads
+git's own markers — `MERGE_HEAD`, `SQUASH_MSG`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
+`BISECT_LOG`, `rebase-merge/`, `rebase-apply/` — plus
+`git diff --name-only --diff-filter=U`, which is what separates an unmerged index
+entry from an ordinary edit. `git ls-files -u` separates them too and returns the same
+paths; `-U` was chosen because its output is already one path per record.
+`--json` prints the same findings for a caller that wants them as data.
 
-**It reports and retires nothing.** Landing, rebasing, archiving and deleting a branch stay
-with a person or an agent that has read the report. A report that also acted would be a
-second `npm run dispose` with none of that command's inventory, board and lock checks.
+**It exits non-zero when it could not look, not only when it found something.** A
+roster it could not read, or a worktree it could not describe, is reported as
+unreadable rather than as clean. `npm run dispose` refuses on exactly those inputs, and
+a report that answered them with exit 0 would be the surface a person trusts more.
 
-**The conflict count reads both of git's phrasings.** Ordinary conflicts use
-`Merge conflict in <path>`; modify/delete and add/delete conflicts use `deleted in <x> and
-modified in <y>` or `added in <x> and modified in <y>`. The command counts both forms.
+**Run it before you believe the repository is quiet.** It exits non-zero when
+anything is in progress, and it is the check to run before a sweep, before a landing,
+and before you conclude that a worktree is finished.
+
+**It is advisory and is wired into no hook, on purpose.** It costs two git spawns per
+worktree, so it scales with the fleet — measured in seconds on a fleet of this
+repository's size. That is right for a command a person runs and wrong for a hook, and the
+decisive reason is behavioural: a hook would block every push in the repository
+because _some other_ worktree is mid-merge, and a gate that punishes the whole swarm
+for one session's state gets `--no-verify`'d, after which it protects nothing.
+
+**It reports WHAT is in progress and never WHOSE it is.** git does not record that
+either, so `WORKTREES.json` carries a chat-recency signal for it. Establish the owner
+before you intervene: the worktree measured above was live, and an abort would have
+destroyed a session's in-flight work.
+
+**`MERGE_HEAD` with an index that no longer has unmerged paths is the dangerous
+shape, and the report warns about it by name.** Every conflict resolved, nothing
+committed. `git commit` lands an unattended resolution; `git merge --abort` throws the
+resolution away. Both are one command away, and neither is distinguishable from the
+index alone. Decide in that worktree, from inside it — never from the main checkout.
+
+**`npm run dispose` refuses a worktree with an operation in progress**, because
+removing the worktree deletes the state files and there is no reflog entry and
+nothing for `git fsck` to recover. It also refuses when it could not read that state,
+and when no state was supplied for it at all: an absent signal is not a clear
+worktree. The refusal names the command that would discard the work, and it carries
+the board claims, locks, agents and sessions `preflight` already holds — because the
+operator's first question about a discard command is whether anybody is standing
+there.
+
+**A worktree whose directory is gone still counts.** Its git directory usually
+survives, and that is where a mid-merge `MERGE_HEAD` lives; `git worktree prune`
+deletes it. Both `repo:state` and `dispose` find that directory by matching the
+administrative directories' own `gitdir` files rather than by deriving a name from the
+worktree path, because git sanitises the name it uses — a leading `.` becomes `-`. So
+when `dispose` refuses with `prunable`, **run `npm run repo:state` before pruning.**
+The refusal used to say there was "nothing to salvage and no state to verify" and then
+recommend the command that destroys it.
+
+**Where there is no command to run, the report says so instead of naming one.**
+`git merge --squash` writes no `MERGE_HEAD` and git cannot abandon a squash at all, so
+its remedy is nothing rather than a plausible-looking command that fatals.
 
 ## The list of worktrees: `WORKTREES.json`
 
@@ -441,150 +502,40 @@ shared source of truth.
 node scripts/worktree-inventory.mjs            # regenerate
 node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
+npm run inventory:verify                       # REPORT about THIS machine's worktrees
 ```
 
-Inventory generation and `--check` can take several minutes. Run them
-asynchronously, continue only with independent work, and wait for that same run
-to finish before using its report. Do not start a duplicate while one is still
-running.
-
-Before using the inventory to decide ownership, inspect `dataSources`: a
-missing session database is reported as unavailable, not as proof that no chats
-exist. The inventory can still be generated with empty history; `dispose`
-refuses when it cannot read the session database or an existing board.
-
-## What Git Is Doing Right Now
-
-A worktree that is mid-merge, mid-rebase or mid-bisect keeps that state in its own
-git directory. No commit records it, no branch name carries it, and `git status` in
-the main checkout cannot see it. `npm run repo:state` reports every registered
-worktree using Git's operation markers and `git diff --name-only --diff-filter=U`.
-
-The command is advisory and is intentionally not a hook: another worktree's
-unfinished operation must not block unrelated pushes. It reports what is in
-progress, never who owns it. Inspect the affected worktree itself before choosing
-whether to finish or abandon the operation.
-
-`MERGE_HEAD` with no unmerged paths is especially dangerous: the resolution is
-staged but uncommitted, `git commit` lands it, and `git merge --abort` discards it.
-`npm run dispose` refuses operation state, unreadable operation state, and an
-omitted operation-state result. Removing a worktree deletes the state files with
-no reflog entry, so an absent signal is not a clear worktree.
-
-When a worktree directory is gone, its administrative git directory may still hold
-the operation markers. `repo:state` and `dispose` match that directory from Git's
-worktree administration rather than deriving its name. Run `npm run repo:state`
-before `git worktree prune` on a prunable worktree.
+The last line is a different program with a different job: it asks about the worktrees
+that exist right now rather than generating a file, it is wired into no hook and no CI
+job, and its exit code is its own verdict rather than something a push can be blocked
+on. It exits non-zero on a finding — a worktree holding the only copy of some work that
+would be reported as disposable, a stale curated flag on one, a curated `landed: true`
+claim git contradicts, or a recorded session id that is not a real top-level session
+inside the committed audit's window — and on a check that could not run: a worktree
+holding work on no ref that could not be classified, facts git could not be read for, or
+a session audit that could not run. A checkout with no resolvable base ref, including one
+too SHALLOW for ancestry to mean anything, is a third shape again: it prints one line
+beginning `UNREADABLE: ` and returns, printing no summary line at all, so there is no
+"clean" line to misread. Every other run ends on one of two summary forms — `OK - no rule
+violated. ` with the count of worktrees holding work on no ref and the sentence that every
+one is protected, or a non-zero verdict that is either `FINDINGS - see above.` or
+`INCOMPLETE - no finding, but the session audit could not run, so this is not a clean
+report.` "Git could not be asked" is not "nothing is at risk", so read the exit line before
+acting on the number. The gated suite asserts the same rules over a synthetic fleet of ten
+`git worktree list` entries it builds itself;
+[`docs/TESTING.md#gates`](docs/TESTING.md#gates) is where the report/gate split is stated.
 
 **Read `action` first.** Every record carries one value, and it is the whole
-answer — which of the seven things it is:
+answer — which of the six things it is:
 
-| `action`    | meaning                                                                                         | do this                            |
-| ----------- | ----------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it                           |
-| `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it                            |
-| `dispose`   | on `main`, clean, nothing protects it                                                           | delete it                          |
-| `legacy`    | a curated `legacy: true`: clean, and nobody will work on it again                               | drop the worktree, keep the branch |
-| `in-use`    | an agent or a session is active there                                                           | leave it                           |
-| `keep`      | the main checkout                                                                               | never a candidate                  |
-| `undecided` | cannot be told from what is known                                                               | do not remove                      |
-
-**`legacy` is the one status whose instruction is two commands long.** A git branch
-needs no worktree, so `legacy` separates the two halves: the checkout, its
-`node_modules` and its `dist/` are removable, and the ref is not. `npm run dispose
--- <name>` removes the directory and skips `git branch -d`; it writes **no** anchor
-ref either, because a ref under `refs/keep/disposed/` records "this was removed and
-this is the only copy", and for a kept branch both halves are false. The branch
-survives at the cost of one entry in `.git/refs` and stays recoverable with
-`git branch <name>`.
-
-**`legacy` is a claim about the future, so it needs a `note` saying why.** Which
-branch, kept for what, and what would make it worth revisiting. An entry carrying
-only `legacy: true` asserts an indefinite hold and gives a later reader no way to
-tell a decision from a leftover. **It is refused for a dirty tree**: `legacy`
-authorises deleting a directory, and a directory holding uncommitted changes is
-the only copy of them, so a dirty legacy worktree stays `at-risk` where a human
-has to look.
-
-**It is not `at-risk`, and that distinction is the reason it exists.** `at-risk`
-means a human must act before anything can be lost, and it reads that way in
-every list an operator opens. A legacy branch is the opposite of a pending problem:
-nobody is going to act on it, and filing it as `at-risk` put a permanent entry on
-the list a sweep reads first — so a branch that was never going to be worked on
-kept being re-investigated every pass. `legacy` also suppresses a clean merge
-verdict: it says do not merge this either.
-
-### `mustNotPrune` outranks `legacy`, and the precedence belongs in `classify`
-
-Two curated fields may move a verdict, and they are opposite claims about one tree:
-
-| field          | claim                                                                    |
-| -------------- | ------------------------------------------------------------------------ |
-| `mustNotPrune` | this work is **not** accounted for; the directory is the only copy of it |
-| `legacy`       | this work **is** accounted for, and it will never be worked on again     |
-
-An entry carrying both is self-contradictory, so it has to resolve somewhere, and
-the direction is not a matter of taste: the flag that can lose content wins.
-
-**It resolved the wrong way once, and the reason is worth keeping.** `classify`
-tests `curatedLegacy` high in its ladder — deliberately, above the merge verdicts,
-because a stale branch that no longer merges is the common case. But it sat there
-above _both_ `curatedBlocksPrune` arms as well, so an entry with both flags took
-the `legacy` arm and never reached either veto. The result was a record reading
-`action: "legacy"`, printed as "LEGACY — worktree disposable, BRANCH KEPT", listed
-under **no** protection: not `at-risk`, not `disposalCandidates`, and not
-`readyToLand`. The `mustNotPrune` field was still on the record, and `preflight`
-still refused it — so **no directory was lost**, and that is exactly why the defect
-was worth writing down rather than just fixing.
-
-The bug was not a hole in the disposal program. It was a second line of defence
-being relied on as the first, on the surface a human actually reads. An operator
-reading the generated inventory sees one answer, and for that answer the
-contradictory pair said "this directory is safe to remove".
-
-So the precedence lives where the verdict is formed:
-
-- `classify` requires `!curatedBlocksPrune` for a `legacy` verdict, so the pair
-  reports `at-risk` and the `legacy` flag is **visibly inert** rather than silently
-  overriding.
-- `preflight` independently refuses `action: "legacy"` on a record carrying
-  `mustNotPrune`. Two lines, so neither surface can be the only thing standing
-  between a hand-written flag and a directory holding the only copy of anything.
-
-The rule this instance earns: **a veto that exists only at the last gate is not a
-veto, it is a hope.** Where a curated claim can move a verdict, the combination
-rules belong beside the other verdict logic, and a refusal layer that repeats such
-a rule is a second line, never the first.
-
-**It is not applied on evidence git did not give.** Three facts must be read
-rather than assumed, and each arrives as something indistinguishable from the
-answer when the command behind it fails:
-
-| unknown                               | arrives as                  | so                                |
-| ------------------------------------- | --------------------------- | --------------------------------- |
-| the working tree could not be read    | `modified: 0, untracked: 0` | what an empty tree looks like     |
-| the base branch could not be resolved | `ahead: null`               | what "0 commits ahead" looks like |
-| the worktree has no branch            | `branch: "(unknown)"`       | —                                 |
-
-Any of the three makes the record `undecided`, and the reason names the unknown
-instead of claiming cleanliness. **This was wrong once, in the same way the flag
-precedence above was.** `legacy` reads a cleanliness fact, and a failed
-`git status` reported an empty tree; the record then said "the branch is an
-ancestor of main and the working tree is clean" beside a printed instruction to
-remove the directory. It widened a hole older than the status — `prunable` already
-read an unreadable tree as empty, but only for a branch already on `main`; an
-unreadable worktree with a conflicting merge used to be `at-risk`.
-
-The general rule, which is the same one the precedence section reaches: **a status
-that authorises a removal must assert that the evidence it relies on was actually
-read.** Silence is not a fact, and a zero is not an observation.
-
-**The record carries both flags, so an overridden claim is visible.** `legacy` and
-`mustNotPrune` appear on the record beside `action`. An entry with both shows
-`legacy: true`, `mustNotPrune: true` and `action: "at-risk"` — a reader can tell a
-silent override from an entry that never claimed to be legacy. Both are watched by
-`node scripts/worktree-inventory.mjs --check`, so a hand-written field turning on
-or off is reported rather than silently changing the answer.
+| `action`    | meaning                                                                                         | do this           |
+| ----------- | ----------------------------------------------------------------------------------------------- | ----------------- |
+| `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it          |
+| `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it           |
+| `dispose`   | on `main`, clean, nothing protects it                                                           | delete it         |
+| `in-use`    | an agent or a session is active there                                                           | leave it          |
+| `keep`      | the main checkout                                                                               | never a candidate |
+| `undecided` | cannot be told from what is known                                                               | do not remove     |
 
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as
@@ -609,28 +560,20 @@ by construction.
 ### Removal goes through one program
 
 `dispose` in the table above is not advice. **`scripts/dispose-worktree.mjs` is
-the only sanctioned way to remove a worktree**, and it is a
+the only sanctioned way to remove a worktree and its branch**, and it is a
 program rather than a paragraph for the reason `main-worktree-guard.mjs` is: the
 agent that needs the rule is mid-task, holding a list of paths, and will not
 re-read this file before the destructive command.
 
 It refuses, and says which signal refused, unless all of these hold:
 
-- the inventory's wall-clock `generatedAt` and evaluation time `ownership.asOf` are
-  **not in the future and no more than 15 minutes old**, and it calls this
-  worktree `action: "dispose"` — or `action: "legacy"`, which permits removing
-  the worktree while keeping the branch. `--keep-branch` explicitly allows an
-  operator to remove a freshly inventoried `action: "at-risk"` worktree while
-  retaining its branch;
-- it is not the base branch, even when the repository uses a bare primary
-  worktree and checks out the base branch in a linked worktree;
+- the generated inventory is **less than 15 minutes old** and calls this
+  worktree `action: "dispose"`;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
 - its **working tree is clean** — re-read now, not taken from the inventory
   snapshot, because a verdict generated at 23:38 acted on at 00:44 is the case
-  this exists for. With `--keep-branch`, tracked edits and untracked files are
-  instead archived under the common git directory, cleared only after the
-  archive succeeds, and verified clean before removal;
+  this exists for;
 - it holds **no gitignored content that no command rebuilds**. `git status`
   honours `.gitignore`, so a tree holding only a `.env` reports itself clean and
   `git worktree remove` deletes it unconditionally. Build and dependency output
@@ -642,14 +585,6 @@ It refuses, and says which signal refused, unless all of these hold:
   exceptions refuses every worktree. **The list is the exception; an ignored path
   it does not name counts as work.** `.serena/`, `playwright/.auth`, `*.local`
   and `*.log` are deliberately absent from it.
-
-When Git no longer registers a directory, `npm run dispose -- <name>` also accepts
-an unregistered directory only when it is a real direct child of the repository's
-`.kilo/worktrees/`. The tool applies the same board and session ownership checks,
-then allows only explicitly regenerable contents; unknown files, symlinks,
-protected subtrees and unreadable content refuse removal. This path removes no
-branch, and `--keep-branch` does not apply. Use `--dry-run` to review the findings
-before removal.
 
 Any one of those refuses on its own. `in-use` from two independent sources is the
 one that matters: `session.directory` records where a chat was **opened**, so its
@@ -666,14 +601,11 @@ text addressed to somebody else: _"only the operator may stop a writing chat"_, 
 are released by the agent that took them, not taken from it"_, or a `derived-live-writer`
 finding naming the chats that wrote inside the live window — which includes yours.
 
-**There is no generic escape from inside the agent.** No `--force` exists — the CLI rejects the flag.
-`--keep-branch` is narrower: it only accepts a freshly inventoried `at-risk` action, archives
-tracked and untracked edits, clears them only after the archive succeeds, and keeps the branch
-ref. It does not override `mustNotPrune`,
-unreadable worktree state, ignored content, active ownership or in-progress operations.
-`undecided` is never eligible. `--max-age-minutes` is ceiling-clamped to the same 15 minutes the
-inventory-freshness check imposes. These options do not change ownership policy: board and session
-claims still require the operator to resolve ownership before removal. Measured over the program's own refusal line: **24 sessions on 2026-10-01
+**There is no escape from inside the agent.** No `--force` exists — the CLI rejects the flag
+outright, because a dirty tree is a finding rather than something to override — and
+`--max-age-minutes` is ceiling-clamped to the same 15 minutes the inventory-freshness check
+imposes. The only exit is `npm run swarm -- release <issue> --force --reason …`, which is the
+operator's move. Measured over the program's own refusal line: **24 sessions on 2026-10-01
 and 2026-10-02, 35 to date.** Read it as a statement about the operator, not about the
 worktree: the verdict is right — you _were_ writing there — and the remedy belongs to whoever
 can stop your session. The half that is wrong is that an agent cannot release its own recorded
@@ -697,17 +629,16 @@ inside the directory:
 | arm         | what it actually is                                                   | window                     | names a chat?      |
 | ----------- | --------------------------------------------------------------------- | -------------------------- | ------------------ |
 | `writeLive` | the write calls inside the worktree                                   | `LIVE_WINDOW_MS`, 30 min   | **yes**            |
-| `ioLive`    | recent `shellHistory` commands; `readHistory` is separate             | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
+| `ioLive`    | recent `shellHistory` **and `readHistory`** — a reader counts         | `RECENT_IO_WINDOW_MS`, 4 h | no                 |
 | `chatLive`  | `session.directory` plus `time_updated` — a chat that only _messaged_ | `LIVE_WINDOW_MS`           | no                 |
 | `liveAgent` | a board row, not a call history                                       | the board's own            | prints an agent id |
 
-So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **recent shell
-commands**, not the separate read-tool history. A session arm makes it worse than it looks:
-`writes.mjs` argues in its own header that attributing a call to a worktree by the session's
-directory is wrong in both directions, and this arm then does exactly that. `classify()` deliberately
-keeps `derivedLive` beside the suppressed `live` rather than letting `--no-live-writers` erase its
-own evidence, and `dispose` reads `derivedLive`, so **the documented suppression flag does not
-clear this refusal.**
+So "a chat ran the gates in there" is only one of the ways in, and the wide arm counts **reads**. A
+session arm makes it worse than it looks: `writes.mjs` argues in its own header that attributing a
+call to a worktree by the session's directory is wrong in both directions, and this arm then does
+exactly that. `classify()` deliberately keeps `derivedLive` beside the suppressed `live` rather than
+letting `--no-live-writers` erase its own evidence, and `dispose` reads `derivedLive`, so **the
+documented suppression flag does not clear this refusal.**
 
 The refusal message names a chat only when `derivedChatIds` is non-empty — the write arm. **Every
 other arm prints "a chat"**, so an anonymous refusal is the normal case, not a sign of something
@@ -720,10 +651,9 @@ carrying `action: "dispose"` and `prunable: true` with every git fact correct. L
 the directory, and **say in the report that the removal is pending** — a harvest that reports its
 landing and silently leaves the directory is indistinguishable from one that forgot.
 
-**A clock pin cannot authorize disposal.** `--now` may change a reproducible recency verdict, but
-`ownership.asOf` records the evaluation time separately from wall-clock `generatedAt`, and
-`dispose` rejects either timestamp if it is in the future or more than 15 minutes old. Regenerate
-without `--now` before disposing a worktree.
+**A flag does clear it, which is why a sweep must not reach for one.** `HANDOFF.md` §224 has the
+mechanism and the reproduction; the short form is that `--now` moves the clock every window is
+measured against, and a clock in the future expires them all.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 
@@ -770,19 +700,11 @@ named, and the time it happened
 (`scripts/lib/worktree-inventory/writes.mjs`). It is in **three separate
 structures, because they have three different lifetimes**:
 
-The generator never runs these JSON-heavy audits against the live Kilo database.
-`scripts/lib/worktree-inventory/session-db-snapshot.mjs` uses SQLite's incremental
-online backup API to create a temporary snapshot first; both audits read that same
-snapshot and it is removed after both audits finish, before inventory assembly. If
-the snapshot cannot be created, the audits report the session source as
-unavailable rather than falling back to a live read. This is deliberate: a slower inventory is safe, while a long-lived read
-transaction on the operational database can block every chat writer.
-
-| Field          | Tools                                           | Retention                                                                           |
-| -------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **last 3 days** — enough to establish live ownership without an all-history DB scan |
-| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable                                                                 |
-| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below                                                      |
+| Field          | Tools                                           | Permanent?                     |
+| -------------- | ----------------------------------------------- | ------------------------------ |
+| `writeHistory` | `edit`, `write`, `apply_patch`, `notebook_edit` | **yes** — this is who built it |
+| `readHistory`  | `read`, `grep`, `glob`, `semantic_search`       | **no** — releasable            |
+| `shellHistory` | `bash`, `background_process`                    | no — the size of the gap below |
 
 Reading a worktree is interest, not authorship: reviewers, explorers and
 debugging agents all read directories they never touched, and a reader list that
@@ -797,8 +719,8 @@ last read is newer than that mark. The mark is read back from the existing file
 and combined with `Math.max`, so it only ever moves forward — a release cannot
 silently undo itself on the next regeneration, and it keeps no record of which
 entries it removed. Writers live in a different structure that nothing filters, so
-a release cannot reach them. The writer records are bounded to the recent
-three-day safety window, but the reader watermark never filters them.
+a release cannot reach them. On a run with `--release-reads=2026-09-29` on this
+repository: 407 readers became 139, and the 206 writers were unchanged.
 
 **A write is a stronger ownership claim than a message**, so
 `writeHistory.derivedChatIds` feeds the `in-use` verdict alongside the session and
@@ -918,9 +840,6 @@ heartbeat` still exists and is still correct — it is the only thing that can
 - **`swarm health` answers "is this thing being used, or only carried?"** It is
   the traffic mix, the locks, live vs expired claims, reclaims so far, live vs
   imported issues, and live findings idle for over six hours.
-- **`swarm defer` parks work instead of resolving it.** A deferred issue without
-  `--until` stays out of `swarm ready`; one with a deadline is offered again
-  once that deadline is reached, subject to its claims and dependencies.
 - **The traffic mix is in TWO UNITS, and adding them is a mistake.** `lock.hold` is
   **one event per command**, `lock.release` is **one event per file**. Read
   `activity.perCommand` and `activity.perFile` as two measures, never as two halves
@@ -1045,10 +964,6 @@ on `agent_id`, which is the **git branch** — `resolveIdentity` prefers
 `AGENT_BOARD_AGENT`, then the branch, and nothing in this repository ever sets
 that variable. Two sessions on one branch are one agent to the board and cannot
 deny each other a file.
-
-Path identity is repository-relative. On case-insensitive volumes, existing
-case-only aliases resolve to the directory entry's actual spelling; on
-case-sensitive volumes, distinct spellings remain distinct.
 
 **Liveness is recency only.** `agents.last_pid` and `session_id` are written and
 never read — the one process-level signal the schema carries is consulted nowhere.
