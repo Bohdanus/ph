@@ -691,7 +691,11 @@ never creates a layer, unlike the Brush.
 ### Layer opacity, and the paint model
 
 **What Photoshop does.** Every layer carries an opacity the user sets, and a brush stroke paints
-into the layer that is already there.
+into the layer that is already there, subject to the layer's kind and protection state. Current
+Photoshop's Brush has a documented exception for type, shape, Smart Object, and adjustment layers:
+it creates a new transparent layer rather than prompting to rasterize. The full editability,
+rasterization, mask, and lock matrix belongs in [`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates),
+not in this tool difficulty record.
 
 **What this app does.** `Layer.opacity` is a required field (`layer-types.ts` — `Layer.opacity`),
 populated by PSD import (`psd-utils.ts` — the layer record `loadPsd()`'s `visit()` walk builds).

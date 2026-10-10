@@ -220,15 +220,20 @@ and opacity and blend mode are applied at draw time
 `Record<LayerId, Layer>` (`layer-types.ts` — the `Layer` record and the
 `LayersRecord` map) with no `parentId`, and the panel offers visibility, reorder,
 rename and delete
-(`LayersTab.tsx` — its `layers-list` rows).
+(`LayersTab.tsx` — its `layers-list` rows). Desktop rows also render a 48x32 `LayerThumbnail`
+through the shared `drawLayerSource()` presentation path; the tablet drawer currently has no preview.
+Selecting a matching tool layer hydrates its arguments, and selecting text can re-enter text editing
+(`textLayerEditTarget()` / `beginTextLayerEdit()`). Desktop and tablet expose the single opacity field;
+desktop also exposes `Layer from Background` for the lone backing layer.
 
 **Status:** `partial`
 
 **Gap:** No groups or nesting, no layer masks, no clipping masks, no adjustment
 or smart-object layers. **No panel control for blend mode or locking** — those
 fields exist in the model and round-trip through PSD, but nothing in the UI sets
-them. Desktop opacity has a basic slider; its Adobe-documented preset drop-down
-is still absent because the preset values are unverified.
+them. Desktop and tablet opacity have basic sliders, but Photoshop's separate Fill
+opacity and preset drop-down remain absent. The app's single `locked` flag is stricter
+than Photoshop's four independent lock protections; see [`LAYERS-PANEL.md`](LAYERS-PANEL.md#92-layer-editability-and-rasterization-gates).
 
 ## History
 
@@ -264,8 +269,8 @@ Swatches, Styles, Character, Paragraph, Brush presets, Navigator, Info, Histogra
 Actions, Measurement Log — dockable, with panel groups.
 
 **This app:** exactly two dockable panels, `PanelId = 'history' | 'layers'`
-(`PanelLayout.tsx` — `PanelId`). They dock, drag-reorder, resize, collapse to
-icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
+(`PanelLayout.tsx` — `PanelId`). They remain pinned to the window edges, resize by
+width and shared split, collapse to icons and roll up (`PanelLayout.tsx` — the setters `PanelLayoutProvider` returns,
 plus `PanelGroup.tsx`), and Window has Reset Workspace
 (`DesktopHeader.tsx` — its `handleResetWorkspace`).
 

@@ -160,6 +160,11 @@ writers in `useLayer.ts`.
 `image`, `tool`), two operation kinds (`filter`, `affine-transform`), and a
 `Layer` with `bitmap` and `tmpCanvas` as the two raster slots.
 
+That is the **runtime** union. Durable replay has a different `DurableLayerSource`
+union (`src/contexts/history-model.ts`) with `blank`, `raster`, `vector`, `text`,
+`paint`, and `legacy-tool` arms. Do not use the durable kind names as if they were
+runtime `LayerSource.kind` values; the adapter is the boundary between them.
+
 The pixel payload is `BitmapSource`, declared in
 `src/contexts/general-types.ts`: `ImageBitmap | HTMLCanvasElement |
 HTMLImageElement | OffscreenCanvas`. Not
@@ -204,6 +209,14 @@ then the filter stack, inside `drawLayerSource()`.
 **`mix-blend-mode` appears nowhere in `src/`.** Blend modes are canvas2D composite
 operators only, with Photoshop's names mapped by the `blendModes` table in
 `psd-utils.ts`.
+
+**Layer-row previews use a narrower path.** `src/components/SidebarRight/LayerThumbnail.tsx`
+draws one 48x32 canvas through `drawLayerSource()` using the row's committed or selected
+preview layer. It does not call `drawLayer()` or `drawLayersToCanvas()`, so it is not a
+complete document composite and does not independently apply neighboring-layer blending.
+The tablet `MobileLayersDrawer` does not render this preview. In-flight `previewLayers`
+are ref-backed and can change without a React store update, so the thumbnail contract is
+committed-row coverage rather than a promise of repainting on every pointer sample.
 
 `ctx.filter` is assigned in **four** places: `drawEvaluatedPresentation()` in
 `presentation-evaluator.ts`, and the three processors `blur()` in `tools/blur.ts`,
