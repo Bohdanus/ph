@@ -84,6 +84,7 @@
  * curated finding protects it stays exactly where it is.
  */
 
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -1110,7 +1111,9 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
   const evaluationAt = doc.ownership?.asOf ?? null;
   const evaluationAtMs = Date.parse(evaluationAt);
   const record =
-    (doc.worktrees ?? []).find((w) => realpathIfExists(w.absolutePath ?? w.path) === gitState.absolutePath) ?? null;
+    (doc.worktrees ?? []).find(
+      (w) => realpathIfExists(w.absolutePath ?? w.path) === realpathIfExists(gitState.absolutePath)
+    ) ?? null;
   return {
     ok: true,
     reason: null,
@@ -1930,6 +1933,6 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
   return `-g${hash}`;
 }
 
-if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(fileURLToPath(import.meta.url))) {
   process.exitCode = main(process.argv);
 }
