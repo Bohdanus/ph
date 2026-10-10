@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -322,7 +322,7 @@ Re-derive the table from the entries this file still carries rather than reading
 the entries it was built from have been deleted. Collecting every `src/` path named in the `Files`
 paragraph of a numbered entry and comparing it against the manifest returns **78** the manifest does
 not list — one of them a directory rather than a file, `src/components/ToolbarHorizontal/`, which §134
-names in that form — and the omissions are exactly where the migration's own boundary lives:
+(retired) names in that form — and the omissions are exactly where the migration's own boundary lives:
 
 | not in the manifest                                           | live entries whose `Files` line names it |
 | ------------------------------------------------------------- | ---------------------------------------- |
@@ -2208,47 +2208,6 @@ size only across dialogs (`e2e/document-dialogs.spec.ts` — `documentSize()`). 
 tool, before building anything on this
 entry; `.kilo/plans/canvas-growth-display-measurement-plan.md` §3 is the measurement, with the
 tool list and the four independent quantities.
-
-## 134. Three tool descriptions promise a scrubby slider that does not exist
-
-**Problem.** `main:src/tools/descriptions/paint.ts` promises the same thing three times — in the
-Brush's `Opacity` row, the Brush's `Flow` row and the Pencil's `Opacity` row:
-
-> "A label with a numeric field, **scrubbable by dragging the label**, 0 to 100 percent."
-
-There is no such behaviour. `git cat-file -e main:src/components/ToolbarHorizontal/ScrubbableField.tsx`
-fails, and a `git grep -il scrub main -- src/**` returns only the descriptions themselves plus
-unrelated hits (`AppKeyboardShortcuts`, `SharpenToolArea`, `useKeyboardEvents` — none a scrub
-handler). Nothing reads a drag on a label.
-
-**Why this class of gap matters more than a missing feature.** These description files are read by
-agents as ground truth about how the app works, and the repository already treats a description that
-outruns the product as a defect rather than a wish — see the other entries about false claims. An
-agent that trusts this sentence will write a test asserting a drag works, or will explain a user's
-"the slider doesn't scrub" report as the user being wrong.
-
-**The contract to implement, and it is small.** Adobe documents scrubby sliders in _Enter values in
-panels, dialog boxes, and the options bar_ (https://helpx.adobe.com/photoshop/using/panels-menus.html):
-the control is **hidden until the pointer is over the title**, the cursor becomes a **Hand**, and
-**holding Shift while dragging accelerates the scrub by a factor of 10**. A worked implementation
-exists on the abandoned `wip/ps-ux-chrome` branch (180-line `ScrubbableField.tsx` plus a
-`fieldPrecision.ts` carrying `SCRUB_SPEED_MULTIPLIER = 10`).
-
-That branch implements **only half** the contract, and the missing half is worth naming before anyone
-rebuilds from it: Adobe documents no Option/Alt modifier, but third-party documentation of the same
-control records _"Hold down the Option (PC: Alt) key as you drag and the sliders change at 1/10
-speed"_. So the Shift-10× rule is documented by Adobe and the Option-0.1× rule is documented
-elsewhere; do not treat the first as the whole contract without deciding about the second.
-
-**Do not land that branch as a whole.** It targets a **schema-driven single options bar**
-(`optionsBarSchema.ts`, 352 lines, plus `OptionsBar.tsx`) while `main` renders per-tool
-`ToolbarsRight/*` panels, and its `src/index.scss` is 817 lines against main's 164. It is a different
-architecture, so the `ScrubbableField` component and `fieldPrecision` are worth taking and the
-options-bar rewrite is not. Its `railPanelIcons.tsx` and ten icon edits are unexplained in any of its
-commit messages — read them before assuming they belong to this work.
-
-**Files.** `src/tools/descriptions/paint.ts` — the Brush's `Opacity` row, the Brush's `Flow` row and
-the Pencil's `Opacity` row; `src/components/ToolbarHorizontal/` (no `ScrubbableField` on main)
 
 ## 135. Symlinking a worktree's `node_modules` to the root's makes `tsc` resolve through the ROOT checkout
 

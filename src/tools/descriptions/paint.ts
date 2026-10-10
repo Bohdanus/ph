@@ -49,7 +49,7 @@ export const paintDescriptions: Record<
       {
         control: 'Opacity',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate. The app seeds its Brush at 90 percent, not Photoshop’s 100.',
+          'A numeric field, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate. The app seeds its Brush at 90 percent, not Photoshop’s 100.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
       },
@@ -61,8 +61,7 @@ export const paintDescriptions: Record<
       },
       {
         control: 'Flow',
-        detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. The per-dab build-up rate inside the Opacity ceiling.',
+        detail: 'A numeric field, 0 to 100 percent. Default 100. The per-dab build-up rate inside the Opacity ceiling.',
         status: 'missing',
       },
       {
@@ -190,7 +189,7 @@ export const paintDescriptions: Record<
       {
         control: 'Opacity',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke. The app seeds its Pencil at 90 percent, not Photoshop’s 100.',
+          'A numeric field, 0 to 100 percent. Default 100. A hard ceiling for one stroke. The app seeds its Pencil at 90 percent, not Photoshop’s 100.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
       },
