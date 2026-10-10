@@ -401,14 +401,11 @@ into a **module-level singleton** — `lastSavedSettings`, in
 `exhaustiveness` trap at the end of the other `saveLastSettings()`, in
 `src/util/settings.ts`.
 
-**Two comments in the tree contradict that and are wrong**:
-the clamp JSDoc above `amount` and `radius` in
-`ToolbarsRight/Sharpen/Sharpen.tsx`, and the one above `tip` in
-`ToolbarsRight/Smudge/Smudge.tsx`,
-both state that settings round-trip through `localStorage`. Grepping `localStorage`
-across `src/` returns two keys — `theme` and `panelLayout`. **Tool settings do not
-survive a reload.** The same incorrect claim appears in
-`ToolbarsRight/Sharpen/__tests__/Sharpen.test.tsx`. Recorded in `HANDOFF.md` §138.
+Grepping `localStorage` across `src/` returns two keys — `theme` and `panelLayout`.
+**Tool settings do not survive a reload.** The clamp comments in
+`ToolbarsRight/Sharpen/Sharpen.tsx` and `ToolbarsRight/Smudge/Smudge.tsx`, as well as the
+clamping coverage in `ToolbarsRight/Sharpen/__tests__/Sharpen.test.tsx`, describe the
+per-session module state accurately.
 
 ## Selection
 
