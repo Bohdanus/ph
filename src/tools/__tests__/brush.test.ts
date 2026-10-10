@@ -370,15 +370,14 @@ describe('PAINT_PRESETS', () => {
     }
   });
 
-  it('opens the brush on a preset that carries the seeded brush size and mode', () => {
+  it('opens the brush on a preset that carries the seeded brush settings', () => {
     // `defaultSettings.brush` seeds lineWidth 10 and Normal
     // (src/tools/settings.ts:115-124), and `Hard Round` is that same 10px tip in that
-    // same mode. Its alpha is the fully opaque 1, deliberately not the seeded 0.9 - a
-    // named tip is a solid mark, where the seeded bar is a light default stroke - so the
-    // seeded bar is not the same state as the opening preset.
+    // same mode. Its alpha is the fully opaque default and its smoothing matches the
+    // deliberately seeded Photoshop smoothing value.
     expect(PAINT_PRESETS.brush[0].lineWidth).toBe(defaultSettings.brush.lineWidth);
     expect(PAINT_PRESETS.brush[0].blendMode).toBe(defaultSettings.brush.blendMode);
-    expect(PAINT_PRESETS.brush[0].alpha).not.toBe(defaultSettings.brush.alpha);
+    expect(PAINT_PRESETS.brush[0].alpha).toBe(defaultSettings.brush.alpha);
     expect(PAINT_PRESETS.pencil[0].lineWidth).toBe(defaultSettings.pencil.lineWidth);
   });
 
@@ -387,7 +386,7 @@ describe('PAINT_PRESETS', () => {
       label: 'Hard Round',
       lineWidth: 10,
       alpha: 1,
-      smoothing: 0,
+      smoothing: PAINT_SMOOTHING_DEFAULT,
       blendMode: 'source-over',
     });
   });
@@ -506,11 +505,8 @@ describe('matchPaintPreset', () => {
     expect(matchPaintPreset(duplicated, hardRound)).toBe('First');
   });
 
-  it('reads a freshly seeded paint bar as Custom', () => {
-    // The seeded brush is 10px at 0.9 opacity with `PAINT_SMOOTHING_DEFAULT` smoothing
-    // (src/tools/settings.ts:115-124) and the opening preset is 10px at 1.0 with no
-    // smoothing, so no preset describes the bar as it is first shown.
-    expect(matchPaintPreset(brushPresets, defaultSettings.brush)).toBe('');
+  it('reads a freshly seeded brush as the opening preset', () => {
+    expect(matchPaintPreset(brushPresets, defaultSettings.brush)).toBe('Hard Round');
     expect(matchPaintPreset(pencilPresets, defaultSettings.pencil)).toBe('');
   });
 });

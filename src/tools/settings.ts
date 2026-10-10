@@ -182,7 +182,7 @@ export const defaultSettings = {
     toolName: 'single-column-marquee',
   } satisfies SingleColumnMarqueeToolArgs,
   brush: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 10,
