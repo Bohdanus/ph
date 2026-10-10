@@ -1067,13 +1067,45 @@ export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTe
   };
 }
 
+const textRasterCache = new Map<string, OffscreenCanvas>();
+
+export function clearTextRasterCache(): void {
+  textRasterCache.clear();
+}
+
+function textCacheKey(size: { width: number; height: number }, args: TextToolArgs): string {
+  return JSON.stringify({
+    size,
+    text: args.text ?? '',
+    kind: args.kind ?? 'point',
+    align: args.align,
+    bold: args.bold,
+    color: args.color,
+    fontFamily: args.fontFamily,
+    fontSize: args.fontSize,
+    italic: args.italic,
+    lineHeight: args.lineHeight,
+    allCaps: args.allCaps ?? false,
+    smallCaps: args.smallCaps ?? false,
+    strikethrough: args.strikethrough ?? false,
+    tracking: args.tracking ?? 0,
+    underline: args.underline ?? false,
+    rect: args.rect ?? null,
+  });
+}
+
 export const text =
   ({ size }: CreatorToolParams) =>
   (args: TextToolArgs) => {
+    const key = textCacheKey(size, args);
+    const cached = textRasterCache.get(key);
+    if (cached) return [cached];
+
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
     renderText(ctx, args);
 
+    textRasterCache.set(key, canvas);
     return [canvas];
   };
