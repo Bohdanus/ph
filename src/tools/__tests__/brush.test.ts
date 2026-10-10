@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -339,6 +341,37 @@ describe('PAINT_BLEND_MODES', () => {
     for (const mode of PAINT_BLEND_MODES) {
       expect(isPaintBlendMode(mode.value), `label "${mode.label}"`).toBe(true);
     }
+  });
+
+  it('keeps the documented Photoshop mode counts and omissions aligned with the list', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../brush.ts'), 'utf8');
+    const omitted = [
+      'Dissolve',
+      'Linear Burn',
+      'Darker Color',
+      'Linear Dodge (Add)',
+      'Lighter Color',
+      'Vivid Light',
+      'Linear Light',
+      'Pin Light',
+      'Hard Mix',
+      'Subtract',
+      'Divide',
+      'Behind',
+      'Clear',
+    ];
+    const values = new Set<string>(PAINT_BLEND_MODES.map((mode) => mode.value));
+
+    expect(source).toContain('Photoshop offers twenty-nine');
+    expect(source).toContain('this list is the sixteen of them');
+    expect(source).toContain('The thirteen it leaves out');
+    expect(PAINT_BLEND_MODES).toHaveLength(16);
+    expect(29 - PAINT_BLEND_MODES.length).toBe(13);
+    for (const label of omitted) expect(source).toContain(label);
+    expect(values.has('dissolve')).toBe(false);
+    expect(values.has('plus-lighter')).toBe(false);
+    expect(values.has('destination-over')).toBe(false);
+    expect(values.has('destination-out')).toBe(false);
   });
 });
 
