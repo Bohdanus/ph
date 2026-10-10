@@ -140,7 +140,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     [openNewImageDialog, openLoadImageDialog, openSaveImageDialog]
   );
 
-  async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
+  async function handleImageSave({ fileName, format, quality }: ImageSaveResponse): Promise<ImageSaveResponse | null> {
     let durableComposite: Awaited<ReturnType<typeof composeDurableDocument>> | undefined;
     try {
       const { layers, size, documentFrame } = fileInput!;
@@ -219,13 +219,15 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       // still on screen.
       setShowSaveDialog(false);
       setFileInput(null);
+      return quality === undefined ? { fileName, format } : { fileName, format, quality };
     } catch (error) {
-      // Preserve the null result for openSaveImageDialog callers, but reject this callback so
-      // SaveDialog can show the failure. Clearing the resolver first keeps retries from
-      // settling an already-completed promise.
+      console.error('Failed to save file:', error);
+      // Preserve the null result for openSaveImageDialog callers so SaveDialog can show the
+      // failure. Clearing the resolver first keeps retries from settling an already-completed
+      // promise.
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
-      throw error;
+      return null;
     } finally {
       durableComposite?.release();
     }
