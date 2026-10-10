@@ -159,7 +159,7 @@ export const CUSTOM_PRESET_LABEL = 'Custom';
 
 export const PAINT_PRESETS = {
   brush: [
-    { label: 'Hard Round', lineWidth: 10, alpha: 1, smoothing: 0, blendMode: 'source-over' },
+    { label: 'Hard Round', lineWidth: 10, alpha: 1, smoothing: PAINT_SMOOTHING_DEFAULT, blendMode: 'source-over' },
     { label: 'Soft Round', lineWidth: 40, alpha: 1, smoothing: 60, blendMode: 'source-over' },
     { label: 'Marker', lineWidth: 24, alpha: 0.45, smoothing: 25, blendMode: 'source-over' },
   ],

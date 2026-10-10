@@ -572,7 +572,7 @@ lives 40 lines above the assertions in that file. `captureCanvasScreenshot` inte
 returns a page 87 CSS px SHORTER than the one that was measured, which re-projects the contain
 fit and makes a correctly committed stroke look like it missed the cursor by ~31px. The
 `expect` before the stroke assertion is a hard guard for exactly that, it is a filed defect
-(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+(`e2e/OPEN_PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
 A red run _without_ that message is therefore evidence of a **second** cause, and the three
 remaining candidates are `waitForCanvasRedraw` (polls a CDP screenshot for ink),
 `getDarkPixelBounds` (thresholds that screenshot), and the derived `toleranceFor(box)` — 6.7-8.4px

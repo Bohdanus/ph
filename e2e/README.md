@@ -358,21 +358,12 @@ React.
 
 ## Visual regression tests
 
-`e2e/export/visual-regression.spec.ts` contains two kinds of tests:
-
-- **OS-specific visual regression tests** — compare exported images against committed
-  platform-specific baseline snapshots. These must be re-recorded per operating system.
-- **OS-agnostic tests** — tagged `@os-agnostic` in the test name, these verify geometric
-  and logical properties (layout independence, document-space mapping, byte-identical
-  exports) without comparing against committed pixel baselines. A failure in any
-  `@os-agnostic` test indicates a real logic regression, not an OS rendering difference.
+`e2e/export/visual-regression.spec.ts` compares exported images against committed
+baseline snapshots.
 
 ```bash
-# run only the OS-agnostic tests
-npx playwright test e2e/export/visual-regression.spec.ts --grep "@os-agnostic"
-
-# run only the visual regression (OS-specific) tests
-npx playwright test e2e/export/visual-regression.spec.ts --grep-invert "@os-agnostic"
+# run them
+npx playwright test e2e/export/visual-regression.spec.ts
 
 # update the baselines, then review `git diff` before committing
 npm run test:e2e:update-baselines
@@ -410,20 +401,14 @@ Paths come from `testInfo.snapshotDir`, not `snapshotPath()` — the latter appe
 the project name and the OS, which would make a baseline committed on one machine
 read as missing on another.
 
-The path now includes a platform component (`process.platform`) so that each operating
-system has its own baseline set. A platform with no committed set fails as missing,
-which is the state the spec already handles with `Baseline missing for <format>`, rather
-than falling back to another platform's file. A silent fallback would put one
-rasteriser's oracle under another's name.
-
-Of the files in the directory, the ones `visual-regression.spec.ts` actually reads are
-one per format in `browserVerifiedFormats` (`e2e/export/helpers.ts`) — the filter the spec
-iterates, and the only place that selection is made:
+Baselines are now organised by platform. Each OS has its own subdirectory under
+`export-baselines/` so that rasterisation differences (font rendering, anti-aliasing,
+colour profile) are isolated to the platform that produced them:
 
 ```
 e2e/export/visual-regression.spec.ts-snapshots/
 └── export-baselines/
-    ├── darwin/
+    ├── darwin/      # macOS baselines (where current baselines were recorded)
     │   ├── drawing.png.png            # PNG export baseline
     │   ├── drawing.jpeg.png           # JPEG export baseline
     │   ├── drawing.webp.png           # WebP export baseline
@@ -431,25 +416,33 @@ e2e/export/visual-regression.spec.ts-snapshots/
     │   ├── drawing.bmp.png            # BMP export baseline
     │   ├── drawing.gif.png            # GIF (static) baseline
     │   └── drawing.avif.png           # AVIF export baseline
-    ├── linux/
-    │   ├── drawing.png.png            # PNG export baseline
-    │   ├── drawing.jpeg.png           # JPEG export baseline
-    │   ├── drawing.webp.png           # WebP export baseline
-    │   ├── drawing.svg.png            # SVG (flattened) baseline
-    │   ├── drawing.bmp.png            # BMP export baseline
-    │   ├── drawing.gif.png            # GIF (static) baseline
-    │   └── drawing.avif.png           # AVIF export baseline
-    └── win32/
-        ├── drawing.png.png            # PNG export baseline
-        ├── drawing.jpeg.png           # JPEG export baseline
-        ├── drawing.webp.png           # WebP export baseline
-        ├── drawing.svg.png            # SVG (flattened) baseline
-        ├── drawing.bmp.png            # BMP export baseline
-        ├── drawing.gif.png            # GIF (static) baseline
-        └── drawing.avif.png           # AVIF export baseline
+    ├── linux/       # Linux baselines (CI runner)
+    │   ├── drawing.png.png
+    │   ├── drawing.jpeg.png
+    │   ├── drawing.webp.png
+    │   ├── drawing.svg.png
+    │   ├── drawing.bmp.png
+    │   ├── drawing.gif.png
+    │   └── drawing.avif.png
+    └── win32/       # Windows baselines
+        ├── drawing.png.png
+        ├── drawing.jpeg.png
+        ├── drawing.webp.png
+        ├── drawing.svg.png
+        ├── drawing.bmp.png
+        ├── drawing.gif.png
+        └── drawing.avif.png
 ```
 
-The remaining committed files are orphans — the raw `drawing.<ext>` exports
+The platform is derived from `process.platform` in the test (win32, darwin, linux)
+rather than from the Playwright project name, because the test runs on the native
+OS in CI and the rasterisation is a property of the OS, not the browser project.
+
+Of the files in the directory, the ones `visual-regression.spec.ts` actually reads are
+one per format in `browserVerifiedFormats` (`e2e/export/helpers.ts`) — the filter the spec
+iterates, and the only place that selection is made.
+
+The remaining committed files at the top level are orphans — the raw `drawing.<ext>` exports
 (including `drawing.bmp`, the bulk of the directory's 2.05 MB), plus `drawing-icon.ico.png` and
 `source-baseline.png`. Nothing reads them; the ICO spec compares in-browser against
 the source canvas instead. They are still tracked, pending authorisation to delete
@@ -617,7 +610,8 @@ PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 
 ## CI
 
-`.github/workflows/ci.yml` has three jobs.
+`.github/workflows/ci.yml` has five jobs — `ci`, `e2e-unit`, and
+`e2e` (a cross-platform matrix on Linux, Windows and macOS).
 
 `e2e-unit` is the **blocking** gate for this directory: it runs
 `npm run test:e2e:unit`, then `npm run test:e2e:unit:coverage`, and uploads
@@ -636,25 +630,34 @@ skipped that way. It carries no type-check step of its own: the `ci` job's
 `npm run tsc` is `tsc -b`, which builds `tsconfig.e2e.json` along with the app and
 node projects, so a second scoped run here could only repeat it.
 
-`ci` is the pre-existing app pipeline: lint, audit, type-check, an assertion that
-every tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and the
-production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
+`ci` is the pre-existing app pipeline: lint, high-severity audit, type-check, an
+assertion that every tracked `.ts`/`.tsx` is inside some project's `include`,
+unit tests, and the production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
 
-`e2e` installs Chrome and runs the browser tests against the dev server started by
-`playwright.config.ts`. It is a **blocking** gate. It was `continue-on-error`, on the
-stated grounds that a handful of specs failed for documented reasons; those are all
-fixed and the job went on reporting a state the suite no longer had.
+`e2e` is a **blocking** matrix gate that runs the headless Playwright suite on
+Linux, Windows, and macOS. It was `continue-on-error` on the stated grounds that a
+handful of specs failed for documented reasons; those are all fixed and the job went
+on reporting a state the suite no longer had. The matrix runs with `fail-fast: false`
+so one platform's failure does not cancel the others. Only `darwin/` visual-regression
+baselines are committed, so the Linux and Windows legs hit the fail-as-missing
+contract on `visual-regression.spec.ts` until their baselines are recorded; the
+macOS leg should pass from the start. See "Missing baselines" in
+`../.github/workflows/ci.yml` for the recording procedure.
 
-Two things are still unmeasured, and neither is a reason to unblock the job — both
-concern configurations this job does not run in:
+`e2e` installs Chrome (`channel: 'chrome'`, the stable channel Playwright
+installs) and runs the browser tests against the dev server started by
+`playwright.config.ts`.
+
+Two things are still unmeasured, and neither is a reason to unblock a matrix leg —
+both concern configurations the job does not run in:
 
 - a headed run, to confirm the CDP fix is green outside the headless configuration
   this host can produce (see `AGENTS.md` — the operator runs it, not an agent);
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-The job reports the true state including the 3 declared skips. It runs the full
+Each matrix leg reports the true state including the 3 declared skips. It runs the full
 suite with no `--grep-invert`, so the report is unfiltered — but note that
 `playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
 green run _after_ retries. A flake that only shows on the first attempt is
-invisible in this job by design.
+invisible on any leg by design.

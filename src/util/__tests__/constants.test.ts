@@ -59,7 +59,18 @@ describe('action type constants', () => {
 describe('CURSOR_MAP', () => {
   it('covers every resize handle plus the interior', () => {
     expect(Object.keys(CURSOR_MAP).sort()).toEqual(
-      ['bottom', 'bottom-left', 'bottom-right', 'inside', 'left', 'right', 'top', 'top-left', 'top-right'].sort()
+      [
+        'bottom',
+        'bottom-left',
+        'bottom-right',
+        'inside',
+        'left',
+        'right',
+        'rotate',
+        'top',
+        'top-left',
+        'top-right',
+      ].sort()
     );
   });
 

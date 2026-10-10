@@ -49,6 +49,8 @@ export interface PanelGroupProps {
   onToggleRolledUp: () => void;
   /** A reorder or re-dock drag is in flight on THIS panel. */
   isDragging: boolean;
+  /** Whether this header exposes the optional panel relocation gesture. */
+  isDraggable?: boolean;
   /**
    * `flex` shorthand for the group's own box, so the dock can hand out shares of the column
    * by ratio and the rolled-up panel can take its natural height. See `SidebarRight.tsx`.
@@ -88,6 +90,7 @@ const PanelGroup = ({
   isRolledUp,
   onToggleRolledUp,
   isDragging,
+  isDraggable = true,
   style,
   className = '',
   onDragStart,
@@ -130,10 +133,10 @@ const PanelGroup = ({
         data-dragging={isDragging || undefined}
       >
         <div
-          {...handleProps}
+          {...(isDraggable ? handleProps : {})}
           aria-controls={isRolledUp ? undefined : `panel-body-${id}`}
           aria-expanded={!isRolledUp}
-          className="flex min-w-0 flex-1 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
+          className={`flex min-w-0 flex-1 select-none items-center self-stretch ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
           onDoubleClick={() => {
             // A double-click is a click twice. The first click has to be allowed through, so the
             // roll-up waits for the second and only then checks that no drag happened.
@@ -164,7 +167,9 @@ const PanelGroup = ({
           tabIndex={0}
           // The testid names the CONTROL, not the row around it, because that is what a test
           // drags and double-clicks.
-          title={`${title} panel — drag this tab to move it, double-click to roll it up`}
+          title={
+            isDraggable ? `${title} panel — drag this tab to move it, double-click to roll it up` : `${title} panel`
+          }
           data-testid={`panel-header-${id}`}
         >
           <span className="truncate">{title}</span>

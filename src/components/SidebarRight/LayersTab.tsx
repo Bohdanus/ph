@@ -18,6 +18,7 @@ import {
   DELETE_BUTTON_ICON,
 } from '../ToolbarsRight/buttonStyles.ts';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+import LayerThumbnail from './LayerThumbnail.tsx';
 
 type LayerOpacityControlProps = {
   layer: Layer;
@@ -71,7 +72,7 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
 }
 
 export default function LayersTab() {
-  const [{ layers, activeLayerId, documentFrame, totalSize }] = useStore();
+  const [{ layers, activeLayerId, documentFrame, totalSize, previewLayers }] = useStore();
   const {
     toggleVisibility,
     removeLayer,
@@ -86,7 +87,7 @@ export default function LayersTab() {
 
   const isMovableLayer = (layerId: LayerId | null): layerId is LayerId => {
     const layer = layerId ? layers[layerId] : null;
-    return Boolean(layer && !layer.isBedrock);
+    return Boolean(layer && !layer.isBedrock && !layer.locked);
   };
 
   const [draggedLayerId, setDraggedLayerId] = useState<LayerId | null>(null);
@@ -235,6 +236,7 @@ export default function LayersTab() {
               prevLayerId !== draggedLayerId;
             const isEditable = editingLayerId === layer.id;
             const isAnimating = animatingLayerId === layer.id;
+            const previewLayer = previewLayers?.current[layer.id]?.layer ?? layer;
 
             return (
               <li
@@ -258,7 +260,7 @@ export default function LayersTab() {
 
                 <div
                   data-testid="layer-row-content"
-                  draggable={!layer.isBedrock && editingLayerId !== layer.id}
+                  draggable={!layer.isBedrock && !layer.locked && editingLayerId !== layer.id}
                   onDragStart={(e) => {
                     if (isEditable || !isMovableLayer(layer.id)) {
                       e.preventDefault();
@@ -326,7 +328,9 @@ export default function LayersTab() {
                     <EyeIcon open={layer.visible} />
                   </button>
 
-                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock} />
+                  <LayerThumbnail layer={previewLayer} />
+
+                  <DragHandleIcon disabled={isPickedLayer || layer.isBedrock || layer.locked} />
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span

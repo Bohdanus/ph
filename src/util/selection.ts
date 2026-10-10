@@ -668,6 +668,29 @@ export function createFeatheredAlphaMask(
   return alphaMask;
 }
 
+/**
+ * Builds the alpha coverage a raster operation should receive from a committed polygon selection.
+ * The points are local to the destination raster, so the same snapshot can be replayed without
+ * consulting the live selection store.
+ */
+export function createSelectionAlphaMask(
+  points: Point[],
+  size: Size,
+  { featherRadius = 0, antiAlias = true }: { featherRadius?: number; antiAlias?: boolean } = {}
+): Uint8Array {
+  const width = Math.max(0, Math.floor(size.width));
+  const height = Math.max(0, Math.floor(size.height));
+  const rasterized = rasterizePolygonMask(points, width, height);
+  return createFeatheredAlphaMask(
+    rasterized.values,
+    width,
+    height,
+    featherRadius,
+    antiAlias,
+    rasterized.preservesCoverage
+  );
+}
+
 export function copyFeatheredPolygonToCanvas(
   sourceCanvas: BitmapSource,
   points: Point[],

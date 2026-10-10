@@ -10,7 +10,7 @@ import {
 } from '../tools/text.ts';
 import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
-import type { Ctx2D, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
+import type { Ctx2D, Point, Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
@@ -135,6 +135,23 @@ export function sortRoundRect(rect: RectXY): Pos {
   const { x1, y1, x2, y2 } = sortRect(rect);
 
   return roundedPos(x1, y1, x2, y2);
+}
+
+export function rectCenter(rect: RectXY): Point {
+  return { x: (rect.x1 + rect.x2) / 2, y: (rect.y1 + rect.y2) / 2 };
+}
+
+export function rotatePointAround(point: Point, center: Point, degrees: number): Point {
+  const radians = (degrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const x = point.x - center.x;
+  const y = point.y - center.y;
+  return { x: center.x + x * cos - y * sin, y: center.y + x * sin + y * cos };
+}
+
+export function angleFromCenter(center: Point, point: Point): number {
+  return (Math.atan2(point.y - center.y, point.x - center.x) * 180) / Math.PI;
 }
 
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
@@ -305,9 +322,9 @@ export const calculateNewRect = (
       /**
        * The point arm, and the ONE place a point box's geometry is decided at all.
        *
-       * **The box hugs its ink, in both directions, and stays centred on the click.** The width is
-       * recomputed on every edit so replacing the placeholder does not leave unused space, and the
-       * click remains the stable horizontal anchor while the text changes.
+       * **The box hugs its ink, in both directions, and stays centred on the click.** Width and
+       * height are recomputed on every edit so replacing the placeholder does not leave unused space,
+       * and the click remains the stable anchor while the text changes.
        *
        * - The width is recomputed every call rather than compared against what is there. "When you
        *   enter point type, each line of type is independent — the line expands or shrinks as you edit
@@ -326,10 +343,13 @@ export const calculateNewRect = (
        * transform question rather than to point type.
        *
        * `clampEdge` still applies to the calculated left edge. A click close to the document edge may
-       * therefore lose perfect centring in order to keep the type origin inside the document.
+       * therefore lose perfect centring to keep the layer origin inside the document.
        */
       const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
-      const centerX = newRect.x1;
+      // `newRect` has already been clamped for the document frame. Use the incoming rect's centre
+      // instead: after the first keystroke its left edge is no longer the placement point, and using
+      // it as the next centre makes the box drift left by half its previous width on every edit.
+      const centerX = (placed.x1 + placed.x2) / 2;
       const x1 = clampEdge(centerX - requiredWidth / 2, imageSize.width);
       newRect = { ...newRect, x1, x2: x1 + requiredWidth };
     }
@@ -346,9 +366,9 @@ export const calculateNewRect = (
   // not yet resident — on every keystroke, purely to have the number discarded one line later.
   if (!isParagraph) {
     const pointRequiredHeight = hardBreakHeight(ctx2d, newArgs, text);
-    if (pointRequiredHeight > newRect.y2 - newRect.y1) {
-      newRect = { ...newRect, y2: newRect.y1 + pointRequiredHeight };
-    }
+    const centerY = (placed.y1 + placed.y2) / 2;
+    const y1 = clampEdge(centerY - pointRequiredHeight / 2, imageSize.height);
+    newRect = { ...newRect, y1, y2: y1 + pointRequiredHeight };
   }
 
   // A PARAGRAPH box keeps every edge clamped to the document, which is the same

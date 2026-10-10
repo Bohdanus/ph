@@ -7,13 +7,15 @@ The rule is [`DOCUMENTATION.md`](DOCUMENTATION.md). This page is the index.
 
 ## Read this first
 
-|                                                |                                                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [`DOCUMENTATION.md`](DOCUMENTATION.md)         | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
-| [`OVERRIDES.md`](OVERRIDES.md)                 | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
-| [`FEATURES.md`](FEATURES.md)                   | What the app can and cannot do, system-wide, against Photoshop                             |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)           | What the code is and how it fits together                                                  |
-| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md) | Durable-history requirements, sequencing, and operator gates                               |
+|                                                      |                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`DOCUMENTATION.md`](DOCUMENTATION.md)               | The precedence ladder, the override rule, the single-home rule, platform limits, lifecycle |
+| [`OVERRIDES.md`](OVERRIDES.md)                       | Operator-only register of decisions to depart from Photoshop. **Agents never write here**  |
+| [`FEATURES.md`](FEATURES.md)                         | What the app can and cannot do, system-wide, against Photoshop                             |
+| [`DEVICE-SUPPORT.md`](DEVICE-SUPPORT.md)             | Supported desktop/tablet/Retina boundary; handheld phones are out of scope                 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)                 | What the code is and how it fits together                                                  |
+| [`HISTORY-MIGRATION.md`](HISTORY-MIGRATION.md)       | Durable-history requirements, sequencing, and operator gates                               |
+| [`ADOBE-LAYERS-HISTORY.md`](ADOBE-LAYERS-HISTORY.md) | Fetched Adobe evidence and processed Layers/History panel summary                          |
 
 The ladder is **operator → Adobe → this repository → judgement**, and the rule belongs to
 [`DOCUMENTATION.md`](DOCUMENTATION.md). `AGENTS.md` carries the short form for agents; this page
@@ -75,6 +77,7 @@ the situations it describes.
 | Skill                                                                            | Its one job                                                                                                                                                  |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`../.skills/broad-test-improvement.md`](../.skills/broad-test-improvement.md)   | Fix broken tests, raise coverage, and strengthen assertions without touching source code                                                                     |
+| [`../.skills/ci-failure-mitigation.md`](../.skills/ci-failure-mitigation.md)     | Fix non-browser CI failures via subagents, ignoring OS-bound e2e rendering issues                                                                            |
 | [`../.skills/chat-history-query.md`](../.skills/chat-history-query.md)           | Locate and query old Kilo and GitHub Copilot Chat sessions from local SQLite, JSONL, and legacy JSON stores                                                  |
 | [`../.skills/chat-loose-end-scan.md`](../.skills/chat-loose-end-scan.md)         | Find loose ends in recent top-level Kilo chats — chats that died on a network loss, a token wall or a tool error, and reviews whose findings nobody answered |
 | [`../.skills/copilot-chat-history.md`](../.skills/copilot-chat-history.md)       | Locate and query GitHub Copilot Chat sessions from Chronicle SQLite and JSONL stores. Read-only, local-first                                                 |

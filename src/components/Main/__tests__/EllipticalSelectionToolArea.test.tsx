@@ -270,7 +270,7 @@ describe('EllipticalSelectionToolArea', () => {
     expect(dispatchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('commits one selection per drag, with its points in document space', () => {
+  it('commits one selection after leave and re-entry, with its points in document space', () => {
     // A crop moves the document's origin off the canvas origin, which is the only state in which
     // canvas and document coordinates differ. A commit that stored canvas points would place the
     // marquee 30px left of and 40px above where the user dragged it — off by exactly the frame
@@ -279,6 +279,9 @@ describe('EllipticalSelectionToolArea', () => {
     const toolArea = renderArea();
 
     fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 80 });
+    fireEvent.pointerLeave(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 80 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 220, clientY: 140 });
     fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 80 });
     fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 80 });
 

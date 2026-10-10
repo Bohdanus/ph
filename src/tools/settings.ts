@@ -1,6 +1,7 @@
 import { cloneDeep } from 'lodash-es';
 
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
+import { PAINT_FLOW_DEFAULT } from '../util/brush-airbrush.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
 import { AUTO_LEADING } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
@@ -46,13 +47,13 @@ import type { SpotHealingToolArgs } from './spotHealing.ts';
 import type { HealingBrushToolArgs } from './healingBrush.ts';
 import type { PatchToolArgs } from './patch.ts';
 
-type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
+type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'pointTimes' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
 
 export const savedDrawPerPen: Record<PenType, PenSettings> = {
   pen: { alpha: 0.9, lineWidth: 10 },
   'pen-dashed': { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] },
-  spray: { alpha: 0.5, lineWidth: 100 },
+  spray: { alpha: 0.5, flow: PAINT_FLOW_DEFAULT, lineWidth: 100 },
 };
 
 export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
@@ -138,6 +139,8 @@ export const defaultSettings = {
   'polygonal-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -146,6 +149,8 @@ export const defaultSettings = {
   'freehand-lasso': {
     alpha: 1,
     lineWidth: 3,
+    featherRadius: 0,
+    antiAlias: true,
     color: '#FF0000',
     fill: false,
     points: [],
@@ -169,16 +174,19 @@ export const defaultSettings = {
     contiguous: true,
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
-  'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
-  // No settings at all, which is a statement about Photoshop and not a shortcut: the
-  // options bar for both of these carries no Style, no Width/Height and no Anti-alias,
-  // because Adobe scopes all three to the Rectangular and Elliptical Marquees by name.
+  'rectangular-selection': {
+    style: 'normal',
+    fixedRatio: 1,
+    fixedWidth: 100,
+    fixedHeight: 100,
+    toolName: 'rectangular-selection',
+  } satisfies RectangularSelectionToolArgs,
   'single-row-marquee': { toolName: 'single-row-marquee' } satisfies SingleRowMarqueeToolArgs,
   'single-column-marquee': {
     toolName: 'single-column-marquee',
   } satisfies SingleColumnMarqueeToolArgs,
   brush: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 10,

@@ -42,6 +42,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import type { TextToolArgs } from '../tools/text.ts';
+import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { NewHistoryItem } from './history-types.ts';
@@ -75,6 +76,39 @@ type EditableToolLayerSource = {
   args: ToolArgs;
   pos: Layer['pos'];
   isBedrock?: false;
+};
+
+/**
+ * Extend only a stroked draw path from the previous preview.
+ *
+ * A segment needs the previous endpoint as its first point; a spray or block stroke cannot
+ * replay that endpoint without depositing it twice, so those paths keep the full-raster fallback.
+ */
+export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): DrawToolArgs | null => {
+  if (toolArgs.toolName !== 'draw' || !previousToolArgs || previousToolArgs.toolName !== 'draw') return null;
+
+  const drawArgs = toolArgs as DrawToolArgs;
+  const previousDrawArgs = previousToolArgs as DrawToolArgs;
+  if (drawArgs.penType === 'spray' || drawArgs.blockStamp) return null;
+  if (previousDrawArgs.penType !== drawArgs.penType || previousDrawArgs.blockStamp !== drawArgs.blockStamp) return null;
+
+  const currentPoints = drawArgs.points;
+  const previousPoints = previousDrawArgs.points;
+  if (
+    !currentPoints ||
+    !previousPoints ||
+    previousPoints.length === 0 ||
+    currentPoints.length <= previousPoints.length
+  ) {
+    return null;
+  }
+  if (
+    !previousPoints.every((point, index) => point.x === currentPoints[index]?.x && point.y === currentPoints[index]?.y)
+  ) {
+    return null;
+  }
+
+  return { ...drawArgs, points: currentPoints.slice(previousPoints.length - 1) };
 };
 
 function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
@@ -363,6 +397,7 @@ export const useLayers = () => {
   const replaceLayerSource = (id: LayerId, source: EditableToolLayerSource): Layer | null => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
+    if (isLayerLocked(layer)) return null;
     delete previewLayersRef.current[id];
     const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
     const currentArgs = layer.source?.kind === 'tool' ? layer.source.args : null;
@@ -779,6 +814,7 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
+    if (isLayerLocked(layers[layerToMoveId])) return;
     dispatch({
       type: 'REORDER_LAYERS',
       payload: { layerToMoveId, afterWhichLayerId },
@@ -882,7 +918,11 @@ export const useLayers = () => {
       return true;
     }
 
-    const bitmap = layer.tmpCanvas ?? layer.bitmap;
+    const preview = previewLayersRef.current[id];
+    const processorArgs = preview?.layer.tmpCanvas ? getIncrementalStrokeArgs(toolArgs, preview.toolArgs) : null;
+    const canAppendStroke = processorArgs !== null;
+    const processorLayer = canAppendStroke ? preview!.layer : layer;
+    const bitmap = canAppendStroke ? preview!.layer.tmpCanvas : (layer.tmpCanvas ?? layer.bitmap);
     if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
       console.error('No active layer or bitmap to update preview');
       return false;
@@ -897,12 +937,12 @@ export const useLayers = () => {
     let result: ToolResult;
     let input: ReturnType<typeof stageProcessorInput> | null = null;
     try {
-      input = bitmap ? stageProcessorInput(layer, bitmap) : null;
+      input = bitmap ? stageProcessorInput(processorLayer, bitmap) : null;
       result = processor.imageProcessor(
         input
           ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
           : ({ size: layer.pos } as CreatorToolParams)
-      )(toolArgs);
+      )(processorArgs ?? toolArgs);
     } catch (error) {
       console.error(error);
       return false;

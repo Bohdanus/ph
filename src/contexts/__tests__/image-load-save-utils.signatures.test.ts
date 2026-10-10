@@ -27,6 +27,22 @@ vi.mock('../ico-utils.ts', () => ({ loadIcoFile }));
 
 const bytes = (...values: number[]) => new Uint8Array(values);
 const ascii = (text: string) => new TextEncoder().encode(text);
+const gifHeader = (width: number, height: number) =>
+  bytes(
+    0x47,
+    0x49,
+    0x46,
+    0x38,
+    0x39,
+    0x61,
+    width & 0xff,
+    (width >> 8) & 0xff,
+    height & 0xff,
+    (height >> 8) & 0xff,
+    0,
+    0,
+    0
+  );
 
 type StubReader = {
   onload: ((event: { target: { result: string } }) => void) | null;
@@ -229,6 +245,26 @@ describe('format detection from byte signatures', () => {
 describe('loadImageFile rejection paths', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('allows a GIF at the 100 MP document ceiling', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File([gifHeader(10_000, 10_000)], 'maximum.gif', { type: 'image/gif' });
+
+    const result = await loadDocumentFile(file);
+
+    expect(result).toMatchObject({ fileName: 'maximum.gif', image: decoders.image });
+    expect(decoders.readerInput?.type).toBe('image/gif');
+  });
+
+  it('rejects an oversized GIF from its logical screen descriptor before creating a FileReader', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File([gifHeader(10_001, 10_000)], 'oversized.gif', { type: 'image/gif' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow(
+      'GIF image is too large to open (10001×10000). Maximum is 100000000 pixels.'
+    );
+    expect(decoders.reader).toBeUndefined();
   });
 
   it.each([

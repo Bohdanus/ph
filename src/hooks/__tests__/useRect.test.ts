@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useRect, type UseRectProps } from '../useRect.ts';
+import { drawCropOverlay, useRect, type UseRectProps } from '../useRect.ts';
 import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
 import { createMockCanvas, createMockCanvasContext } from '@/__tests__/fixtures/canvas.ts';
 import { refitRectWidthToAspect } from '@/util/rect-aspect.ts';
@@ -95,6 +95,37 @@ const createTestContext = () => {
 };
 
 describe('useRect', () => {
+  it.each([
+    ['ruleOfThirds', 4],
+    ['grid', 18],
+    ['diagonal', 2],
+    ['triangle', 3],
+    ['goldenRatio', 4],
+  ] as const)('draws the %s crop overlay guide', (overlayType, lineCount) => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, { x: 10, y: 20, width: 300, height: 200 }, overlayType);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(lineCount);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(lineCount);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws both orientations of the golden spiral', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      { x: 0, y: 0, width: 300, height: 200 },
+      'goldenSpiral'
+    );
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      { x: 0, y: 0, width: 300, height: 200 },
+      'goldenSpiral',
+      'flipped'
+    );
+    expect(ctx.arc).toHaveBeenCalledTimes(6);
+    expect(ctx.stroke).toHaveBeenCalledTimes(2);
+  });
+
   let testContext: ReturnType<typeof createTestContext>;
 
   beforeEach(() => {
@@ -118,6 +149,9 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      rotationEnabled?: boolean;
+      rotation?: number;
+      onRotationChange?: UseRectProps['onRotationChange'];
       onRepaint?: UseRectProps['onRepaint'];
       onChange?: UseRectProps['onChange'];
       onChangeEnd?: UseRectProps['onChangeEnd'];
@@ -130,6 +164,9 @@ describe('useRect', () => {
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
       isMoveTool: options.isMoveTool ?? false,
+      rotationEnabled: options.rotationEnabled ?? false,
+      rotation: options.rotation ?? 0,
+      onRotationChange: options.onRotationChange,
       containerRef: { current: containerElement },
       overlayRef: { current: overlayCanvas },
       onRepaint: options.onRepaint ?? vi.fn(),
@@ -346,6 +383,32 @@ describe('useRect', () => {
   });
 
   describe('handlePointerMove', () => {
+    it('shows a rotation cursor and rotates the rect from a corner hotspot', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 90, clientY: 90, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toBe(CURSOR_MAP.rotate);
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 90, clientY: 90, target })
+        );
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 285, clientY: 65, target }));
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(onRotationChange).toHaveBeenCalled();
+      expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
+    });
+
     it('reports a hit for every handle and edge of the rect, and a miss off it', () => {
       // `isMouseDown` is owned by the (mocked) pointer-position hook and is false here, so a move is
       // a HOVER: it reports whether an edge is under the pointer and resizes nothing. The drag

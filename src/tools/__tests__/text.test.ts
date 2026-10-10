@@ -17,6 +17,7 @@ import {
   requiredHeightForLines,
   resolveTextKind,
   resolveTextStyle,
+  clearTextRasterCache,
   text,
   textWrapWidth,
   trackingPx,
@@ -707,6 +708,16 @@ describe('layoutText', () => {
 });
 
 describe('renderText', () => {
+  it('rotates text around the centre of its box', () => {
+    const ctx = makeTextCtx();
+
+    renderText(ctx, { ...baseArgs, angle: 30 });
+
+    expect(ctx.translate).toHaveBeenNthCalledWith(1, 100, 60);
+    expect(ctx.rotate).toHaveBeenCalledWith((30 * Math.PI) / 180);
+    expect(ctx.translate).toHaveBeenNthCalledWith(2, -100, -60);
+  });
+
   describe('the guard on a draft with nothing to draw', () => {
     it('draws nothing at all for an empty string', () => {
       // The guard is `!text`, so an empty draft returns before `resetOverlayAlpha` and before any
@@ -1528,6 +1539,7 @@ describe('getTextWidth', () => {
 
 describe('text processor', () => {
   beforeEach(() => {
+    clearTextRasterCache();
     RecordingOffscreenCanvas.instances = [];
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
@@ -1578,33 +1590,18 @@ describe('text processor', () => {
     expect(result).toBeTruthy();
   });
 
-  it('documents the current cost: a fresh full-document canvas and a fresh fillText pass on every replay (src/tools/text.ts:334-339)', () => {
+  it('reuses a cached raster for an identical replay instead of re-rasterizing', () => {
     const params = { size: { width: 40, height: 20 } };
     const processor = text(params);
 
     const first = processor(baseArgs);
     const second = processor(baseArgs);
 
-    // Each replay allocates a fresh canvas and re-runs the font rasterization, so an
-    // N-step undo history re-renders the same glyphs N times. There is no vector-durable
-    // source to re-materialize from, so this cost is structural, not a caching oversight.
-    expect(RecordingOffscreenCanvas.instances).toHaveLength(2);
-    expect(first[0]).not.toBe(second[0]);
-    expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
-    expect((second[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
-  });
-
-  it.fails('replays text from a durable vector source without re-rasterizing (src/tools/text.ts:331-340)', () => {
-    const params = { size: { width: 40, height: 20 } };
-    const processor = text(params);
-
-    const first = processor(baseArgs);
-    const second = processor(baseArgs);
-
-    // Desired: an identical replay reuses the already-rasterized source instead of
-    // allocating a second full-document OffscreenCanvas and re-running renderText.
+    // An identical replay reuses the already-rasterized canvas from the module-level
+    // cache: no second allocation, no second renderText pass.
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(first[0]).toBe(second[0]);
+    expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
   });
 });
 

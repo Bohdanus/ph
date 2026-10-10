@@ -1,16 +1,28 @@
 import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
-import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
+import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
-import { getCanvasSize, posToSortedRect, sortRect, sortRoundRect, trimRect } from '../util/rect.ts';
+import {
+  angleFromCenter,
+  getCanvasSize,
+  posToSortedRect,
+  rectCenter,
+  rotatePointAround,
+  sortRect,
+  sortRoundRect,
+  trimRect,
+} from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import type { Layer } from '../contexts/layer-types.ts';
+import type { CropOverlayOrientation, CropOverlayType } from '../tools/crop.ts';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
+  /** A fixed-size fresh drag, centred on the press point. */
+  fixedSize?: Size | null;
   /** The frame's size in CANVAS px, so the frame rect here is `[0, 0, imageSize]`. */
   imageSize: Size;
   initialRect?: RectXYSorted | null; // can be set using props, in canvas px like everything else
@@ -79,6 +91,12 @@ export type UseRectProps = {
    * hit area.
    */
   handlesOutside?: boolean;
+  rotationEnabled?: boolean;
+  rotation?: number;
+  onRotationChange?: (degrees: number) => void;
+  /** Optional composition guide for the crop consumer. Other rectangle tools leave this absent. */
+  overlayType?: CropOverlayType;
+  overlayOrientation?: CropOverlayOrientation;
 
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
@@ -97,6 +115,82 @@ type FreshDragModifiers = {
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
 const RECT_BORDER_DASH_LENGTH = 5;
 const RECT_BORDER_DASH_SPEED = 0.4;
+const ROTATE_HOTZONE = 24;
+
+/** Paints Photoshop's crop composition guide in canvas pixels. */
+export function drawCropOverlay(
+  ctx: CanvasRenderingContext2D,
+  rect: Pos,
+  overlayType: CropOverlayType = 'ruleOfThirds',
+  orientation: CropOverlayOrientation = 'normal',
+  scale = 1
+) {
+  const { x, y, width, height } = rect;
+  const vertical = (ratio: number) => x + width * ratio;
+  const horizontal = (ratio: number) => y + height * ratio;
+  const line = (x1: number, y1: number, x2: number, y2: number) => {
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+  };
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.lineWidth = 1 / scale;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  switch (overlayType) {
+    case 'ruleOfThirds':
+      line(vertical(1 / 3), y, vertical(1 / 3), y + height);
+      line(vertical(2 / 3), y, vertical(2 / 3), y + height);
+      line(x, horizontal(1 / 3), x + width, horizontal(1 / 3));
+      line(x, horizontal(2 / 3), x + width, horizontal(2 / 3));
+      break;
+    case 'grid':
+      for (let index = 1; index < 10; index += 1) {
+        const ratio = index / 10;
+        line(vertical(ratio), y, vertical(ratio), y + height);
+        line(x, horizontal(ratio), x + width, horizontal(ratio));
+      }
+      break;
+    case 'diagonal':
+      line(x, y, x + width, y + height);
+      line(x + width, y, x, y + height);
+      break;
+    case 'triangle': {
+      const flip = orientation === 'flipped';
+      const left = flip ? x + width : x;
+      const right = flip ? x : x + width;
+      line(left, y, right, y + height);
+      line(right, y, left, y + height);
+      line(x + width / 2, y, x + width / 2, y + height);
+      break;
+    }
+    case 'goldenRatio':
+      line(vertical(0.382), y, vertical(0.382), y + height);
+      line(vertical(0.618), y, vertical(0.618), y + height);
+      line(x, horizontal(0.382), x + width, horizontal(0.382));
+      line(x, horizontal(0.618), x + width, horizontal(0.618));
+      break;
+    case 'goldenSpiral': {
+      const direction = orientation === 'flipped' ? -1 : 1;
+      const cx = x + width / 2;
+      const cy = y + height / 2;
+      const radius = Math.min(width, height) / 2;
+      ctx.arc(cx, cy, radius, direction > 0 ? 0 : Math.PI, direction > 0 ? Math.PI * 1.5 : Math.PI * 2.5);
+      ctx.arc(
+        cx,
+        cy,
+        radius * 0.618,
+        direction > 0 ? Math.PI * 1.5 : Math.PI / 2,
+        direction > 0 ? Math.PI * 2 : Math.PI * 2.5
+      );
+      ctx.arc(cx, cy, radius * 0.382, direction > 0 ? 0 : Math.PI, direction > 0 ? Math.PI / 2 : Math.PI * 1.5);
+      break;
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
 
 /**
  * CANVAS px throughout: every point, size and rect read or computed below — and every rect handed
@@ -109,6 +203,7 @@ const RECT_BORDER_DASH_SPEED = 0.4;
  */
 export function useRect({
   aspectRatio = null,
+  fixedSize = null,
   imageSize,
   initialRect,
 
@@ -119,6 +214,11 @@ export function useRect({
   borderMode = 'always',
   allowOutsideCanvas = false,
   handlesOutside = false,
+  rotationEnabled = false,
+  rotation = 0,
+  onRotationChange,
+  overlayType,
+  overlayOrientation = 'normal',
 
   containerRef,
   overlayRef,
@@ -134,6 +234,10 @@ export function useRect({
   const currentEdgeRef = useRef<string | null>(null);
   const customAspectRatioRef = useRef<number | null>(null);
   const freshDragModifiersRef = useRef<FreshDragModifiers>({ ...NO_MODIFIERS });
+  const rotationRef = useRef(rotation);
+  const lastRotationRef = useRef(rotation);
+  const startRotationRef = useRef(rotation);
+  const rotationStartAngleRef = useRef(0);
 
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
@@ -207,6 +311,12 @@ export function useRect({
       drawMaskRef.current?.();
     }
   }, [aspectRatio, initialRect]);
+
+  useEffect(() => {
+    rotationRef.current = rotation;
+    if (lastRotationRef.current !== rotation && rectUnsortedRef.current) drawMaskRef.current?.();
+    lastRotationRef.current = rotation;
+  }, [rotation]);
 
   /**
    * The overlay canvas outlives this hook: `Main.tsx:239-284` renders both overlay canvases
@@ -318,6 +428,27 @@ export function useRect({
       const h1 = HANDLE_SIZE / scale;
       const h2 = HANDLE_SIZE / scale / 2;
 
+      if (rotationEnabled) {
+        const center = rectCenter(_initialRect);
+        const localPoint = rotatePointAround(point, center, -rotationRef.current);
+        const outside = localPoint.x < x1 || localPoint.x > x2 || localPoint.y < y1 || localPoint.y > y2;
+        if (outside) {
+          const corners = [
+            { x: x1, y: y1 },
+            { x: x2, y: y1 },
+            { x: x2, y: y2 },
+            { x: x1, y: y2 },
+          ];
+          if (
+            corners.some(
+              (corner) => Math.hypot(localPoint.x - corner.x, localPoint.y - corner.y) <= ROTATE_HOTZONE / scale
+            )
+          ) {
+            return 'rotate';
+          }
+        }
+      }
+
       if (handlesOutside) {
         if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y1 - h1 && point.y <= y1) return 'top-left';
         if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y1 - h1 && point.y <= y1) return 'top-right';
@@ -396,6 +527,7 @@ export function useRect({
     const cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
 
     eventTarget.style.cursor = cursor ?? '';
+    if (event.currentTarget) event.currentTarget.style.cursor = cursor ?? '';
   }
 
   function drawMask(hasRectChanged?: boolean) {
@@ -427,6 +559,9 @@ export function useRect({
     const { x, y, width, height } = allowOutsideCanvas
       ? sortRoundRect(sortedRect)
       : trimRect(sortedRect, getCanvasSize(overlayRef));
+    const angle = rotationEnabled ? rotationRef.current : 0;
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
 
     if (!hideBlend) {
       // Draw semi-transparent overlay
@@ -439,8 +574,18 @@ export function useRect({
       // rectangle in both modes, and this line is the only part of the blend the prop reaches: a
       // negative CANVAS-origin `clearRect` is clipped by the backing store to exactly the part of
       // the true rect that overlaps the frame, which is the cut-out wanted.
-      ctx.clearRect(x, y, width, height);
+      if (angle === 0) {
+        ctx.clearRect(x, y, width, height);
+      } else {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.clearRect(-width / 2, -height / 2, width, height);
+        ctx.restore();
+      }
     }
+
+    if (overlayType) drawCropOverlay(ctx, { x, y, width, height }, overlayType, overlayOrientation, scale);
 
     // The one thing on this overlay that another canvas can also draw, and so the reason
     // `borderMode` exists: for a selection, the ants canvas strokes the same rectangle one layer
@@ -460,7 +605,15 @@ export function useRect({
         borderMode === 'while-dragging' && isGestureActiveRef.current && isMouseDown.current
           ? borderDashOffsetRef.current
           : 0;
-      ctx.strokeRect(x, y, width, height);
+      if (angle === 0) {
+        ctx.strokeRect(x, y, width, height);
+      } else {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.strokeRect(-width / 2, -height / 2, width, height);
+        ctx.restore();
+      }
     }
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
@@ -477,10 +630,33 @@ export function useRect({
     const hIn = handlesOutside ? -h1 : -h1 / 2;
     const hOut = handlesOutside ? 0 : -h1 / 2;
     ctx.fillStyle = '#007bff';
-    ctx.fillRect(x + hIn, y + hIn, h1, h1);
-    ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
-    ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
-    ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
+    if (angle === 0) {
+      ctx.fillRect(x + hIn, y + hIn, h1, h1);
+      ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
+      ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
+      ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
+    } else {
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate((angle * Math.PI) / 180);
+      ctx.fillRect(-width / 2 + hIn, -height / 2 + hIn, h1, h1);
+      ctx.fillRect(width / 2 + hOut, -height / 2 + hIn, h1, h1);
+      ctx.fillRect(-width / 2 + hIn, height / 2 + hOut, h1, h1);
+      ctx.fillRect(width / 2 + hOut, height / 2 + hOut, h1, h1);
+      ctx.restore();
+    }
+
+    if (rotationEnabled) {
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate((angle * Math.PI) / 180);
+      ctx.strokeStyle = '#007bff';
+      ctx.lineWidth = 1 / scale;
+      ctx.beginPath();
+      ctx.arc(0, -height / 2 - ROTATE_HOTZONE / scale / 2, 4 / scale, Math.PI * 0.2, Math.PI * 1.8);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
@@ -548,6 +724,17 @@ export function useRect({
    * neither prop.
    */
   function adjustFreshPoint(point: Point, modifiers: FreshDragModifiers, _aspectRatio: number | null) {
+    if (fixedSize && fixedSize.width > 0 && fixedSize.height > 0) {
+      const halfWidth = fixedSize.width / 2;
+      const halfHeight = fixedSize.height / 2;
+      return {
+        x1: startPointRef.current!.x - halfWidth,
+        y1: startPointRef.current!.y - halfHeight,
+        x2: startPointRef.current!.x + halfWidth,
+        y2: startPointRef.current!.y + halfHeight,
+      };
+    }
+
     if (!modifiers.constrainToSquare && !modifiers.fromCentre) return adjustFreePoint(point, _aspectRatio);
 
     const x1 = startPointRef.current!.x;
@@ -600,6 +787,14 @@ export function useRect({
           y2 = point.y;
           ({ x1, x2 } = refitRectWidthToAspect({ x1, y1, x2, y2 }, _aspectRatio));
           break;
+        case 'rotate': {
+          const center = rectCenter(_initialRect);
+          rotationRef.current =
+            startRotationRef.current + angleFromCenter(center, point) - rotationStartAngleRef.current;
+          onRotationChange?.(rotationRef.current);
+          ({ x1, y1, x2, y2 } = _initialRect);
+          break;
+        }
         default:
           ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));
       }
@@ -698,6 +893,10 @@ export function useRect({
             y: selectionRect.y1,
           };
           break;
+        case 'rotate':
+          startRotationRef.current = rotationRef.current;
+          rotationStartAngleRef.current = angleFromCenter(rectCenter(selectionRect), point);
+          break;
       }
     }
 
@@ -755,6 +954,7 @@ export function useRect({
     if (!isPointerUpValid(event)) return;
 
     (event.target as HTMLDivElement).style.cursor = '';
+    if (event.currentTarget) event.currentTarget.style.cursor = '';
 
     if (isMoveTool && !startRectRef.current) {
       // A release this hook DID accept, so nothing of ours is in flight afterwards whatever this

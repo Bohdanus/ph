@@ -1369,7 +1369,7 @@ describe('ShapeToolArea', () => {
       view.unmount();
     });
 
-    it.each(['rectangle', 'oval', 'triangle', 'polygon'] as const)(
+    it.each(['rectangle', 'oval', 'polygon'] as const)(
       'applies the aspect constraint to %s when shift is held',
       (figure) => {
         toolArgsState.toolArgs.figure = figure;
@@ -1391,6 +1391,21 @@ describe('ShapeToolArea', () => {
         view.unmount();
       }
     );
+
+    it('uses an equilateral triangle box when shift is held', () => {
+      toolArgsState.toolArgs.figure = 'triangle';
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 10, y: 20 };
+      const pointer = { x: 50, y: 80 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
+      const expected = normalizeShapeGeometry(anchor, pointer, 'triangle', { shiftKey: true, altKey: false });
+
+      expect(expected).toEqual({ start: { x: 10, y: 20 }, end: { x: 79.2820323027551, y: 80 } });
+      expect(committedGeometry(fullArgs)).toEqual(toDocumentShape(expected));
+      expect(fullArgs.args.figure).toBe('triangle');
+      view.unmount();
+    });
 
     it('constrains a shifted line to 45 degrees and keeps its length', () => {
       toolArgsState.toolArgs.figure = 'line';

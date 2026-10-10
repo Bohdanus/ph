@@ -5,6 +5,8 @@ export type LassoToolArgs = {
   color: string;
   lineWidth: number;
   alpha: number;
+  featherRadius: number;
+  antiAlias: boolean;
   fill: boolean;
   toolName: 'polygonal-lasso' | 'freehand-lasso';
 };

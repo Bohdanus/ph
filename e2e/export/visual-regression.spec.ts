@@ -48,6 +48,9 @@ const layoutInvarianceFormat: ExportFormat = { label: 'PNG', extension: '.png', 
 /** Sub-directory of the committed snapshot directory that holds the baseline PNGs. */
 const BASELINE_DIR = 'export-baselines';
 
+/** Platform-specific subdirectory for baselines (win32, darwin, linux). */
+const PLATFORM_DIR = process.platform;
+
 /**
  * The one `updateSnapshots` value that re-records a baseline.
  *
@@ -74,14 +77,14 @@ const BASELINE_RECORD_MODE = 'all';
  * would differ per operating system, leaving a baseline committed on one OS to read as
  * "missing" on every other one.
  *
- * The path now includes a platform component (`process.platform`) so that each operating
- * system has its own baseline set. A platform with no committed set fails as missing,
- * which is the state the spec already handles with `Baseline missing for <format>`, rather
- * than falling back to another platform's file. A silent fallback would put one
- * rasteriser's oracle under another's name.
+ * The baseline is now stored under a platform-specific subdirectory so that each OS
+ * has its own committed oracle. The platform is derived from `process.platform`
+ * (win32, darwin, linux) rather than from the Playwright project name, because the
+ * test runs on the native OS in CI and the rasterisation is a property of the OS,
+ * not the browser project.
  */
 function baselineFile(testInfo: TestInfo, fileName: string): string {
-  return path.join(testInfo.snapshotDir, BASELINE_DIR, process.platform, fileName);
+  return path.join(testInfo.snapshotDir, BASELINE_DIR, PLATFORM_DIR, fileName);
 }
 
 test.describe('Export visual regression', () => {
@@ -139,7 +142,7 @@ test.describe('Export visual regression', () => {
         // `--update-snapshots` this used to print resolves to 'changed' and cannot
         // reach this branch, so telling a reader to run it named a dead end.
         throw new Error(
-          `Baseline missing for ${format.label}. Record it with \`npm run test:e2e:update-baselines\`, ` +
+          `Baseline missing for ${format.label} on ${PLATFORM_DIR}. Record it with \`npm run test:e2e:update-baselines\`, ` +
             `which runs \`playwright test e2e/export/visual-regression.spec.ts --update-snapshots=${BASELINE_RECORD_MODE}\`. ` +
             'Re-recording replaces a committed oracle, so it is an operator decision - review the diff it produces.'
         );

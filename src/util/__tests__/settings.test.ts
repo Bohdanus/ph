@@ -307,6 +307,8 @@ describe('saveLastSettings', () => {
       color: '#ff0000',
       lineWidth: 2,
       alpha: 1,
+      featherRadius: 0,
+      antiAlias: true,
       fill: false,
       toolName: 'freehand-lasso',
     });
@@ -321,6 +323,8 @@ describe('saveLastSettings', () => {
       color: '#0000ff',
       lineWidth: 4,
       alpha: 0.5,
+      featherRadius: 8,
+      antiAlias: false,
       fill: true,
       toolName: 'polygonal-lasso',
     });
@@ -852,7 +856,7 @@ describe('defaultSettings and lastSavedSettings', () => {
   it('savedDrawPerPen has entries for all pen types', () => {
     expect(savedDrawPerPen.pen).toMatchObject({ alpha: 0.9, lineWidth: 10 });
     expect(savedDrawPerPen['pen-dashed']).toMatchObject({ alpha: 0.9, lineWidth: 10, lineDash: [5, 30] });
-    expect(savedDrawPerPen.spray).toMatchObject({ alpha: 0.5, lineWidth: 100 });
+    expect(savedDrawPerPen.spray).toMatchObject({ alpha: 0.5, flow: 50, lineWidth: 100 });
   });
 
   it('savedArgsPerFigure has entries for all figure types', () => {
@@ -958,7 +962,13 @@ describe('defaultSettings and lastSavedSettings', () => {
     });
     expect(defaultSettings.crop).toMatchObject({ aspectRatio: null, rect: null, toolName: 'crop' });
     expect(defaultSettings['magic-wand']).toMatchObject({ tolerance: 28, smoothing: 1.5, toolName: 'magic-wand' });
-    expect(defaultSettings['rectangular-selection']).toEqual({ toolName: 'rectangular-selection' });
+    expect(defaultSettings['rectangular-selection']).toEqual({
+      style: 'normal',
+      fixedRatio: 1,
+      fixedWidth: 100,
+      fixedHeight: 100,
+      toolName: 'rectangular-selection',
+    });
     expect(defaultSettings['feather-magnetic-lasso']).toMatchObject({
       featherRadius: 12,
       magneticWidth: 18,

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -340,6 +342,37 @@ describe('PAINT_BLEND_MODES', () => {
       expect(isPaintBlendMode(mode.value), `label "${mode.label}"`).toBe(true);
     }
   });
+
+  it('keeps the documented Photoshop mode counts and omissions aligned with the list', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../brush.ts'), 'utf8');
+    const omitted = [
+      'Dissolve',
+      'Linear Burn',
+      'Darker Color',
+      'Linear Dodge (Add)',
+      'Lighter Color',
+      'Vivid Light',
+      'Linear Light',
+      'Pin Light',
+      'Hard Mix',
+      'Subtract',
+      'Divide',
+      'Behind',
+      'Clear',
+    ];
+    const values = new Set<string>(PAINT_BLEND_MODES.map((mode) => mode.value));
+
+    expect(source).toContain('Photoshop offers twenty-nine');
+    expect(source).toContain('this list is the sixteen of them');
+    expect(source).toContain('The thirteen it leaves out');
+    expect(PAINT_BLEND_MODES).toHaveLength(16);
+    expect(29 - PAINT_BLEND_MODES.length).toBe(13);
+    for (const label of omitted) expect(source).toContain(label);
+    expect(values.has('dissolve')).toBe(false);
+    expect(values.has('plus-lighter')).toBe(false);
+    expect(values.has('destination-over')).toBe(false);
+    expect(values.has('destination-out')).toBe(false);
+  });
 });
 
 describe('PAINT_PRESETS', () => {
@@ -370,15 +403,14 @@ describe('PAINT_PRESETS', () => {
     }
   });
 
-  it('opens the brush on a preset that carries the seeded brush size and mode', () => {
+  it('opens the brush on a preset that carries the seeded brush settings', () => {
     // `defaultSettings.brush` seeds lineWidth 10 and Normal
     // (src/tools/settings.ts:115-124), and `Hard Round` is that same 10px tip in that
-    // same mode. Its alpha is the fully opaque 1, deliberately not the seeded 0.9 - a
-    // named tip is a solid mark, where the seeded bar is a light default stroke - so the
-    // seeded bar is not the same state as the opening preset.
+    // same mode. Its alpha is the fully opaque default and its smoothing matches the
+    // deliberately seeded Photoshop smoothing value.
     expect(PAINT_PRESETS.brush[0].lineWidth).toBe(defaultSettings.brush.lineWidth);
     expect(PAINT_PRESETS.brush[0].blendMode).toBe(defaultSettings.brush.blendMode);
-    expect(PAINT_PRESETS.brush[0].alpha).not.toBe(defaultSettings.brush.alpha);
+    expect(PAINT_PRESETS.brush[0].alpha).toBe(defaultSettings.brush.alpha);
     expect(PAINT_PRESETS.pencil[0].lineWidth).toBe(defaultSettings.pencil.lineWidth);
   });
 
@@ -387,7 +419,7 @@ describe('PAINT_PRESETS', () => {
       label: 'Hard Round',
       lineWidth: 10,
       alpha: 1,
-      smoothing: 0,
+      smoothing: PAINT_SMOOTHING_DEFAULT,
       blendMode: 'source-over',
     });
   });
@@ -506,11 +538,8 @@ describe('matchPaintPreset', () => {
     expect(matchPaintPreset(duplicated, hardRound)).toBe('First');
   });
 
-  it('reads a freshly seeded paint bar as Custom', () => {
-    // The seeded brush is 10px at 0.9 opacity with `PAINT_SMOOTHING_DEFAULT` smoothing
-    // (src/tools/settings.ts:115-124) and the opening preset is 10px at 1.0 with no
-    // smoothing, so no preset describes the bar as it is first shown.
-    expect(matchPaintPreset(brushPresets, defaultSettings.brush)).toBe('');
+  it('reads a freshly seeded brush as the opening preset', () => {
+    expect(matchPaintPreset(brushPresets, defaultSettings.brush)).toBe('Hard Round');
     expect(matchPaintPreset(pencilPresets, defaultSettings.pencil)).toBe('');
   });
 });

@@ -224,8 +224,8 @@ rasterised polygon — so the Pen family is not six tools to implement but a doc
 and the Path Type entry below is the same work seen from the shape tools.
 
 **What the app does instead.** The six tools are in the rail under Adobe's names and mount a stub
-options bar. `AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
-Photoshop grouping and naming are the specification, and the stub bar is the debt.
+options bar. `docs/PHOTOSHOP-UX.md` §"Open violations" is explicit that this is the correct state for a tool
+the app cannot do: the Photoshop grouping and naming are the specification, and the stub bar is the debt.
 
 ### Custom Shape
 
@@ -430,6 +430,12 @@ build against this entry — the "why it is too hard" above describes the CSS-fi
 implementation happens to use, which is exactly what a per-hue conversion replaces rather than
 constrains. What survives the rewrite is Adobe's six-sextant behaviour, which is the product
 requirement and is unchanged by anything an agent decides about the mechanism.
+
+The retained `src/tools/colors.ts` and `src/tools/levels.ts` processors are the future raster
+implementations behind that canvas-filter limitation. They remain intentionally registered for
+replay and materialization, even though the current production adjustment path uses CSS filters;
+do not delete them as dead code or wire them into a different tool until the adjustment rendering
+contract is specified.
 
 ### Real Levels — the three-point remap, the histogram and the channel selector
 

@@ -107,7 +107,11 @@ npm run tsc
 
 ## CI/CD
 
-The project uses GitHub Actions for continuous integration:
+The project uses GitHub Actions for continuous integration, with a read-only
+`permissions: contents: read` scoping at the workflow level. No job in
+`.github/workflows/ci.yml` needs to write to the repository, and the checkout
+steps all set `persist-credentials: false`, so a compromised step cannot
+exfiltrate a usable token. CI runs are read-only by design.
 
 - **Check Job**: ESLint + Prettier, `npm audit --audit-level=high`, TypeScript
   (`tsc -b`, which also builds `tsconfig.e2e.json`), an assertion that every
@@ -121,12 +125,17 @@ The project uses GitHub Actions for continuous integration:
   Job's `tsc -b` already builds `tsconfig.e2e.json`. This is the **blocking** gate
   for `e2e/`, kept as a separate job so a break in the app pipeline cannot
   silently skip the only coverage of that code.
-- **E2E Job**: Playwright specs in Chrome. A **blocking** gate. It was
-  `continue-on-error` on the stated grounds that five specs failed; those failures
-  were fixed, so the comment justifying it stopped describing the suite and the job
-  went on reporting a state the suite no longer had. Chrome is installed through the
-  OS package manager, so there is nothing here to cache. See
-  [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
+- **E2E Job** (matrix): Playwright specs in Chrome, on Linux, Windows, and macOS.
+  A **blocking** gate. It was `continue-on-error` on the stated grounds that five
+  specs failed; those failures were fixed, so the comment justifying it stopped
+  describing the suite and the job went on reporting a state the suite no longer
+  had. Chrome is the `channel: 'chrome'` that Playwright installs — not the system
+  browser. The matrix runs with `fail-fast: false` so one platform's failure does
+  not cancel the others. The Linux and Windows legs will hit the fail-as-missing
+  contract on `visual-regression.spec.ts` until their baselines are recorded;
+  only `darwin/` baselines are committed. See
+  [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) and
+  [`e2e/README.md`](e2e/README.md).
 - **Dependency licensing**: CI does not check dependency licence terms. The former
   allow/deny list was never checked against the actual dependency tree and is
   retired; do not treat it as an approved policy. `npm audit --audit-level=high`

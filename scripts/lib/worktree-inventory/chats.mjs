@@ -44,6 +44,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { LIVE_WINDOW_MS } from './classify.mjs';
+import { boundSessionSinceMs } from './session-audit-limits.mjs';
 
 /**
  * Every chat state that means an agent has NOT finished, in one place.
@@ -280,7 +281,8 @@ export function auditChats({
   }
 
   try {
-    const sessions = readSessions(db, sinceMs);
+    const boundedSinceMs = boundSessionSinceMs(sinceMs, nowMs);
+    const sessions = readSessions(db, boundedSinceMs);
 
     // A `--now` earlier than the newest session makes `idleMs` negative, and a
     // negative idle time satisfies the liveness test — so pinning the clock
@@ -290,8 +292,8 @@ export function auditChats({
     const newest = sessions.reduce((n, s) => (s.timeUpdated > n ? s.timeUpdated : n), 0);
     const effectiveNow = Math.max(nowMs, newest);
 
-    const outcomes = readOutcomes(db, sinceMs);
-    const subagents = new Map(readSubagentCounts(db, sinceMs).map((row) => [row.parent_id, row.n]));
+    const outcomes = readOutcomes(db, boundedSinceMs);
+    const subagents = new Map(readSubagentCounts(db, boundedSinceMs).map((row) => [row.parent_id, row.n]));
 
     const byDirectory = new Map();
     for (const s of sessions) {
@@ -332,7 +334,7 @@ export function auditChats({
       // not just here. Clamping in one place only left `classify` reading the
       // raw value and produced exactly the drift the clamp exists to prevent.
       newestSessionAt: newest,
-      windowMs: nowMs - sinceMs,
+      windowMs: nowMs - boundedSinceMs,
     };
   } finally {
     db.close();

@@ -15,6 +15,16 @@ const storeState = vi.hoisted(
     documentFrame: null,
   })
 );
+const toolArgsState = vi.hoisted(() => ({
+  current: {
+    toolName: 'draw',
+    alpha: 1,
+    color: '#000000',
+    penType: 'pen',
+    lineWidth: 10,
+    points: [],
+  } as Record<string, unknown>,
+}));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
@@ -37,14 +47,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
-    toolArgs: {
-      toolName: 'draw',
-      alpha: 1,
-      color: '#000000',
-      penType: 'pen',
-      lineWidth: 10,
-      points: [],
-    },
+    toolArgs: toolArgsState.current,
   }),
 }));
 
@@ -132,6 +135,14 @@ describe('DrawToolArea', () => {
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = null;
     storeState.documentFrame = null;
+    toolArgsState.current = {
+      toolName: 'draw',
+      alpha: 1,
+      color: '#000000',
+      penType: 'pen',
+      lineWidth: 10,
+      points: [],
+    };
   });
 
   it('normalizes a finished stroke to its bounding box instead of snapping it to the origin', () => {
@@ -186,6 +197,42 @@ describe('DrawToolArea', () => {
     expect(drawLine).toHaveBeenCalledWith(
       expect.objectContaining({ args: expect.objectContaining({ points: [{ x: 10, y: 20 }] }) })
     );
+  });
+
+  it('keeps a stationary Spray stroke building and records its elapsed samples', () => {
+    vi.useFakeTimers();
+    toolArgsState.current = {
+      toolName: 'draw',
+      alpha: 0.5,
+      color: '#000000',
+      penType: 'spray',
+      lineWidth: 10,
+      flow: 50,
+      points: [],
+    };
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+    act(() => {
+      vi.advanceTimersByTime(40);
+    });
+
+    const previewArgs = vi.mocked(drawLine).mock.lastCall?.[0].args;
+    expect(previewArgs?.points).toEqual([
+      { x: 10, y: 20 },
+      { x: 10, y: 20 },
+    ]);
+    expect(previewArgs?.pointTimes?.[1]).toBeGreaterThan(0);
+
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+
+    const committedArgs = createLayerFromToolMock.mock.calls[0][0].args;
+    expect(committedArgs.points).toHaveLength(2);
+    expect(committedArgs.points[1]).toEqual(committedArgs.points[0]);
+    expect(committedArgs.pointTimes).toEqual([0, expect.any(Number)]);
+    expect(committedArgs.pointTimes[1]).toBeGreaterThan(0);
   });
 
   it('coalesces a burst of pointer moves into exactly one overlay repaint', () => {

@@ -1182,7 +1182,10 @@ const PARAGRAPH_TEXT = 'wrap this text inside the dragged box';
 const POINT_TEXT = 'one line only here';
 
 /** Where a point-type draft is placed, in canvas-box coordinates. A press, not a drag. */
-const CLICK_POINT = { x: 200, y: 300 };
+// Keep the point well inside the contained document rather than in its left letterbox. The text
+// layer origin is intentionally clamped to the document, so a click too close to an edge cannot
+// remain perfectly centred once the full line would extend beyond that edge.
+const CLICK_POINT = { x: 450, y: 300 };
 
 /**
  * The rectangle the overflow test drags, low in the canvas box so that the text can outgrow it
@@ -2224,6 +2227,16 @@ test.describe('Text tool', () => {
     // editable draft holding the placeholder, so the type below is typed onto the canvas rather
     // than into a field the gesture never touched.
     await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    const placed = await draftOverlay(page).boundingBox();
+    expect(placed, 'the click did not create a measurable point-text box').not.toBeNull();
+    expect(
+      Math.abs(placed!.x + placed!.width / 2 - (box.x + CLICK_POINT.x)),
+      'the placeholder box is not centred on the click'
+    ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs(placed!.y + placed!.height / 2 - (box.y + CLICK_POINT.y)),
+      'the placeholder box is not vertically centred on the click'
+    ).toBeLessThanOrEqual(3);
     await replaceDraftText(page, POINT_TEXT);
 
     await waitForCanvasPixels(page, canvasBoxClip(box), hasRedPixels, { description: 'the point draft type' });
@@ -2245,6 +2258,10 @@ test.describe('Text tool', () => {
       Math.abs((draft.frame.left + draft.frame.right) / 2 - (box.x + CLICK_POINT.x)),
       'the point box is not centred on the click'
     ).toBeLessThanOrEqual(3);
+    expect(
+      Math.abs((draft.frame.top + draft.frame.bottom) / 2 - (box.y + CLICK_POINT.y)),
+      'the point box is not vertically centred on the click'
+    ).toBeLessThanOrEqual(3);
 
     // 2. THE BOX GREW TO FIT, on the committed line. The frame measured above IS the frame of the
     // box this commit writes, and the line below is that box's own rendering of the string, so the
@@ -2260,14 +2277,42 @@ test.describe('Text tool', () => {
     expect(boxWidth - inkWidth, 'the point box is not the line plus its padding').toBeGreaterThanOrEqual(
       paddingAndFrame - 4
     );
+    // CSS-pixel bounds are rounded from the device-pixel screenshot, so allow one extra pixel on
+    // the upper edge while keeping the lower bound tight enough to reject a collapsed or grow-only box.
     expect(boxWidth - inkWidth, 'the point box is much wider than the line it holds').toBeLessThanOrEqual(
-      paddingAndFrame + 4
+      paddingAndFrame + 5
     );
     // The same claim without the arithmetic above: a box still collapsed at the click point is
     // about 14 CSS px wide, which is a fortieth of the 512 measured here, and one that grew
     // without bound would be 900 — so both wrong answers are outside the band this pair admits.
     expect(boxWidth, 'the point box did not grow off the click point').toBeGreaterThan(100);
     expect(boxWidth, 'the point box is wider than the line it grew to fit').toBeLessThanOrEqual(inkWidth * 1.2);
+  });
+
+  test('a point-text corner exposes rotation and dragging it changes the draft angle', async ({ page }) => {
+    const box = await canvasBox(page);
+    await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    const overlay = await draftOverlay(page).boundingBox();
+    expect(overlay, 'the point-text draft did not appear').not.toBeNull();
+
+    const surface = page.locator('.cursor-text');
+    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
+    await page.mouse.move(corner.x, corner.y);
+    await expect(surface, 'the text rotation hotspot uses the horizontal arrow cursor').toHaveCSS(
+      'cursor',
+      'ew-resize'
+    );
+
+    await page.mouse.down();
+    const centerX = overlay!.x + overlay!.width / 2;
+    const centerY = overlay!.y + overlay!.height / 2;
+    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
+    await page.mouse.up();
+
+    await expect(surface, 'the text draft did not retain its rotated angle').toHaveAttribute(
+      'data-rotation',
+      /8[5-9]|9[0-5]/
+    );
   });
 
   /**
