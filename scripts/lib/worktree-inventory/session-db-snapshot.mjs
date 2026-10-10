@@ -14,6 +14,8 @@ import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 
 const SNAPSHOT_PREFIX = 'worktree-inventory-session-';
+// One page per backup step is deliberate: higher rates keep SQLite's source
+// lock held across more pages and can block a Kilo writer between yields.
 const SNAPSHOT_RATE = 1;
 
 /**

@@ -33,4 +33,39 @@ describe('createSessionDbSnapshot', () => {
   it('returns null for a missing source instead of exposing the live path', async () => {
     expect(await createSessionDbSnapshot('/missing/kilo.db')).toBeNull();
   });
+
+  it('lets a concurrent writer proceed between one-page backup steps', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-snapshot-writer-test-'));
+    const sourcePath = join(dir, 'source.db');
+    const source = new DatabaseSync(sourcePath);
+    source.exec('CREATE TABLE records (value TEXT)');
+    const insert = source.prepare('INSERT INTO records VALUES (?)');
+    source.exec('BEGIN');
+    for (let i = 0; i < 200_000; i += 1) insert.run(String(i));
+    source.exec('COMMIT');
+    source.close();
+
+    const writer = new DatabaseSync(sourcePath);
+    let writerResult;
+    const writerTurn = new Promise((resolve) => {
+      setTimeout(() => {
+        try {
+          writer.exec("INSERT INTO records VALUES ('concurrent')");
+          writerResult = { ok: true };
+        } catch (error) {
+          writerResult = { ok: false, error: error.message };
+        }
+        resolve();
+      }, 0);
+    });
+
+    const snapshot = await createSessionDbSnapshot(sourcePath);
+    await writerTurn;
+    writer.close();
+
+    expect(snapshot).not.toBeNull();
+    expect(writerResult).toEqual({ ok: true });
+    await snapshot.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
