@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-137, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 97, 100-102, 104-105, 111-112, 117, 125-133, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186, 188, 191-192, 194-196, 198-200, 203-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2286,46 +2286,6 @@ misleading", because `tsc` and `vitest` mostly work by walking up to the parent.
 form of the same trap: they not only work, they work on the wrong files.
 
 **Files.** `node_modules/.bin/tsc`, `scripts/tsc-guard.mjs`, `scripts/__tests__/tsc-guard.test.mjs`
----
-
-## 138. Two tool options bars justify their clamping with a `localStorage` round trip that no code performs
-
-The comment above the `amount`/`radius` clamps in
-`src/components/ToolbarsRight/Sharpen/Sharpen.tsx` and the one above `tip`/`strength` in
-`src/components/ToolbarsRight/Smudge/Smudge.tsx` both carry the same text:
-
-> A persisted args object can hold a value outside Photoshop's range — settings are round-tripped
-> through `localStorage` and restored before anything clamps them — and a controlled `<input
-type="range">` whose `value` is out of its own `min`/`max` pins the thumb to the bound while
-> reporting the raw value, so the readout and the thumb disagree.
-
-The reasoning is sound and the clamping is correct. **The premise is false.** `saveLastSettings()`
-is called from `src/contexts/useCurrentTool.tsx` — `_setToolArgs()` — and writes to
-`src/tools/settings.ts`'s module-level singleton `lastSavedSettings`, seeded from `defaultSettings`.
-Grepping `localStorage`
-across `src/` returns exactly two keys — `panelLayout` (read in `src/contexts/PanelLayout.tsx`'s
-`readStoredLayout()`, written in `PanelLayoutProvider()`'s persist effect)
-and `theme` (read and written in `src/contexts/ThemeContext.tsx`'s `ThemeProvider()`). Nothing
-reaches the disk.
-
-So the comment's stated scenario cannot occur, and a reader who believes it will reason about a
-restore path that does not exist when changing the clamping. It is worse than a harmless lie for a
-second reason: if tool settings _were_ persisted, `settings.ts` would be the wrong home for them,
-because it is a module singleton a reload discards by construction. The comment describes the
-architecture the code should have and does not.
-
-**Fix.** Correct the comment to say settings are per-session module state, which is the fact, and
-keep the clamping — it is right for a different reason: `defaultSettings` is `satisfies
-ToolArgsByName`, so a hand-edited default outside Photoshop's range would produce exactly the
-disagreeing readout. If cross-reload persistence is wanted, that is a feature, it belongs in a
-`localStorage` layer with a versioned schema, and the two comments become true. Neither is a
-cleanup; pick deliberately.
-
-**Files.** `src/components/ToolbarsRight/Sharpen/Sharpen.tsx` — the comment above the
-`amount`/`radius` clamps; `src/components/ToolbarsRight/Smudge/Smudge.tsx` — the comment above
-`tip`/`strength`; `src/contexts/useCurrentTool.tsx` — `_setToolArgs()`;
-`src/util/settings.ts` — `saveLastSettings()`; `src/tools/settings.ts` — `lastSavedSettings`
-
 ---
 
 ## 139. The superseded point-in-time reports cannot be moved without editing a data file

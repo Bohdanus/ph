@@ -73,7 +73,7 @@ const Smudge: React.FC<{}> = () => {
    * Coalesce the frame's writes into one `patchToolArgs`, the shape `Levels.tsx` uses for the
    * same reason. A drag emits an event per pointer sample, and each `setToolArgs` re-renders
    * the panel and calls `saveLastSettings`, so unthrottled a single drag is hundreds of
-   * renders and hundreds of localStorage writes.
+   * renders and hundreds of `saveLastSettings` calls.
    *
    * Patches MERGE rather than replace: each control writes a disjoint field, so the last write
    * per field in a frame is the one that must survive, and merging is what lets two sliders
@@ -110,10 +110,13 @@ const Smudge: React.FC<{}> = () => {
   /**
    * What the sliders RENDER is the clamped value, not `args` verbatim.
    *
-   * A persisted args object can hold a value outside Photoshop's range — settings are
-   * round-tripped through `localStorage` and restored before anything clamps them — and a
-   * controlled `<input type="range">` whose `value` is out of its own `min`/`max` pins the
-   * thumb to the bound while reporting the raw value, so the readout and the thumb disagree.
+   * The args object holds per-session module state — written by
+   * `saveLastSettings()` to `lastSavedSettings` in `src/tools/settings.ts`, not
+   * serialized to `localStorage` — and a hand-edited default outside Photoshop's
+   * range would populate it with an out-of-bounds value, so a
+   * controlled `<input type="range">` whose `value` is out of its own `min`/`max`
+   * pins the thumb to the bound while reporting the raw value, so the readout
+   * and the thumb disagree.
    * Clamping once, here, and deriving every control from that one copy also means the bar and
    * the processor agree on what the tip is without each re-deriving it.
    */
