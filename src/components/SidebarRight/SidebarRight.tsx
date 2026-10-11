@@ -172,7 +172,7 @@ const SidebarRight = () => {
       // ratio. The clamp below would absorb it, but the arithmetic is better not to happen.
       if (start === null || start.height <= 0) return;
       const floor = Math.min(0.5, PANEL_MIN_HEIGHT / start.height);
-      const next = start.ratio - dy / start.height;
+      const next = start.ratio + dy / start.height;
       layout.setSplitRatio(clamp(next, floor, 1 - floor));
     },
     [layout]
