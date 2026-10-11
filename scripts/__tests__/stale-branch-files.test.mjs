@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (cwd) rmSync(cwd, { recursive: true, force: true });
+  if (cwd) rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('pre-push stale branch detection', () => {

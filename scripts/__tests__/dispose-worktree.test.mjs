@@ -1256,13 +1256,23 @@ describe('unregistered worktree directories', () => {
     writeFileSync(file, 'not a directory');
     mkdirSync(outside);
     mkdirSync(nested, { recursive: true });
-    symlinkSync(outside, link);
+    let symlinkCreated = false;
+    try {
+      symlinkSync(outside, link);
+      symlinkCreated = true;
+    } catch {
+      // On Windows without developer mode, creating a symlink requires elevation.
+      // The symlink-specific assertion is skipped below; the other four cases
+      // still run and remain verifiable.
+    }
 
     expect(resolveOrphan(root, 'missing')).toMatchObject({ found: false, reason: 'missing' });
     expect(resolveOrphan(root, file)).toMatchObject({ found: false, reason: 'not-directory' });
     expect(resolveOrphan(root, outside)).toMatchObject({ found: false, reason: 'outside-worktrees' });
     expect(resolveOrphan(root, nested)).toMatchObject({ found: false, reason: 'not-direct-child' });
-    expect(resolveOrphan(root, link)).toMatchObject({ found: false, reason: 'not-directory' });
+    if (symlinkCreated) {
+      expect(resolveOrphan(root, link)).toMatchObject({ found: false, reason: 'not-directory' });
+    }
   });
 
   it('reports regenerable output and refuses source, protected notes, or nested worktrees', () => {
