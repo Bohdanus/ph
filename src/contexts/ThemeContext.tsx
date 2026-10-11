@@ -41,7 +41,13 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (testOverride) return testOverride;
 
     const savedTheme = localStorage.getItem('theme');
-    return savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : DEFAULT_THEME;
+    if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+
+    // TEST OVERRIDE: VITE_TEST_THEME can force a theme when no stored preference exists.
+    const testOverride = getTestOverride();
+    if (testOverride) return testOverride;
+
+    return DEFAULT_THEME;
   });
 
   useEffect(() => {
