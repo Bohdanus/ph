@@ -180,6 +180,9 @@ const LONG_PRESS_SETTLE_MS = 400;
 /** `ToolTooltip.tsx`'s hover threshold, plus slack. */
 const TOOLTIP_SETTLE_MS = 400;
 
+/** Well past `ToolTooltip`'s 250ms threshold, used where the tooltip must be definitely on screen. */
+const TOOLTIP_VISIBLE_MS = 600;
+
 /**
  * Long-presses a tile with REAL mouse input.
  *
@@ -788,7 +791,7 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await openToolFlyoutViaRightClick(page, WAND);
     await getToolButton(page, WAND).hover();
     // Well past `ToolTooltip`'s 250ms threshold, so the tooltip is definitely on screen.
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(TOOLTIP_VISIBLE_MS);
     await expect(page.getByRole('tooltip')).toBeVisible();
 
     await flyoutItem(page, WAND_ALTERNATE.toolName, WAND_ALTERNATE.label).click();
