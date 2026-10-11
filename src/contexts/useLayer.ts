@@ -1223,6 +1223,11 @@ export const useLayers = () => {
   }, [canvasRef, documentFrame, layers, previewLayersRef]);
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
+    if (![rect.x1, rect.y1, rect.x2, rect.y2].every((value) => Number.isFinite(value))) {
+      console.warn('applyDocumentCrop refused a non-finite crop rectangle');
+      return false;
+    }
+
     // Unclamped on purpose, and that is the whole feature: Photoshop's crop box may be dragged
     // past the image edge, which extends the canvas. `sortRoundRect` sorts, rounds each edge once
     // and derives the extent from the rounded edges, so a rect reaching past an edge grows the

@@ -1484,6 +1484,54 @@ Appendix F's own argument is that a line number is a property of a moment.
 `scripts/lib/worktree-inventory/curated.mjs` — the `'toolbar-overflow'` entry;
 `docs/ORCHESTRATION.md` — the `mustNotPrune` paragraph and the expired-lease material
 
+## 110. `ToolbarsRight/Lasso/Lasso.tsx` has no importer, and it is the only UI for two persisted lasso settings
+
+`src/components/ToolbarsRight/Lasso/Lasso.tsx` (152 lines) is not reachable:
+
+```bash
+git grep -nE "import .*\bLasso\b.* from" -- src e2e   # zero hits
+git grep -n "Lasso/Lasso.tsx" -- src e2e             # zero hits
+```
+
+`src/tools/toolsMap.ts` — its three lasso entries — wires the three lasso keys to `PolygonalLasso`,
+`FreehandLasso`
+and `FeatherMagneticLasso`. The component's only consumer is its own test,
+`Lasso/__tests__/Lasso.test.tsx`, which renders a component the app can never reach.
+
+**It is nevertheless the only place `lineWidth` and `alpha` are editable**, and both are
+persisted defaults for two live keys:
+
+- `src/tools/settings.ts` — its `'polygonal-lasso'` and `'freehand-lasso'` defaults — each declare
+  `{ alpha: 1, lineWidth: 3, color: '#FF0000', fill: false, points: [] } satisfies LassoToolArgs`.
+- `src/tools/polygonSelection.ts` types all of them, and `PolygonSelectionToolSettings` is
+  `Omit<LassoToolArgs, 'points'>` — so they survive a reload.
+- `PolygonalLasso.tsx` and `FreehandLasso.tsx` render **hint text only**; neither has a control.
+
+So deleting it is not a cleanup, it is a second defect: two persisted settings with no UI
+at all, and a settings bucket that round-trips values a user can no longer change. **The real
+defect is the missing options bar.** `src/tools/descriptions/selection.notes.md` §"What is true of
+all seven" already
+records what Photoshop's Polygonal Lasso bar carries — the four combination modes, `Feather`,
+`Style` and `Anti-alias` — and marks them absent here, while `FeatherMagneticLasso` ships
+`featherRadius` / `magneticWidth` / `edgeContrast` / `frequency` (`src/tools/settings.ts` — its
+`'feather-magnetic-lasso'` default).
+
+The component is also wrong if reconnected: `Lasso.tsx` hardcodes
+`toolName: 'polygonal-lasso'` into every `setToolArgs`, so wiring it to the freehand key would
+label that tool's panel with the polygonal name.
+
+**Fix.** Do not delete. Port `lineWidth` and `alpha` — and Photoshop's `Feather` and
+`Anti-alias` — into `PolygonalLasso.tsx` and `FreehandLasso.tsx`, which are the components the
+keys actually render, and delete `Lasso.tsx` and `Lasso.test.tsx` **in the same change**. The
+two hints `Lasso.tsx` renders ("Backspace removes anchor • Enter finishes • Esc cancels")
+are behaviour the live panels do not document, so carry them across too.
+
+**Files.** `src/components/ToolbarsRight/Lasso/Lasso.tsx`,
+`src/components/ToolbarsRight/Lasso/PolygonalLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/FreehandLasso.tsx`,
+`src/components/ToolbarsRight/Lasso/__tests__/Lasso.test.tsx`, `src/tools/settings.ts` — the three
+lasso defaults
+
 ## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
 
 `docs/TOOLS-TOO-HARD.md` §"The Pen family":

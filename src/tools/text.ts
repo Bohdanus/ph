@@ -1111,7 +1111,11 @@ export const text =
     if (cached) return [cached];
 
     const canvas = new OffscreenCanvas(size.width, size.height);
-    const ctx = canvas.getContext('2d')!;
+    // A platform may expose OffscreenCanvas without a usable 2D context. Returning the allocated
+    // blank canvas keeps the creator total and lets the caller preserve the layer rather than
+    // throwing from a force-unwrap during replay or export.
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return [canvas];
 
     renderText(ctx, args);
 

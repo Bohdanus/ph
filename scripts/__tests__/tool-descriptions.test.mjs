@@ -86,6 +86,32 @@ describe('tool description citations', () => {
     expect(broken).toEqual([]);
   });
 
+  it('keeps the text toolbar citations attached to the controls they describe', () => {
+    const expected = new Map([
+      ['Font family', /FontSelect/],
+      ['Size', /data-testid="font-size-input"/],
+      ['Text color', /id="text-color"/],
+      ['Align Text Left / Center Text / Align Text Right', /id="align-select"/],
+      ['Commit / Cancel', /Commit/],
+    ]);
+    const text = descriptions.text;
+    const mismatches = [];
+
+    for (const option of text.options) {
+      const pattern = expected.get(option.control);
+      if (!pattern || option.appRef === undefined) continue;
+      const match = /^(?<path>[^:]+):(?<line>\d+)$/.exec(option.appRef);
+      if (!match) {
+        mismatches.push(`${option.control}: malformed appRef ${option.appRef}`);
+        continue;
+      }
+      const source = readRepoFile(match.groups.path).split('\n')[Number(match.groups.line) - 1] ?? '';
+      if (!pattern.test(source)) mismatches.push(`${option.control}: ${option.appRef} does not contain ${pattern}`);
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
   // A duplicated key is invisible to `index.ts`: the later spread silently wins, and the losing
   // family's research is lost with no error anywhere. The compiler proves the families are
   // complete; only this can prove they do not overlap.
