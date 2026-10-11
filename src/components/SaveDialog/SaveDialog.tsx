@@ -7,7 +7,7 @@ import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment
 interface SaveDialogProps {
   proposedName: string;
   onClose: () => void;
-  onSave: (data: ImageSaveResponse) => Promise<void>;
+  onSave: (data: ImageSaveResponse) => Promise<ImageSaveResponse | null>;
 }
 
 const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
@@ -21,7 +21,12 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave(format === 'image/jpeg' ? { fileName, format, quality: jpegQuality } : { fileName, format });
+      const result = await onSave(
+        format === 'image/jpeg' ? { fileName, format, quality: jpegQuality } : { fileName, format }
+      );
+      if (result === null) {
+        setSaveError('Export failed. Please check your settings and try again.');
+      }
     } catch (error) {
       console.error('Failed to save file:', error);
       const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
@@ -76,7 +81,10 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 className="w-full rounded border px-3 py-2 leading-tight text-gray-700 shadow focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
                 id="filenameInput"
                 value={fileName}
-                onChange={(e) => setFileName(e.target.value)}
+                onChange={(e) => {
+                  setSaveError(null);
+                  setFileName(e.target.value);
+                }}
                 data-testid="save-dialog-filename-input"
               />
             </div>
@@ -88,7 +96,10 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 className="w-full rounded border px-3 py-2 leading-tight text-gray-700 shadow focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
                 id="formatSelect"
                 value={format}
-                onChange={(e) => setFormat(e.target.value)}
+                onChange={(e) => {
+                  setSaveError(null);
+                  setFormat(e.target.value);
+                }}
                 data-testid="save-dialog-format-select"
               >
                 {IMAGE_FORMATS.map(({ value, label }) => (
@@ -111,7 +122,10 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                     max="1"
                     step="0.01"
                     value={jpegQuality}
-                    onChange={(e) => setJpegQuality(Number(e.target.value))}
+                    onChange={(e) => {
+                      setSaveError(null);
+                      setJpegQuality(Number(e.target.value));
+                    }}
                     disabled={saving}
                     className="w-full"
                     data-testid="save-dialog-jpeg-quality"
@@ -125,13 +139,22 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
               )}
             </div>
             {saveError && (
-              <p
-                className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300"
+              <div
+                className="mt-4 flex items-start justify-between gap-3 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300"
                 role="alert"
                 data-testid="save-dialog-error"
               >
-                {saveError}
-              </p>
+                <span>{saveError}</span>
+                <button
+                  type="button"
+                  className="font-semibold underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+                  onClick={() => setSaveError(null)}
+                  aria-label="Dismiss export error"
+                  data-testid="save-dialog-error-dismiss"
+                >
+                  Dismiss
+                </button>
+              </div>
             )}
           </div>
           <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">

@@ -45,6 +45,9 @@ import type { TextToolArgs } from '../tools/text.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
+import type { EraserToolArgs } from '../tools/eraser.ts';
+import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
+import type { SpongeToolArgs } from '../tools/sponge.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
@@ -111,6 +114,73 @@ export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: 
   return { ...drawArgs, points: currentPoints.slice(previousPoints.length - 1) };
 };
 
+/**
+ * Extend only an eraser brush-mode stroke from the previous preview.
+ *
+ * Incremental is allowed ONLY when:
+ * - Both current and previous are eraser brush-mode (not pencil, not block)
+ * - All raster-affecting settings are identical (lineWidth, alpha, hardness, spacing, color)
+ * - Previous points are an exact prefix of current points
+ * The shared endpoint is preserved so brush spacing/falloff remains continuous.
+ * Any mismatch falls back to full processing.
+ */
+export const getIncrementalEraserArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): EraserToolArgs | null => {
+  if (toolArgs.toolName !== 'eraser' || !previousToolArgs || previousToolArgs.toolName !== 'eraser') return null;
+
+  const current = toolArgs as EraserToolArgs;
+  const previous = previousToolArgs as EraserToolArgs;
+
+  // Only brush mode supports incremental
+  if (current.mode !== 'brush' || previous.mode !== 'brush') return null;
+
+  // All raster-affecting settings must be identical
+  if (
+    current.lineWidth !== previous.lineWidth ||
+    current.alpha !== previous.alpha ||
+    current.hardness !== previous.hardness ||
+    current.spacing !== previous.spacing ||
+    current.color !== previous.color
+  ) {
+    return null;
+  }
+
+  const currentSelection = current.selection;
+  const previousSelection = previous.selection;
+  if ((currentSelection === undefined) !== (previousSelection === undefined)) return null;
+  if (currentSelection && previousSelection) {
+    if (
+      currentSelection.featherRadius !== previousSelection.featherRadius ||
+      currentSelection.antiAlias !== previousSelection.antiAlias ||
+      currentSelection.points.length !== previousSelection.points.length ||
+      !currentSelection.points.every(
+        (point, index) =>
+          point.x === previousSelection.points[index]?.x && point.y === previousSelection.points[index]?.y
+      )
+    ) {
+      return null;
+    }
+  }
+
+  const currentPoints = current.points;
+  const previousPoints = previous.points;
+  if (
+    !currentPoints ||
+    !previousPoints ||
+    previousPoints.length === 0 ||
+    currentPoints.length <= previousPoints.length
+  ) {
+    return null;
+  }
+  if (
+    !previousPoints.every((point, index) => point.x === currentPoints[index]?.x && point.y === currentPoints[index]?.y)
+  ) {
+    return null;
+  }
+
+  // Preserve the shared endpoint (previousPoints.length - 1) so spacing/falloff is continuous
+  return { ...current, points: currentPoints.slice(previousPoints.length - 1) };
+};
+
 function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
   return args.toolName === 'transform';
 }
@@ -159,6 +229,87 @@ function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
  * rather than a layer that silently locks itself.
  */
 const isLayerLocked = (layer: Layer): boolean => layer.locked === true;
+
+/**
+ * Returns the appended Dodge/Burn args only when tool name, exposure, range, size, hardness, and
+ * the exact point prefix are unchanged. The shared endpoint is preserved to maintain continuity.
+ */
+function getIncrementalDodgeBurnArgs(prevArgs: ToolArgs | undefined, currArgs: ToolArgs): DodgeBurnToolArgs | null {
+  if (!prevArgs || prevArgs.toolName !== currArgs.toolName) return null;
+  if (!isDodgeBurnToolArgs(prevArgs) || !isDodgeBurnToolArgs(currArgs)) return null;
+
+  const prev = prevArgs as DodgeBurnToolArgs;
+  const curr = currArgs as DodgeBurnToolArgs;
+
+  if (prev.exposure !== curr.exposure) return null;
+  if (prev.range !== curr.range) return null;
+  if (prev.size !== curr.size) return null;
+  if (prev.hardness !== curr.hardness) return null;
+
+  const prevPoints = prev.points;
+  const currPoints = curr.points;
+
+  if (!Array.isArray(prevPoints) || !Array.isArray(currPoints)) return null;
+  if (prevPoints.length === 0) return null;
+
+  // Current points must start with the previous points as a prefix
+  if (currPoints.length <= prevPoints.length) return null;
+
+  // Check exact point prefix match
+  for (let i = 0; i < prevPoints.length; i++) {
+    const pp = prevPoints[i];
+    const cp = currPoints[i];
+    if (pp.x !== cp.x || pp.y !== cp.y) return null;
+  }
+
+  // Preserve shared endpoint: last point of prev === first new point of curr
+  // This is already enforced by the prefix check above since the prefix includes the last point
+
+  return { ...curr, points: currPoints.slice(prevPoints.length - 1) };
+}
+
+function isDodgeBurnToolArgs(args: ToolArgs): args is DodgeBurnToolArgs {
+  return args.toolName === 'dodge' || args.toolName === 'burn';
+}
+
+/**
+ * Returns the appended Sponge args only when tool name, mode, flow, vibrance, size, hardness, and
+ * the exact point prefix are unchanged. The shared endpoint is preserved to maintain continuity.
+ */
+function getIncrementalSpongeArgs(prevArgs: ToolArgs | undefined, currArgs: ToolArgs): SpongeToolArgs | null {
+  if (!prevArgs || prevArgs.toolName !== currArgs.toolName) return null;
+  if (currArgs.toolName !== 'sponge') return null;
+
+  const prev = prevArgs as SpongeToolArgs;
+  const curr = currArgs as SpongeToolArgs;
+
+  if (prev.mode !== curr.mode) return null;
+  if (prev.flow !== curr.flow) return null;
+  if (prev.vibrance !== curr.vibrance) return null;
+  if (prev.size !== curr.size) return null;
+  if (prev.hardness !== curr.hardness) return null;
+
+  const prevPoints = prev.points;
+  const currPoints = curr.points;
+
+  if (!Array.isArray(prevPoints) || !Array.isArray(currPoints)) return null;
+  if (prevPoints.length === 0) return null;
+
+  // Current points must start with the previous points as a prefix
+  if (currPoints.length <= prevPoints.length) return null;
+
+  // Check exact point prefix match
+  for (let i = 0; i < prevPoints.length; i++) {
+    const pp = prevPoints[i];
+    const cp = currPoints[i];
+    if (pp.x !== cp.x || pp.y !== cp.y) return null;
+  }
+
+  // Preserve shared endpoint: last point of prev === first new point of curr
+  // This is already enforced by the prefix check above since the prefix includes the last point
+
+  return { ...curr, points: currPoints.slice(prevPoints.length - 1) };
+}
 
 // A frame allocates SIX surfaces at its own size — the staging canvas `drawLayersToCanvas`
 // composites into (`layer-renderer.ts:195`), the visible canvas it resizes to (`:238`), the
@@ -921,8 +1072,48 @@ export const useLayers = () => {
     const preview = previewLayersRef.current[id];
     const processorArgs = preview?.layer.tmpCanvas ? getIncrementalStrokeArgs(toolArgs, preview.toolArgs) : null;
     const canAppendStroke = processorArgs !== null;
-    const processorLayer = canAppendStroke ? preview!.layer : layer;
-    const bitmap = canAppendStroke ? preview!.layer.tmpCanvas : (layer.tmpCanvas ?? layer.bitmap);
+
+    // Check for incremental eraser brush-mode
+    let incrementalEraserArgs: EraserToolArgs | null = null;
+    let canIncrementalEraser = false;
+    if (!canAppendStroke && toolArgs.toolName === 'eraser' && preview?.layer.tmpCanvas) {
+      incrementalEraserArgs = getIncrementalEraserArgs(toolArgs, preview.toolArgs);
+      canIncrementalEraser = incrementalEraserArgs !== null;
+    }
+
+    // Check for incremental dodge/burn
+    let incrementalDodgeBurnArgs: DodgeBurnToolArgs | null = null;
+    if (
+      !canAppendStroke &&
+      !canIncrementalEraser &&
+      (toolArgs.toolName === 'dodge' || toolArgs.toolName === 'burn') &&
+      preview?.layer.tmpCanvas
+    ) {
+      incrementalDodgeBurnArgs = getIncrementalDodgeBurnArgs(preview.toolArgs, toolArgs);
+    }
+    const canIncrementalDodgeBurn = incrementalDodgeBurnArgs !== null;
+
+    // Check for incremental sponge
+    let incrementalSpongeArgs: SpongeToolArgs | null = null;
+    if (
+      !canAppendStroke &&
+      !canIncrementalEraser &&
+      !canIncrementalDodgeBurn &&
+      toolArgs.toolName === 'sponge' &&
+      preview?.layer.tmpCanvas
+    ) {
+      incrementalSpongeArgs = getIncrementalSpongeArgs(preview.toolArgs, toolArgs);
+    }
+    const canIncrementalSponge = incrementalSpongeArgs !== null;
+
+    const processorLayer =
+      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
+        ? preview!.layer
+        : layer;
+    const bitmap =
+      canAppendStroke || canIncrementalEraser || canIncrementalDodgeBurn || canIncrementalSponge
+        ? preview!.layer.tmpCanvas
+        : (layer.tmpCanvas ?? layer.bitmap);
     if (!bitmap && (processor.commit === 'raster' || !processor.creator)) {
       console.error('No active layer or bitmap to update preview');
       return false;
@@ -938,11 +1129,24 @@ export const useLayers = () => {
     let input: ReturnType<typeof stageProcessorInput> | null = null;
     try {
       input = bitmap ? stageProcessorInput(processorLayer, bitmap) : null;
-      result = processor.imageProcessor(
-        input
-          ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
-          : ({ size: layer.pos } as CreatorToolParams)
-      )(processorArgs ?? toolArgs);
+      const processorParams: ProcessorToolParams | CreatorToolParams = input
+        ? ({ bitmap: input.bitmap, size: input.bounds } as ProcessorToolParams)
+        : ({ size: layer.pos } as CreatorToolParams);
+      // Pass previousCanvas for incremental eraser brush-mode
+      if (canIncrementalEraser && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
+      // Pass previousCanvas for incremental dodge/burn
+      if (canIncrementalDodgeBurn && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
+      // Pass previousCanvas for incremental sponge
+      if (canIncrementalSponge && preview?.layer.tmpCanvas) {
+        (processorParams as ProcessorToolParams).previousCanvas = preview.layer.tmpCanvas;
+      }
+      result = processor.imageProcessor(processorParams)(
+        processorArgs ?? incrementalEraserArgs ?? incrementalDodgeBurnArgs ?? incrementalSpongeArgs ?? toolArgs
+      );
     } catch (error) {
       console.error(error);
       return false;

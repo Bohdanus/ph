@@ -298,13 +298,16 @@ const applyDodgeBurn = (
   bitmap: BitmapSource,
   size: Size,
   args: DodgeBurnToolArgs,
-  towardWhite: boolean
+  towardWhite: boolean,
+  previousCanvas?: BitmapSource
 ): ToolResult => {
   const canvas = new OffscreenCanvas(size.width, size.height);
   const ctx = canvas.getContext('2d');
   if (!ctx) return [canvas];
 
-  ctx.drawImage(bitmap, 0, 0);
+  // Use previousCanvas as the source for incremental rendering, otherwise use the layer bitmap
+  const source = previousCanvas ?? bitmap;
+  ctx.drawImage(source, 0, 0);
 
   // A reduced canvas environment has no read-back at all
   // (`src/test/setup.ts:185` documents that the global mock deliberately omits it, and
@@ -333,9 +336,9 @@ const applyDodgeBurn = (
  * `exposure` and by the tip's coverage. Returns a full-`size` raster.
  */
 export const dodge =
-  ({ bitmap, size }: ProcessorToolParams) =>
+  ({ bitmap, size, previousCanvas }: ProcessorToolParams) =>
   (args: DodgeBurnToolArgs): ToolResult =>
-    applyDodgeBurn(bitmap, size, args, true);
+    applyDodgeBurn(bitmap, size, args, true, previousCanvas);
 
 /**
  * Burn: the same arithmetic measured from black instead of from white. Returns a
@@ -348,6 +351,6 @@ export const dodge =
  * in the other, not by the arithmetic above.
  */
 export const burn =
-  ({ bitmap, size }: ProcessorToolParams) =>
+  ({ bitmap, size, previousCanvas }: ProcessorToolParams) =>
   (args: DodgeBurnToolArgs): ToolResult =>
-    applyDodgeBurn(bitmap, size, args, false);
+    applyDodgeBurn(bitmap, size, args, false, previousCanvas);

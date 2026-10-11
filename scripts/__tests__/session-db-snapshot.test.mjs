@@ -94,16 +94,29 @@ describe('createSessionDbSnapshot', () => {
         updated: NOW - 1 * DAY,
       }
     );
+    for (let i = 0; i < 1_500; i += 1) {
+      addSession(source, `old-${i}`, { at: NOW - 30 * DAY });
+      addPart(
+        source,
+        `old-part-${i}`,
+        `old-${i}`,
+        { type: 'tool' },
+        {
+          created: NOW - 30 * DAY,
+          updated: NOW - 30 * DAY,
+        }
+      );
+    }
+    for (let i = 0; i < 10; i += 1) {
+      addSession(source, `recent-${i}`);
+      addPart(source, `recent-part-${i}`, `recent-${i}`, { type: 'tool' });
+    }
     source.close();
 
     const snapshot = await createSessionDbSnapshot(sourcePath, { sinceMs: NOW - 3 * DAY, nowMs: NOW });
     const copy = new DatabaseSync(snapshot.dbPath, { readOnly: true });
-    expect(
-      copy
-        .prepare('SELECT id FROM part')
-        .all()
-        .map((r) => r.id)
-    ).toEqual(['updated-part']);
+    expect(copy.prepare("SELECT id FROM part WHERE id = 'updated-part'").get().id).toBe('updated-part');
+    expect(copy.prepare("SELECT id FROM part WHERE id = 'old-part-1499'").get()).toBeUndefined();
     copy.close();
     await snapshot.cleanup();
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

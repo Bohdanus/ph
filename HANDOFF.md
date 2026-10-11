@@ -1846,11 +1846,12 @@ addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs an
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 
 **Problem.** `tempUpdateLayer` is the sanctioned live-pixel writer for a stroke in progress. The
-stroked `draw` pen path now appends from the previous endpoint, but spray, block strokes, and every
-other processor still read the bitmap from the hook closure rather than accumulating a safe delta:
+stroked `draw` pen path and the additive Eraser brush, Dodge, Burn and Sponge paths now append from
+the previous endpoint, but spray, block strokes and the remaining processors still read the bitmap
+from the hook closure rather than accumulating a safe delta:
 
-`src/contexts/useLayer.ts` now calls `getIncrementalStrokeArgs` for the safe stroked-pen case; the
-remaining processors take the full argument list on every move.
+`src/contexts/useLayer.ts` now calls the processor-specific incremental helpers for those four
+additive paths; the remaining processors take the full argument list on every move.
 
 For those remaining paths, `previewLayersRef.current[id]` is written but not read back as the next
 invocation's input, so each move redoes the work for the entire region the stroke has touched so far.
@@ -1866,7 +1867,8 @@ canvas handle in the processor contract would work, but it must NOT go in `args`
 conversion whitelists the tool-arg shape, and a canvas in `args` would either void the document or
 require a migration. Put it outside `args`.
 
-**Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()`
+**Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()` and the processor-specific incremental
+guards; the remaining processor modules still need the same contract.
 
 ## 124. An ordinary tool commit can move the document's size, and a mid-document bedrock blank layer is the production trigger
 
