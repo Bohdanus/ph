@@ -1578,6 +1578,19 @@ describe('text processor', () => {
     expect(result).toBeTruthy();
   });
 
+  it('returns a blank canvas when the platform provides no 2D context', () => {
+    const getContext = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockReturnValue(null as never);
+    try {
+      const [result] = text({ size: { width: 300, height: 150 } })(baseArgs);
+
+      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
+      expect(canvas.ctx.fillText).not.toHaveBeenCalled();
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+
   it('documents the current cost: a fresh full-document canvas and a fresh fillText pass on every replay (src/tools/text.ts:334-339)', () => {
     const params = { size: { width: 40, height: 20 } };
     const processor = text(params);

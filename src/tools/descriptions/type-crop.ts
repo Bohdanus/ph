@@ -38,7 +38,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The type size, entered in points by default and accepting a unit suffix. `TypeUnits` is `MILLIMETERS / PIXELS / POINTS`.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:277',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:279',
       },
       {
         control: 'Text color',
@@ -52,7 +52,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:372',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:373',
       },
       {
         control: 'Toggle the type on a path',
@@ -83,7 +83,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The check mark and the cancel cross, which appear only while a type layer is in edit mode — Adobe\'s own test for edit mode is that they are there: "look in the options bar — if you see the Commit button and the Cancel button, the type tool is in edit mode." Commit also fires on the numeric keypad\'s Enter and on Ctrl+Enter (Windows) or Command+Return (Mac OS). Esc commits by default, and the Use Esc key to commit text preference that flips it to cancel moved from Edit > Preferences > Type to Settings > Type in 23.0.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:484',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:485',
       },
     ],
     modifiers: [],
@@ -125,6 +125,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/util/rect.ts:116',
       'src/util/settings.ts:31',
       'src/tools/settings.ts:85',
+      'src/tools/text.ts:1077',
       'toolbar-mapping.ts:127',
     ],
     appNotes:
@@ -174,7 +175,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'Holding Ratio, W x H x Resolution, Original Ratio, 1 : 1 (Square), 4 : 5 (8 : 10), 5 : 7, 2 : 3 (4 : 6), 16 : 9 and Front Image, plus New Crop Preset… to save the current values and Delete Crop Preset to remove a saved one. Adobe names the first entry Ratio, not "Free", and defines it as cropping freely without a fixed ratio; Adobe\'s own reference is explicit about what unconstrained actually means — "Clicking the Clear button clears the values in the Width and Height fields in the option bar. If displayed, the value in the Resolution field is also cleared."',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:61',
+        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:71',
       },
       {
         control: 'Swap Width and Height values',
@@ -322,6 +323,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/contexts/useLayer.ts:203',
       'src/contexts/useLayer.ts:790',
       'src/util/settings.ts:39',
+      'src/contexts/useLayer.ts:1004',
       'src/tools/settings.ts:70',
       'toolbar-mapping.ts:66',
     ],

@@ -64,6 +64,17 @@ range.
 Adobe quotations that this pass did not open, including one this file had already recorded as
 unverifiable and left unquoted. See `Unverified` item 20.
 
+## Defensive input boundary
+
+The live crop commit remains the document-frame operation described below. Its registered raster
+processor is also defensive because old or hand-edited records can still reach a registry entry:
+missing, non-finite and zero-area crop rectangles are treated as no-op copies instead of producing a
+zero-sized bitmap or throwing while normalising the rectangle. The live document-frame commit
+rejects non-finite edges before `sortRoundRect`, so an invalid record cannot publish a frame whose
+size is `NaN`. Text creation follows the same platform boundary: an `OffscreenCanvas` with no 2D
+context yields a blank canvas rather than an exception during replay or export. These are safety
+guards, not Photoshop behaviour claims.
+
 ## Method
 
 Two passes. First the Photoshop half: `websearch` with `livecrawl: 'preferred'` over Adobe's

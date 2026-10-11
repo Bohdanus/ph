@@ -1337,13 +1337,13 @@ describe('toolProcessors dispatch for every tool name', () => {
     );
   });
 
-  it('cannot consume the seeded crop defaults at all (the crop processor in src/tools/crop.ts)', () => {
-    // Every other tool runs straight off its defaults; crop destructures `rect!` and the
-    // seeded rect is null, so the document-operation commit needs a real rect first.
+  it('consumes the seeded crop defaults as a no-op copy (the crop processor in src/tools/crop.ts)', () => {
+    // Crop's live document operation needs a real rect, but the registered processor must still
+    // tolerate the persisted default record during replay and return the source unchanged.
     expect(defaultSettings.crop.rect).toBeNull();
-    expect(() => toolProcessors.crop.imageProcessor({ size, bitmap })({ ...defaultSettings.crop } as never)).toThrow(
-      TypeError
-    );
+    const result = toolProcessors.crop.imageProcessor({ size, bitmap })({ ...defaultSettings.crop } as never);
+    expect(result).toEqual([bitmap]);
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
   });
 
   it('collapses both lasso tools to a 1x1 canvas for the default empty point list', () => {
