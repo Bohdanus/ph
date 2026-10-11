@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -315,6 +315,91 @@ describe('find-session-id', () => {
       const results = find(opened, 'path\\to\\file');
       expect(results.length).toBe(1);
       expect(results[0].id).toBe('ses_back');
+
+      opened.close();
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('excludes sessions older than the sinceMs cutoff', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'fsi-test-'));
+      const dbPath = join(dir, 'test.db');
+      const db = createDb(dbPath);
+
+      addSession(db, 'ses_old', { at: NOW - 10 * DAY });
+      const msgOld = 'msg-old';
+      addMessage(db, msgOld, 'ses_old', { at: NOW - 10 * DAY });
+      addPart(db, 'part-old', msgOld, 'ses_old', { type: 'text', text: 'matching phrase here' });
+
+      addSession(db, 'ses_recent', { at: NOW - 1 * DAY });
+      const msgRecent = 'msg-recent';
+      addMessage(db, msgRecent, 'ses_recent', { at: NOW - 1 * DAY });
+      addPart(db, 'part-recent', msgRecent, 'ses_recent', { type: 'text', text: 'matching phrase here' });
+
+      const opened = openDb(dbPath);
+      expect(opened).not.toBeNull();
+
+      const cutoff = NOW - 7 * DAY;
+      const results = find(opened, 'matching phrase', cutoff);
+      expect(results.length).toBe(1);
+      expect(results[0].id).toBe('ses_recent');
+
+      opened.close();
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('includes sessions at exactly the sinceMs boundary (>= is inclusive)', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'fsi-test-'));
+      const dbPath = join(dir, 'test.db');
+      const db = createDb(dbPath);
+
+      addSession(db, 'ses_boundary', { at: NOW - 7 * DAY });
+      const msgBound = 'msg-bound';
+      addMessage(db, msgBound, 'ses_boundary', { at: NOW - 7 * DAY });
+      addPart(db, 'part-bound', msgBound, 'ses_boundary', { type: 'text', text: 'matching phrase here' });
+
+      addSession(db, 'ses_recent', { at: NOW - 1 * DAY });
+      const msgRecent = 'msg-recent';
+      addMessage(db, msgRecent, 'ses_recent', { at: NOW - 1 * DAY });
+      addPart(db, 'part-recent', msgRecent, 'ses_recent', { type: 'text', text: 'matching phrase here' });
+
+      const opened = openDb(dbPath);
+      expect(opened).not.toBeNull();
+
+      const cutoff = NOW - 7 * DAY;
+      const results = find(opened, 'matching phrase', cutoff);
+      expect(results.length).toBe(2);
+      expect(results[0].id).toBe('ses_recent');
+      expect(results[1].id).toBe('ses_boundary');
+
+      opened.close();
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('includes all sessions when sinceMs is 0', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'fsi-test-'));
+      const dbPath = join(dir, 'test.db');
+      const db = createDb(dbPath);
+
+      addSession(db, 'ses_old', { at: NOW - 30 * DAY });
+      const msgOld = 'msg-old';
+      addMessage(db, msgOld, 'ses_old', { at: NOW - 30 * DAY });
+      addPart(db, 'part-old', msgOld, 'ses_old', { type: 'text', text: 'matching phrase here' });
+
+      addSession(db, 'ses_recent', { at: NOW - 1 * DAY });
+      const msgRecent = 'msg-recent';
+      addMessage(db, msgRecent, 'ses_recent', { at: NOW - 1 * DAY });
+      addPart(db, 'part-recent', msgRecent, 'ses_recent', { type: 'text', text: 'matching phrase here' });
+
+      const opened = openDb(dbPath);
+      expect(opened).not.toBeNull();
+
+      const results = find(opened, 'matching phrase', 0);
+      expect(results.length).toBe(2);
+      expect(results[0].id).toBe('ses_recent');
+      expect(results[1].id).toBe('ses_old');
 
       opened.close();
       db.close();
