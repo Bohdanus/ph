@@ -221,13 +221,14 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       setFileInput(null);
       return quality === undefined ? { fileName, format } : { fileName, format, quality };
     } catch (error) {
-      console.error('Failed to save file:', error);
-      // Preserve the null result for openSaveImageDialog callers so SaveDialog can show the
-      // failure. Clearing the resolver first keeps retries from settling an already-completed
-      // promise.
+      // Resolve the caller's promise with null so openSaveImageDialog callers
+      // (AppKeyboardShortcuts, DesktopHeader, etc.) treat the attempt as a non-save and
+      // skip their save-state dispatch. Clearing the resolver first keeps retries from
+      // settling an already-completed promise. Re-throw so SaveDialog's own catch block
+      // can surface the detailed error message and keep the dismiss affordance.
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
-      return null;
+      throw error;
     } finally {
       durableComposite?.release();
     }

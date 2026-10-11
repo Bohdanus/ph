@@ -216,9 +216,11 @@ describe('SaveDialog cancel and close paths', () => {
 describe('SaveDialog failure handling', () => {
   // The `catch` in `SaveDialog.handleSave` owns the failed save: the `finally` alone
   // only re-enables the controls, so without it a rejected `onSave` reached the void as
-  // an unhandled rejection and the failure was never recorded. The production caller
-  // (useFile.handleImageSave) catches its own failures, logs them, and resolves, so the
-  // contract under test here is the component boundary a rejecting caller crosses.
+  // an unhandled rejection and the failure was never recorded. In production,
+  // `useFile.handleImageSave` resolves the caller's promise with null before
+  // re-throwing, so SaveDialog's catch fires and surfaces the detailed error
+  // message with a dismiss affordance. The null-resolve path below is a defensive
+  // fallback for callers that swallow the error and return null instead.
   it('restores the controls when onSave resolves', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn().mockResolvedValue({ fileName: 'test.png', format: 'image/png' });
@@ -252,7 +254,7 @@ describe('SaveDialog failure handling', () => {
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
   });
 
-  it('shows inline error when onSave resolves with null (production failure path)', async () => {
+  it('shows inline error when onSave resolves with null (defensive fallback for swallowing callers)', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn().mockResolvedValue(null);
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
