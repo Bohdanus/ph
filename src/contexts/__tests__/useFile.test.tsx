@@ -629,7 +629,7 @@ describe('FileProvider save dialog after a failed export', () => {
     // the document is never marked saved.
     expect(resolved).toHaveBeenCalledExactlyOnceWith(null);
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('Export failed. Please check your settings and try again.');
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to save the file: Disk full');
     // `saving` is reset by SaveDialog's own `finally`, so the dialog is not a shell.
     expect(submit().disabled).toBe(false);
     expect(cancel().disabled).toBe(false);

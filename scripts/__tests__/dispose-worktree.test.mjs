@@ -25,7 +25,7 @@
 import { describe, expect, it, afterEach, beforeEach } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { sep, join } from 'node:path';
 import {
   KEEP_REF_PREFIX,
   MAX_INVENTORY_AGE_MS,
@@ -52,6 +52,9 @@ import { SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 import { ACTION, LIVE_WINDOW_MS } from '../lib/worktree-inventory/classify.mjs';
 
 const NOW = 1_800_000_000_000;
+
+/** Normalize a Unix-style path to the platform's native separator. */
+const np = (p) => p.split('/').join(sep);
 
 // Real files for the availability rule, which is about whether a path EXISTS —
 // something no injected stub can express. Under the OS temp dir, never the repo.
@@ -168,6 +171,24 @@ describe('dispose preflight', () => {
     expect(verdict.failures).toEqual([]);
     expect(verdict.ok).toBe(true);
     expect(verdict.keepBranch).toBe(true);
+  });
+
+  it('refuses --keep-branch for a land worktree: landing must delete the branch, not preserve it', () => {
+    const verdict = green({
+      preserveBranch: true,
+      gitState: greenState({ modified: 0, untracked: 0 }),
+      inventory: greenInventory({
+        record: {
+          action: ACTION.LAND,
+          mustNotPrune: false,
+          derivedLive: false,
+          writeHistory: {},
+        },
+      }),
+    });
+
+    expect(codes(verdict)).toContain('action-not-dispose');
+    expect(verdict.ok).toBe(false);
   });
 
   it('does not let branch-preserving removal decide an undecided worktree', () => {
@@ -877,13 +898,13 @@ describe('dispose execution', () => {
     // Keyed by the SLUGGED FULL PATH plus the name, not by the bare basename:
     // two worktrees can share a basename here, and `mkdirSync(recursive: true)`
     // had the second overwrite the first's archive.
-    const SALVAGE_DIR = '/repo/.git/worktree-salvage/repo-.kilo-worktrees-task-task';
+    const SALVAGE_DIR = np('/repo/.git/worktree-salvage/repo-.kilo-worktrees-task-task');
     expect(result.salvage.dir).toBe(SALVAGE_DIR);
-    expect(h.writes.map((w) => w.p)).toEqual([`${SALVAGE_DIR}/tracked.patch`]);
+    expect(h.writes.map((w) => w.p)).toEqual([`${SALVAGE_DIR}${sep}tracked.patch`]);
     // `tar`, never `git tar` — verified `git: 'tar' is not a git command`. The
     // swallowed failure made a partial salvage report itself as a success.
     expect(tars).toHaveLength(1);
-    expect(tars[0][1]).toBe(`${SALVAGE_DIR}/untracked.tar`);
+    expect(tars[0][1]).toBe(`${SALVAGE_DIR}${sep}untracked.tar`);
     expect(h.calls.some((c) => c.includes('tar'))).toBe(false);
   });
 
@@ -1638,9 +1659,9 @@ describe('locating the inventory', () => {
   it('resolves it in the main checkout, from a worktree', () => {
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
       run: gitSays('/repo/.git'),
-      exists: (p) => p === '/repo/WORKTREES.json',
+      exists: (p) => p === np('/repo/WORKTREES.json'),
     });
-    expect(resolved).toBe('/repo/WORKTREES.json');
+    expect(resolved).toBe(np('/repo/WORKTREES.json'));
   });
 
   it('does not fall back to the worktree copy when the main one is there', () => {
@@ -1648,7 +1669,7 @@ describe('locating the inventory', () => {
     // reads as a stale or absent inventory, and either way the disposal refuses.
     const resolved = locateInventory('/repo/.kilo/worktrees/task', {
       run: gitSays('/repo/.git'),
-      exists: (p) => p === '/repo/WORKTREES.json' || p === '/repo/.kilo/worktrees/task/WORKTREES.json',
+      exists: (p) => p === np('/repo/WORKTREES.json') || p === np('/repo/.kilo/worktrees/task/WORKTREES.json'),
     });
     expect(resolved).not.toContain('.kilo');
   });
@@ -1661,9 +1682,9 @@ describe('locating the inventory', () => {
             ? 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n'
             : '/repo/.git\n',
       }),
-      exists: (p) => p === '/repo/WORKTREES.json' || p === '/repo/.kilo/worktrees/main/WORKTREES.json',
+      exists: (p) => p === np('/repo/WORKTREES.json') || p === np('/repo/.kilo/worktrees/main/WORKTREES.json'),
     });
-    expect(resolved).toBe('/repo/.kilo/worktrees/main/WORKTREES.json');
+    expect(resolved).toBe(np('/repo/.kilo/worktrees/main/WORKTREES.json'));
   });
 
   it('does not use a bare inventory when the registered main worktree has none', () => {
@@ -1674,9 +1695,9 @@ describe('locating the inventory', () => {
             ? 'worktree /repo\nbare\n\nworktree /repo/.kilo/worktrees/main\nHEAD abc123\nbranch refs/heads/main\n'
             : '/repo/.git\n',
       }),
-      exists: (p) => p === '/repo/WORKTREES.json',
+      exists: (p) => p === np('/repo/WORKTREES.json'),
     });
-    expect(resolved).toBe('/repo/.kilo/worktrees/task/WORKTREES.json');
+    expect(resolved).toBe(np('/repo/.kilo/worktrees/task/WORKTREES.json'));
   });
 
   it('falls back to cwd outside a repository, so the injected suite still resolves', () => {
@@ -1686,7 +1707,7 @@ describe('locating the inventory', () => {
       },
       exists: () => false,
     });
-    expect(resolved).toBe('/somewhere/WORKTREES.json');
+    expect(resolved).toBe(np('/somewhere/WORKTREES.json'));
   });
 
   it('falls back to cwd when the main checkout has no inventory yet', () => {
@@ -1696,7 +1717,7 @@ describe('locating the inventory', () => {
       run: gitSays('/repo/.git'),
       exists: () => false,
     });
-    expect(resolved).toBe('/repo/.kilo/worktrees/task/WORKTREES.json');
+    expect(resolved).toBe(np('/repo/.kilo/worktrees/task/WORKTREES.json'));
   });
 
   it('checks the registered main worktree before falling back to the common directory', () => {

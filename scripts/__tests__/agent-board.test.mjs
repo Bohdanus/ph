@@ -84,6 +84,7 @@ const PACKAGE_JSON = resolve(import.meta.dirname ?? process.cwd(), '..', '..', '
 let dir;
 const agents = {};
 let clock = Date.parse('2026-09-28T12:00:00.000Z');
+const openBoards = [];
 
 const identityFor = (agentId) =>
   (agents[agentId] ??= {
@@ -97,12 +98,15 @@ const identityFor = (agentId) =>
   });
 
 /** A clock the test moves by hand, so lease expiry is tested, not waited for. */
-const boardFor = (agentId) =>
-  new Board({
+const boardFor = (agentId) => {
+  const board = new Board({
     dir,
     identity: identityFor(agentId),
     now: () => clock,
   }).open();
+  openBoards.push(board);
+  return board;
+};
 
 /**
  * A board on the real clock, for the tests that are about two processes seeing
@@ -110,7 +114,11 @@ const boardFor = (agentId) =>
  * on an injected clock and read by another on the real one expires at a moment
  * neither party chose, which is a test artefact and not a defect.
  */
-const liveBoardFor = (agentId) => new Board({ dir, identity: identityFor(agentId) }).open();
+const liveBoardFor = (agentId) => {
+  const board = new Board({ dir, identity: identityFor(agentId) }).open();
+  openBoards.push(board);
+  return board;
+};
 
 const advance = (ms) => {
   clock += ms;
@@ -123,7 +131,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  while (openBoards.length > 0) {
+    const board = openBoards.pop();
+    try {
+      board?.close();
+    } catch {
+      /* best-effort close before directory removal */
+    }
+  }
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('the board is testable where it is going to run', () => {
@@ -2591,12 +2607,15 @@ describe('the command line', () => {
  * released it in the same invocation.
  */
 describe('lease renewal when two agents share a branch', () => {
-  const openAs = (agentId, worktree) =>
-    new Board({
+  const openAs = (agentId, worktree) => {
+    const board = new Board({
       dir,
       identity: { agentId, kind: 'kilo', worktree, branch: agentId, sessionId: null, pid: 1, meta: {} },
       now: () => clock,
     }).open();
+    openBoards.push(board);
+    return board;
+  };
 
   it("renews only the claims made from the caller's own worktree", () => {
     const mine = join(dir, 'wt-shared-mine');

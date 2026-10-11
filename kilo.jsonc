@@ -34,17 +34,22 @@
 
       // Playwright flags that override `use.headless` after the config is read.
       //
-      // `--ui` IS DENIED ON THE FLAG ALONE, and the pattern used to require `playwright`
-      // to appear before it. That was wrong in a way only a counter-example shows:
-      // `npm run test:e2e -- --ui` — the spelling a model reaches for, because the
-      // npm script is already in its head — contains neither `playwright` nor
-      // `test:e2e:ui`, and fell through to the catch-all. e2e/global-setup.ts cannot
-      // cover it either: `runUIMode` RETURNS at cli/testActions.js:77, and
-      // `globalSetup` is only ever constructed inside `runAllTestsWithConfig`
-      // (runner/index.js:6949-6954), so the guard runs after the window is already up.
-      // Matching the flag is the only shape that catches the command whatever carries it.
+      // `--headed` opens a browser window regardless of config — denied.
+      // `--ui` launches Playwright's UI mode which also opens a window — asked so a
+      //   human can confirm if they genuinely want it. Using `ask` instead of `deny`
+      //   prevents blocking other tools that might use `--ui`.
+      // `--debug` launches a Playwright inspector — asked for the same reason.
+      //
+      // The patterns match the flag regardless of what carries it. For example,
+      // `npm run test:e2e -- --ui` — the spelling a model reaches for — contains
+      // neither `playwright` nor `test:e2e:ui`, and falls through to the catch-all.
+      // e2e/global-setup.ts cannot cover it either: `runUIMode` RETURNS at
+      // cli/testActions.js:77, and `globalSetup` is only ever constructed inside
+      // `runAllTestsWithConfig` (runner/index.js:6949-6954), so the guard runs after
+      // the window is already up. Matching the flag is the only shape that catches
+      // the command whatever carries it.
       "*--headed*": "deny",
-      "*--ui*": "deny",
+      "*--ui*": "ask",
       "*--debug*": "ask",
 
       // The HTML report opens a browser window and then waits forever
@@ -187,6 +192,14 @@
       // Keep force-deleting a local branch behind a human prompt.
       "*branch -D*": "ask",
     },
+
+    "external_directory": {
+      "/tmp/kilo/**": "allow",
+      ".kilo/worktrees/**": "allow"
+    },
+    "edit": {
+      ".kilo/**": "allow"
+    }
   },
 
   // Chrome DevTools, scoped to this project rather than the global config, and

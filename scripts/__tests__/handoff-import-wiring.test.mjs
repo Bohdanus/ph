@@ -19,14 +19,27 @@ import { importDocuments } from '../lib/agent-board/import-wiring.mjs';
 
 let dir;
 const identity = { agentId: 'importer', kind: 'kilo', worktree: null, branch: 'chore/import' };
-const boardFor = () => new Board({ dir, identity }).open();
+const openBoards = [];
+const boardFor = () => {
+  const board = new Board({ dir, identity }).open();
+  openBoards.push(board);
+  return board;
+};
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'agent-board-import-'));
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  while (openBoards.length > 0) {
+    const board = openBoards.pop();
+    try {
+      board?.close();
+    } catch {
+      /* best-effort close before directory removal */
+    }
+  }
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 describe('the import of the handoff documents', () => {

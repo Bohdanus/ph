@@ -291,7 +291,7 @@ const INTERNAL_ACTION_TYPES = [
  * dispatcher already answers with a test of its own.
  */
 function reducerSource(): string {
-  const source = readFileSync(join(srcDir, 'contexts/StoreContext.tsx'), 'utf8');
+  const source = readFileSync(join(srcDir, 'contexts/StoreContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
   const start = source.indexOf('function reducer(state: StoreData, action: StoreAction): StoreData {');
   expect(start).toBeGreaterThan(-1);
   const end = source.indexOf('\n}\n', start);

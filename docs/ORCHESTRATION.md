@@ -567,8 +567,14 @@ re-read this file before the destructive command.
 
 It refuses, and says which signal refused, unless all of these hold:
 
-- the generated inventory is **less than 15 minutes old** and calls this
-  worktree `action: "dispose"`;
+- the inventory's wall-clock `generatedAt` and evaluation time `ownership.asOf` are
+  **not in the future and no more than 15 minutes old**, and it calls this
+  worktree `action: "dispose"` — or `action: "legacy"`, which permits removing
+  the worktree while keeping the branch. `--keep-branch` explicitly allows an
+  operator to remove a freshly inventoried `action: "at-risk"` worktree
+  while retaining its branch;
+- it is not the base branch, even when the repository uses a bare primary
+  worktree and checks out the base branch in a linked worktree;
 - **no board claim, no board file lock and no live board agent** names it;
 - **no Kilo session** has it as its `directory` inside the live window;
 - its **working tree is clean** — re-read now, not taken from the inventory
@@ -601,11 +607,14 @@ text addressed to somebody else: _"only the operator may stop a writing chat"_, 
 are released by the agent that took them, not taken from it"_, or a `derived-live-writer`
 finding naming the chats that wrote inside the live window — which includes yours.
 
-**There is no escape from inside the agent.** No `--force` exists — the CLI rejects the flag
-outright, because a dirty tree is a finding rather than something to override — and
-`--max-age-minutes` is ceiling-clamped to the same 15 minutes the inventory-freshness check
-imposes. The only exit is `npm run swarm -- release <issue> --force --reason …`, which is the
-operator's move. Measured over the program's own refusal line: **24 sessions on 2026-10-01
+**There is no generic escape from inside the agent.** No `--force` exists — the CLI rejects the flag.
+`--keep-branch` is narrower: it only accepts a freshly inventoried `at-risk`
+action, archives tracked and untracked edits, clears them only after the
+archive succeeds, and keeps the branch ref. It does not override `mustNotPrune`,
+unreadable worktree state, ignored content, active ownership or in-progress operations.
+`undecided` is never eligible. `--max-age-minutes` is ceiling-clamped to the same 15 minutes the
+inventory-freshness check imposes. These options do not change ownership policy: board and session
+claims still require the operator to resolve ownership before removal. Measured over the program's own refusal line: **24 sessions on 2026-10-01
 and 2026-10-02, 35 to date.** Read it as a statement about the operator, not about the
 worktree: the verdict is right — you _were_ writing there — and the remedy belongs to whoever
 can stop your session. The half that is wrong is that an agent cannot release its own recorded

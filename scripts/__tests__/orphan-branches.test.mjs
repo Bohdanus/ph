@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectOrphanBranches, report } from '../orphan-branches.mjs';
@@ -12,7 +12,7 @@ vi.setConfig({ testTimeout: 20_000 });
  * worktree is gone, and one already merged.
  */
 function fixture() {
-  const root = execFileSync('sh', ['-c', 'cd "$(mktemp -d)" && pwd -P']).toString().trim();
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'orphan-branches-')));
   const g = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   // Absolute only: `write(join(orphan, name))` would be joined twice and ENOENT.
   const write = (path, body) => writeFileSync(path, body);

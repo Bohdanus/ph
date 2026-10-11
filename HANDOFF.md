@@ -550,10 +550,7 @@ not the tiles. Any future invented tool fails it. It is cheap, and it is the tri
 other eight steps safe.
 
 **What this costs in tests, before a single tool is added.** The hand-copied lists are the expense,
-and they are already drifted: `constants.test.ts` — the `it('names a tool that exists in the tool
-registry')` title holds a hand-copied
-29-name list that is **12 short of the real 41** and passes only because its assertion is
-`toContain`. `toolIcons.test.tsx` — `toolIconNames` holds a 46-name union by hand;
+and they are already drifted: `toolIcons.test.tsx` — `toolIconNames` holds a 46-name union by hand;
 `tool-processors.test.ts`
 carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx` — the
 `it('renders the available tools in Photoshop-inspired order')` title pins

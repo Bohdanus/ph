@@ -84,6 +84,7 @@
  * curated finding protects it stays exactly where it is.
  */
 
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -1110,7 +1111,9 @@ export function readInventory(cwd, gitState, { nowMs = Date.now(), path = locate
   const evaluationAt = doc.ownership?.asOf ?? null;
   const evaluationAtMs = Date.parse(evaluationAt);
   const record =
-    (doc.worktrees ?? []).find((w) => realpathIfExists(w.absolutePath ?? w.path) === gitState.absolutePath) ?? null;
+    (doc.worktrees ?? []).find(
+      (w) => realpathIfExists(w.absolutePath ?? w.path) === realpathIfExists(gitState.absolutePath)
+    ) ?? null;
   return {
     ok: true,
     reason: null,
@@ -1640,7 +1643,7 @@ const USAGE = `Usage: node scripts/dispose-worktree.mjs <worktree> [--dry-run] [
 
 For a registered worktree, refuses unless the generated inventory calls it
 \`action: "dispose"\` or \`action: "legacy"\`, or \`--keep-branch\` explicitly selects
-an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
+ an \`at-risk\` worktree. No board claim, lock or live agent may name it, no session
 may have it as its directory inside the live window, and ignored content or Git
 operations in progress always refuse removal.
 
@@ -1661,10 +1664,10 @@ ref survives. No anchor ref is written, because the branch is the copy being
 kept. See docs/ORCHESTRATION.md.
 
 \`--keep-branch\` explicitly permits a freshly inventoried \`action: "at-risk"\`
-worktree to be removed while retaining its branch. Tracked edits and untracked
-files are archived under the common git directory first. It still refuses live
-ownership, unreadable state, ignored content, operations in progress,
-\`mustNotPrune\`, and \`undecided\` worktrees. Review with \`--dry-run\` first.
+worktree to be removed while retaining its branch. Tracked edits
+and untracked files are archived under the common git directory first. It still
+refuses live ownership, unreadable state, ignored content, operations in
+progress, \`mustNotPrune\`, and \`undecided\` worktrees. Review with \`--dry-run\` first.
 `;
 
 function main(argv) {
@@ -1930,6 +1933,6 @@ function anchorDisambiguation(cwd, slug, source, tip, run) {
   return `-g${hash}`;
 }
 
-if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && realpathIfExists(process.argv[1]) === realpathIfExists(fileURLToPath(import.meta.url))) {
   process.exitCode = main(process.argv);
 }

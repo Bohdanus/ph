@@ -24,10 +24,31 @@ Use the `ses_…` value returned by the Kilo session host. If it is not exposed 
 search of Kilo's database can help locate candidates by a distinctive phrase from the current task.
 Return enough context to verify the match; do not blindly take the first row:
 
+### Using the `session:id` helper (recommended)
+
+```sh
+npm run session:id -- "distinctive current task phrase"
+# or from any worktree:
+# node scripts/find-session-id.mjs "distinctive current task phrase"
+```
+
+The helper opens `~/.local/share/kilo/kilo.db` read-only (using the built-in `node:sqlite` module, so it
+needs no `node_modules`), searches top-level sessions for the phrase, and prints the most recent match's
+ID to stdout. Verify the match by running with `FIND_SESSION_VERBOSE=1`:
+
+```sh
+npm run session:id -- "distinctive current task phrase" 2>&1
+```
+
+When no phrase is given, the helper falls back to the most recent top-level session across all
+repositories (use `FIND_SESSION_VERBOSE=1` to verify the directory). If the database cannot be opened
+or no session matches, the helper exits non-zero with a message on stderr.
+
+If the helper is unavailable, fall back to a manual read-only search:
+
 ```sh
 sqlite3 -readonly "$HOME/.local/share/kilo/kilo.db" "
   SELECT s.id, s.title, s.directory,
-         datetime(s.time_created / 1000, 'unixepoch') AS created,
          datetime(s.time_updated / 1000, 'unixepoch') AS updated
   FROM session s
   JOIN message m ON m.session_id = s.id

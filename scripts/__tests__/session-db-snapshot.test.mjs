@@ -76,7 +76,7 @@ describe('createSessionDbSnapshot', () => {
     await snapshot.cleanup();
     expect(existsSync(snapshot.dbPath)).toBe(false);
     await snapshot.cleanup();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('includes a part updated recently even when it was created earlier', async () => {
@@ -119,7 +119,7 @@ describe('createSessionDbSnapshot', () => {
     expect(copy.prepare("SELECT id FROM part WHERE id = 'old-part-1499'").get()).toBeUndefined();
     copy.close();
     await snapshot.cleanup();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('returns null for a missing source instead of exposing the live path', async () => {
@@ -158,6 +158,6 @@ describe('createSessionDbSnapshot', () => {
 
     expect(snapshot).not.toBeNull();
     await snapshot.cleanup();
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 });

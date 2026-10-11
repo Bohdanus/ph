@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
@@ -557,7 +557,7 @@ describe('resolveBoardDb', () => {
     const dir = makeRepo();
     try {
       const p = resolveBoardDb(dir);
-      expect(p.startsWith('/')).toBe(true);
+      expect(isAbsolute(p)).toBe(true);
       // The failure this pins: plain `git rev-parse --git-common-dir` answers
       // the RELATIVE string ".git", which DatabaseSync then resolves against
       // process.cwd() — a different directory in every worktree.
