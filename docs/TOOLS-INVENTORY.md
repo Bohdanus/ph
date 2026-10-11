@@ -151,7 +151,6 @@ are covered by `e2e/single-row-column-marquee.spec.ts`.
 | **Healing Brush**      | Retouch — healing flyout, second entry                                                   | `J`, printed on Adobe's own page                                                                                                                                          | Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample, Diffusion                                                                                                                      | Adobe's Healing Brush page lists _"Mode, Source, Aligned, Sample, and Diffusion"_                                                                                                                                                                                                                                                               |
 | **Patch**              | Retouch — healing flyout, third entry                                                    | `J`, printed on Adobe's own page                                                                                                                                          | Patch option Normal, then Source or Destination                                                                                                                                                           | Adobe's Patch page lists _"Normal"_ and _"Source or Destination"_                                                                                                                                                                                                                                                                               |
 | **Remove**             | Retouch — healing flyout                                                                 | not researched — no Adobe shortcut page opened                                                                                                                            | Size, Mode dropdown (Generative AI on / off / Auto), Sample All Layers, Remove after each stroke, Output to                                                                                               | Adobe's Remove tool page names all five controls; the shortcut is not confirmed on any Adobe page. `HANDOFF.md` §74 established Adobe-documented membership.                                                                                                                                                                                    |
-| **Red Eye**            | Retouch — healing flyout, fifth entry                                                    | `J` — **Adobe-confirmed** via the Spot Healing Brush page (Adobe: _"Select the Spot Healing Brush (J)"_); Red Eye is the fifth member of the `J` flyout; `Shift+J` cycles | Pupil Size and Darken Amount (sliders; range 1–100, default 50 — third-party; Adobe names both but gives no range or default)                                                                             | Adobe's _"Remove red eye in flash photos"_ page names both sliders; the `J` shortcut is confirmed on Adobe's Spot Healing Brush page (Adobe prints `(J)`). Adobe does not publish the detection algorithm or the slider ranges/defaults.                                                                                                        |
 | **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser                           | `E` — **Adobe-confirmed** (Adobe NZ/AU: _"Select the Background Eraser tool (E)"_); shared with Eraser and Magic Eraser; `Shift+E` cycles the family                      | Brush Preset (Size, Hardness, Spacing, Angle, Roundness), Sampling (Continuous / Once / Background Swatch), Limits (Discontiguous / Contiguous / Find Edges), Tolerance (0–100), Protect Foreground Color | Adobe's _"Change pixels to transparent with the Background Eraser tool"_ page names every control; Adobe's NZ/AU pages confirm `(E)`.                                                                                                                                                                                                           |
 | **Adjustment Brush**   | Painting — **Brush flyout sibling**; placement (standalone vs. flyout) is **unresolved** | none of its own                                                                                                                                                           | not researched — third-party only; options bar contents from glensmith + creativepro, not Adobe-confirmed                                                                                                 | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed membership via the dedicated Adjustment Brush page. Toolbar placement is contradictory: `glensmith.co.uk` (2026-08-14) says standalone, `photoshopessentials.com` (2024-02-16) says Brush flyout. Options bar not researched against Adobe. |
 
@@ -171,11 +170,21 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and the seven Adobe-group tables below hold **32 rows** in total
-(Drawing 1, Selection 3, Retouch 7, Painting 5, Type 3, Navigation and measuring 10, Path 3), which is
+`src/contexts/tool-types.ts` — and the seven Adobe-group tables below hold **31 rows** in total
+(Drawing 1, Selection 3, Retouch 6, Painting 5, Type 3, Navigation and measuring 10, Path 3), which is
 neither 29 nor the 30 this file attributes to `TOOLS-TOO-HARD.md`: the two lists are counted
-separately and are not reconciled here. **Two claims the deleted row carried were themselves
-wrong**, and they are the reason this note exists rather than a bare `git log` entry:
+separately and are not reconciled here.
+
+**Red Eye was on this table and is not any more, which is recorded here rather than left as a
+quiet deletion.** It was the fifth member of this table's `J` healing flyout row, and the app now
+ships it: `src/tools/redEye.ts` is the tool, `src/components/ToolbarsRight/RedEye/RedEye.tsx` is
+its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Red Eye Tool** with the
+sources behind it. The tool uses a bounded connected red-pixel correction as an approximation of
+Photoshop's proprietary eye/pupil detector; `docs/TOOLS.md` §Red Eye Tool records that
+approximation and the limits Adobe's HelpX page does not document.
+
+**Two claims the Sponge row carried were themselves wrong**, and they are the reason this note
+exists rather than a bare `git log` entry:
 
 - It cited "`docs/TOOLS.md` (Sponge section)" as evidence for the `O` cycle. **There was no Sponge
   section in `docs/TOOLS.md`**, and there could not have been: that file is generated from the
@@ -192,8 +201,8 @@ wrong**, and they are the reason this note exists rather than a bare `git log` e
 because they are geometry and pixel loops rather than new subsystems. **It does not list
 the Healing Brush** — `grep -n "Healing Brush" HANDOFF.md` returns nothing, and §74 puts
 **Spot Healing** in the opposite list, the one headed "Largest, and they need a primitive
-the app does not have". **The Sponge was the one of those two that has actually been
-built**; Red Eye is still absent, and so is the Healing Brush.
+the app does not have". **The Sponge and Red Eye are now implemented**; the Healing Brush
+remains absent.
 
 ## Painting
 
@@ -410,7 +419,6 @@ this file; the "not researched" cells in the tables above are the same fact at r
 - **Selection Brush** options bar. Adobe's _"Selecting with the Lasso tools"_ page names Hardness, Opacity, Color overlay, Add/Subtract brush and selection modes.
 - **Remove** options bar. Adobe's Remove tool page names Size, Mode (Gen AI on/off/Auto), Sample All Layers, Remove after each stroke, Output to.
 - **Spot Healing Brush** options bar. Adobe's 2025 page confirms Brush Preset, Mode, Type (Content-Aware / Proximity Match / Create Texture) and Sample All Layers; **Pressure is not a control** on this tool.
-- **Red Eye** shortcut and options bar. `J` confirmed via Adobe's Spot Healing Brush page; Adobe's Red Eye page names Pupil Size and Darken Amount.
 - **Background Eraser** shortcut and options bar. Adobe's NZ/AU pages confirm `(E)`; Adobe's main page names Brush Preset, Sampling, Limits, Tolerance and Protect Foreground Color.
 - **Mixer Brush** options bar. Adobe's _"Paint with the Mixer Brush"_ page lists Wet, Load, Mix, Sample All Layers, Current Brush Load (Load / Clean), Load/Clean after each stroke, Preset menu, plus Brush Preset / Mode / Opacity / Flow / Airbrush.
 - **History Brush** shortcut and options bar. Adobe confirms `(Y)`; options bar carries Brush Preset, Mode, Opacity, Flow; **Source is set in the History panel**, not the options bar.
@@ -441,9 +449,8 @@ parameter where `selectRectangle` takes both. Their cycling key is still unverif
 - `Z` (Zoom), `V` (Artboard). Adobe's own pages were not opened for these letters.
 - `W` for Object Selection, `E` for Background Eraser, `K` for Frame, `C` for Slice and Perspective Crop — **upgraded from third-party to Adobe-confirmed**: Adobe's own tool pages now print these letters. See the Adobe shortcuts confirmed via web search snippets note above.
 - `Shift+Y`, `Shift+S`, `Shift+K`, `Shift+T`, `Shift+A`, `N` are from a **CS2** sheet. They
-  are recorded because they are the best available evidence, not because a 2026 Adobe page
-  confirms them.
-- Red Eye's letter `J` is confirmed for the healing family via Adobe's Spot Healing Brush page, but Red Eye's own shortcut page was not opened.
+   are recorded because they are the best available evidence, not because a 2026 Adobe page
+   confirms them.
 - `Shift+B` for the Mixer Brush is third-party; Adobe does not print a dedicated Mixer Brush letter on its current shortcut reference.
 
 **Group order and separators — hypothesis, not fact**
