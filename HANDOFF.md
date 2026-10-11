@@ -521,9 +521,7 @@ the suite's default way to make a mark, **25 call sites across 14 e2e specs**, a
 `brush`, `pencil` and `color-replacement` are all built on `buildDrawArgs` and `draw()` — only the
 tool goes, and the engine should be renamed to stop pretending to be one.
 
-**Cheapest real additions**, and they are parallelisable because they touch disjoint files: Single
-Row and Single Column Marquee (SHIPPED 2026-10-01, `src/tools/singleRowColumnMarquee.ts`; the
-phrase "two lines of geometry reusing `rectangularSelection`" held up), Sponge, Red
+**Cheapest real additions**, and they are parallelisable because they touch disjoint files: Sponge, Red
 Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
 is the measurement band — Color Sampler, Note, Count — because these are `PIXEL_FREE_TOOLS` like
 the Eyedropper and the Ruler, committing no pixels and needing no durable operation. **The Ruler is

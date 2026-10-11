@@ -48,29 +48,6 @@ observation, not a baseline; run `npm run test:e2e` for the current result. The
 open findings below describe independent weaknesses in the suite and remain work
 even when a full run passes.
 
-The earlier export-line and `pen-types` failures recorded here are gone because
-their causes were fixed, not because assertions were relaxed:
-`ab5f53c` corrected the export line's document constant, which had been derived
-from the canvas box rather than from the document, so the stroke landed 23 rows
-off the committed baseline. The recorded pixels were correct all along. The
-Chrome 155 visual mismatches recorded in the 2026-10-07 run were not reproduced
-by the latest full headless run.
-
-Three defect groups used to fail here and have been fixed in this repository. Their
-evidence is kept below rather than deleted, because each explains a shape the suite
-must not drift back into:
-
-| was failing                                                                                                                       | was                                     | now                                            |
-| --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ---------------------------------------------- |
-| `e2e/helpers/cdp-helpers.spec.ts`                                                                                                 | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts` — its `Enter activates focused flyout item` and `full keyboard flow: open, navigate, select` tests | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
-| `e2e/levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast` tests                            | 2, both modes                           | canvas found by test id, not document order    |
-
-All of these historical failures were introduced with the specs and were
-independent of how they were moved into this repository: each was reproducible
-with no changes to the specs or to `src/`. The current failures above are separate
-from that fixed history.
-
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
@@ -100,24 +77,6 @@ comment of `sidebar-keyboard.spec.ts`, above `GROUPED_TILE`. The hazard is
 reported as recurring across this project's test work generally, which is why the
 default is structural rather than procedural: it removes the failure class instead
 of relying on everyone to remember.
-
-Headless is also simply better for this suite, and that part is measured. The
-failure sets are disjoint per mode and deterministic across repeats:
-
-| specs                                                                                                                                   | headed | headless |
-| --------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------- |
-| CDP, deriving expected size from `getDevicePixelRatio()` (the `captureCanvasScreenshot` block in `e2e/helpers/cdp-helpers.spec.ts`)     | 5 fail | pass     |
-| CDP, explicit `deviceScaleFactor: 2` block (the `captureCanvasScreenshot at an emulated deviceScaleFactor of 2` block in the same spec) | pass   | 2 fail   |
-
-So headless was the better mode even then, and both sets have since been fixed
-(below).
-
-**Headed runs are for looking at, not for gating on.** If you must run headed, a
-headless result is what CI will produce. The five CDP failures in the table above
-were _expected_ in a headed run at the time and are fixed now, so a headed run is
-expected to be green too — which is the one claim in this file that no run in this
-repository can establish. `test:e2e:headed` prints its warning on every invocation,
-so the tradeoff is visible at the moment it is accepted.
 
 **The invariant is layered, not "impossible".** Without the explicit
 `PLAYWRIGHT_ALLOW_HEADED=1` opt-in, `refuseVisibleBrowser()` rejects `--headed`,
@@ -391,45 +350,7 @@ Two specs are `test.skip` by declaration:
   declaration's own reason is the intermittent CDP capture drift that `TEST-FLAKES.md`
   §12 still records as open, behind an operator decision dated 2026-09-29.
 
-## Verified and still unverified
-
-**Verified by running the suite against a real browser:**
-
-- The 7 comparison formats matched the committed baselines, before the toolbar
-  grew. `e2e/export/visual-regression.spec.ts` passed, so every baseline the spec
-  reads decoded and matched its committed pixels on this host. The ICO spec passes
-  in-browser against the source canvas. They no longer match; the one layout change
-  that moved them and the three ways out are recorded under **Checked here and
-  rejected** below, which is where a re-derived claim about them belongs.
-
-  **This was not true until the `updateSnapshots` guard was fixed** — see the
-  transferred-findings section, whose deleted P1 recorded it. The check that produced
-  this claim was `if (testInfo.config.updateSnapshots)`,
-  and Playwright's default for that option is the string `'missing'`, so the branch was
-  always taken: every run re-recorded the baseline and returned before
-  `compareScreenshots`. The comparison below it was unreachable, so "matches the
-  committed baselines" was never actually established by any run. It is now, and it was
-  established by mutation testing rather than by a green bar: a corrupted baseline fails
-  with a sharp decode error, and a valid-but-different baseline fails with
-  `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)`. Before the fix both
-  were silently overwritten and the spec passed.
-
-- The CDP failing set used to be deterministic per browser mode with disjoint sets. The numbers
-  are the finding here — they are the line numbers the failing run's own output carried, quoted
-  as it printed them:
-
-  ```
-  headed failed :128 :142 :157 :179 :208
-  headless failed :272 :287
-  ```
-
-  Both sets reproduced identically across repeats and are now empty, and the new
-  assertions are mode-independent by construction rather than by observation.
-
-- `levels.spec.ts` — its `changes red line via brightness` and `changes red line via contrast`
-  cases — used to fail in both modes, 2/2 each, which is
-  what established the `getWorkspaceCanvas` index shift as a real defect rather
-  than a mode artifact. Both pass now that the canvas is found by test id.
+## Still unverified
 
 **Not verified:**
 
