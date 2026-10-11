@@ -16,8 +16,17 @@ type Theme = 'light' | 'dark';
  * rendered two different ways on two machines, with nothing in the repo recording
  * which one a screenshot was taken under. A stored preference still wins (below), so
  * a visitor who toggles to light keeps it.
+ *
+ * TEST OVERRIDE: `import.meta.env.VITE_TEST_THEME` can be set to 'light' or 'dark'
+ * to force a specific theme in tests without mocking localStorage. This is only
+ * respected when no saved preference exists.
  */
 const DEFAULT_THEME: Theme = 'dark';
+
+function getTestOverride(): Theme | null {
+  const env = import.meta.env?.VITE_TEST_THEME;
+  return env === 'light' || env === 'dark' ? env : null;
+}
 
 interface ThemeContextType {
   theme: Theme;
@@ -28,6 +37,9 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
+    const testOverride = getTestOverride();
+    if (testOverride) return testOverride;
+
     const savedTheme = localStorage.getItem('theme');
     return savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : DEFAULT_THEME;
   });

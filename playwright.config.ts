@@ -196,24 +196,9 @@ export default defineConfig({
      * the dark threshold, and under light the letterbox is above the near-white one.
      * The thresholds are not "roughly right"; they are calibrated to one palette.
      *
-     * Playwright's own default is 'light', so every already-green test is correct today
-     * and is correct by an inherited value that this file never stated.
-     * `e2e/document-dialogs.spec.ts` no longer pins the theme itself; its own comment
-     * records that as a deletion rather than a demotion, which is what makes this line
-     * the only pin.
-     *
-     * What breaks without it, in the canvas helpers: every `hasDarkPixels` wait can be
-     * satisfied by the dark letterbox alone, and every `getStrokeAnalysis` reads a
-     * backdrop it believes is the page's background. A stroke that never landed passes
-     * its wait and fails later, or passes for the wrong reason.
-     *
-     * This DECLARES a precondition every green test already relies on; it constrains
-     * nothing new. It is deliberately not a variable: an escape hatch on a pixel
-     * threshold is a way to turn the suite's colour measurements off, which is the same
-     * move as raising a threshold, and it would not be greppable as one. A spec that
-     * genuinely needs the dark palette should pin `colorScheme: 'dark'` on itself and
-     * measure the direction it depends on, exactly as document-dialogs.spec.ts did. */
-    colorScheme: 'light',
+     * The app defaults to dark theme. Tests that rely on light-theme pixel thresholds
+     * must pin `colorScheme: 'light'` on themselves. */
+    colorScheme: 'dark',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
