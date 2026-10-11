@@ -71,8 +71,9 @@ What makes it unresolvable from the documents alone:
 - The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
   "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
   `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
-  **That 41 is §74's own historical figure, not today's count** — the registry carries 44 now,
-  since the Sponge and the two 1-pixel marquees were added to it. The quotation is left as §74 states it rather than
+  **That 41 is §74's own historical figure, not today's count** — the registry carries 53 now,
+  since the Sponge, the two 1-pixel marquees, and additional implementations (Star, Red Eye,
+  the healing flyout family, and others) were added to it. The quotation is left as §74 states it rather than
   silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
   the **70-tool target**, not counted off a roster. A combined list of 36 means either the
   target is 72 or two entries do not belong.
@@ -108,11 +109,11 @@ someone who trusts the source material.
 
 ## Drawing
 
-| Adobe tool | Group                                                                  | Shortcut                                             | Headline options                             | Source                                                                                                                              |
-| ---------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **Star**   | Drawing — shapes flyout; exact position relative to Line is unresolved | none of its own; reached by cycling the shapes group | Points, corner radius, inner and outer radii | Adobe's drawing-tools overview and Star-tool page; see the sourced Shape-family research in `src/tools/descriptions/shape.notes.md` |
-
-**Star is now implemented.** Adobe's separate Star-tool page names its points and inner/outer radii,
+**Star was on this table and is not any more**, which is recorded here rather than left as a
+quiet deletion. It was the sole entry in this table, sourced from Adobe's drawing-tools overview
+and Star-tool page (see the Shape-family research in `src/tools/descriptions/shape.notes.md`).
+The row documented the unresolved question of Star's exact position relative to Line in the
+shape flyout. **Star is now implemented.** Adobe's separate Star-tool page names its points and inner/outer radii,
 and the sourced Shape-family research records its options and the app-side implementation
 (`src/tools/descriptions/shape.notes.md`, Star-tool research). Star renders via the `shape` tool with
 `figure: 'star'`, and `FigureType` in `src/tools/shape.ts` includes `'star'`.
@@ -176,8 +177,8 @@ three share `J` and ship in the app: `src/tools/spotHealing.ts`, `src/tools/heal
 `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx` and `src/components/ToolbarsRight/Patch/Patch.tsx`
 are their bars, and `docs/TOOLS.md` carries the generated per-tool census at **§Spot Healing Brush Tool**,
 **§Healing Brush Tool** and **§Patch Tool** with the sources behind them. Deleting the rows keeps this
-file's contract — every row here is absent from `src/contexts/tool-types.ts` — and the seven
-Adobe-group tables below hold **28 rows** in total (Drawing 1, Selection 3, Retouch 3, Painting 5,
+file's contract — every row here is absent from `src/contexts/tool-types.ts` — and the six
+Adobe-group tables below hold **27 rows** in total (Selection 3, Retouch 3, Painting 5,
 Type 3, Navigation and measuring 10, Path 3), which is neither the 30 this file
 attributes to `TOOLS-TOO-HARD.md` nor the 31 it carried before these three Retouch rows were
 removed: the two lists are counted separately and are not reconciled here.
