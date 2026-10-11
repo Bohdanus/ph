@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { collectOrphanBranches, report } from '../orphan-branches.mjs';
 
 vi.setConfig({ testTimeout: 20_000 });
+const rmOptions = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
 
 /**
  * A repository with three unmerged branches: one whose worktree still exists, one whose
@@ -53,7 +54,7 @@ describe('a branch nobody holds', () => {
       expect(rows[0].ahead).toBe(1);
       expect(rows[0].conflicts).toBe(0);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, rmOptions);
     }
   });
 
@@ -85,7 +86,7 @@ describe('a branch nobody holds', () => {
       expect(orphan2).toBeTruthy();
       expect(orphan2.conflicts).toBeGreaterThan(0);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, rmOptions);
     }
   });
 

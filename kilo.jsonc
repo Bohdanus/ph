@@ -35,9 +35,9 @@
       // Playwright flags that override `use.headless` after the config is read.
       //
       // `--headed` opens a browser window regardless of config — denied.
-      // `--ui` launches Playwright's UI mode which also opens a window — asked so a
+      // `--ui` launches Playwright's UI mode which also opens a window — asked so
       //   human can confirm if they genuinely want it. Using `ask` instead of `deny`
-      //   prevents blocking other tools that might use `--ui`.
+      //   allows a human to opt in to interactive UI mode.
       // `--debug` launches a Playwright inspector — asked for the same reason.
       //
       // The patterns match the flag regardless of what carries it. For example,
