@@ -23,6 +23,8 @@ export type CropToolArgs = {
    */
   preRatioRect?: RectXYSorted | null;
   aspectRatio?: number | null;
+  /** Rotation of the pending crop box in degrees, around its centre. */
+  angle?: number;
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
 

@@ -179,6 +179,9 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      rotationEnabled?: boolean;
+      rotation?: number;
+      onRotationChange?: UseRectProps['onRotationChange'];
       onRepaint?: UseRectProps['onRepaint'];
       onChange?: UseRectProps['onChange'];
       onChangeEnd?: UseRectProps['onChangeEnd'];
@@ -191,6 +194,9 @@ describe('useRect', () => {
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
       isMoveTool: options.isMoveTool ?? false,
+      rotationEnabled: options.rotationEnabled ?? false,
+      rotation: options.rotation ?? 0,
+      onRotationChange: options.onRotationChange,
       containerRef: { current: containerElement },
       overlayRef: { current: overlayCanvas },
       onRepaint: options.onRepaint ?? vi.fn(),
@@ -407,6 +413,49 @@ describe('useRect', () => {
   });
 
   describe('handlePointerMove', () => {
+    it('shows a rotation cursor and rotates the rect from a corner hotspot', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 90, clientY: 90, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toBe(CURSOR_MAP.rotate);
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 90, clientY: 90, target })
+        );
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 285, clientY: 65, target }));
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(onRotationChange).toHaveBeenCalled();
+      expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
+    });
+
+    it('keeps the painted handles hit-testable after the rect rotates', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+        rotation: 90,
+      });
+
+      // The local top-left corner (100,100) rotates to (275,75) around (200,175).
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: 275, clientY: 75, target: createMockTarget() })
+          )
+        ).toBe(true);
+      });
+    });
+
     it('reports a hit for every handle and edge of the rect, and a miss off it', () => {
       // `isMouseDown` is owned by the (mocked) pointer-position hook and is false here, so a move is
       // a HOVER: it reports whether an edge is under the pointer and resizes nothing. The drag
