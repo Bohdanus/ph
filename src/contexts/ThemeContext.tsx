@@ -37,13 +37,11 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
-    const testOverride = getTestOverride();
-    if (testOverride) return testOverride;
-
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
 
     // TEST OVERRIDE: VITE_TEST_THEME can force a theme when no stored preference exists.
+    // A stored user preference always wins over this; it is purely for testing.
     const testOverride = getTestOverride();
     if (testOverride) return testOverride;
 
