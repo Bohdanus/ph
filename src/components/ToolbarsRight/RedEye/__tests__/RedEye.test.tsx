@@ -75,7 +75,7 @@ describe('RedEye options bar', () => {
     expect(darkenAmount).toHaveValue('20');
   });
 
-  it('does not call patchToolArgs when slider is set to its current value', () => {
+  it('does not call patchToolArgs when slider value is unchanged (React controlled input behavior)', () => {
     render(<RedEye />);
 
     const pupilSize = screen.getByRole('slider', { name: 'Pupil Size' });
