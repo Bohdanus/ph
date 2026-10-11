@@ -30,6 +30,13 @@ export const createMockCanvasContext = (overrides: Record<string, unknown> = {})
   clip: vi.fn(),
   isPointInPath: vi.fn(() => false),
   isPointInStroke: vi.fn(() => false),
+  getImageData: vi.fn((_sx: number, _sy: number, _sw: number, _sh: number) => ({
+    data: new Uint8ClampedArray([255, 255, 255, 255]),
+    width: 1,
+    height: 1,
+    colorSpace: 'srgb' as const,
+  })),
+  putImageData: vi.fn(),
   createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   createConicGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
