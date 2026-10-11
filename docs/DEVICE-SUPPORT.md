@@ -36,9 +36,11 @@ the desktop tool and panel contract; it must not become a separate phone product
 
 **Fragile sites for D2c (display resolution increase):**
 
-- `EyedropperToolArea.tsx`: clips sample window against `canvas.width`/`canvas.height` (would sample half-size physical region at 2×)
-- `rect.ts:144` / `text.ts:75-80`: text tool measures on overlay context but bakes into layer-sized OffscreenCanvas (diverge at 2×)
-- `useRect.ts:216`/`221`: clears with document `imageSize` but clamps with overlay backing store (different units that coincide only at 1×)
+```
+- EyedropperToolArea.tsx: clips sample window against canvas.width/canvas.height (would sample half-size physical region at 2x)
+- rect.ts / text.ts: text tool measures on overlay context but bakes into layer-sized OffscreenCanvas (diverge at 2x)
+- useRect.ts: clears with document imageSize but clamps with overlay backing store (different units that coincide only at 1x)
+```
 
 ## Engineering Rules
 
