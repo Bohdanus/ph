@@ -98,6 +98,9 @@ export type UseRectProps = {
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
 
+  /** The document canvas, sampled to pick an overlay-guide color that inverts the underlying pixels. */
+  documentCanvasRef?: RefObject<HTMLCanvasElement | null>;
+
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 
@@ -117,13 +120,61 @@ const RECT_BORDER_DASH_LENGTH = 5;
 const RECT_BORDER_DASH_SPEED = 0.4;
 const ROTATE_HOTZONE = 24;
 
+/**
+ * Samples the document canvas at strategic points within the crop rect and returns
+ * an inverted color for the overlay guides, so they stay visible on both light and
+ * dark image content — matching Photoshop's behavior.
+ *
+ * Returns white as a fallback when no document canvas is available or when sampling
+ * fails (e.g. cross-origin canvas).
+ */
+function computeOverlayColor(documentCanvas: HTMLCanvasElement | null, rect: Pos): string {
+  if (!documentCanvas) return 'rgba(255, 255, 255, 0.8)';
+
+  const ctx = documentCanvas.getContext('2d');
+  if (!ctx) return 'rgba(255, 255, 255, 0.8)';
+
+  const { x, y, width, height } = rect;
+  const samplePoints = [
+    { x: x + width / 3, y: y + height / 3 },
+    { x: x + (2 * width) / 3, y: y + height / 3 },
+    { x: x + width / 2, y: y + height / 2 },
+    { x: x + width / 3, y: y + (2 * height) / 3 },
+    { x: x + (2 * width) / 3, y: y + (2 * height) / 3 },
+  ];
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (const point of samplePoints) {
+    try {
+      const pixel = ctx.getImageData(Math.round(point.x), Math.round(point.y), 1, 1);
+      r += pixel.data[0];
+      g += pixel.data[1];
+      b += pixel.data[2];
+      count += 1;
+    } catch {
+      // skip out-of-bounds or tainted samples
+    }
+  }
+
+  if (count === 0) return 'rgba(255, 255, 255, 0.8)';
+
+  const avgR = Math.round(r / count);
+  const avgG = Math.round(g / count);
+  const avgB = Math.round(b / count);
+  return `rgba(${255 - avgR}, ${255 - avgG}, ${255 - avgB}, 0.8)`;
+}
+
 /** Paints Photoshop's crop composition guide in canvas pixels. */
 export function drawCropOverlay(
   ctx: CanvasRenderingContext2D,
   rect: Pos,
   overlayType: CropOverlayType = 'ruleOfThirds',
   orientation: CropOverlayOrientation = 'normal',
-  scale = 1
+  scale = 1,
+  documentCanvas: HTMLCanvasElement | null = null
 ) {
   const { x, y, width, height } = rect;
   const vertical = (ratio: number) => x + width * ratio;
@@ -133,8 +184,9 @@ export function drawCropOverlay(
     ctx.lineTo(x2, y2);
   };
 
+  const overlayColor = computeOverlayColor(documentCanvas, rect);
   ctx.save();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.strokeStyle = overlayColor;
   ctx.lineWidth = 1 / scale;
   ctx.setLineDash([]);
   ctx.beginPath();
@@ -222,6 +274,7 @@ export function useRect({
   onRotationChange,
   overlayType,
   overlayOrientation = 'normal',
+  documentCanvasRef,
 
   containerRef,
   overlayRef,
@@ -594,12 +647,26 @@ export function useRect({
 
     if (overlayType) {
       if (angle === 0) {
-        drawCropOverlay(ctx, { x, y, width, height }, overlayType, overlayOrientation, scale);
+        drawCropOverlay(
+          ctx,
+          { x, y, width, height },
+          overlayType,
+          overlayOrientation,
+          scale,
+          documentCanvasRef?.current
+        );
       } else {
         ctx.save();
         ctx.translate(centerX, centerY);
         ctx.rotate((angle * Math.PI) / 180);
-        drawCropOverlay(ctx, { x: -width / 2, y: -height / 2, width, height }, overlayType, overlayOrientation, scale);
+        drawCropOverlay(
+          ctx,
+          { x: -width / 2, y: -height / 2, width, height },
+          overlayType,
+          overlayOrientation,
+          scale,
+          documentCanvasRef?.current
+        );
         ctx.restore();
       }
     }
