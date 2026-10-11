@@ -184,7 +184,11 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const { applyDocumentCrop } = useLayers();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect, overlayType = 'ruleOfThirds', overlayOrientation = 'normal' } = args;
+  const { aspectRatio, rect, angle = 0, overlayType = 'ruleOfThirds', overlayOrientation = 'normal' } = args;
+  const clearDraft = () =>
+    args.angle === undefined
+      ? { ...args, rect: null, preRatioRect: null }
+      : { ...args, angle: 0, rect: null, preRatioRect: null };
 
   /**
    * Photoshop commits a crop with Enter and abandons it with Escape, so the panel's Apply and Clear
@@ -209,12 +213,12 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     cropKeysRef.current = {
       commit: () => {
         if (args.rect && applyDocumentCrop(args.rect)) {
-          setToolArgs({ ...args, rect: null, preRatioRect: null });
+          setToolArgs(clearDraft());
         }
       },
       cancel: () => {
         if (!args.rect && !args.preRatioRect) return;
-        setToolArgs({ ...args, rect: null, preRatioRect: null });
+        setToolArgs(clearDraft());
       },
     };
   });
@@ -281,6 +285,9 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     // Crop is the one consumer whose box may run off the frame, so it keeps the overhang instead
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,
+    rotationEnabled: true,
+    rotation: angle,
+    onRotationChange: (nextAngle: number) => setToolArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType,
     overlayOrientation,
 
@@ -321,7 +328,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const dash = painted ? OUTLINE_DASH / painted.fit.scale : 0;
 
   return (
-    <div className={`${className} cursor-crop`} {...pointerHandlers}>
+    <div className={`${className} cursor-crop`} data-rotation={angle} {...pointerHandlers}>
       {overhangPieces.length > 0 && painted && (
         /**
          * `pointer-events: none` is inherited, so this one declaration takes the whole subtree out
@@ -345,7 +352,11 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
             style={{
               width: totalSize.width,
               height: totalSize.height,
-              transform: `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale})`,
+              transformOrigin: `${(painted.rect.x1 + painted.rect.x2) / 2}px ${(painted.rect.y1 + painted.rect.y2) / 2}px`,
+              transform:
+                angle === 0
+                  ? `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale})`
+                  : `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale}) rotate(${angle}deg)`,
             }}
           >
             {overhangPieces.map((piece) => (

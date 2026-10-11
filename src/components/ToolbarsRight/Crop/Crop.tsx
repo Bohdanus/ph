@@ -29,6 +29,10 @@ const Crop: React.FC<{}> = () => {
 
   const args = toolArgs as CropToolArgs;
   const { aspectRatio, rect, preRatioRect, overlayType = 'ruleOfThirds' } = args;
+  const clearDraft = () =>
+    args.angle === undefined
+      ? { ...args, rect: null, preRatioRect: null }
+      : { ...args, angle: 0, rect: null, preRatioRect: null };
 
   const onChange = setToolArgs;
 
@@ -112,17 +116,13 @@ const Crop: React.FC<{}> = () => {
           className={PRIMARY_BUTTON}
           disabled={!rect}
           onClick={() => {
-            if (rect && applyDocumentCrop(rect)) onChange({ ...args, rect: null, preRatioRect: null });
+            if (rect && applyDocumentCrop(rect)) onChange(clearDraft());
           }}
         >
           Apply
         </button>
 
-        <button
-          className={SECONDARY_BUTTON}
-          disabled={!rect}
-          onClick={() => onChange({ ...args, rect: null, preRatioRect: null })}
-        >
+        <button className={SECONDARY_BUTTON} disabled={!rect} onClick={() => onChange(clearDraft())}>
           Clear
         </button>
       </div>

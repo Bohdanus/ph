@@ -32,7 +32,7 @@ import { shape } from '../shape.ts';
 import { sharpen } from '../sharpen.ts';
 import { smudge } from '../smudge.ts';
 import { sponge } from '../sponge.ts';
-import { text } from '../text.ts';
+import { clearTextRasterCache, text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
@@ -528,6 +528,7 @@ describe('toolProcessors registry', () => {
 describe('paint tool raster processors', () => {
   beforeEach(() => {
     RecordingOffscreenCanvas.instances = [];
+    clearTextRasterCache();
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
 
@@ -1297,6 +1298,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     // returning, because the only thing asked was that something came back.
     for (const [toolName, outcome, expectedWidth, expectedHeight] of defaultsOutcomeTable) {
       RecordingOffscreenCanvas.instances = [];
+      if (toolName === 'text') clearTextRasterCache();
       const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
         ...defaultSettings[toolName],
       } as never);
