@@ -307,7 +307,6 @@ describe('waitForCanvasPixels', () => {
 describe('waitForCanvasPixels on a region that is not in view', () => {
   const VIEWPORT_HEIGHT = 720;
   const DOCUMENT_HEIGHT = 1177;
-  const MAX_SCROLL_Y = DOCUMENT_HEIGHT - VIEWPORT_HEIGHT;
 
   /** The measured wide stroke: page y 748..908, inside a 720px window. */
   const BELOW_THE_FOLD: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
@@ -438,18 +437,23 @@ describe('waitForCanvasPixels on a region that is not in view', () => {
     expect(harness.clips()[0].y + straddling.height).toBeLessThanOrEqual(VIEWPORT_HEIGHT);
   });
 
-  it('does not ask the page for a scroll it cannot perform', async () => {
-    // A region taller than the window can never be fully in view; the request must still
-    // land on the page's real scroll extent rather than somewhere unreachable.
+  it('refuses a clip taller than the viewport rather than scrolling or photographing it', async () => {
+    // A region taller than the window can never be fully in view, and the old behaviour
+    // scrolled to the nearest reachable position and photographed whatever the viewport
+    // trimmed down to — a short image at exit 0. See `HANDOFF.md` §242. The guard runs
+    // before the visibility check and before any scroll, so the refusal names both numbers
+    // and no scroll request is made.
     const harness = scrolledPage();
     const tallerThanTheWindow: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
 
-    await waitForCanvasPixels(harness.page, tallerThanTheWindow, always(true), { timeoutMs: 1_000 });
+    await expect(
+      waitForCanvasPixels(harness.page, tallerThanTheWindow, always(true), { timeoutMs: 1_000 })
+    ).rejects.toThrow(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested 900px in a ${VIEWPORT_HEIGHT}px window`
+    );
 
-    for (const request of harness.scroll.scrollRequests()) {
-      expect(request.y).toBeGreaterThanOrEqual(0);
-      expect(request.y).toBeLessThanOrEqual(MAX_SCROLL_Y);
-    }
+    expect(harness.screenshot).not.toHaveBeenCalled();
+    expect(harness.scroll.scrollRequests()).toEqual([]);
   });
 });
 

@@ -179,7 +179,7 @@ function cropOverhangPieces(rect: RectXYSorted, frameSize: Size, fit: ContainDim
 }
 
 export const CropToolArea = ({ className }: cropToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
+  const [{ containerRef, toolOverlayRef, canvasRef, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { applyDocumentCrop } = useLayers();
 
@@ -298,6 +298,8 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     onRotationChange: (nextAngle: number) => setToolArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType,
     overlayOrientation,
+
+    documentCanvasRef: canvasRef,
 
     onRepaint: (sortedRect: RectXYSorted) => {
       // Read after this render has bound `pointerState`. The closure runs from inside `drawMask`,
