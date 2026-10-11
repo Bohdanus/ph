@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import {
   isBuffer,
   buildClip,
@@ -7,6 +7,8 @@ import {
   getSelectionBounds,
   getStrokeAnalysis,
   STROKE_ANALYSIS,
+  takeLineScreenshot,
+  waitForCanvasPixels,
   type BoundingBox,
   type ClipOptions,
   type ImageDataResult,
@@ -20,9 +22,13 @@ import {
   TRANSPARENT,
   WHITE,
   captureRegionOf,
+  cleanupTempDirs,
   createImageData,
+  createScrollablePage,
+  createTestInfoMock,
   fillAll,
   fillRect,
+  makeOutputDir,
   setPixel,
   type Color,
 } from './canvas-helpers.fixtures';
@@ -394,5 +400,101 @@ describe('getSelectionBounds default thresholds', () => {
     expect(result).not.toBeNull();
     expect(result!.left).toBe(0);
     expect(result!.bottom).toBe(3);
+  });
+});
+
+/**
+ * `onScreenClip` is module-private, so these tests drive it through its two public gates,
+ * `waitForCanvasPixels` and `takeLineScreenshot`, and assert on the throw. That is the
+ * contract: a clip taller than the viewport is refused BEFORE anything is scrolled or
+ * photographed, so a caller asking for a region the page cannot render gets an error
+ * naming both numbers instead of a short image at exit 0. See `HANDOFF.md` §242.
+ *
+ * The default `createScrollablePage` geometry is a window that holds its whole page, so
+ * every clip here is already on screen; the only thing under test is the height guard,
+ * which runs before the visibility check. The fixture's viewport is 1280x1080 by default,
+ * so the short-clip cases below are the ordinary path and exist to prove the guard does
+ * not over-refuse.
+ */
+describe('onScreenClip refuses an over-tall clip', () => {
+  const SHORT_VIEWPORT = 720;
+  const overTall: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
+
+  it('throws naming the requested height and the viewport height', async () => {
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+
+    await expect(waitForCanvasPixels(harness.page, overTall, async () => true, { timeoutMs: 1_000 })).rejects.toThrow(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested 900px in a ${SHORT_VIEWPORT}px window`
+    );
+    // Nothing was scrolled and nothing was photographed: the refusal is at the gate.
+    expect(harness.screenshot).not.toHaveBeenCalled();
+    expect(harness.scroll.scrollRequests()).toEqual([]);
+  });
+
+  it('refuses even when the region is already fully on screen', async () => {
+    // The guard runs before the `alreadyVisible` check, so a clip that fits vertically
+    // in the page but not in the window is refused regardless of scroll position.
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+
+    await expect(waitForCanvasPixels(harness.page, overTall, async () => true, { timeoutMs: 1_000 })).rejects.toThrow(
+      /cannot be taller than the viewport/
+    );
+    expect(harness.screenshot).not.toHaveBeenCalled();
+  });
+
+  it('refuses through takeLineScreenshot, which routes every clip the same way', async () => {
+    const outputDir = await makeOutputDir('over-tall-line');
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+    const { testInfo } = createTestInfoMock(outputDir);
+
+    await expect(
+      takeLineScreenshot(harness.page, { x: 0, y: 0, width: 1280, height: 1280 }, 'over-tall', testInfo, {
+        x: 0,
+        y: 0,
+        width: 1280,
+        height: 900,
+      })
+    ).rejects.toThrow(/cannot be taller than the viewport/);
+    expect(harness.screenshot).not.toHaveBeenCalled();
+  });
+
+  it('admits a clip exactly the viewport height', async () => {
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+    const exact: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: SHORT_VIEWPORT };
+
+    await expect(
+      waitForCanvasPixels(harness.page, exact, async () => true, { timeoutMs: 1_000 })
+    ).resolves.toBeUndefined();
+    expect(harness.screenshot).toHaveBeenCalledTimes(1);
+    expect(harness.clips()).toEqual([exact]);
+  });
+
+  it('admits a clip shorter than the viewport and photographs it as given', async () => {
+    const harness = createScrollablePage({ viewportHeight: SHORT_VIEWPORT, documentHeight: SHORT_VIEWPORT });
+    const short: Required<ClipOptions> = { x: 10, y: 20, width: 120, height: 100 };
+
+    await waitForCanvasPixels(harness.page, short, async () => true, { timeoutMs: 1_000 });
+    expect(harness.clips()).toEqual([short]);
+  });
+
+  it('admits a clip shorter than the viewport that needs scrolling into view', async () => {
+    // Below the fold but NOT over-tall: the guard must not refuse a region the page can
+    // render, only one it cannot.
+    const harness = createScrollablePage({
+      viewportHeight: SHORT_VIEWPORT,
+      documentHeight: 1_177,
+      initialScrollY: 0,
+    });
+    const belowTheFold: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
+
+    await expect(
+      waitForCanvasPixels(harness.page, belowTheFold, async () => true, { timeoutMs: 1_000 })
+    ).resolves.toBeUndefined();
+    expect(harness.screenshot).toHaveBeenCalledTimes(1);
+    expect(harness.clips()[0].y + belowTheFold.height).toBeLessThanOrEqual(SHORT_VIEWPORT);
+  });
+
+  afterEach(async () => {
+    await cleanupTempDirs();
   });
 });

@@ -620,9 +620,24 @@ function clamp(value: number, min: number, max: number): number {
  * reports success — and because "the page does not scroll" is a property of the current
  * layout rather than of the helper's contract. If a future change reintroduces an
  * overflowing page, the read below degrades to working instead of to a false negative.
+ *
+ * WHAT THIS FUNCTION WILL NOT DO, AND WHY IT IS CHECKED FIRST. A clip whose HEIGHT exceeds
+ * the viewport's cannot be photographed whole: `page.screenshot` trims the clip against the
+ * viewport and returns the intersection without saying so, so a 900px clip in a 720px
+ * window comes back 720px tall at exit 0. The scroll below moves the region's ORIGIN, and
+ * it deliberately does not move its EXTENT — nothing here bounds `clip.height`, and the
+ * `clamp` at the top of this file bounds the scroll TARGET, not the clip. An over-tall clip
+ * therefore takes the scroll path, keeps its full height, and is photographed short. See
+ * `HANDOFF.md` §242. Refusing is the only honest answer: the caller asked for a region the
+ * page cannot render, and a smaller image is a wrong answer wearing a plausible shape.
  */
 async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
+  if (clip.height > viewport.height) {
+    throw new Error(
+      `onScreenClip: a screenshot clip cannot be taller than the viewport: requested ${clip.height}px in a ${viewport.height}px window`
+    );
+  }
   const pageRect = viewportRectToPageRect(clip, { x: viewport.scrollX, y: viewport.scrollY });
   const alreadyVisible =
     pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height;
