@@ -14,71 +14,18 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
+import {
+  DELIBERATE_OVERFLOW_CSS_PX,
+  LEGACY_FIXED_SLACK_CSS_PX,
+  MAX_BOX_DRIFT_CSS_PX,
+  toleranceFor,
+} from './helpers/viewport-tolerance';
 
 const VIEWPORTS = [
   { name: 'normal', width: 1280, height: 720 },
   { name: 'wide', width: 1600, height: 900 },
   { name: 'narrow', width: 900, height: 700 },
 ] as const;
-
-/**
- * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
- * (`src/tools/settings.ts:38`, `pen: { alpha: 0.9, lineWidth: 10 }`, spread into the `draw`
- * args at `:68-74`). A stroke's painted extent therefore runs half a stroke WIDER than the
- * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
- * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
- * is not at the cursor, and it is why the bound below is a function of the fit scale rather
- * than a constant: the same 10 document pixels are 12.7 CSS px in the `wide` window and 9.4
- * in `narrow`, so any single constant is either loose at one window or tight at another.
- */
-const DRAW_HALF_WIDTH_DOC_PX = 5;
-
-/**
- * What is left after the geometric half-width: the faint antialiased fringe of the round
- * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
- * pixel index to the CENTRE of that pixel (see its JSDoc, `screenshot-scale.ts:153-176`) and
- * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
- * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
- * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
- * than on it. 2px covers both; the measured slack over it is 2.9-3.7px at the three windows
- * below, so this is a margin and not a fit.
- */
-const ANTIALIASED_FLANGE_CSS_PX = 2;
-
-/**
- * The fixed constant this test used before, kept ONLY as a ceiling the derived tolerance is
- * asserted against. It is not the tolerance; see `expect(toleranceFor(...)).toBeLessThan`
- * below. It is here so that a future edit which replaces the derived bound with a literal
- * fails loudly instead of quietly re-widening the gate.
- */
-const LEGACY_FIXED_SLACK_CSS_PX = 25;
-
-/**
- * How far the canvas box may drift between the gesture and the capture that photographs it.
- * Nothing: the two have to describe the same rectangle, and layout here is pixel-quantised,
- * so anything above sub-pixel noise means the page was re-laid-out in between.
- */
-const MAX_BOX_DRIFT_CSS_PX = 0.5;
-
-/**
- * How far the stroke's painted edge may sit from the cursor point that asked for it: the
- * brush's own half-width converted to CSS by the app's contain fit, plus the fringe above.
- *
- * Derived from `containFit`, which is the suite's single implementation of the app's fit and
- * is asserted equal to the app's own published `data-fit-*` at more than one rect size by
- * `e2e/export/visual-regression.spec.ts`. So the bound moves WITH the window instead of
- * being a constant that happened to hold.
- *
- * What it does NOT absorb is any mapping error, and that is the load-bearing property. The
- * `drawLine` P2 (`e2e/OPEN_PROBLEMS.md`, "drawLine applies no contain scale") is a mismatch
- * worth TENS of CSS pixels: at the `wide` window below, the difference between painting the
- * document stretched across the box and painting it contained is 88px in x (379.5 against
- * 291.5 for the start point). A bound of 8.36px still catches that with an order of
- * magnitude to spare, so this number can absorb the stroke's own width and nothing else.
- */
-function toleranceFor(box: BoundingBox): number {
-  return DRAW_HALF_WIDTH_DOC_PX * containFit(box, DEFAULT_DOCUMENT_SIZE).scale + ANTIALIASED_FLANGE_CSS_PX;
-}
 
 interface ViewportMeasurement {
   name: string;
@@ -347,16 +294,16 @@ test.describe('Viewport Drawing', () => {
     // ---- NON-VACUITY CONTROL for the COMPARISON ITSELF. ----
     // A derived bound can be wrong in the direction that matters: too large, or computed
     // from a term that evaluates to zero. So the exact expression each assertion below uses
-    // is run against a stroke displaced by 40 CSS px — 5x the widest tolerance above, and
-    // well past any plausible fit failure — and must reject it. This is the same shape as
+    // is run against a stroke displaced by `DELIBERATE_OVERFLOW_CSS_PX` — 5x the widest
+    // tolerance above, and well past any plausible fit failure — and must reject it. This is the same shape as
     // the deliberate-overflow control in `e2e/no-document-overflow.spec.ts`: prove the
     // numbers notice, because "found nothing" and "measured nothing" are otherwise the
     // same result.
     for (const measurement of measurements) {
       const tolerance = toleranceFor(measurement.box);
       expect(
-        Math.abs(40) > tolerance,
-        `${measurement.name}: the comparison cannot detect a 40px displacement (tolerance ${tolerance.toFixed(2)}px)`
+        Math.abs(DELIBERATE_OVERFLOW_CSS_PX) > tolerance,
+        `${measurement.name}: the comparison cannot detect a ${DELIBERATE_OVERFLOW_CSS_PX}px displacement (tolerance ${tolerance.toFixed(2)}px)`
       ).toBe(true);
     }
 
