@@ -22,6 +22,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 type Size = { width: number; height: number };
 
+/** Settling time for the Crop tool's Enter-commit to finish re-allocating the backing store. */
+const CROP_COMMIT_SETTLE_MS = 400;
+
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error('The workspace canvas has no box');
@@ -180,7 +183,7 @@ test.describe('document size across many tool commits', () => {
     const end = documentToCanvasOffset(box, 520, 420);
     await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(CROP_COMMIT_SETTLE_MS);
     const afterCrop = await backingStore(page);
     const cropFooter = await footerDimensions(page);
     console.log(`[PW-CROP] after-crop backingStore=${JSON.stringify(afterCrop)} footer="${cropFooter}"`);
