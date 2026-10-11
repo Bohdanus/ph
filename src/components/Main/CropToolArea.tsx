@@ -229,6 +229,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
         return;
       if (event.key.toLowerCase() === 'o') {
         event.preventDefault();
+        event.stopPropagation();
         const current = overlayKeysRef.current;
         if (event.shiftKey && (current.overlayType === 'triangle' || current.overlayType === 'goldenSpiral')) {
           setToolArgs({
@@ -242,12 +243,19 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
         }
         return;
       }
-      if (event.key === 'Enter') cropKeysRef.current.commit();
-      else if (event.key === 'Escape') cropKeysRef.current.cancel();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        cropKeysRef.current.commit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        cropKeysRef.current.cancel();
+      }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [setToolArgs]);
 
   /**

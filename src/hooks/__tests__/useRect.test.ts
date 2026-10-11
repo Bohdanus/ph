@@ -109,6 +109,36 @@ describe('useRect', () => {
     expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
+  it('draws distinct triangle orientations around a golden-ratio anchor', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 10, y: 20, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle');
+    expect(ctx.moveTo.mock.calls).toEqual([
+      [10, 20],
+      [310, 20],
+      [10, 220],
+    ]);
+    expect(ctx.lineTo.mock.calls).toEqual([
+      [310, 220],
+      [195.4, 143.6],
+      [195.4, 143.6],
+    ]);
+
+    vi.clearAllMocks();
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 'flipped');
+    expect(ctx.moveTo.mock.calls).toEqual([
+      [310, 20],
+      [10, 20],
+      [310, 220],
+    ]);
+    expect(ctx.lineTo.mock.calls[0]).toEqual([10, 220]);
+    expect(ctx.lineTo.mock.calls[1][0]).toBeCloseTo(124.6);
+    expect(ctx.lineTo.mock.calls[1][1]).toBeCloseTo(143.6);
+    expect(ctx.lineTo.mock.calls[2][0]).toBeCloseTo(124.6);
+    expect(ctx.lineTo.mock.calls[2][1]).toBeCloseTo(143.6);
+  });
+
   it('draws both orientations of the golden spiral', () => {
     const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
     drawCropOverlay(

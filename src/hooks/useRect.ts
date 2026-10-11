@@ -145,11 +145,14 @@ export function drawCropOverlay(
       break;
     case 'triangle': {
       const flip = orientation === 'flipped';
-      const left = flip ? x + width : x;
-      const right = flip ? x : x + width;
-      line(left, y, right, y + height);
-      line(right, y, left, y + height);
-      line(x + width / 2, y, x + width / 2, y + height);
+      const diagonalStart = flip ? { x: x + width, y } : { x, y };
+      const diagonalEnd = flip ? { x, y: y + height } : { x: x + width, y: y + height };
+      const anchor = flip
+        ? { x: x + width * 0.382, y: y + height * 0.618 }
+        : { x: x + width * 0.618, y: y + height * 0.618 };
+      line(diagonalStart.x, diagonalStart.y, diagonalEnd.x, diagonalEnd.y);
+      line(flip ? x : x + width, y, anchor.x, anchor.y);
+      line(flip ? x + width : x, y + height, anchor.x, anchor.y);
       break;
     }
     case 'goldenRatio':
