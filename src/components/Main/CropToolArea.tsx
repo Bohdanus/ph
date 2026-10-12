@@ -5,7 +5,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { sortRoundRect } from '../../util/rect.ts';
 import { HANDLE_SIZE } from '../../util/constants.ts';
 import type { ContainDimensions } from '../../util/contain-fit.ts';
-import { CROP_OVERLAYS, type CropToolArgs } from '../../tools/crop.ts';
+import { CROP_OVERLAYS, type CropToolArgs, type CropOverlayType } from '../../tools/crop.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point, Pos, RectXYSorted, Size } from '../../contexts/general-types.ts';
@@ -184,7 +184,15 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const { applyDocumentCrop } = useLayers();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect, angle = 0, overlayType = 'ruleOfThirds', overlayOrientation = 'normal' } = args;
+  const {
+    aspectRatio,
+    rect,
+    angle = 0,
+    overlayType = 'ruleOfThirds',
+    overlayOrientation = 0,
+    overlayVisibility = 'always',
+    gridDivisions = 10,
+  } = args;
   const clearDraft = () =>
     args.angle === undefined
       ? { ...args, rect: null, preRatioRect: null }
@@ -236,14 +244,25 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
         event.stopPropagation();
         const current = overlayKeysRef.current;
         if (event.shiftKey && (current.overlayType === 'triangle' || current.overlayType === 'goldenSpiral')) {
+          const orientationCount = current.overlayType === 'triangle' ? 4 : 8;
+          const currentOrientation =
+            typeof current.overlayOrientation === 'number'
+              ? current.overlayOrientation
+              : current.overlayOrientation === 'flipped'
+                ? 1
+                : 0;
           setToolArgs({
             ...current.args,
             overlayType: current.overlayType,
-            overlayOrientation: current.overlayOrientation === 'normal' ? 'flipped' : 'normal',
+            overlayOrientation: (currentOrientation + 1) % orientationCount,
           });
         } else if (!event.shiftKey) {
           const index = CROP_OVERLAYS.indexOf(current.overlayType);
-          setToolArgs({ ...current.args, overlayType: CROP_OVERLAYS[(index + 1) % CROP_OVERLAYS.length] });
+          setToolArgs({
+            ...current.args,
+            overlayType: CROP_OVERLAYS[(index + 1) % CROP_OVERLAYS.length] as CropOverlayType,
+            overlayOrientation: 0,
+          });
         }
         return;
       }
@@ -298,6 +317,8 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     onRotationChange: (nextAngle: number) => setToolArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType,
     overlayOrientation,
+    overlayVisibility,
+    gridDivisions,
 
     documentCanvasRef: canvasRef,
 

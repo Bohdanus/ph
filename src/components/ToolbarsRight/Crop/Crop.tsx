@@ -1,5 +1,13 @@
-import React from 'react';
-import { CROP_OVERLAYS, type CropToolArgs, type CropOverlayType } from '../../../tools/crop.ts';
+import React, { useState } from 'react';
+import {
+  CROP_OVERLAYS,
+  GRID_DIVISIONS_DEFAULT,
+  GRID_DIVISIONS_MAX,
+  GRID_DIVISIONS_MIN,
+  type CropToolArgs,
+  type CropOverlayType,
+  type CropOverlayVisibility,
+} from '../../../tools/crop.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
@@ -28,7 +36,19 @@ const Crop: React.FC<{}> = () => {
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect, preRatioRect, overlayType = 'ruleOfThirds' } = args;
+  const {
+    aspectRatio,
+    rect,
+    preRatioRect,
+    overlayType = 'ruleOfThirds',
+    overlayOrientation = 0,
+    overlayVisibility = 'always',
+    gridDivisions = GRID_DIVISIONS_DEFAULT,
+  } = args;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const orientationValue =
+    typeof overlayOrientation === 'number' ? overlayOrientation : overlayOrientation === 'flipped' ? 1 : 0;
+  const orientationCount = overlayType === 'triangle' ? 4 : 8;
   const clearDraft = () =>
     args.angle === undefined
       ? { ...args, rect: null, preRatioRect: null }
@@ -99,7 +119,7 @@ const Crop: React.FC<{}> = () => {
           id="crop-overlay"
           value={overlayType}
           onChange={(event) =>
-            onChange({ ...args, overlayType: event.target.value as CropOverlayType, overlayOrientation: 'normal' })
+            onChange({ ...args, overlayType: event.target.value as CropOverlayType, overlayOrientation: 0 })
           }
           className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
@@ -109,6 +129,80 @@ const Crop: React.FC<{}> = () => {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="relative">
+        <button
+          type="button"
+          aria-label="Crop settings"
+          aria-expanded={settingsOpen}
+          className={SECONDARY_BUTTON}
+          onClick={() => setSettingsOpen((open) => !open)}
+        >
+          Settings
+        </button>
+        {settingsOpen && (
+          <div
+            role="menu"
+            aria-label="Crop settings menu"
+            className="absolute left-0 top-full z-50 mt-1 flex min-w-64 flex-col gap-3 rounded border border-gray-300 bg-white p-3 text-sm shadow-lg dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          >
+            <label className="flex items-center justify-between gap-3" htmlFor="crop-overlay-visibility">
+              <span>Overlay visibility</span>
+              <select
+                id="crop-overlay-visibility"
+                value={overlayVisibility}
+                onChange={(event) =>
+                  onChange({ ...args, overlayVisibility: event.target.value as CropOverlayVisibility })
+                }
+                className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-600 dark:bg-gray-800"
+              >
+                <option value="always">Always Show</option>
+                <option value="auto">Auto Show</option>
+                <option value="never">Never Show</option>
+              </select>
+            </label>
+
+            {(overlayType === 'triangle' || overlayType === 'goldenSpiral') && (
+              <label className="flex items-center justify-between gap-3" htmlFor="crop-overlay-orientation">
+                <span>Orientation</span>
+                <select
+                  id="crop-overlay-orientation"
+                  value={orientationValue}
+                  onChange={(event) => onChange({ ...args, overlayOrientation: Number(event.target.value) })}
+                  className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-600 dark:bg-gray-800"
+                >
+                  {Array.from({ length: orientationCount }, (_, index) => (
+                    <option key={index} value={index}>
+                      {index + 1} of {orientationCount}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <label className="flex items-center justify-between gap-3" htmlFor="crop-grid-divisions">
+              <span>Grid divisions</span>
+              <input
+                id="crop-grid-divisions"
+                type="number"
+                min={GRID_DIVISIONS_MIN}
+                max={GRID_DIVISIONS_MAX}
+                step={1}
+                value={gridDivisions}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value))
+                    onChange({
+                      ...args,
+                      gridDivisions: Math.max(GRID_DIVISIONS_MIN, Math.min(GRID_DIVISIONS_MAX, Math.round(value))),
+                    });
+                }}
+                className="w-16 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-600 dark:bg-gray-800"
+              />
+            </label>
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2">
