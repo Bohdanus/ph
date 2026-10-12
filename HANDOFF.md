@@ -719,33 +719,6 @@ groups", not "no letter repeats".
 **These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
 doing them here would land the deletion without the replacement rail.
 
-## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
-
-A correction, because a wrong claim in this repository's own history is read by every future agent
-that runs `git log`. `b001d7d` states that five components fold `!isBedrock` into the flag they
-hand `usePaintStroke` — Dodge, Burn, Smudge, CloneStamp and Gradient — "and not one had a test".
-Both halves need narrowing, and the error in the second one is about coverage rather than about
-the flag.
-
-The list of five is **correct**: the `enabled` / `isEnabled` each of `DodgeToolArea.tsx`,
-`BurnToolArea.tsx`, `SmudgeToolArea.tsx`,
-`CloneStampToolArea.tsx` and `GradientToolArea.tsx` computes from
-`activeLayer && !activeLayer.isBedrock` and passes to `usePaintStroke`. What is
-wrong is "not one had a test" as a description of the finished branch: `b001d7d` added suites for
-four of the five, and **`CloneStampToolArea` still has no test file** — `git ls-tree main --
-src/components/Main/__tests__/` answers none. The fifth area the commit covers is
-`EllipticalSelectionToolArea`, which is **not** one of the five: it imports no `usePaintStroke`
-and reads no `isBedrock`. It is a selection tool, and the rule it shares with the four is nothing
-more than "the suite mounts a store fixture and drives real pointer events".
-
-Two components read `isBedrock` without `usePaintStroke` and must not be counted into that set
-either: `CloneStampToolArea` folds it into `isEnabled` **and** uses `usePaintStroke`, so it is
-in; `MoveToolArea.tsx` — `activeLayerRect`, `EraserToolArea.tsx` — its own `isEnabled` — and
-`FillToolArea` — its bedrock early return — read the flag directly
-and are out of it. **The cheapest thing that settles whether `CloneStampToolArea` is actually
-covered is a test, not a sentence** — and until one exists, treat the "not one had a test" claim
-as four, not five.
-
 ## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
 
 `src/hooks/usePolylineAnts.ts` — the stale comment above the `isPaused` effect, whose closing three
