@@ -52,6 +52,7 @@ import {
   convertLegacyHistorySafely,
   deriveReplaceLayerSourceEntry,
   durableSourceKindForTool,
+  UnsupportedHistoryFeatureError,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
@@ -1622,7 +1623,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       );
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
-      const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
+      let boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
       // One append, one durable entry: the boundary's plan is published when the
       // store's durable document still describes the timeline it was planned
       // against, and the whole timeline is reconverted otherwise.
@@ -1643,7 +1644,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           plannerTransaction?.rollback();
           plannerTransaction = undefined;
           plannedEntry = null;
-          console.error('Unable to derive a source-backed durable append plan', error);
+          if (error instanceof UnsupportedHistoryFeatureError) {
+            boundaryDiagnostics = [
+              ...boundaryDiagnostics,
+              {
+                historyId: error.historyId ?? action.payload.historyItem.id,
+                actionName: action.payload.historyItem.actionName,
+                severity: 'error',
+                code: 'unsupported-history-feature',
+                message: error.message,
+              },
+            ];
+          } else {
+            console.error('Unable to derive a source-backed durable append plan', error);
+          }
         }
       }
       const planned = decideDurableAppend({
