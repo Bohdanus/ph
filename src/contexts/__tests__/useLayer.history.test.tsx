@@ -663,4 +663,173 @@ describe('useLayers layer-property writers', () => {
     ]);
     expect(store.durableDocument!.cursor).toBe(1);
   });
+
+  describe('durable projection publication identity', () => {
+    it('selects the durable projection when its publication identity matches the live document', () => {
+      const result = setupWithDocument();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      // Establish a durable document with cursor at 0 (baseline + one entry)
+      act(() => {
+        result.current.layers.updateLayer(id, { name: 'First' }, RENAME_LAYER_ACTION);
+      });
+      const afterFirst = result.current.store;
+      expect(afterFirst.durableDocument!.cursor).toBe(0);
+      expect(afterFirst.historyIndex).toBe(1);
+      expect(afterFirst.durableDocument!.cursor).toBeLessThan(afterFirst.historyIndex);
+
+      // Capture the durable document's publication identity
+      const durableDoc = afterFirst.durableDocument!;
+      const matchingHistoryItem: HistoryItem = {
+        id: 'rename-second',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: id,
+        args: { name: 'Second' },
+      };
+      const matchingPayload = {
+        updates: { layers: { [id]: { ...afterFirst.layers[id], name: 'Second' } } },
+        historyItem: matchingHistoryItem,
+        durableEntry: {
+          id: 'rename-second',
+          schemaVersion: 1,
+          enabled: true,
+          operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Second' } },
+        } as DurableHistoryEntry,
+        durableDocument: durableDoc,
+        durableStatus: 'current' as const,
+        durableDiagnostics: [],
+      };
+
+      // Dispatch with matching publication identity - the projection should be selected
+      act(() => {
+        result.current.dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: matchingPayload,
+        });
+      });
+
+      const store = result.current.store;
+      // The durable projection was published: cursor advanced, history grew by one
+      expect(store.durableStatus).toBe('current');
+      expect(store.durableDocument!.cursor).toBe(1);
+      expect(store.durableDocument!.history).toHaveLength(2);
+      expect(store.durableDocument!.history[1]!.id).toBe('rename-second');
+      // The legacy timeline also advanced
+      expect(store.historyIndex).toBe(2);
+    });
+
+    it('falls back to legacy reconversion when the durable projection identity mismatches', () => {
+      const result = setupWithDocument();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      // Establish a durable document
+      act(() => {
+        result.current.layers.updateLayer(id, { name: 'First' }, RENAME_LAYER_ACTION);
+      });
+      const afterFirst = result.current.store;
+      const durableDoc = afterFirst.durableDocument!;
+
+      // Create a mismatched projection: different documentId
+      const mismatchedHistoryItem: HistoryItem = {
+        id: 'rename-mismatch',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: id,
+        args: { name: 'Mismatched' },
+      };
+      const mismatchedPayload = {
+        updates: { layers: { [id]: { ...afterFirst.layers[id], name: 'Mismatched' } } },
+        historyItem: mismatchedHistoryItem,
+        durableEntry: {
+          id: 'rename-second',
+          schemaVersion: 1,
+          enabled: true,
+          operation: { kind: 'set-layer-properties' as const, layerId: id, patch: { name: 'Second' } },
+        } as DurableHistoryEntry,
+        durableDocument: {
+          ...durableDoc,
+          documentId: 'different-document-id',
+        },
+        durableStatus: 'current' as const,
+        durableDiagnostics: [],
+      };
+
+      // Dispatch with mismatched publication identity - should fall back to legacy
+      act(() => {
+        result.current.dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: mismatchedPayload,
+        });
+      });
+
+      const store = result.current.store;
+      // The fallback reconversion produces a new durable document (not the mismatched one)
+      expect(store.durableStatus).toBe('current');
+      // The mismatched projection was rejected, so the durable document was rebuilt from legacy
+      expect(store.durableDocument!.documentId).toBe(afterFirst.documentId);
+      expect(store.durableDocument!.history.map((e) => e.id)).toContain('rename-mismatch');
+    });
+
+    it('falls back to legacy when the durable cursor would lead the legacy cursor', () => {
+      const result = setupWithDocument();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      // Establish a durable document with cursor at 0
+      act(() => {
+        result.current.layers.updateLayer(id, { name: 'First' }, RENAME_LAYER_ACTION);
+      });
+      const afterFirst = result.current.store;
+      const durableDoc = afterFirst.durableDocument!;
+
+      // Manually advance the durable cursor beyond what the legacy timeline allows
+      // by creating a projection with cursor at tip of durable history but legacy cursor lagging
+      const advancedDurableDoc = {
+        ...durableDoc,
+        cursor: durableDoc.history.length, // cursor at tip (would be 1), but legacy is at 1
+        history: [
+          ...durableDoc.history,
+          {
+            id: 'phantom',
+            schemaVersion: 1,
+            enabled: true,
+            operation: { kind: 'set-layer-properties' as const, layerId: id, patch: { name: 'Phantom' } },
+          },
+        ],
+      };
+
+      const mismatchedHistoryItem: HistoryItem = {
+        id: 'rename-second',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: id,
+        args: { name: 'Second' },
+      };
+      const mismatchedPayload = {
+        updates: { layers: { [id]: { ...afterFirst.layers[id], name: 'Second' } } },
+        historyItem: mismatchedHistoryItem,
+        durableEntry: {
+          id: 'rename-second',
+          schemaVersion: 1,
+          enabled: true,
+          operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Second' } },
+        } as DurableHistoryEntry,
+        durableDocument: advancedDurableDoc,
+        durableStatus: 'current' as const,
+        durableDiagnostics: [],
+      };
+
+      // Dispatch with a projection whose durable cursor would lead legacy
+      act(() => {
+        result.current.dispatch({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: mismatchedPayload,
+        });
+      });
+
+      const store = result.current.store;
+      // The projection was rejected (precondition: durable cursor would lead legacy)
+      // Fallback reconversion produces a current document with the new entry
+      expect(store.durableStatus).toBe('current');
+      expect(store.durableDocument!.cursor).toBeLessThanOrEqual(store.historyIndex);
+      expect(store.durableDocument!.history.map((e) => e.id)).toContain('rename-second');
+    });
+  });
 });
