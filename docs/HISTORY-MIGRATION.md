@@ -8,13 +8,13 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 ## Authority
 
 The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
-now stages a durable-composed presentation cache into those legacy layers, and
-render and export consume that cache through `getLayerBitmap()`; logical
-undo/redo remains legacy-authoritative. `durableDocument` is a mounted
-navigation presentation cache as well as the durable state model. The migration
-is not complete until one replay/materialization authority feeds undo, redo,
-navigation, render, export and history-panel state without a second logical
-state writer.
+now stages a complete durable render projection beside the legacy logical layers;
+`renderSelector` holds the pending/durable/legacy canvas authority, while export
+consumes its own guarded durable projection. Logical undo/redo remains
+legacy-authoritative. `durableDocument` is a mounted navigation projection as
+well as the durable state model. The migration is not complete until one
+replay/materialization authority feeds undo, redo, navigation, render, export and
+history-panel state without a second logical state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
 sources, asset registry, immutable operation cloning, and append boundary are

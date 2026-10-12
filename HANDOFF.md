@@ -33,9 +33,10 @@ mount by accident. The two durable modules that remain:
 | `src/contexts/durable-replay.ts`  | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
 
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
-`useHistory.ts`) for logical navigation and runtime `Layer` state. `StoreContext.tsx` now composes
-the mapped durable cursor after that transition and publishes only presentation caches into those
-legacy layers. `durableDocument`,
+`useHistory.ts`) for logical navigation and compatibility state. `StoreContext.tsx` now composes
+the mapped durable cursor after that transition and publishes a separate
+`durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; the legacy
+layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
 inside that function. Two production components read the fields from `useStore()` —
@@ -50,9 +51,9 @@ case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — i
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
-**Why it matters.** The navigation cache is the first user-visible durable projection, and its
-`tmpCanvas` reaches both runtime rendering and export through `layer-renderer.ts` —
-`getLayerBitmap()`. Durable logical state remains legacy-authoritative. Every additional surface
+**Why it matters.** The navigation projection is the first user-visible durable projection, and
+its complete layer record now reaches the canvas through `renderSelector`; export has its own
+guarded projection. Durable logical state remains legacy-authoritative. Every additional surface
 must keep the same staged publication and lease ownership contract; the migration is not a full
 authority cutover yet.
 
@@ -66,15 +67,15 @@ through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 now the first real caller; the remaining surfaces still need independent parity gates before they
 are mounted.
 
-**Also wrong at the boundary.** The runtime path reads `layer.tmpCanvas` before `layer.bitmap` through
-`getLayerBitmap()`, with vector-source handling between those fallbacks; the durable path materializes
-the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
-reconciling these changes pixel-tool results.
+**Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
+`layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
+the durable selector renders its complete projected layer record after materialization. Wiring
+the durable path without reconciling these paths changes pixel-tool results.
 
 **Fix.** Keep the runtime, export and history-panel projections independently gated, then make the
 remaining presentation authority explicit across editor surfaces. Keep legacy logical state as the
-authority until each projection is staged, lease-safe and failure-contained; do not mount all
-remaining consumers at once.
+authority until each projection is staged, lease-safe and failure-contained; the next cutover must
+prove append/preview and unsupported-source behavior before retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
