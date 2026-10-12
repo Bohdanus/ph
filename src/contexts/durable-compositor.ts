@@ -78,7 +78,12 @@ function orderedLayers(replay: DurableReplayResult): readonly string[] {
     .map((layer) => layer.snapshot.id);
 }
 
-function requireVisibleLayerCoverage(
+/**
+ * A durable presentation is publishable only when every visible replay layer
+ * materialized. Callers that adapt a composite into runtime records reuse this
+ * check so a partial document can never be staged as durable.
+ */
+export function requireVisibleLayerCoverage(
   replay: DurableReplayResult,
   materialized: Readonly<Record<string, MaterializedLayer>>
 ): void {

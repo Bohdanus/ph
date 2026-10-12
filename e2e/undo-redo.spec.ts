@@ -20,7 +20,7 @@ import {
   type BoundingBox,
   type ClipOptions,
 } from './helpers/canvas-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 
 /**
  * Per-test budget. The config default is 30s, which covers a single canvas wait
@@ -334,5 +334,43 @@ test.describe('Undo and redo', () => {
     });
     expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, true, false]);
     await expect(getRedoButton(page), 'undoing back to the branch point should make it redoable').toBeEnabled();
+  });
+
+  test('vector shape undo and redo publish durable presentation with cursor and layer ids', async ({ page }) => {
+    const box = await canvasBox(page);
+    const clip = wholeCanvasClip(box);
+
+    // Select the Rectangle shape tool
+    await openToolFlyout(page, 'shape');
+    await selectFromFlyout(page, { toolName: 'shape', label: 'Rectangle Tool' });
+
+    // Draw a rectangle in the center of the canvas
+    const rectStart = { x: box.width * 0.25, y: box.height * 0.25 };
+    const rectEnd = { x: box.width * 0.75, y: box.height * 0.75 };
+    await drawLine(page, box, rectStart.x, rectStart.y, rectEnd.x, rectEnd.y, { steps: 10 });
+
+    // Wait for the shape to appear on the canvas
+    await waitForBandInked(page, wholeCanvasBand(box), { description: 'the rectangle to reach the canvas' });
+
+    // Verify the shape was drawn
+    const drawn = await getDarkPixelBounds(await capture(page, clip));
+    expect(drawn, 'the rectangle was not on the canvas at all').toBeTruthy();
+
+    // Undo the shape creation
+    await getUndoButton(page).click();
+    await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink after undo' });
+    await expectPresentationDecision(page);
+
+    expect(await hasDarkPixels(await capture(page, clip)), 'undo left ink on the canvas').toBe(false);
+    await expect(getRedoButton(page)).toBeEnabled();
+
+    // Redo the shape creation
+    await getRedoButton(page).click();
+    await waitForBands(page, [wholeCanvasBand(box)], [true], { description: 'the redone rectangle to be back' });
+    await expectPresentationDecision(page);
+
+    const redone = await getDarkPixelBounds(await capture(page, clip));
+    expect(redone, 'redo left the canvas empty').toBeTruthy();
+    expect(redone, 'redo did not restore the rectangle pixel for pixel').toEqual(drawn);
   });
 });

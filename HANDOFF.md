@@ -33,9 +33,10 @@ mount by accident. The two durable modules that remain:
 | `src/contexts/durable-replay.ts`  | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
 
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
-`useHistory.ts`) for logical navigation and runtime `Layer` state. `StoreContext.tsx` now composes
-the mapped durable cursor after that transition and publishes only presentation caches into those
-legacy layers. `durableDocument`,
+`useHistory.ts`) for logical navigation and compatibility state. `StoreContext.tsx` now composes
+the mapped durable cursor after that transition and publishes a separate
+`durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; the legacy
+layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
 inside that function. Two production components read the fields from `useStore()` —
@@ -50,9 +51,9 @@ case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — i
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
-**Why it matters.** The navigation cache is the first user-visible durable projection, and its
-`tmpCanvas` reaches both runtime rendering and export through `layer-renderer.ts` —
-`getLayerBitmap()`. Durable logical state remains legacy-authoritative. Every additional surface
+**Why it matters.** The navigation projection is the first user-visible durable projection, and
+its complete layer record now reaches the canvas through `renderSelector`; export has its own
+guarded projection. Durable logical state remains legacy-authoritative. Every additional surface
 must keep the same staged publication and lease ownership contract; the migration is not a full
 authority cutover yet.
 
@@ -66,15 +67,15 @@ through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 now the first real caller; the remaining surfaces still need independent parity gates before they
 are mounted.
 
-**Also wrong at the boundary.** The runtime path reads `layer.tmpCanvas` before `layer.bitmap` through
-`getLayerBitmap()`, with vector-source handling between those fallbacks; the durable path materializes
-the retained presentation first (in `renderRetainedSegment`). Wiring the durable path without
-reconciling these changes pixel-tool results.
+**Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
+`layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
+the durable selector renders its complete projected layer record after materialization. Wiring
+the durable path without reconciling these paths changes pixel-tool results.
 
 **Fix.** Keep the runtime, export and history-panel projections independently gated, then make the
 remaining presentation authority explicit across editor surfaces. Keep legacy logical state as the
-authority until each projection is staged, lease-safe and failure-contained; do not mount all
-remaining consumers at once.
+authority until each projection is staged, lease-safe and failure-contained; the next cutover must
+prove append/preview and unsupported-source behavior before retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
@@ -719,33 +720,6 @@ groups", not "no letter repeats".
 **These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
 doing them here would land the deletion without the replacement rail.
 
-## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
-
-A correction, because a wrong claim in this repository's own history is read by every future agent
-that runs `git log`. `b001d7d` states that five components fold `!isBedrock` into the flag they
-hand `usePaintStroke` — Dodge, Burn, Smudge, CloneStamp and Gradient — "and not one had a test".
-Both halves need narrowing, and the error in the second one is about coverage rather than about
-the flag.
-
-The list of five is **correct**: the `enabled` / `isEnabled` each of `DodgeToolArea.tsx`,
-`BurnToolArea.tsx`, `SmudgeToolArea.tsx`,
-`CloneStampToolArea.tsx` and `GradientToolArea.tsx` computes from
-`activeLayer && !activeLayer.isBedrock` and passes to `usePaintStroke`. What is
-wrong is "not one had a test" as a description of the finished branch: `b001d7d` added suites for
-four of the five, and **`CloneStampToolArea` still has no test file** — `git ls-tree main --
-src/components/Main/__tests__/` answers none. The fifth area the commit covers is
-`EllipticalSelectionToolArea`, which is **not** one of the five: it imports no `usePaintStroke`
-and reads no `isBedrock`. It is a selection tool, and the rule it shares with the four is nothing
-more than "the suite mounts a store fixture and drives real pointer events".
-
-Two components read `isBedrock` without `usePaintStroke` and must not be counted into that set
-either: `CloneStampToolArea` folds it into `isEnabled` **and** uses `usePaintStroke`, so it is
-in; `MoveToolArea.tsx` — `activeLayerRect`, `EraserToolArea.tsx` — its own `isEnabled` — and
-`FillToolArea` — its bedrock early return — read the flag directly
-and are out of it. **The cheapest thing that settles whether `CloneStampToolArea` is actually
-covered is a test, not a sentence** — and until one exists, treat the "not one had a test" claim
-as four, not five.
-
 ## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
 
 `src/hooks/usePolylineAnts.ts` — the stale comment above the `isPaused` effect, whose closing three
@@ -1332,85 +1306,6 @@ The append-boundary test citations were a separate drift cluster, not part of th
 outstanding.
 
 ---
-
-## 103. The `REPLACE_DOCUMENT` fast path is a second, untested copy of the reducer's identity logic
-
-**Problem.** The dispatcher's `REPLACE_DOCUMENT` arm in `StoreContext.tsx` intercepts `REPLACE_DOCUMENT`
-before it
-reaches the reducer. It recomputes seven fields the reducer's own `REPLACE_DOCUMENT` arm
-also computes — `documentFrame`, `totalSize`, `documentId`, `documentRevision`,
-`branchRevision`, `history`, `historyIndex` — assigns them to `latestStateRef.current` in
-that arm's own pre-write, and then calls `rawDispatch`, so the reducer runs anyway and React state is
-recomputed
-from the reducer chain. The two copies are related by nothing but a comment.
-
-**Measured 2026-09-30, one field at a time, against the real provider** with
-`src/hooks/__tests__/useApp.document-reset.test.tsx` (12 tests, all green). Each row mutates one of the
-seven assignments in the fast path's pre-write — named by its field below, since they all live in that
-one arm — plus the disposal guard beside it:
-
-| fast-path site     | field              | mutated to                      | result                                                                           |
-| ------------------ | ------------------ | ------------------------------- | -------------------------------------------------------------------------------- |
-| the seed           | `documentFrame`    | `currentState.documentFrame`    | **survives**                                                                     |
-| the seed           | `totalSize`        | `currentState.totalSize`        | **survives**                                                                     |
-| the seed           | `documentId`       | `currentState.documentId`       | **survives**                                                                     |
-| the seed           | `documentRevision` | `currentState.documentRevision` | **survives**                                                                     |
-| the seed           | `branchRevision`   | `currentState.branchRevision`   | **survives**                                                                     |
-| the seed           | `history`          | appended instead of replaced    | **survives**                                                                     |
-| the seed           | `historyIndex`     | `currentState.historyIndex`     | **survives**                                                                     |
-| the disposal guard | disposal guard     | `if (false)`                    | caught — but by `StoreContext.durable-boundary.test.tsx`, not by any other suite |
-
-Seven of eight survive, and the reason is structural rather than incidental: the pre-write lands in
-`latestStateRef`, which the next dispatch reads as its `currentState`, and that value is used only to
-(a) decide document disposal and (b) seed the _next_ fast path. It never reaches `useReducer`, so no
-React state and no exported value can observe it. The one append that reads a cursor —
-`updateHistoryTimeline` — clamps it, so even a stale `historyIndex` yields the same timeline.
-
-**Why it matters.** The duplication is a real correctness surface, not dead code: `currentState` is
-read by the disposal guard, so a wrong `documentId` in the fast path's seed would dispose the wrong
-document's
-assets — and that is precisely the one field whose divergence is currently caught by a different
-suite, which is luck rather than design. Nothing binds the two copies together, so an edit to the
-reducer arm that is not mirrored in the fast path's pre-write is invisible, and an edit to the fast
-path that is
-not mirrored in the reducer is invisible too.
-
-**Fix.** Two options, and the second is the real one. Either expose the fast path's pre-write to a
-test — `latestStateRef` is already in the provider's value, so a store test can assert the seven
-fields directly and pin the two copies against each other. Or delete the fast path and let the
-reducer be the only writer; the pre-write exists to make same-batch dispatches see the new document,
-which `useSetSelectionFromHistory` and the append path need, so deletion is not free and the first
-option is the cheaper correct move. Whichever is chosen, the seven seeds in the table above are the
-list.
-
-**Files.** `src/contexts/StoreContext.tsx` — the dispatcher's `REPLACE_DOCUMENT` arm and the reducer
-case of the same name,
-`src/contexts/__tests__/StoreContext.durable-boundary.test.tsx` — the `it('keeps unavailable rather
-than downgrading to stale when a selection commits after a failure')` title
-
-## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
-
-The pointer in the document every other worktree rule defers to: `docs/ORCHESTRATION.md`
-§"Four traps that cost real debugging time" cited
-`db.mjs`'s `holdFiles()` signature line for the `lock.agent_id !== who` conflict test. The lock-level
-comparisons are in `scripts/lib/agent-board/db.mjs` — one inside `holdFiles()` and one inside
-`lockFile`; the claim-level ones are in `createIssue()`, `claimIssue()`, `holdFileInTransaction()` and
-`releaseIssueLocksInTransaction()`.
-
-It matters more than an ordinary stale citation because it sits inside a rule an agent is told to
-obey rather than to check — the section that ends "Only `e2e-run/<…>/<digits>` is probed" — and
-because the wrong line names a function rather than a comparison, so a reader who opens that
-`holdFiles()` signature
-sees something that looks like the rule and is not.
-
-A second, now-corrected pointer: `docs/ORCHESTRATION.md` §"Landing" attributed the `git stash` rule to
-"HANDOFF §69", which was an eraser-preview defect, not the stash rule, and the real rule's own entry
-restated `docs/ORCHESTRATION.md` back at it. Both entries are now deleted and the dangling pointer
-went with them, so `docs/ORCHESTRATION.md` carries the stash rule once and on its own.
-
-**Files.** `docs/ORCHESTRATION.md` §"Four traps that cost real debugging time" and §"Landing",
-`scripts/lib/agent-board/db.mjs` — `holdFiles()`, `createIssue()`, `claimIssue()`,
-`holdFileInTransaction()`, `releaseIssueLocksInTransaction()`
 
 ## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
 
