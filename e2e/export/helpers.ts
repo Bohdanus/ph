@@ -7,7 +7,7 @@ import {
   DEFAULT_DOCUMENT_HEIGHT,
   DEFAULT_DOCUMENT_WIDTH,
   documentToCanvasOffset,
-  drawLine,
+  drawLineFromDocument,
   getWorkspaceCanvas,
   inkHeight,
   INK_LUMA_FLOOR,
@@ -464,7 +464,16 @@ export async function setupExportTest(
   const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y, documentSize);
 
   await clickToolButton(page, 'draw');
-  await drawLine(page, box, start.x, start.y, end.x, end.y);
+  await drawLineFromDocument(
+    page,
+    box,
+    EXPORT_LINE_START.x,
+    EXPORT_LINE_START.y,
+    EXPORT_LINE_END.x,
+    EXPORT_LINE_END.y,
+    {},
+    documentSize
+  );
 
   // The redraw clip has to be derived from the mapped line as well. The shared
   // `CANVAS_REDRAW_CLIP` is a fixed region of the canvas box, and at any canvas size other
@@ -1273,10 +1282,16 @@ export async function setupIcoTest(page: Page): Promise<string> {
   const end = documentToCanvasOffset(iconBox, ICON_STROKE.endX, ICON_STROKE.centerY, documentSize);
 
   await clickToolButton(page, 'draw');
-  await page.mouse.move(iconBox.x + start.x, iconBox.y + start.y);
-  await page.mouse.down();
-  await page.mouse.move(iconBox.x + end.x, iconBox.y + end.y, { steps: ICON_STROKE.steps });
-  await page.mouse.up();
+  await drawLineFromDocument(
+    page,
+    iconBox,
+    ICON_STROKE.startX,
+    ICON_STROKE.centerY,
+    ICON_STROKE.endX,
+    ICON_STROKE.centerY,
+    { steps: ICON_STROKE.steps },
+    documentSize
+  );
   // A clip derived from the MAPPED stroke, in PAGE coordinates for the same reason
   // `setupExportTest` says it is: the shared `CANVAS_REDRAW_CLIP` is a fixed region of a
   // 974x583 box and does not cover a stroke at box row 291, so waiting on it would poll
