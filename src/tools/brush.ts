@@ -164,7 +164,7 @@ export const PAINT_PRESETS = {
     { label: 'Marker', lineWidth: 24, alpha: 0.45, smoothing: 25, blendMode: 'source-over' },
   ],
   pencil: [
-    { label: 'Hard Pencil', lineWidth: 3, alpha: 1, smoothing: 0, blendMode: 'source-over' },
+    { label: 'Hard Pencil', lineWidth: 3, alpha: 1, smoothing: PAINT_SMOOTHING_DEFAULT, blendMode: 'source-over' },
     { label: 'Soft Pencil', lineWidth: 12, alpha: 0.7, smoothing: 50, blendMode: 'source-over' },
     { label: 'Marker', lineWidth: 24, alpha: 0.45, smoothing: 25, blendMode: 'source-over' },
   ],

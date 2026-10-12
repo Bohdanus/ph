@@ -203,7 +203,7 @@ export const defaultSettings = {
     toolName: 'brush',
   } satisfies PaintToolArgs,
   pencil: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 3,
