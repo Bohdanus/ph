@@ -18,7 +18,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
-import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -891,6 +891,43 @@ describe('renderSelector contract', () => {
       reason: 'unsupported-source',
     });
     expect(store().durableRenderProjection).toBeNull();
+  });
+
+  it('clears durable navigation authority when a logical append is committed', async () => {
+    const layer = rasterLayer();
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(makeComposite());
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    await act(async () => {
+      await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().durableRenderProjection).not.toBeNull();
+
+    const updatedLayer = { ...layer, opacity: 0.5 };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+
+    expect(store().historyIndex).toBe(1);
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durablePresentation).toEqual({ status: 'unpublished', cursor: null, reason: null });
   });
 
   it('cannot change the selector when a publication is stale', async () => {
