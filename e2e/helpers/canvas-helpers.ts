@@ -926,6 +926,47 @@ export async function drawLine(
 }
 
 /**
+ * Draws a straight stroke on the canvas at DOCUMENT coordinates. `[DOCUMENT]` endpoints,
+ * converted through the app's contain fit before they reach `page.mouse`.
+ *
+ * This is the contain-aware companion to `drawLine`, and the two differ on purpose. `drawLine`
+ * takes box-relative offsets and applies no contain scale — `e2e/OPEN_PROBLEMS.md` records
+ * that as a P2: a document point reaches `page.mouse` as `(x / scale, (y - offsetY) / scale)`
+ * once the box origin is added, and a spec that asserts a specific document row is tens of
+ * pixels off. The arithmetic is `documentToCanvasOffset`, which is the single place the fit
+ * rule lives, so this helper cannot drift from the app's own mapping.
+ *
+ * It is NOT a replacement for `drawLine`. Every spec that calls `drawLine` today is written
+ * around box-relative coordinates and survives only because its strokes need to land
+ * SOMEWHERE, not where they were asked to land; changing `drawLine`'s meaning would break all
+ * of them at once. This helper exists for the callers that need document precision — the
+ * export fixture, which asserts a specific row against a committed baseline, and any future
+ * spec that names a pixel position.
+ *
+ * `documentSize` defaults to the seeded document; pass the measured backing store when you
+ * have it. `documentFrame` defaults to the origin and no current caller passes it.
+ *
+ * The gesture itself is delegated to `drawLine`, so every behaviour pinned by
+ * `canvas-interaction.unit.test.ts` — the `steps` normalisation, the zero-size box, the
+ * negative box origin — carries over unchanged rather than being re-derived here.
+ */
+export async function drawLineFromDocument(
+  page: Page,
+  box: BoundingBox,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  options: DrawLineOptions = {},
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE,
+  documentFrame: DocumentFrameOrigin = ZERO_DOCUMENT_FRAME
+): Promise<void> {
+  const start = documentToCanvasOffset(box, startX, startY, documentSize, documentFrame);
+  const end = documentToCanvasOffset(box, endX, endY, documentSize, documentFrame);
+  await drawLine(page, box, start.x, start.y, end.x, end.y, options);
+}
+
+/**
  * Clip region of the standard test line, PAGE-relative.
  *
  * PAGE, not BOX: the box is added, and the result is handed straight to `page.screenshot`
