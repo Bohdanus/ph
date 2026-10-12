@@ -416,6 +416,7 @@ describe('StoreContext boundary gates', () => {
   it('routes production durable materialization only through the compositor boundary', () => {
     expect(materializationProductionImports().map(({ file, specifier }) => ({ file, specifier }))).toEqual([
       { file: 'src/contexts/durable-compositor.ts', specifier: './materialization.ts' },
+      { file: 'src/contexts/durable-render-projection.ts', specifier: './materialization.ts' },
     ]);
   });
 
