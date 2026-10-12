@@ -4,11 +4,9 @@ import { renderHook } from '@testing-library/react';
 import { AssetRegistry } from '../asset-registry.ts';
 import { composeDurableDocument, type DurableComposite } from '../durable-compositor.ts';
 import { replayDurableAtCursor, type DurableReplayResult } from '../durable-replay.ts';
-import { renderExportCanvas } from '../export-canvas.ts';
+import { durableExportRecords, renderExportCanvas } from '../export-canvas.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { createLayerSource } from '../layer-utils.ts';
-import { documentFrameSize, type DocumentFrame } from '../document-frame.ts';
-import type { Size } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord } from '../layer-types.ts';
 import { durablePresentationIsRendererIdentical } from '../StoreContext.tsx';
@@ -211,60 +209,6 @@ type RenderedPair = {
   accepted: string[];
   declined: string[];
   filters: string[];
-};
-
-/**
- * Builds the export-side layer records FROM THE DURABLE SIDE ALONE.
- *
- * The previous version started from the legacy records and swapped only `tmpCanvas`, which made
- * the export comparison structurally incapable of failing: `renderExportCanvas()` places by
- * `layer.pos`, reads `visible`/`opacity`/`blendMode` and re-evaluates `layer.operations`, and every
- * one of those was still the LEGACY value on both sides. Worse, the mount's own accept rule
- * requires `isEqual(bounds, existing.pos)` and no retained operations, so the bitmap it accepted
- * was a byte-identical copy of the legacy record's own — 30 accepted mounts, 0 differing bytes, on
- * every cursor. A 7px durable misplacement turned the runtime axis red and left the export axis at
- * zero.
- *
- * So nothing here is read off the legacy replay. Position, visibility, opacity, blend mode, order,
- * name and frame all come from the durable composition and the durable replay's own snapshot, and
- * `operations` is empty because the retained presentation is already baked into the bitmap. Two
- * authorities that disagree about placement, ordering or frame now disagree HERE.
- */
-const durableExportRecords = (
-  replay: DurableReplayResult,
-  composite: DurableComposite
-): { layers: LayersRecord; size: Size; frame: DocumentFrame; missing: string[] } => {
-  const layers: LayersRecord = {};
-  const missing: string[] = [];
-  for (const [layerId, materialized] of Object.entries(composite.layers)) {
-    const replayLayer = replay.layers[layerId];
-    if (!replayLayer) {
-      missing.push(layerId);
-      continue;
-    }
-    const snapshot = replayLayer.snapshot;
-    layers[layerId] = {
-      id: layerId,
-      name: snapshot.name,
-      isBedrock: snapshot.isBedrock,
-      pos: { ...snapshot.pos },
-      bitmap: null,
-      tmpCanvas: materialized.bitmap,
-      presentationBounds: materialized.bounds,
-      visible: snapshot.visible,
-      opacity: snapshot.opacity,
-      locked: snapshot.locked,
-      blendMode: snapshot.blendMode,
-      order: snapshot.order,
-      operations: [],
-    };
-  }
-  return {
-    layers,
-    size: documentFrameSize(replay.frame),
-    frame: replay.frame,
-    missing,
-  };
 };
 
 const mountDurablePresentation = (
