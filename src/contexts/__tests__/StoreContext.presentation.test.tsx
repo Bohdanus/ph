@@ -6,6 +6,7 @@ import * as durableCompositor from '../durable-compositor.ts';
 import type { DurableComposite } from '../durable-compositor.ts';
 import {
   durablePresentationIsRendererIdentical,
+  type DurableNavigationPresentationOutcome,
   type StoreData,
   type StoreDispatch,
   StoreProvider,
@@ -757,5 +758,127 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
 
     expect(store().layers[layerId]).toBe(before);
     expect(store().layers[layerId].operations).toEqual([]);
+  });
+});
+
+describe('renderSelector contract', () => {
+  function rasterLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
+    const bitmap = createMockImageBitmap(pos.width, pos.height);
+    const source: ImageLayerSource = { kind: 'image', bitmap, isBedrock: false, pos };
+    return { ...createMockLayer({ id, pos }), bitmap, source };
+  }
+
+  function makeComposite(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): DurableComposite {
+    const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
+    const releaseMaterialized = vi.fn();
+    const materialized: MaterializedLayer = {
+      layerId: id,
+      bitmap: materializedBitmap,
+      bounds: pos,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      lease: {
+        key: 'render-selector-test',
+        bitmap: materializedBitmap,
+        byteSize: pos.width * pos.height * 4,
+        metadata: pos,
+        release: releaseMaterialized,
+      },
+    };
+    const layers = { [id]: materialized };
+    const releaseDetached = vi.fn(() => releaseMaterialized());
+    const releaseComposite = vi.fn(() => releaseMaterialized());
+    return {
+      bitmap: materializedBitmap,
+      frame: defaultFrame,
+      layers,
+      takeLayers: () => ({ layers, release: releaseDetached }),
+      release: releaseComposite,
+    };
+  }
+
+  it('enters pending on APPLY_HISTORY_REPLAY, preserving the prior canvas authority', () => {
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    expect(store().renderSelector.source).toBe('legacy');
+
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    const pending = store().renderSelector;
+    expect(pending.source).toBe('pending');
+    expect(pending.documentId).toBe(store().documentId);
+    expect(pending.documentRevision).toBe(store().documentRevision);
+    expect(pending.branchRevision).toBe(store().branchRevision);
+    expect(pending.historyCursor).toBe(store().historyIndex);
+    expect(pending.frame).toEqual(store().documentFrame);
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durablePresentation.status).toBe('unpublished');
+  });
+
+  it('selects legacy on an explicit legacy fallback, clearing projection', async () => {
+    const layer = rasterLayer();
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockRejectedValue(
+      new durableCompositor.DurableCompositionRefusal('renderer-incompatible', 'renderer refused')
+    );
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+    expect(store().renderSelector.source).toBe('pending');
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'renderer-incompatible' });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().renderSelector.frame).toEqual(store().documentFrame);
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durablePresentation.status).toBe('legacy-fallback');
+  });
+
+  it('cannot change the selector when a publication is stale', async () => {
+    const layer = rasterLayer();
+    const composite = makeComposite();
+    let resolveComposition!: () => void;
+    const composition = new Promise<void>((resolve) => {
+      resolveComposition = resolve;
+    });
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockImplementation(async () => {
+      await composition;
+      return composite;
+    });
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+    expect(store().renderSelector.source).toBe('pending');
+
+    const publication = store().publishDurableNavigationPresentation();
+    expect(store().renderSelector.source).toBe('pending');
+
+    act(() => {
+      dispatch()({ type: 'SET_SIZE', payload: { width: 500, height: 400 } });
+    });
+    const selectorAfterSize = store().renderSelector;
+    expect(selectorAfterSize.source).toBe('legacy');
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      resolveComposition();
+      outcome = await publication;
+      await Promise.resolve();
+    });
+
+    expect(outcome?.status).toBe('stale');
+    expect(store().renderSelector).toBe(selectorAfterSize);
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation.status).toBe('unpublished');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durableStatus).toBe('stale');
   });
 });
