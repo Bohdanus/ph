@@ -106,6 +106,7 @@ export const draw = (params: CreatorToolParams | ProcessorToolParams) => (args: 
   const { size } = params;
   const canvas = new OffscreenCanvas(size.width, size.height);
   const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
 
   if ('bitmap' in params) ctx.drawImage(params.bitmap, 0, 0, size.width, size.height);
 
