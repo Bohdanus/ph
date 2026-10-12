@@ -15,7 +15,9 @@ It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
 rebuilt on every commit and every navigation. Successful supported navigation and
 export consume its materialized projection; logical append/preview editing and
-unsupported documents retain the legacy compatibility path.
+unsupported documents retain the legacy compatibility path. Canvas navigation
+selects a complete durable render projection only after its identity and frame
+match; pending navigation preserves the previously painted canvas.
 
 `durableStatus` is a second thing and has its own readers: `DevStatusStrip` and
 the crash screen display it, so "read at one place" is a claim about
@@ -23,9 +25,10 @@ the crash screen display it, so "read at one place" is a claim about
 
 The corollary is the one that still bites: **`store.history` remains the logical
 timeline for append, branch, and compatibility fallback, and it stores args,
-never pixels.** Durable navigation uses the materialized projection; preview and
-legacy fallback still re-run the tool processors. Undo and compatibility replay
-are processor replays, not inverse or incremental operations.
+never pixels.** Durable navigation uses a separate render projection selected by
+`renderSelector`; preview and legacy fallback still re-run the tool processors.
+Undo and compatibility replay are processor replays, not inverse or incremental
+operations.
 
 Evidence, all three current:
 
@@ -36,8 +39,8 @@ Evidence, all three current:
   beside it — _"A non-current sidecar must never be used as a replay or export
   input."_
 - `src/contexts/useHistory.ts` — inside `resetHistoryTo()` — the durable
-  publication is awaited and legacy replay is painted only for the fallback
-  outcome.
+  publication is awaited and the complete legacy replay is painted only for the
+  fallback outcome.
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
@@ -46,8 +49,9 @@ Evidence, all three current:
 the normal supported-navigation presentation. It does not replace logical state:
 the composition is staged off-tree, every layer is checked by
 `durablePresentationIsRendererIdentical()` against the legacy structural replay,
-and publication goes through `PUBLISH_RUNTIME_PRESENTATION`, whose
-`layersDifferOnlyByPresentation()` guard refuses logical movement. The awaitable
+and the complete result is published into `durableRenderProjection` with a
+`renderSelector` identity gate. `PUBLISH_RUNTIME_PRESENTATION` remains the
+legacy-compatible presentation path for other runtime updates. The awaitable
 publication returns a durable outcome or a complete legacy fallback; any replay
 carrying a `'legacy-tool'` source selects the latter.
 
@@ -401,14 +405,11 @@ into a **module-level singleton** — `lastSavedSettings`, in
 `exhaustiveness` trap at the end of the other `saveLastSettings()`, in
 `src/util/settings.ts`.
 
-**Two comments in the tree contradict that and are wrong**:
-the clamp JSDoc above `amount` and `radius` in
-`ToolbarsRight/Sharpen/Sharpen.tsx`, and the one above `tip` in
-`ToolbarsRight/Smudge/Smudge.tsx`,
-both state that settings round-trip through `localStorage`. Grepping `localStorage`
-across `src/` returns two keys — `theme` and `panelLayout`. **Tool settings do not
-survive a reload.** The same incorrect claim appears in
-`ToolbarsRight/Sharpen/__tests__/Sharpen.test.tsx`. Recorded in `HANDOFF.md` §138.
+Grepping `localStorage` across `src/` returns two keys — `theme` and `panelLayout`.
+**Tool settings do not survive a reload.** The clamp comments in
+`ToolbarsRight/Sharpen/Sharpen.tsx` and `ToolbarsRight/Smudge/Smudge.tsx`, as well as the
+clamping coverage in `ToolbarsRight/Sharpen/__tests__/Sharpen.test.tsx`, describe the
+per-session module state accurately.
 
 ## Selection
 

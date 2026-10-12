@@ -8,13 +8,13 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 ## Authority
 
 The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
-now stages a durable-composed presentation cache into those legacy layers, and
-render and export consume that cache through `getLayerBitmap()`; logical
-undo/redo remains legacy-authoritative. `durableDocument` is a mounted
-navigation presentation cache as well as the durable state model. The migration
-is not complete until one replay/materialization authority feeds undo, redo,
-navigation, render, export and history-panel state without a second logical
-state writer.
+now stages a complete durable render projection beside the legacy logical layers;
+`renderSelector` holds the pending/durable/legacy canvas authority, while export
+consumes its own guarded durable projection. Logical undo/redo remains
+legacy-authoritative. `durableDocument` is a mounted navigation projection as
+well as the durable state model. The migration is not complete until one
+replay/materialization authority feeds undo, redo, navigation, render, export and
+history-panel state without a second logical state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
 sources, asset registry, immutable operation cloning, and append boundary are
@@ -55,10 +55,10 @@ case in `durable-replay.ts`, and deep-frozen by `cloneOperation`
 (`history-model.ts`). Its retained operations deliberately survive a source
 rewrite, so a live filter or transform is not dropped when the text is retyped.
 
-**What the requirement still owes.** The production options bar reads
-`toolArgs` from legacy replay, so source rehydration is a cutover-time
-requirement governed by RQ-4's differential and ownership gates, not a gap in the
-operation itself. The affine-resampling divergence found by the pixel differential
+**What the requirement still owes.** `CurrentToolProvider` now rehydrates matching
+text and vector source arguments from the durable navigation document while
+protecting pending text and active gestures; saved settings remain the fallback
+for unsupported sources. The affine-resampling divergence found by the pixel differential
 is fixed; the remaining differential obligations are listed under Sequencing.
 The pinned `args.enabled` divergence also remains open.
 
@@ -156,24 +156,25 @@ variant or an equivalent atomic history action.
    raster append path and the navigation presentation mount are closed, and the
    §87-§89 append-boundary defects are fixed; no append-boundary defect is open.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
-   planned, replayed and cloned. Logical replay parity, history-panel parity, and
-   the browser authority seam now exist alongside the pixel/export differential;
-   what is still owed is the two scenarios jsdom cannot render in either direction,
-   options-bar rehydration, and the pinned `args.enabled` divergence.
-   Do not read the landed operation as a closed requirement; the
-   operator's ruling was that the operation and its visible consumer land as one
-   slice, and the consumer is still legacy-sourced.
+   planned, replayed and cloned. Logical replay parity, history-panel parity, the
+   browser authority seam, options-bar rehydration, and the pixel/export
+   differential now exist alongside it. The export matrix still needs to exercise
+   the production `durableExportRecords()` adapter directly, and the browser seam
+   still needs a forced durable-publication case. The two scenarios jsdom cannot
+   render in either direction and the pinned `args.enabled` divergence remain
+   proof gaps, not permission to weaken the authority gate.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
-6. Transfer RENDER AUTHORITY, which render already reads, through the staged
-   durable projection. Keep both raster and PSD EXPORT legacy-authoritative until
-   their shared differential is green for every layer kind (§206), then transfer
-   them together. Stage successfully before publication and delete each old
-   authority only after its differential and failure-contract gates pass. This is
-   no longer a mounting question: durable pixels already reach both surfaces
-   through `getLayerBitmap()`, and what is unmounted is durable STATE authority.
+6. Keep the staged durable projection as the authority for supported runtime
+   presentation and both raster/PSD export paths. Ownership checks and atomic
+   failure fallback are closed; the production export adapter still needs to be
+   wired into the full parity matrix, and unsupported documents still use the
+   complete legacy compatibility path. The next authority work is to widen typed
+   vector-source admission one proven source family at a time, then retire legacy
+   logical replay only after durable replay can provide the same complete state for
+   append, branch, preview, and compatibility fallback.
 
 ## Operator rulings
 

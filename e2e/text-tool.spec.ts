@@ -2289,6 +2289,32 @@ test.describe('Text tool', () => {
     expect(boxWidth, 'the point box is wider than the line it grew to fit').toBeLessThanOrEqual(inkWidth * 1.2);
   });
 
+  test('a point-text corner exposes rotation and dragging it changes the draft angle', async ({ page }) => {
+    const box = await canvasBox(page);
+    await page.mouse.click(box.x + CLICK_POINT.x, box.y + CLICK_POINT.y);
+    const overlay = await draftOverlay(page).boundingBox();
+    expect(overlay, 'the point-text draft did not appear').not.toBeNull();
+
+    const surface = page.locator('.cursor-text');
+    const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
+    await page.mouse.move(corner.x, corner.y);
+    await expect(surface, 'the text rotation hotspot uses the horizontal arrow cursor').toHaveCSS(
+      'cursor',
+      'ew-resize'
+    );
+
+    await page.mouse.down();
+    const centerX = overlay!.x + overlay!.width / 2;
+    const centerY = overlay!.y + overlay!.height / 2;
+    await page.mouse.move(centerX + overlay!.height / 2, centerY - overlay!.width / 2, { steps: 12 });
+    await page.mouse.up();
+
+    await expect(surface, 'the text draft did not retain its rotated angle').toHaveAttribute(
+      'data-rotation',
+      /8[5-9]|9[0-5]/
+    );
+  });
+
   /**
    * Adobe's overflow icon: "If you enter more text that can fit within a paragraph boundary…, a
    * small box or circle containing a plus symbol (+) appears in place of a handle in the corner of

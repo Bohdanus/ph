@@ -23,23 +23,41 @@ export type CropToolArgs = {
    */
   preRatioRect?: RectXYSorted | null;
   aspectRatio?: number | null;
+  /** Rotation of the pending crop box in degrees, around its centre. */
+  angle?: number;
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
 
   toolName: 'crop';
 };
 
+function hasFiniteRect(rect: RectXYSorted | null | undefined): rect is RectXYSorted {
+  return (
+    rect !== null &&
+    rect !== undefined &&
+    [rect.x1, rect.y1, rect.x2, rect.y2].every((value) => typeof value === 'number' && Number.isFinite(value))
+  );
+}
+
 export const crop =
   ({ bitmap, size }: ProcessorToolParams) =>
   ({ rect }: CropToolArgs) => {
-    const canvas = new OffscreenCanvas(size.width, size.height);
+    // Crop is a document operation in the live path, but the processor remains part of the
+    // registry and can still receive old or hand-edited records during replay. A missing,
+    // non-finite, or degenerate rect cannot describe a bitmap and must not manufacture a 0x0
+    // canvas or throw from `trimRect`.
+    if (!hasFiniteRect(rect)) return [bitmap];
 
-    const { x, y, width, height } = trimRect(rect!, size);
+    const { x, y, width, height } = trimRect(rect, size);
+    if (width <= 0 || height <= 0) return [bitmap];
+
+    const canvas = new OffscreenCanvas(size.width, size.height);
 
     canvas.width = width;
     canvas.height = height;
 
-    const ctx = canvas.getContext('2d')!;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return [bitmap];
     ctx.drawImage(bitmap, x, y, width, height, 0, 0, width, height);
 
     return [canvas, { width, height }];

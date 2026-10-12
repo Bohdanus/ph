@@ -12,6 +12,7 @@ export const CURSOR_MAP = {
   left: 'ew-resize',
   'top-left': 'nwse-resize',
   inside: 'move',
+  rotate: 'ew-resize',
 };
 
 export const DEFAULT_TOOL = 'draw';

@@ -303,6 +303,29 @@ describe('EyedropperToolArea', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * REGRESSION CHECK for a bounds error in the Sample Size > 1 path.
+   *
+   * With `sampleSize === 1` the `right <= left` / `bottom <= top` guard catches every
+   * out-of-bounds centre pixel. But with a larger sample size the CLIPPED block can be
+   * non-empty while the centre pixel is still outside the canvas — e.g. `centerX = -1`,
+   * `sampleSize = 3`, `half = 1`: `left = 0`, `right = 2`, so the block has two pixels,
+   * but `centerX - left = -1` indexes the wrong byte in the pixel array and the average
+   * silently includes padding. This test pins the early return that guards the array index.
+   */
+  it('ignores out-of-bounds clicks with a Sample Size larger than 1', () => {
+    toolState.toolArgs = { ...toolState.toolArgs, sampleSize: 3 };
+    const toolArea = renderArea();
+
+    // centerX = -1: the block clips to [0, 2) but the centre is outside.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: -1, clientY: 0 });
+
+    // centerX = 4 (== canvas.width): the block clips to [3, 4) but the centre is outside.
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 4, clientY: 0 });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
   it('ignores non-primary mouse buttons', () => {
     const toolArea = renderArea();
 

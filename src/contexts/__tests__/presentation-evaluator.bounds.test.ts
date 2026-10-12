@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MAX_AFFINE_COORDINATE, MAX_AFFINE_PIXELS, type AffineTransform } from '../affine-transform.ts';
 import {
+  drawEvaluatedPresentation,
   getPresentationFilter,
   evaluatePresentation,
   evaluatePresentationForDraw,
@@ -10,6 +11,7 @@ import {
   retainedPresentationOperations,
   stageProcessorInput,
 } from '../presentation-evaluator.ts';
+import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { FilterArgumentUnrenderableError } from '../../util/canvas-filter.ts';
 
 const position = { x: 0, y: 0, width: 9000, height: 9000 };
@@ -229,5 +231,58 @@ describe('the processor input boundary', () => {
     expect(() => stageProcessorInput(rasterLayer, { width: big.width, height: big.height } as ImageBitmap)).toThrow(
       /raster bounds/
     );
+  });
+});
+
+describe('drawEvaluatedPresentation compositing', () => {
+  it('disables image smoothing before the identity-affine blit, so a fractional layer box is not bilinearly resampled', () => {
+    // §163: nothing in the composite path sets imageSmoothingEnabled, so it defaults to
+    // true and a drawImage at a different size bilinearly stretches every stroke. The
+    // intended behaviour is a pixel-perfect blit — no smoothing.
+    const ctx = makeMockCtx();
+    const smoothingAtBlit: boolean[] = [];
+    vi.spyOn(ctx, 'drawImage').mockImplementation(() => {
+      smoothingAtBlit.push(ctx.imageSmoothingEnabled);
+      return undefined as never;
+    });
+
+    const evaluation = evaluatePresentationForDraw(
+      {
+        position: { x: 0, y: 0, width: 40, height: 20 },
+        sourceSize: { width: 40, height: 20 },
+        operations: [],
+        mode: 'layer-bounds',
+      },
+      documentTarget
+    );
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, documentTarget);
+
+    expect(smoothingAtBlit).toEqual([false]);
+  });
+
+  it('disables image smoothing before the affine-transformed blit', () => {
+    const ctx = makeMockCtx();
+    const smoothingAtBlit: boolean[] = [];
+    vi.spyOn(ctx, 'drawImage').mockImplementation(() => {
+      smoothingAtBlit.push(ctx.imageSmoothingEnabled);
+      return undefined as never;
+    });
+
+    const evaluation = evaluatePresentationForDraw(
+      {
+        position: { x: 0, y: 0, width: 40, height: 20 },
+        sourceSize: { width: 40, height: 20 },
+        operations: [{ kind: 'affine-transform', transform: scale }],
+        mode: 'layer-bounds',
+      },
+      documentTarget
+    );
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+
+    drawEvaluatedPresentation(ctx, bitmap, evaluation, documentTarget);
+
+    expect(smoothingAtBlit).toEqual([false]);
   });
 });

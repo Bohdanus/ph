@@ -639,6 +639,32 @@ describe('CloneStampToolArea', () => {
       strokeAndProve(view, toolArea);
     });
 
+    it('proves usePaintStroke is disabled on a bedrock layer and enabled on a non-bedrock layer', () => {
+      // Bedrock: `enabled` is false, so `usePaintStroke` returns from every handler before
+      // reaching a callback — nothing claims the pointer, and both writers are silent.
+      storeState.layers = { base: makeLayer('base', { isBedrock: true }) };
+      storeState.activeLayerId = 'base';
+      const { toolArea } = renderArea(NO_OVERLAY);
+
+      stroke(toolArea, [20, 20], [100, 60]);
+
+      expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+      expect(updateLayerByToolMock).not.toHaveBeenCalled();
+      expect(pointerState.activePointer).toBeNull();
+
+      // Non-bedrock: `enabled` is true, so `usePaintStroke` captures the pointer and fires
+      // both the preview and the commit callbacks exactly once.
+      storeState.layers = { base: makeLayer('base') };
+      storeState.activeLayerId = 'base';
+      const { toolArea: toolArea2 } = renderArea(NO_OVERLAY);
+
+      stroke(toolArea2, [20, 20], [100, 60]);
+
+      expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+      expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+      expect(pointerState.activePointer).toBeNull();
+    });
+
     it('commits nothing when there is no active layer', () => {
       storeState.activeLayerId = null;
       const { toolArea, view } = renderArea();

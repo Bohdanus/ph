@@ -62,8 +62,9 @@ const toHexColor = (red: number, green: number, blue: number): string =>
  * The sample is read from the COMPOSITED workspace canvas (`canvasRef`, the element
  * `drawLayersToCanvas` composes every visible layer into), not from the active layer, because that
  * is the pixel the user actually clicked. `drawLayersToCanvas` sizes that canvas to the document
- * frame and draws each layer at `position.x - documentFrame.x`, so a document-space point IS a
- * canvas pixel.
+ * frame and draws each layer at `position.x - documentFrame.x`, so the canvas's own pixel (0,0) IS
+ * the frame origin, and `getLocalCoords` (which returns frame-space coordinates) is already the index
+ * `getImageData` wants.
  */
 export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
   const [{ canvasRef, containerRef, totalSize }, dispatch] = useStore();
@@ -132,6 +133,17 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     // offers are odd, so the block is centred. The block is then CLIPPED to the canvas rather than
     // shifted inward: a click on the border averages the pixels that exist instead of reading out
     // of bounds or quietly sliding the sample off the edge the user clicked.
+    //
+    // The centre pixel must be inside the canvas before the clipping math below is safe: `getLocalCoords`
+    // returns frame-space coordinates, and a click in the contain-fit padding (outside the canvas bitmap
+    // but inside the container) can be negative or past `canvas.width`. With `sampleSize === 1` the
+    // `right <= left` guard at the next step catches every out-of-bounds case, but with a larger sample
+    // size the clipped block CAN be non-empty while the centre pixel is outside it, which would index
+    // a negative offset into the pixel array — `Uint8ClampedArray` returns `undefined` for negative
+    // indices, so the alpha check would read the wrong byte and the average would include padding.
+    // `sampleColorAt` makes the same check (`src/tools/colorSampler.ts:146`).
+    if (centerX < 0 || centerY < 0 || centerX >= canvas.width || centerY >= canvas.height) return;
+
     const sampleSize: EyedropperSampleSize = args.sampleSize;
     const half = Math.floor(sampleSize / 2);
     const left = Math.max(0, centerX - half);

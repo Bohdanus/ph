@@ -249,6 +249,7 @@ describe('paint tool rasterization', () => {
     expect(result).toHaveLength(1);
     expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
     expect(result[0]).not.toBe(bitmap);
+    expect(RecordingOffscreenCanvas.instances[0].ctx.imageSmoothingEnabled).toBe(false);
     expect(RecordingOffscreenCanvas.instances[0].ctx.drawImage).toHaveBeenCalledWith(
       bitmap,
       0,

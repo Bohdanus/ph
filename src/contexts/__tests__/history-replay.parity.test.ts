@@ -11,6 +11,7 @@ import type { DurableReplayResult } from '../durable-replay.ts';
 import type { Selection, Size } from '../general-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
+import type { ShapeToolArgs } from '../../tools/shape.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -100,6 +101,18 @@ const textArgs: TextToolArgs = {
   lineHeight: 1.2,
   text: 'Parity',
   rect: { x1: 10, y1: 15, x2: 140, y2: 55 },
+};
+
+const vectorArgs: ShapeToolArgs = {
+  toolName: 'shape',
+  alpha: 1,
+  color: '#0000ff',
+  backgroundColor: '#ffffff',
+  hasFill: true,
+  figure: 'oval',
+  lineWidth: 2,
+  start: { x: 20, y: 20 },
+  end: { x: 100, y: 80 },
 };
 
 const transformArgs: TransformToolArgs = {
@@ -235,6 +248,23 @@ const cases: ReadonlyArray<{
           args: textArgs,
           isBedrock: false,
           pos: { x: 10, y: 15, width: 130, height: 40 },
+        },
+      },
+    ],
+  },
+  {
+    name: 'vector source',
+    history: [
+      baseline(),
+      {
+        id: 'shape',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'shape-layer',
+        layerSource: {
+          kind: 'tool',
+          args: vectorArgs,
+          isBedrock: false,
+          pos: { x: 20, y: 20, width: 80, height: 60 },
         },
       },
     ],

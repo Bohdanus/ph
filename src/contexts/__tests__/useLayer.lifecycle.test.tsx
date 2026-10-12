@@ -771,6 +771,27 @@ describe('useLayers applyDocumentCrop', () => {
     expect(result.current.store.history).toEqual([]);
   });
 
+  it('refuses a non-finite crop rectangle without publishing an invalid frame', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0) },
+      activeLayerId: 'edited',
+      canvas: document.createElement('canvas'),
+    });
+
+    let applied = true;
+    act(() => {
+      applied = result.current.layers.applyDocumentCrop({ x1: 0, y1: 0, x2: Number.NaN, y2: 200 });
+    });
+
+    expect(applied).toBe(false);
+    expect(result.current.store.documentFrame).toEqual(frame);
+    expect(result.current.store.totalSize).toEqual(size);
+    expect(result.current.store.history).toEqual([]);
+    expect(warn).toHaveBeenCalledWith('applyDocumentCrop refused a non-finite crop rectangle');
+    warn.mockRestore();
+  });
+
   it('accumulates crops relative to the already-cropped frame', () => {
     // The `console.warn` spy this test used to install was never asserted, and
     // `useLayer.ts` contains no `console.warn` call at all, so it existed only to swallow a

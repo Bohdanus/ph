@@ -71,8 +71,9 @@ What makes it unresolvable from the documents alone:
 - The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
   "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
   `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
-  **That 41 is §74's own historical figure, not today's count** — the registry carries 44 now,
-  since the Sponge and the two 1-pixel marquees were added to it. The quotation is left as §74 states it rather than
+  **That 41 is §74's own historical figure, not today's count** — the registry carries 53 now,
+  since the Sponge, the two 1-pixel marquees, and additional implementations (Star, Red Eye,
+  the healing flyout family, and others) were added to it. The quotation is left as §74 states it rather than
   silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
   the **70-tool target**, not counted off a roster. A combined list of 36 means either the
   target is 72 or two entries do not belong.
@@ -108,11 +109,11 @@ someone who trusts the source material.
 
 ## Drawing
 
-| Adobe tool | Group                                                                  | Shortcut                                             | Headline options                             | Source                                                                                                                              |
-| ---------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **Star**   | Drawing — shapes flyout; exact position relative to Line is unresolved | none of its own; reached by cycling the shapes group | Points, corner radius, inner and outer radii | Adobe's drawing-tools overview and Star-tool page; see the sourced Shape-family research in `src/tools/descriptions/shape.notes.md` |
-
-**Star is now implemented.** Adobe's separate Star-tool page names its points and inner/outer radii,
+**Star was on this table and is not any more**, which is recorded here rather than left as a
+quiet deletion. It was the sole entry in this table, sourced from Adobe's drawing-tools overview
+and Star-tool page (see the Shape-family research in `src/tools/descriptions/shape.notes.md`).
+The row documented the unresolved question of Star's exact position relative to Line in the
+shape flyout. **Star is now implemented.** Adobe's separate Star-tool page names its points and inner/outer radii,
 and the sourced Shape-family research records its options and the app-side implementation
 (`src/tools/descriptions/shape.notes.md`, Star-tool research). Star renders via the `shape` tool with
 `figure: 'star'`, and `FigureType` in `src/tools/shape.ts` includes `'star'`.
@@ -145,14 +146,11 @@ are covered by `e2e/single-row-column-marquee.spec.ts`.
 
 ## Retouch
 
-| Adobe tool             | Group                                                                                    | Shortcut                                                                                                                                                                  | Headline options                                                                                                                                                                                          | Source                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Spot Healing Brush** | Retouch — healing flyout, first entry                                                    | `J` — **Adobe-confirmed** (Adobe: _"Select the Spot Healing Brush (J)"_)                                                                                                  | Brush Preset (Size, Hardness, Spacing), Mode, Type (Content-Aware / Proximity Match / Create Texture), Sample All Layers                                                                                  | Adobe: _"Select the Spot Healing Brush (J)"_, and the Options bar names Brush Preset, Mode, Type and Sample All Layers — **no Pressure control exists** on this tool.                                                                                                                                                                           |
-| **Healing Brush**      | Retouch — healing flyout, second entry                                                   | `J`, printed on Adobe's own page                                                                                                                                          | Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample, Diffusion                                                                                                                      | Adobe's Healing Brush page lists _"Mode, Source, Aligned, Sample, and Diffusion"_                                                                                                                                                                                                                                                               |
-| **Patch**              | Retouch — healing flyout, third entry                                                    | `J`, printed on Adobe's own page                                                                                                                                          | Patch option Normal, then Source or Destination                                                                                                                                                           | Adobe's Patch page lists _"Normal"_ and _"Source or Destination"_                                                                                                                                                                                                                                                                               |
-| **Remove**             | Retouch — healing flyout                                                                 | not researched — no Adobe shortcut page opened                                                                                                                            | Size, Mode dropdown (Generative AI on / off / Auto), Sample All Layers, Remove after each stroke, Output to                                                                                               | Adobe's Remove tool page names all five controls; the shortcut is not confirmed on any Adobe page. `HANDOFF.md` §74 established Adobe-documented membership.                                                                                                                                                                                    |
-| **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser                           | `E` — **Adobe-confirmed** (Adobe NZ/AU: _"Select the Background Eraser tool (E)"_); shared with Eraser and Magic Eraser; `Shift+E` cycles the family                      | Brush Preset (Size, Hardness, Spacing, Angle, Roundness), Sampling (Continuous / Once / Background Swatch), Limits (Discontiguous / Contiguous / Find Edges), Tolerance (0–100), Protect Foreground Color | Adobe's _"Change pixels to transparent with the Background Eraser tool"_ page names every control; Adobe's NZ/AU pages confirm `(E)`.                                                                                                                                                                                                           |
-| **Adjustment Brush**   | Painting — **Brush flyout sibling**; placement (standalone vs. flyout) is **unresolved** | none of its own                                                                                                                                                           | not researched — third-party only; options bar contents from glensmith + creativepro, not Adobe-confirmed                                                                                                 | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed membership via the dedicated Adjustment Brush page. Toolbar placement is contradictory: `glensmith.co.uk` (2026-08-14) says standalone, `photoshopessentials.com` (2024-02-16) says Brush flyout. Options bar not researched against Adobe. |
+| Adobe tool            | Group                                                                                    | Shortcut                                                                                                                                             | Headline options                                                                                                                                                                                          | Source                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Remove**            | Retouch — healing flyout                                                                 | not researched — no Adobe shortcut page opened                                                                                                       | Size, Mode dropdown (Generative AI on / off / Auto), Sample All Layers, Remove after each stroke, Output to                                                                                               | Adobe's Remove tool page names all five controls; the shortcut is not confirmed on any Adobe page. `HANDOFF.md` §74 established Adobe-documented membership.                                                                                                                                                                                    |
+| **Background Eraser** | Retouch — **Eraser group**, beside the Eraser and Magic Eraser                           | `E` — **Adobe-confirmed** (Adobe NZ/AU: _"Select the Background Eraser tool (E)"_); shared with Eraser and Magic Eraser; `Shift+E` cycles the family | Brush Preset (Size, Hardness, Spacing, Angle, Roundness), Sampling (Continuous / Once / Background Swatch), Limits (Discontiguous / Contiguous / Find Edges), Tolerance (0–100), Protect Foreground Color | Adobe's _"Change pixels to transparent with the Background Eraser tool"_ page names every control; Adobe's NZ/AU pages confirm `(E)`.                                                                                                                                                                                                           |
+| **Adjustment Brush**  | Painting — **Brush flyout sibling**; placement (standalone vs. flyout) is **unresolved** | none of its own                                                                                                                                      | not researched — third-party only; options bar contents from glensmith + creativepro, not Adobe-confirmed                                                                                                 | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed membership via the dedicated Adjustment Brush page. Toolbar placement is contradictory: `glensmith.co.uk` (2026-08-14) says standalone, `photoshopessentials.com` (2024-02-16) says Brush flyout. Options bar not researched against Adobe. |
 
 **The Ruler was on this table and is not any more**, which is recorded here rather than left as a
 quiet deletion for the same reason the Sponge is below. It was the only row in
@@ -170,10 +168,20 @@ quiet deletion.** It was the third member of this table's `O` toning flyout row,
 ships it: `src/tools/sponge.ts` is the tool, `src/components/ToolbarsRight/Sponge/Sponge.tsx` is
 its bar, and `docs/TOOLS.md` carries the generated per-tool census at **§Sponge Tool** with the
 sources behind it. Deleting the row keeps this file's contract — every row here is absent from
-`src/contexts/tool-types.ts` — and the seven Adobe-group tables below hold **31 rows** in total
-(Drawing 1, Selection 3, Retouch 6, Painting 5, Type 3, Navigation and measuring 10, Path 3), which is
-neither 29 nor the 30 this file attributes to `TOOLS-TOO-HARD.md`: the two lists are counted
-separately and are not reconciled here.
+`src/contexts/tool-types.ts`.
+
+**The three healing flyout tools — Spot Healing Brush, Healing Brush, and Patch — were on this
+table and are not any more, which is recorded here rather than left as a quiet deletion.** All
+three share `J` and ship in the app: `src/tools/spotHealing.ts`, `src/tools/healingBrush.ts` and
+`src/tools/patch.ts` are the processors, `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx`,
+`src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx` and `src/components/ToolbarsRight/Patch/Patch.tsx`
+are their bars, and `docs/TOOLS.md` carries the generated per-tool census at **§Spot Healing Brush Tool**,
+**§Healing Brush Tool** and **§Patch Tool** with the sources behind them. Deleting the rows keeps this
+file's contract — every row here is absent from `src/contexts/tool-types.ts` — and the six
+Adobe-group tables below hold **27 rows** in total (Selection 3, Retouch 3, Painting 5,
+Type 3, Navigation and measuring 10, Path 3), which is neither the 30 this file
+attributes to `TOOLS-TOO-HARD.md` nor the 31 it carried before these three Retouch rows were
+removed: the two lists are counted separately and are not reconciled here.
 
 **Red Eye was on this table and is not any more, which is recorded here rather than left as a
 quiet deletion.** It was the fifth member of this table's `J` healing flyout row, and the app now
@@ -201,8 +209,11 @@ exists rather than a bare `git log` entry:
 because they are geometry and pixel loops rather than new subsystems. **It does not list
 the Healing Brush** — `grep -n "Healing Brush" HANDOFF.md` returns nothing, and §74 puts
 **Spot Healing** in the opposite list, the one headed "Largest, and they need a primitive
-the app does not have". **The Sponge and Red Eye are now implemented**; the Healing Brush
-remains absent.
+the app does not have". **All five are now implemented** — `src/tools/spotHealing.ts`,
+`src/tools/healingBrush.ts`, `src/tools/redEye.ts`, `src/tools/sponge.ts`, and
+`src/tools/patch.ts` each ship as a registered processor in `toolProcessors.ts` — none of
+them landed as the planned handoff items §74 named them, and none of them carried a
+handoff entry: they were implemented as undocumented gaps rather than as tracked additions.
 
 ## Painting
 
@@ -394,8 +405,7 @@ versions of this file.
   what the deleted row got wrong by citing it as though it already existed.
 - `docs/TOOLS-RESEARCH-BRIEF.md` — the protocol this repository runs research under, including
   the rule that an unsourceable claim goes in an Unverified list rather than into the data.
-- `toolbarMap`'s shape flyout, in `toolbar-mapping.ts` — its six entries, and the missing
-  seventh.
+- `toolbarMap`'s shape flyout, in `toolbar-mapping.ts` — its seven entries: Rectangle, Ellipse, Line, Triangle, Polygon, Star and Custom Shape, all present.
 - `docs/LAYERS-PANEL.md` — the app side of the Artboard gap.
 
 ## Unverified
@@ -418,7 +428,10 @@ this file; the "not researched" cells in the tables above are the same fact at r
 - **Object Selection** shortcut and options bar. Adobe's own page confirms `(W)` and names Object Finder, the four selection modes, Sample All Layers and Hard Edge.
 - **Selection Brush** options bar. Adobe's _"Selecting with the Lasso tools"_ page names Hardness, Opacity, Color overlay, Add/Subtract brush and selection modes.
 - **Remove** options bar. Adobe's Remove tool page names Size, Mode (Gen AI on/off/Auto), Sample All Layers, Remove after each stroke, Output to.
-- **Spot Healing Brush** options bar. Adobe's 2025 page confirms Brush Preset, Mode, Type (Content-Aware / Proximity Match / Create Texture) and Sample All Layers; **Pressure is not a control** on this tool.
+- **Spot Healing Brush** options bar. Adobe's 2025 page confirms Brush Preset, Mode, Type (Content-Aware / Proximity Match / Create Texture) and Sample All Layers; **Pressure is not a control** on this tool. Now implemented — `src/tools/spotHealing.ts` ships it.
+- **Healing Brush** options bar. Adobe's Healing Brush page names Mode (Normal, Replace, Multiply, Screen, Darken), Source, Aligned, Sample and Diffusion. Now implemented — `src/tools/healingBrush.ts` ships it.
+- **Patch** options bar. Adobe's Patch page names the single Patch option (Normal, then Source or Destination). Now implemented — `src/tools/patch.ts` ships it.
+- **Red Eye** shortcut and options bar. `J` confirmed via Adobe's Spot Healing Brush page; Adobe's Red Eye page names Pupil Size and Darken Amount. Now implemented — `src/tools/redEye.ts` ships it.
 - **Background Eraser** shortcut and options bar. Adobe's NZ/AU pages confirm `(E)`; Adobe's main page names Brush Preset, Sampling, Limits, Tolerance and Protect Foreground Color.
 - **Mixer Brush** options bar. Adobe's _"Paint with the Mixer Brush"_ page lists Wet, Load, Mix, Sample All Layers, Current Brush Load (Load / Clean), Load/Clean after each stroke, Preset menu, plus Brush Preset / Mode / Opacity / Flow / Airbrush.
 - **History Brush** shortcut and options bar. Adobe confirms `(Y)`; options bar carries Brush Preset, Mode, Opacity, Flow; **Source is set in the History panel**, not the options bar.
@@ -449,8 +462,8 @@ parameter where `selectRectangle` takes both. Their cycling key is still unverif
 - `Z` (Zoom), `V` (Artboard). Adobe's own pages were not opened for these letters.
 - `W` for Object Selection, `E` for Background Eraser, `K` for Frame, `C` for Slice and Perspective Crop — **upgraded from third-party to Adobe-confirmed**: Adobe's own tool pages now print these letters. See the Adobe shortcuts confirmed via web search snippets note above.
 - `Shift+Y`, `Shift+S`, `Shift+K`, `Shift+T`, `Shift+A`, `N` are from a **CS2** sheet. They
-   are recorded because they are the best available evidence, not because a 2026 Adobe page
-   confirms them.
+  are recorded because they are the best available evidence, not because a 2026 Adobe page
+  confirms them.
 - `Shift+B` for the Mixer Brush is third-party; Adobe does not print a dedicated Mixer Brush letter on its current shortcut reference.
 
 **Group order and separators — hypothesis, not fact**
