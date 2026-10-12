@@ -62,6 +62,49 @@ describe('pointsBoundingPos', () => {
     expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
   });
 
+  it('rounds outward for every fractional drag, never inward', () => {
+    for (const lineWidth of [0.5, 1, 2, 3, 3.5, 7]) {
+      for (const points of [
+        [
+          { x: 10.4, y: 20.6 },
+          { x: 50.2, y: 80.9 },
+        ],
+        [
+          { x: -3.7, y: -1.2 },
+          { x: 99.9, y: 12.05 },
+        ],
+        [
+          { x: 0.5, y: 0.5 },
+          { x: 0.5, y: 0.5 },
+        ],
+      ]) {
+        const bounds = pointsBoundingPosOutward({ points, lineWidth });
+        const label = `lw=${lineWidth} ${points[0].x},${points[0].y} -> ${points[1].x},${points[1].y}`;
+
+        expect(bounds.x, label).toBeLessThanOrEqual(Math.min(points[0].x, points[1].x) - lineWidth);
+        expect(bounds.y, label).toBeLessThanOrEqual(Math.min(points[0].y, points[1].y) - lineWidth);
+        expect(bounds.x + bounds.width, label).toBeGreaterThanOrEqual(Math.max(points[0].x, points[1].x) + lineWidth);
+        expect(bounds.y + bounds.height, label).toBeGreaterThanOrEqual(Math.max(points[0].y, points[1].y) + lineWidth);
+        expect(Number.isInteger(bounds.x), label).toBe(true);
+        expect(Number.isInteger(bounds.y), label).toBe(true);
+        expect(Number.isInteger(bounds.width), label).toBe(true);
+        expect(Number.isInteger(bounds.height), label).toBe(true);
+      }
+    }
+  });
+
+  it('is the identity on integer geometry with an integral lineWidth', () => {
+    const bounds = pointsBoundingPosOutward({
+      points: [
+        { x: 10, y: 20 },
+        { x: 50, y: 60 },
+      ],
+      lineWidth: 2,
+    });
+
+    expect(bounds).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+  });
+
   it('rounds fractional bounds outward to integer raster dimensions', () => {
     // §163: pointer coordinates divided by the contain fit are fractional, and the
     // Draw tool must use its outward-rounded bounds before allocating the layer bitmap,
