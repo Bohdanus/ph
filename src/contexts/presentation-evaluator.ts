@@ -311,8 +311,8 @@ export function drawEvaluatedPresentation(
   const y = target.kind === 'bounds' ? -evaluation.localBounds.y : evaluation.position.y - (target.frame?.y ?? 0);
 
   ctx.filter = evaluation.filter;
+  ctx.imageSmoothingEnabled = false;
   if (isIdentityAffineTransform(evaluation.affine)) {
-    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(bitmap as CanvasImageSource, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height);
     return;
   }
