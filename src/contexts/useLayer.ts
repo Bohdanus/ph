@@ -346,6 +346,10 @@ export const useLayers = () => {
       history,
       historyIndex,
       branchRevision = 0,
+      documentId,
+      documentRevision,
+      durableRenderProjection,
+      renderSelector,
       currentArgs: currentArgsRef,
       previewLayers: previewLayersRef,
       promoteLayerPresentation,
@@ -1202,17 +1206,35 @@ export const useLayers = () => {
   const drawAllLayers = useCallback(() => {
     if (!canvasRef.current) return;
 
-    const renderLayers = Object.keys(previewLayersRef.current).length
+    // Navigation has moved logical state but no complete presentation authority
+    // has been accepted yet. Keep the prior canvas intact until then.
+    if (renderSelector.source === 'pending') return;
+
+    const previewLayerIds = Object.keys(previewLayersRef.current);
+    const hasPreview = previewLayerIds.length > 0;
+    const durableProjection =
+      !hasPreview &&
+      renderSelector.source === 'durable' &&
+      durableRenderProjection &&
+      durableRenderProjection.documentId === documentId &&
+      durableRenderProjection.documentRevision === documentRevision &&
+      durableRenderProjection.branchRevision === branchRevision &&
+      durableRenderProjection.historyCursor === historyIndex &&
+      documentFrameEquals(durableRenderProjection.frame, documentFrame) &&
+      documentFrameEquals(renderSelector.frame, documentFrame)
+        ? durableRenderProjection
+        : null;
+    const durableLayers = durableProjection?.layers ?? null;
+    const renderLayers = hasPreview
       ? ({
           ...layers,
           ...Object.fromEntries(Object.entries(previewLayersRef.current).map(([id, preview]) => [id, preview.layer])),
         } as LayersRecord)
-      : layers;
+      : (durableLayers ?? layers);
     const sorted = getSortedLayersArray(renderLayers);
+    const renderFrame = durableProjection ? durableProjection.frame : documentFrame;
     try {
-      if (
-        !drawLayersToCanvas(canvasRef.current, sorted, documentFrame, new Set(Object.keys(previewLayersRef.current)))
-      ) {
+      if (!drawLayersToCanvas(canvasRef.current, sorted, renderFrame, new Set(previewLayerIds))) {
         console.error('Unable to publish runtime layer presentation');
       }
     } catch (error) {
@@ -1220,9 +1242,25 @@ export const useLayers = () => {
       // event boundary. The renderer already preserves the last good canvas.
       console.error('Unable to publish runtime layer presentation', error);
     }
-  }, [canvasRef, documentFrame, layers, previewLayersRef]);
+  }, [
+    branchRevision,
+    canvasRef,
+    documentFrame,
+    documentId,
+    documentRevision,
+    durableRenderProjection,
+    historyIndex,
+    layers,
+    previewLayersRef,
+    renderSelector,
+  ]);
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
+    if (![rect.x1, rect.y1, rect.x2, rect.y2].every((value) => Number.isFinite(value))) {
+      console.warn('applyDocumentCrop refused a non-finite crop rectangle');
+      return false;
+    }
+
     // Unclamped on purpose, and that is the whole feature: Photoshop's crop box may be dragged
     // past the image edge, which extends the canvas. `sortRoundRect` sorts, rounds each edge once
     // and derives the extent from the rounded edges, so a rect reaching past an edge grows the

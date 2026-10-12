@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { execSync } from 'child_process';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -11,6 +12,18 @@ export default defineConfig({
         plugins: [['babel-plugin-react-compiler', { target: '19' }]],
       },
     }),
+    {
+      name: 'inject-commit-hash',
+      apply: 'build',
+      transformIndexHtml(html) {
+        try {
+          const hash = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+          return html.replace('</head>', `  <!-- build: ${hash} -->\n</head>`);
+        } catch {
+          return html;
+        }
+      },
+    },
   ],
   css: {
     transformer: 'postcss',

@@ -74,6 +74,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 const BLACK = '#000000';
 const RED = '#cc0000';
+const BLUE = '#0000cc';
 const GREEN = '#00aa00';
 
 const LINE_Y = 200;
@@ -872,5 +873,152 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     ).toBeGreaterThan(30);
     expect(averaged.green, 'the average must mix the two sides of the boundary').toBeGreaterThan(20);
     expect(averaged.green).toBeLessThan(235);
+  });
+
+  // eyedropper: reads the top opaque layer where two strokes overlap on separate layers
+  test('the eyedropper samples the top layer where two opaque layers overlap', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+    await drawSlab(page, RED, SLAB, hasRedPixels);
+
+    // A second opaque stroke on its own layer, offset in Y so the slabs overlap
+    // rather than coincide: red spans y=150..250, blue spans y=190..290.
+    const LINE_Y_BLUE = LINE_Y + 40;
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, BLUE, true);
+    const sizeSlider = page.getByRole('slider', { name: /^Size/ });
+    await expect(sizeSlider).toBeVisible();
+    await sizeSlider.fill(String(SLAB));
+    await expect(sizeSlider).toHaveValue(String(SLAB));
+    const opacitySlider = page.getByRole('slider', { name: /^Opacity/ });
+    await opacitySlider.fill('1');
+    await expect(opacitySlider).toHaveValue('1');
+    const box = await canvasBox(page);
+    await drawLine(page, box, LINE_START_X, LINE_Y_BLUE, ERASE_LINE_END_X, LINE_Y_BLUE, { steps: 8 });
+    await expect(page.getByTestId('undo-button'), 'the blue stroke to commit one history entry').toBeEnabled();
+
+    const hasBluePixels = async (screenshot: Buffer): Promise<boolean> => {
+      const imageData = await loadImageData(screenshot);
+      const { data } = imageData;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] !== 0 && data[i] < 100 && data[i + 1] < 100 && data[i + 2] > 180) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    await waitForCanvasPixels(page, await slabClip(page), hasBluePixels, {
+      description: 'the blue line',
+    });
+
+    await clickToolButton(page, 'eyedropper');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'the eyedropper is the active tool'
+    ).toBeVisible();
+
+    // At y=220 both slabs overlap; blue is the top layer and fully opaque, so the
+    // composite pixel is pure blue.
+    await setForegroundColor(page, '#ff00ff', true);
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y + 20 });
+    await expect
+      .poll(async () => swatchDelta(page, { red: 0, green: 0, blue: 204 }), {
+        message: 'the eyedropper to read the top (blue) layer at the overlap',
+        timeout: 5_000,
+      })
+      .toBeLessThanOrEqual(8);
+
+    // At y=160 only the red slab covers; blue's lower edge is at 190.
+    await setForegroundColor(page, '#ff00ff', true);
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y - 40 });
+    await expect
+      .poll(async () => swatchDelta(page, { red: 204, green: 0, blue: 0 }), {
+        message: 'the eyedropper to read the red layer outside the overlap',
+        timeout: 5_000,
+      })
+      .toBeLessThanOrEqual(8);
+  });
+
+  // eyedropper: must sample the composited result of multiple layers with blend modes
+  test('the eyedropper samples the composited result of overlaid layers with blend modes', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+    await openWorkspace(page);
+
+    // Draw a red slab using the Draw tool (Normal blend mode, opacity 1)
+    await drawSlab(page, RED, SLAB, hasRedPixels);
+
+    // Switch to Pencil tool for the second layer with Multiply blend mode.
+    // Clicking the brush group tile selects the Brush; the pencil comes out of
+    // the flyout — same pattern `paint-options.spec.ts` follows.
+    await openToolFlyout(page, 'brush');
+    await selectFromFlyout(page, { toolName: 'pencil', label: 'Pencil Tool' });
+    await expectToolSelected(page, 'pencil');
+
+    // Set foreground color to blue; setForegroundColor with verifySwatch=true
+    // already polls until the swatch matches, so no explicit wait is needed.
+    await setForegroundColor(page, BLUE, true);
+
+    // Set pencil size and opacity to 100%
+    const sizeSlider = page.getByRole('slider', { name: /^Size/ });
+    await expect(sizeSlider).toBeVisible();
+    await sizeSlider.fill(String(SLAB));
+    await expect(sizeSlider).toHaveValue(String(SLAB));
+    const opacitySlider = page.getByRole('slider', { name: /^Opacity/ });
+    await opacitySlider.fill('100');
+    await expect(opacitySlider).toHaveValue('100');
+
+    // Set blend mode to Multiply
+    const modeSelect = page.getByRole('combobox', { name: 'Mode', exact: true });
+    await expect(modeSelect).toBeVisible();
+    await modeSelect.selectOption({ label: 'Multiply' });
+    await expect(modeSelect).toHaveValue('multiply');
+
+    // Draw the blue slab on top — one history entry must be committed
+    const box = await canvasBox(page);
+    await drawLine(page, box, LINE_START_X, LINE_Y, ERASE_LINE_END_X, LINE_Y, { steps: 8 });
+    await expect(
+      page.getByTestId('undo-button'),
+      'the blue stroke must commit one history entry before compositing is verified'
+    ).toBeEnabled();
+
+    // Wait for the composited result: Multiply of blue (0,0,204) over red (204,0,0) = black (0,0,0)
+    await waitForCanvasPixels(
+      page,
+      await slabClip(page),
+      async (screenshot) => {
+        const image = await loadImageData(screenshot);
+        const centerX = Math.floor(image.width / 2);
+        const centerY = Math.floor(image.height / 2);
+        const index = (centerY * image.width + centerX) * 4;
+        return image.data[index] < 50 && image.data[index + 1] < 50 && image.data[index + 2] < 50;
+      },
+      { description: 'the multiply blend to produce black' }
+    );
+
+    // Now use the eyedropper to sample the overlapping area
+    await clickToolButton(page, 'eyedropper');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'the eyedropper is the active tool'
+    ).toBeVisible();
+
+    // Set the swatch to fuchsia — delta ~204 from black, so the poll below cannot be
+    // satisfied by a dead eyedropper leaving the swatch at its pre-click value.
+    await setForegroundColor(page, '#ff00ff', true);
+
+    // Click at the center of the slab where the layers overlap
+    await clickAt(page, { x: LINE_CENTRE_X, y: LINE_Y });
+
+    // The eyedropper should sample the composited result (black from multiply).
+    // Threshold of 8 matches the sibling tests: a fully opaque multiply at the
+    // stroke centre has no anti-aliasing, so the readback is exact up to
+    // sub-pixel sampling variance.
+    await expect
+      .poll(async () => swatchDelta(page, { red: 0, green: 0, blue: 0 }), {
+        message: 'the foreground swatch to show the composited black from multiply blend',
+        timeout: 5_000,
+      })
+      .toBeLessThanOrEqual(8);
   });
 });

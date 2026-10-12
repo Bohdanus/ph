@@ -283,10 +283,10 @@ test.describe('Panel workspace (fast)', () => {
     const splitter = (await page.locator(SPLITTER).boundingBox())!;
     await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height / 2);
     await page.mouse.down();
-    // UP, which is what gives the top panel the space. Dragging down would take it away, and
+    // DOWN, which is what gives the top panel the space. Dragging up would take it away, and
     // the top panel starts at 20% of a 580px column, so there is barely any to take — it would
     // hit the minimum height floor and read as "nothing happened".
-    await page.mouse.move(splitter.x + splitter.width / 2, splitter.y - 100, { steps: 8 });
+    await page.mouse.move(splitter.x + splitter.width / 2, splitter.y + splitter.height + 100, { steps: 8 });
     await page.mouse.up();
 
     const after = {

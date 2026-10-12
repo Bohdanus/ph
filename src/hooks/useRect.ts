@@ -2,7 +2,16 @@ import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } fro
 import type { Point, Pos, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
-import { getCanvasSize, posToSortedRect, sortRect, sortRoundRect, trimRect } from '../util/rect.ts';
+import {
+  angleFromCenter,
+  getCanvasSize,
+  posToSortedRect,
+  rectCenter,
+  rotatePointAround,
+  sortRect,
+  sortRoundRect,
+  trimRect,
+} from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
@@ -82,9 +91,15 @@ export type UseRectProps = {
    * hit area.
    */
   handlesOutside?: boolean;
+  rotationEnabled?: boolean;
+  rotation?: number;
+  onRotationChange?: (degrees: number) => void;
   /** Optional composition guide for the crop consumer. Other rectangle tools leave this absent. */
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
+
+  /** The document canvas, sampled to pick an overlay-guide color that inverts the underlying pixels. */
+  documentCanvasRef?: RefObject<HTMLCanvasElement | null>;
 
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
@@ -103,6 +118,54 @@ type FreshDragModifiers = {
 const NO_MODIFIERS: FreshDragModifiers = { constrainToSquare: false, fromCentre: false };
 const RECT_BORDER_DASH_LENGTH = 5;
 const RECT_BORDER_DASH_SPEED = 0.4;
+const ROTATE_HOTZONE = 24;
+
+/**
+ * Samples the document canvas at strategic points within the crop rect and returns
+ * an inverted color for the overlay guides, so they stay visible on both light and
+ * dark image content — matching Photoshop's behavior.
+ *
+ * Returns white as a fallback when no document canvas is available or when sampling
+ * fails (e.g. cross-origin canvas).
+ */
+function computeOverlayColor(documentCanvas: HTMLCanvasElement | null, rect: Pos): string {
+  if (!documentCanvas) return 'rgba(255, 255, 255, 0.8)';
+
+  const ctx = documentCanvas.getContext('2d');
+  if (!ctx) return 'rgba(255, 255, 255, 0.8)';
+
+  const { x, y, width, height } = rect;
+  const samplePoints = [
+    { x: x + width / 3, y: y + height / 3 },
+    { x: x + (2 * width) / 3, y: y + height / 3 },
+    { x: x + width / 2, y: y + height / 2 },
+    { x: x + width / 3, y: y + (2 * height) / 3 },
+    { x: x + (2 * width) / 3, y: y + (2 * height) / 3 },
+  ];
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  for (const point of samplePoints) {
+    try {
+      const pixel = ctx.getImageData(Math.round(point.x), Math.round(point.y), 1, 1);
+      r += pixel.data[0];
+      g += pixel.data[1];
+      b += pixel.data[2];
+      count += 1;
+    } catch {
+      // skip out-of-bounds or tainted samples
+    }
+  }
+
+  if (count === 0) return 'rgba(255, 255, 255, 0.8)';
+
+  const avgR = Math.round(r / count);
+  const avgG = Math.round(g / count);
+  const avgB = Math.round(b / count);
+  return `rgba(${255 - avgR}, ${255 - avgG}, ${255 - avgB}, 0.8)`;
+}
 
 /** Paints Photoshop's crop composition guide in canvas pixels. */
 export function drawCropOverlay(
@@ -110,7 +173,8 @@ export function drawCropOverlay(
   rect: Pos,
   overlayType: CropOverlayType = 'ruleOfThirds',
   orientation: CropOverlayOrientation = 'normal',
-  scale = 1
+  scale = 1,
+  documentCanvas: HTMLCanvasElement | null = null
 ) {
   const { x, y, width, height } = rect;
   const vertical = (ratio: number) => x + width * ratio;
@@ -120,8 +184,9 @@ export function drawCropOverlay(
     ctx.lineTo(x2, y2);
   };
 
+  const overlayColor = computeOverlayColor(documentCanvas, rect);
   ctx.save();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.strokeStyle = overlayColor;
   ctx.lineWidth = 1 / scale;
   ctx.setLineDash([]);
   ctx.beginPath();
@@ -145,11 +210,14 @@ export function drawCropOverlay(
       break;
     case 'triangle': {
       const flip = orientation === 'flipped';
-      const left = flip ? x + width : x;
-      const right = flip ? x : x + width;
-      line(left, y, right, y + height);
-      line(right, y, left, y + height);
-      line(x + width / 2, y, x + width / 2, y + height);
+      const diagonalStart = flip ? { x: x + width, y } : { x, y };
+      const diagonalEnd = flip ? { x, y: y + height } : { x: x + width, y: y + height };
+      const anchor = flip
+        ? { x: x + width * 0.382, y: y + height * 0.618 }
+        : { x: x + width * 0.618, y: y + height * 0.618 };
+      line(diagonalStart.x, diagonalStart.y, diagonalEnd.x, diagonalEnd.y);
+      line(flip ? x : x + width, y, anchor.x, anchor.y);
+      line(flip ? x + width : x, y + height, anchor.x, anchor.y);
       break;
     }
     case 'goldenRatio':
@@ -201,8 +269,12 @@ export function useRect({
   borderMode = 'always',
   allowOutsideCanvas = false,
   handlesOutside = false,
+  rotationEnabled = false,
+  rotation = 0,
+  onRotationChange,
   overlayType,
   overlayOrientation = 'normal',
+  documentCanvasRef,
 
   containerRef,
   overlayRef,
@@ -218,6 +290,10 @@ export function useRect({
   const currentEdgeRef = useRef<string | null>(null);
   const customAspectRatioRef = useRef<number | null>(null);
   const freshDragModifiersRef = useRef<FreshDragModifiers>({ ...NO_MODIFIERS });
+  const rotationRef = useRef(rotation);
+  const lastRotationRef = useRef(rotation);
+  const startRotationRef = useRef(rotation);
+  const rotationStartAngleRef = useRef(0);
 
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
@@ -291,6 +367,12 @@ export function useRect({
       drawMaskRef.current?.();
     }
   }, [aspectRatio, initialRect]);
+
+  useEffect(() => {
+    rotationRef.current = rotation;
+    if (lastRotationRef.current !== rotation && rectUnsortedRef.current) drawMaskRef.current?.();
+    lastRotationRef.current = rotation;
+  }, [rotation]);
 
   /**
    * The overlay canvas outlives this hook: `Main.tsx:239-284` renders both overlay canvases
@@ -401,44 +483,69 @@ export function useRect({
       const { scale } = dimensionsRef.current;
       const h1 = HANDLE_SIZE / scale;
       const h2 = HANDLE_SIZE / scale / 2;
+      const hitPoint = rotationEnabled
+        ? rotatePointAround(point, rectCenter(_initialRect), -rotationRef.current)
+        : point;
+
+      if (rotationEnabled) {
+        const localPoint = hitPoint;
+        const outside = localPoint.x < x1 || localPoint.x > x2 || localPoint.y < y1 || localPoint.y > y2;
+        if (outside) {
+          const corners = [
+            { x: x1, y: y1 },
+            { x: x2, y: y1 },
+            { x: x2, y: y2 },
+            { x: x1, y: y2 },
+          ];
+          if (
+            corners.some(
+              (corner) => Math.hypot(localPoint.x - corner.x, localPoint.y - corner.y) <= ROTATE_HOTZONE / scale
+            )
+          ) {
+            return 'rotate';
+          }
+        }
+      }
 
       if (handlesOutside) {
-        if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y1 - h1 && point.y <= y1) return 'top-left';
-        if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y1 - h1 && point.y <= y1) return 'top-right';
-        if (point.x >= x1 - h1 && point.x <= x1 && point.y >= y2 && point.y <= y2 + h1) return 'bottom-left';
-        if (point.x >= x2 && point.x <= x2 + h1 && point.y >= y2 && point.y <= y2 + h1) return 'bottom-right';
+        if (hitPoint.x >= x1 - h1 && hitPoint.x <= x1 && hitPoint.y >= y1 - h1 && hitPoint.y <= y1) return 'top-left';
+        if (hitPoint.x >= x2 && hitPoint.x <= x2 + h1 && hitPoint.y >= y1 - h1 && hitPoint.y <= y1) return 'top-right';
+        if (hitPoint.x >= x1 - h1 && hitPoint.x <= x1 && hitPoint.y >= y2 && hitPoint.y <= y2 + h1)
+          return 'bottom-left';
+        if (hitPoint.x >= x2 && hitPoint.x <= x2 + h1 && hitPoint.y >= y2 && hitPoint.y <= y2 + h1)
+          return 'bottom-right';
       } else {
         // check for tops
-        if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+        if (hitPoint.x >= x1 - h2 && hitPoint.x <= x1 + h2 && hitPoint.y >= y1 - h2 && hitPoint.y <= y1 + h2) {
           return 'top-left';
         }
-        if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+        if (hitPoint.x >= x2 - h2 && hitPoint.x <= x2 + h2 && hitPoint.y >= y1 - h2 && hitPoint.y <= y1 + h2) {
           return 'top-right';
         }
-        if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+        if (hitPoint.x >= x1 - h2 && hitPoint.x <= x1 + h2 && hitPoint.y >= y2 - h2 && hitPoint.y <= y2 + h2) {
           return 'bottom-left';
         }
-        if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+        if (hitPoint.x >= x2 - h2 && hitPoint.x <= x2 + h2 && hitPoint.y >= y2 - h2 && hitPoint.y <= y2 + h2) {
           return 'bottom-right';
         }
       }
 
       // check for line
-      if (point.x >= x1 && point.x <= x2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
+      if (hitPoint.x >= x1 && hitPoint.x <= x2 && hitPoint.y >= y1 - h2 && hitPoint.y <= y1 + h2) {
         return 'top';
       }
-      if (point.x >= x2 - h2 && point.x <= x2 + h2 && point.y >= y1 && point.y <= y2) {
+      if (hitPoint.x >= x2 - h2 && hitPoint.x <= x2 + h2 && hitPoint.y >= y1 && hitPoint.y <= y2) {
         return 'right';
       }
-      if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 && point.y <= y2) {
+      if (hitPoint.x >= x1 - h2 && hitPoint.x <= x1 + h2 && hitPoint.y >= y1 && hitPoint.y <= y2) {
         return 'left';
       }
-      if (point.x >= x1 && point.x <= x2 && point.y >= y2 - h2 && point.y <= y2 + h2) {
+      if (hitPoint.x >= x1 && hitPoint.x <= x2 && hitPoint.y >= y2 - h2 && hitPoint.y <= y2 + h2) {
         return 'bottom';
       }
 
       // inside the resize square
-      if (point.x > x1 && point.x < x2 && point.y > y1 && point.y < y2) {
+      if (hitPoint.x > x1 && hitPoint.x < x2 && hitPoint.y > y1 && hitPoint.y < y2) {
         return 'inside';
       }
     }
@@ -480,6 +587,7 @@ export function useRect({
     const cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
 
     eventTarget.style.cursor = cursor ?? '';
+    if (event.currentTarget) event.currentTarget.style.cursor = cursor ?? '';
   }
 
   function drawMask(hasRectChanged?: boolean) {
@@ -511,6 +619,9 @@ export function useRect({
     const { x, y, width, height } = allowOutsideCanvas
       ? sortRoundRect(sortedRect)
       : trimRect(sortedRect, getCanvasSize(overlayRef));
+    const angle = rotationEnabled ? rotationRef.current : 0;
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
 
     if (!hideBlend) {
       // Draw semi-transparent overlay
@@ -523,10 +634,42 @@ export function useRect({
       // rectangle in both modes, and this line is the only part of the blend the prop reaches: a
       // negative CANVAS-origin `clearRect` is clipped by the backing store to exactly the part of
       // the true rect that overlaps the frame, which is the cut-out wanted.
-      ctx.clearRect(x, y, width, height);
+      if (angle === 0) {
+        ctx.clearRect(x, y, width, height);
+      } else {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.clearRect(-width / 2, -height / 2, width, height);
+        ctx.restore();
+      }
     }
 
-    if (overlayType) drawCropOverlay(ctx, { x, y, width, height }, overlayType, overlayOrientation, scale);
+    if (overlayType) {
+      if (angle === 0) {
+        drawCropOverlay(
+          ctx,
+          { x, y, width, height },
+          overlayType,
+          overlayOrientation,
+          scale,
+          documentCanvasRef?.current
+        );
+      } else {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((angle * Math.PI) / 180);
+        drawCropOverlay(
+          ctx,
+          { x: -width / 2, y: -height / 2, width, height },
+          overlayType,
+          overlayOrientation,
+          scale,
+          documentCanvasRef?.current
+        );
+        ctx.restore();
+      }
+    }
 
     // The one thing on this overlay that another canvas can also draw, and so the reason
     // `borderMode` exists: for a selection, the ants canvas strokes the same rectangle one layer
@@ -546,7 +689,15 @@ export function useRect({
         borderMode === 'while-dragging' && isGestureActiveRef.current && isMouseDown.current
           ? borderDashOffsetRef.current
           : 0;
-      ctx.strokeRect(x, y, width, height);
+      if (angle === 0) {
+        ctx.strokeRect(x, y, width, height);
+      } else {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.strokeRect(-width / 2, -height / 2, width, height);
+        ctx.restore();
+      }
     }
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
@@ -563,10 +714,33 @@ export function useRect({
     const hIn = handlesOutside ? -h1 : -h1 / 2;
     const hOut = handlesOutside ? 0 : -h1 / 2;
     ctx.fillStyle = '#007bff';
-    ctx.fillRect(x + hIn, y + hIn, h1, h1);
-    ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
-    ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
-    ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
+    if (angle === 0) {
+      ctx.fillRect(x + hIn, y + hIn, h1, h1);
+      ctx.fillRect(x + width + hOut, y + hIn, h1, h1);
+      ctx.fillRect(x + hIn, y + height + hOut, h1, h1);
+      ctx.fillRect(x + width + hOut, y + height + hOut, h1, h1);
+    } else {
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate((angle * Math.PI) / 180);
+      ctx.fillRect(-width / 2 + hIn, -height / 2 + hIn, h1, h1);
+      ctx.fillRect(width / 2 + hOut, -height / 2 + hIn, h1, h1);
+      ctx.fillRect(-width / 2 + hIn, height / 2 + hOut, h1, h1);
+      ctx.fillRect(width / 2 + hOut, height / 2 + hOut, h1, h1);
+      ctx.restore();
+    }
+
+    if (rotationEnabled) {
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate((angle * Math.PI) / 180);
+      ctx.strokeStyle = '#007bff';
+      ctx.lineWidth = 1 / scale;
+      ctx.beginPath();
+      ctx.arc(0, -height / 2 - ROTATE_HOTZONE / scale / 2, 4 / scale, Math.PI * 0.2, Math.PI * 1.8);
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // todo update status bar - add func on each update
     onRepaint?.(sortedRect);
@@ -668,6 +842,10 @@ export function useRect({
     const edge = currentEdgeRef.current;
 
     const _aspectRatio = customAspectRatioRef.current ?? aspectRatio;
+    const localPoint =
+      _initialRect && rotationEnabled
+        ? rotatePointAround(point, rectCenter(_initialRect), -rotationRef.current)
+        : point;
 
     if (_initialRect && edge) {
       ({ x1, y1, x2, y2 } = _initialRect);
@@ -682,23 +860,31 @@ export function useRect({
           break;
         }
         case 'left':
-          x1 = point.x;
+          x1 = localPoint.x;
           ({ y1, y2 } = adjustHeightRatio({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'right':
-          x2 = point.x;
+          x2 = localPoint.x;
           ({ y1, y2 } = adjustHeightRatio({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'top':
-          y1 = point.y;
+          y1 = localPoint.y;
           ({ x1, x2 } = refitRectWidthToAspect({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'bottom':
-          y2 = point.y;
+          y2 = localPoint.y;
           ({ x1, x2 } = refitRectWidthToAspect({ x1, y1, x2, y2 }, _aspectRatio));
           break;
+        case 'rotate': {
+          const center = rectCenter(_initialRect);
+          rotationRef.current =
+            startRotationRef.current + angleFromCenter(center, point) - rotationStartAngleRef.current;
+          onRotationChange?.(rotationRef.current);
+          ({ x1, y1, x2, y2 } = _initialRect);
+          break;
+        }
         default:
-          ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));
+          ({ x1, y1, x2, y2 } = adjustFreePoint(localPoint, _aspectRatio));
       }
     } else {
       // A marquee under a modifier is not held to the last one's ratio: `adjustFreshPoint` takes
@@ -795,6 +981,10 @@ export function useRect({
             y: selectionRect.y1,
           };
           break;
+        case 'rotate':
+          startRotationRef.current = rotationRef.current;
+          rotationStartAngleRef.current = angleFromCenter(rectCenter(selectionRect), point);
+          break;
       }
     }
 
@@ -852,6 +1042,7 @@ export function useRect({
     if (!isPointerUpValid(event)) return;
 
     (event.target as HTMLDivElement).style.cursor = '';
+    if (event.currentTarget) event.currentTarget.style.cursor = '';
 
     if (isMoveTool && !startRectRef.current) {
       // A release this hook DID accept, so nothing of ours is in flight afterwards whatever this

@@ -128,44 +128,6 @@ Playwright UI mode returns before `globalSetup`, so the in-process guard cannot 
 window. `npm run test:e2e:headed` is the supported operator opt-in; agents use
 `npm run test:e2e`.
 
-## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
-
-`e2e/helpers/canvas-helpers.ts` — `drawLine()`
-
-A spec must not drift into the assumption that `drawLine`'s arguments are
-document coordinates. They are not. `drawLine` computes
-`{ x: box.x + startX, y: box.y + startY }` and nothing else, while the document it
-addresses is **contained** in that box (`object-contain` on the `workspace-canvas`
-element in `src/components/Main/Main.tsx`): the CSS origin of document `(0,0)` is
-
-```text
-scale    = min(boxWidth / 800, boxHeight / 600)
-offsetX  = (boxWidth  - 800 * scale) / 2
-offsetY  = (boxHeight - 600 * scale) / 2
-cssX     = box.x + offsetX + documentX * scale
-cssY     = box.y + offsetY + documentY * scale
-```
-
-so a document point reaches `page.mouse` as
-`(x / scale, (y - offsetY) / scale)` once the box origin is added. At the Desktop
-Chrome default in a 1280px viewport the scale is 1.2175, and `offsetY` is 54.75
-at a 840px box and 154.75 at a 1040px box — which is why the previous entry moves
-the export fixture's line by more than 80 document rows upward while its box
-coordinates do not change at all.
-
-Existing specs survive this only because their strokes need to land SOMEWHERE, not
-where they were asked to land. `levels.spec.ts`, `color.spec.ts`, `select-move.spec.ts`
-and `example.spec.ts` all pass `LINE_START_*`/`LINE_END_*` and then assert colour,
-presence or a bounding box wide enough to absorb the error. A new spec that asserts
-a specific pixel position, a specific row, or a stroke that must fall inside the
-document will be tens of pixels off, and the failure will look like an app bug.
-
-Fix: add a contain-aware coordinate helper next to `drawLine` — the arithmetic is
-the four lines above — and migrate the specs that need document precision onto it.
-Do not change `drawLine`'s existing behaviour: the specs that call it today are
-written around box-relative coordinates, and changing the meaning of the argument
-breaks all of them at once.
-
 ## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
 
 `e2e/helpers/screenshot-scale.ts` — `viewportRectToPageRect()`, `e2e/helpers/cdp-helpers.ts` — `captureCanvasScreenshot()`

@@ -410,7 +410,7 @@ metadata option; no WebP, AVIF, GIF or TIFF encoder settings.
 ## Tablet Touch (Not Handheld Phone)
 
 **Hard boundary:** this product supports desktop and tablet-sized touch devices, including Retina/high-DPI
-tablets. It does **not** support handheld phone layouts such as iPhone-sized screens. “Mobile” component
+tablets. It does **not** support handheld phone layouts such as iPhone-sized screens. "Mobile" component
 names are historical and mean the tablet touch surface here; they are not a phone product.
 
 **Photoshop:** a touch-optimised workspace with one-finger draw, two-finger pan and
@@ -434,6 +434,8 @@ through Pointer Events with single-pointer capture, so drawing works on touch
 
 **Gap:** No pinch-zoom and no two-finger pan — inherited from the absence of zoom
 and pan entirely, not a mobile-specific omission.
+
+**Retina/High-DPI Status:** Pointer mapping is DPR-correct (tested at 3×). Paint tools are DPR-proof — all geometry paths are document-pixel invariant. Option-bar thumbnails render at device resolution. **Display surfaces (workspace canvas, overlays) remain at 1× backing store**; CSS `object-contain` upscales on retina displays. This is tracked as **D2c in `CANVAS-RESOLUTION-PLAN.md`** (Phase 4, unblocked).
 
 **Priority:** tablet touch and Retina/high-DPI behavior are supported product surfaces. Handheld phone
 layouts and phone-only gestures remain explicitly out of scope.

@@ -44,8 +44,8 @@ import {
  * `history-replay.parity.test.ts` proves the two replay MODELS agree on ids, orders, names,
  * booleans and kind labels. It cannot see a colour: it normalises both sides away from pixels
  * and it stubs `applyRasterTool` to identity, so the whole raster half of both authorities is
- * outside its reach. This file is the other half — the same twelve scenarios at the same cursors
- * plus a thirteenth carrying a real raster processor, compared as BYTES.
+ * outside its reach. This file is the other half — the same thirteen scenarios at the same cursors
+ * plus a fourteenth carrying a real raster processor, compared as BYTES.
  *
  * ## WHAT IS COMPARED, PER (SCENARIO, CURSOR)
  *
@@ -578,6 +578,21 @@ describe('legacy/durable pixel parity', () => {
     ).toThrow(/extents differ/);
   });
 
+  it('accepts a zero-operation vector source through the durable runtime and export parity path', async () => {
+    resetUnresolvableDraws();
+    resetFilterAssignments();
+    const scenario = replayParityScenarios.find((entry) => entry.name === 'vector source')!;
+    const pair = await renderPair(scenario, scenario.history.length - 1);
+
+    expect(drainRefusals(), `${pair.label}: console.error refusals`).toEqual([]);
+    expect(unresolvableDraws(), `${pair.label}: drawImage sources the fixture could not resolve`).toEqual([]);
+
+    expect(pair.declined, `${pair.label}: durable mount declined`).toEqual([]);
+
+    assertIdentical(pair.legacyRuntime, pair.durableRuntime, `${pair.label} runtime presentation`);
+    assertIdentical(pair.legacyExport, pair.durableExport, `${pair.label} export bytes`);
+  });
+
   it.fails(
     'sees the pixels a filter chain produces — jsdom applies no ctx.filter, so both authorities draw unfiltered',
     async () => {
@@ -630,6 +645,27 @@ describe('legacy/durable pixel parity', () => {
   );
 
   it.fails(
+    'sees the pixels a vector source produces — jsdom records but does not rasterize canvas paths, so both authorities draw an empty surface',
+    async () => {
+      const scenario = replayParityScenarios.find((entry) => entry.name === 'vector source')!;
+      const pair = await renderPair(scenario, scenario.history.length - 1);
+      expect(drainRefusals()).toEqual([]);
+
+      // FAILS today: the shape tool reaches `PixelContext.beginPath()`, `moveTo()` and
+      // `stroke()`, which are recorded and rasterize nothing, so the figure a shape layer
+      // is made of contributes no pixel. Both authorities agree on that absence, which is
+      // why the runtime axis above is green here and is worth nothing about vector shapes.
+      // It passes on a host that rasterizes paths — `OffscreenCanvas` in a browser.
+      const unmodified = await renderPair({ name: 'vector source baseline', history: scenario.history.slice(0, 1) }, 0);
+      expect(
+        compareRasters(unmodified.durableRuntime, pair.durableRuntime).differing,
+        'the shape layer composited at least one pixel the unshaped document does not carry'
+      ).toBeGreaterThan(0);
+    },
+    120_000
+  );
+
+  it.fails(
     'mounts every composed layer — durablePresentationIsRendererIdentical() accepts only the unfiltered raster/blank subset',
     async () => {
       const declined: string[] = [];
@@ -641,7 +677,7 @@ describe('legacy/durable pixel parity', () => {
         }
       }
       // FAILS today, and it is the divergence list S1 exists to produce: the mount's own rule is
-      // "no retained operations, matching bounds, and a raster or blank source", so every
+      // "no retained operations, matching bounds, and a raster, blank or vector source", so every
       // filtered, transformed and text layer composes correctly on the durable side and is then
       // refused by the mount — leaving the export axis comparing the legacy presentation against
       // itself for exactly the layers worth comparing. `reposition and affine transform` and

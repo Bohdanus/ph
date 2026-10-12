@@ -11,6 +11,7 @@ import {
   LINE_START_Y,
   canvasRedrawClip,
   drawLine,
+  drawLineFromDocument,
   getPageScroll,
   getWorkspaceCanvas,
   takeLineScreenshot,
@@ -433,6 +434,39 @@ describe('drawLine', () => {
     expect(input.down.mock.invocationCallOrder[0]).toBeGreaterThan(input.move.mock.invocationCallOrder[0]);
     expect(input.down.mock.invocationCallOrder[0]).toBeLessThan(input.move.mock.invocationCallOrder[1]);
     expect(input.up.mock.invocationCallOrder[0]).toBeGreaterThan(input.down.mock.invocationCallOrder[0]);
+  });
+
+  it('maps document endpoints through the contain fit before drawing', async () => {
+    const input = createMouseMock();
+    const box: BoundingBox = { x: 100, y: 200, width: 800, height: 800 };
+
+    await drawLineFromDocument(createPageMock({ mouse: input.mouse }), box, 10, 20, 30, 40);
+
+    expect(input.move.mock.calls).toEqual([
+      [110, 320],
+      [130, 340],
+    ]);
+  });
+
+  it('uses the measured document size when mapping document endpoints', async () => {
+    const input = createMouseMock();
+    const box: BoundingBox = { x: 100, y: 200, width: 800, height: 600 };
+
+    await drawLineFromDocument(
+      createPageMock({ mouse: input.mouse }),
+      box,
+      10,
+      20,
+      30,
+      40,
+      {},
+      { width: 400, height: 300 }
+    );
+
+    expect(input.move.mock.calls).toEqual([
+      [120, 240],
+      [160, 280],
+    ]);
   });
 
   it('interpolates the drag when steps are requested', async () => {
