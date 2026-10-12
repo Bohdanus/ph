@@ -1242,10 +1242,10 @@ describe('ShapeToolArea', () => {
 
   /**
    * The overlay canvas is shared, long-lived and only ever `display`-toggled
-   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store. This area never
-   * clears it on pointer up at all — the last `flushDrawingFrame` in `handlePointerUp` REDRAWS the
-   * shape and the commit leaves it there — so the unmount teardown is the only thing that ever
-   * removes the preview. Without it the shape stays painted over the next tool's document.
+   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store.
+   * `commitShape` (called from `handlePointerUp`) clears the preview after a successful
+   * commit so the committed layer is not painted twice — once in the overlay and once by
+   * the layer renderer. The unmount teardown provides a secondary clear for aborted gestures.
    */
   describe('overlay teardown', () => {
     it('clears the whole backing store on unmount', () => {

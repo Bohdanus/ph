@@ -170,11 +170,11 @@ describe('durableExportRecords', () => {
     } satisfies DurableComposite);
 
     expect(records.layers.vector).toMatchObject({
-      tmpCanvas: bakedBitmap,
+      bitmap: bakedBitmap,
+      tmpCanvas: null,
       pos: bakedBounds,
       presentationBounds: null,
       operations: [],
-      bitmap: null,
       visible: true,
       id: 'vector',
       name: 'vector',
@@ -219,11 +219,11 @@ describe('durableExportRecords', () => {
     } satisfies DurableComposite);
 
     expect(records.layers.paint).toMatchObject({
-      tmpCanvas: processedBitmap,
+      bitmap: processedBitmap,
+      tmpCanvas: null,
       pos: processedBounds,
       presentationBounds: null,
       operations: [],
-      bitmap: null,
       visible: true,
       id: 'paint',
       name: 'paint',
@@ -271,7 +271,8 @@ describe('durableExportRecords', () => {
     expect(records.frame).toEqual(frame);
 
     expect(records.layers['raster-visible']).toMatchObject({
-      tmpCanvas: rasterBitmap,
+      bitmap: rasterBitmap,
+      tmpCanvas: null,
       pos: { x: 4, y: 5, width: 20, height: 10 },
       visible: true,
       opacity: 0.5,
@@ -280,11 +281,11 @@ describe('durableExportRecords', () => {
       order: 0,
       presentationBounds: null,
       operations: [],
-      bitmap: null,
     });
 
     expect(records.layers['vector-visible']).toMatchObject({
-      tmpCanvas: vectorBitmap,
+      bitmap: vectorBitmap,
+      tmpCanvas: null,
       pos: { x: 5, y: 6, width: 20, height: 10 },
       visible: true,
       blendMode: 'screen',
@@ -294,7 +295,8 @@ describe('durableExportRecords', () => {
     });
 
     expect(records.layers['paint-visible']).toMatchObject({
-      tmpCanvas: paintBitmap,
+      bitmap: paintBitmap,
+      tmpCanvas: null,
       pos: { x: 6, y: 7, width: 20, height: 10 },
       visible: true,
       locked: true,

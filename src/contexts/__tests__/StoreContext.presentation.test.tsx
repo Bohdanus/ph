@@ -18,7 +18,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
-import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -768,6 +768,13 @@ describe('renderSelector contract', () => {
     return { ...createMockLayer({ id, pos }), bitmap, source };
   }
 
+  function legacyToolLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
+    return {
+      ...createMockLayer({ id, pos }),
+      source: { kind: 'tool', args: { toolName: 'pen' } as never, pos, isBedrock: false },
+    };
+  }
+
   function makeComposite(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): DurableComposite {
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
     const releaseMaterialized = vi.fn();
@@ -862,6 +869,67 @@ describe('renderSelector contract', () => {
     expect(store().durableRenderProjection?.historyCursor).toBe(-1);
   });
 
+  it('keeps legacy authority for a document containing an unsupported source', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const layer = legacyToolLayer();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(compose).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'unsupported-source', cursor: -1 });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toEqual({
+      status: 'legacy-fallback',
+      cursor: -1,
+      reason: 'unsupported-source',
+    });
+    expect(store().durableRenderProjection).toBeNull();
+  });
+
+  it('clears durable navigation authority when a logical append is committed', async () => {
+    const layer = rasterLayer();
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(makeComposite());
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    await act(async () => {
+      await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().durableRenderProjection).not.toBeNull();
+
+    const updatedLayer = { ...layer, opacity: 0.5 };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+
+    expect(store().historyIndex).toBe(1);
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durablePresentation).toEqual({ status: 'unpublished', cursor: null, reason: null });
+  });
+
   it('cannot change the selector when a publication is stale', async () => {
     const layer = rasterLayer();
     const composite = makeComposite();
@@ -901,5 +969,66 @@ describe('renderSelector contract', () => {
     expect(store().durablePresentation.status).toBe('unpublished');
     expect(store().durableRenderProjection).toBeNull();
     expect(store().durableStatus).toBe('stale');
+  });
+
+  it('retains a published projection lease until its document exits', async () => {
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const sourceBitmap = createMockImageBitmap(pos.width, pos.height);
+    const layer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      bitmap: sourceBitmap,
+      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+    };
+    const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
+    const releaseMaterialized = vi.fn();
+    const materialized: MaterializedLayer = {
+      layerId,
+      bitmap: materializedBitmap,
+      bounds: pos,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      lease: {
+        key: 'published-projection-retirement',
+        bitmap: materializedBitmap,
+        byteSize: pos.width * pos.height * 4,
+        metadata: pos,
+        release: releaseMaterialized,
+      },
+    };
+    const layers = { [layerId]: materialized };
+    const releaseDetached = vi.fn(() => releaseMaterialized());
+    const composite: DurableComposite = {
+      bitmap: materializedBitmap,
+      frame: defaultFrame,
+      layers,
+      takeLayers: () => ({ layers, release: releaseDetached }),
+      release: vi.fn(),
+    };
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(composite);
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome?.status).toBe('durable');
+    expect(store().durableRenderProjection?.layers[layerId].bitmap).toBe(materializedBitmap);
+    expect(store().durableRenderProjection?.layers[layerId].tmpCanvas).toBeNull();
+    expect(releaseMaterialized).not.toHaveBeenCalled();
+
+    replaceDocument(dispatch(), { [layerId]: layer }, 'doc-2');
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(store().documentId).toBe('doc-2');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(releaseMaterialized).toHaveBeenCalledOnce();
   });
 });

@@ -37,10 +37,13 @@ const toolArgs = vi.hoisted(() => ({
   underline: false,
   strikethrough: false,
   tracking: 0,
+  editingLayerId: undefined as string | undefined,
 }));
 
 const mockCreateLayerFromTool = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
+const mockReplaceLayerSource = vi.hoisted(() => vi.fn());
 
 /**
  * `hasPendingText` is the one predicate the bar and the canvas both derive edit mode from, so the
@@ -65,6 +68,8 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     createLayerFromTool: mockCreateLayerFromTool,
+    replaceLayerSource: mockReplaceLayerSource,
+    cancelLayerPreview: mockCancelLayerPreview,
   }),
 }));
 
@@ -103,6 +108,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
     underline: false,
     strikethrough: false,
     tracking: 0,
+    editingLayerId: undefined,
     ...overrides,
   });
 }
@@ -176,6 +182,8 @@ describe('Text toolbar', () => {
     // case in the file would be asserting against a mock left pointing at a dead array.
     mockCreateLayerFromTool.mockReset();
     mockSetToolArgs.mockReset();
+    mockCancelLayerPreview.mockReset();
+    mockReplaceLayerSource.mockReset();
     pendingTextOverride.value = null;
   });
 
@@ -1232,6 +1240,154 @@ describe('Text toolbar', () => {
       await user.keyboard('{Escape}');
       expect(fontSizeField).toHaveFocus();
       expect(screen.queryByRole('button', { name: 'Georgia' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('edge-case coverage', () => {
+    it('calls createLayerFromTool when editingLayerId is absent, not replaceLayerSource', () => {
+      renderWithProvider(<Text />);
+      expect(toolArgs.editingLayerId).toBeUndefined();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+      expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
+        expect.objectContaining({ args: expect.objectContaining({ text: 'Hello' }) })
+      );
+      expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+    });
+
+    it('calls cancelLayerPreview for the editing layer when Cancel is clicked', () => {
+      resetToolArgs({ editingLayerId: 'text-layer-1' });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockCancelLayerPreview).toHaveBeenCalledWith('text-layer-1');
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('does not call cancelLayerPreview when Cancel is clicked without an editing layer', () => {
+      expect(toolArgs.editingLayerId).toBeUndefined();
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('commits a font size typed at exactly FONT_SIZE_MIN (0.01)', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '0.01' } });
+      expect(size.value).toBe('0.01');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('commits a font size typed at exactly FONT_SIZE_MAX (1296)', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '1296' } });
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 1296 }));
+    });
+
+    it('clamps a negative font size to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '-40' } });
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('restores the published font size when Escape abandons an out-of-range draft', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '5000' } });
+      expect(size.value).toBe('5000');
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(size, { key: 'Escape' });
+
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(size.value).toBe('64');
+    });
+
+    it('publishes the line height slider value and recomputes the rect', () => {
+      renderWithProvider(<Text />);
+      const lineHeightSlider = screen.getByLabelText(/Line Height/) as HTMLInputElement;
+
+      fireEvent.change(lineHeightSlider, { target: { value: '1.5' } });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lineHeight: 1.5 }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('enables Align for paragraph kind and disables it for point kind', () => {
+      resetToolArgs({ kind: 'paragraph' });
+      const { unmount } = renderWithProvider(<Text />);
+      expect(screen.getByLabelText('Align')).toBeEnabled();
+
+      unmount();
+      resetToolArgs({ kind: 'point' });
+      renderWithProvider(<Text />);
+      expect(screen.getByLabelText('Align')).toBeDisabled();
+    });
+
+    it('routes an alignment change through publishStyle for point type', () => {
+      renderWithProvider(<Text />);
+      const alignSelect = screen.getByLabelText('Align');
+      expect(alignSelect).toBeDisabled();
+
+      fireEvent.change(alignSelect, { target: { value: 'center' } });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ align: 'center' }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('publishes colour swatch changes into the tool args', () => {
+      renderWithProvider(<Text />);
+      const swatch = screen.getByLabelText('Color') as HTMLInputElement;
+
+      fireEvent.change(swatch, { target: { value: '#123456' } });
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ color: '#123456' }));
+      expect(lastToolArgs()).toMatchObject({ color: '#123456', text: 'Hello', fontSize: 64 });
+    });
+
+    it('toggles Bold from true to false and recomputes the rect', () => {
+      resetToolArgs({ bold: true });
+      renderWithProvider(<Text />);
+
+      const boldButton = screen.getByRole('button', { name: 'Bold' });
+      expect(boldButton).toHaveAttribute('aria-pressed', 'true');
+
+      fireEvent.click(boldButton);
+
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ bold: false }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
+    });
+
+    it('toggles Italic from true to false and recomputes the rect like Bold', () => {
+      resetToolArgs({ italic: true });
+      renderWithProvider(<Text />);
+
+      const italicButton = screen.getByRole('button', { name: 'Italic' });
+      expect(italicButton).toHaveAttribute('aria-pressed', 'true');
+
+      fireEvent.click(italicButton);
+
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ italic: false }));
+      expect(lastToolArgs().rect).not.toBe(toolArgs.rect);
     });
   });
 });
