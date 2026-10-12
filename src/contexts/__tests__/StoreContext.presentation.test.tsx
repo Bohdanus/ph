@@ -768,6 +768,13 @@ describe('renderSelector contract', () => {
     return { ...createMockLayer({ id, pos }), bitmap, source };
   }
 
+  function legacyToolLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
+    return {
+      ...createMockLayer({ id, pos }),
+      source: { kind: 'tool', args: { toolName: 'pen' } as never, pos, isBedrock: false },
+    };
+  }
+
   function makeComposite(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): DurableComposite {
     const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
     const releaseMaterialized = vi.fn();
@@ -860,6 +867,30 @@ describe('renderSelector contract', () => {
     expect(store().renderSelector.historyCursor).toBe(store().historyIndex);
     expect(store().durablePresentation).toMatchObject({ status: 'durable', cursor: -1 });
     expect(store().durableRenderProjection?.historyCursor).toBe(-1);
+  });
+
+  it('keeps legacy authority for a document containing an unsupported source', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const layer = legacyToolLayer();
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(compose).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ status: 'legacy-fallback', reason: 'unsupported-source', cursor: -1 });
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toEqual({
+      status: 'legacy-fallback',
+      cursor: -1,
+      reason: 'unsupported-source',
+    });
+    expect(store().durableRenderProjection).toBeNull();
   });
 
   it('cannot change the selector when a publication is stale', async () => {
