@@ -54,7 +54,7 @@ import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout }
  *   (`src/components/Main/DrawToolArea.tsx:23,51,81`).
  * - Measured with the foreground set to `#ff0000` and the swatch verified as `#ff0000`:
  *   the widest channel spread anywhere in the stroke is **0**, i.e. the pixels are exactly
- *   neutral. Brush and Pencil peak at `rgb(26, 26, 26)` — black at their `alpha: 0.9`
+ *   neutral. Brush and Pencil peak at `rgb(0, 0, 0)` — black at their `alpha: 1`
  *   composited over the white document. The Draw tool on the same gesture and the same
  *   swatch measures `rgb(255, 26, 26)`, a channel spread of 229, which is the control that
  *   says the measurement would see red if the red were there.
