@@ -117,7 +117,7 @@ describe('projectDurableRender', () => {
       order: 0,
       pos: { x: 0, y: 0, width: 20, height: 10 },
     });
-    expect(layerA.tmpCanvas).toBe(bitmapA);
+    expect(layerA.bitmap).toBe(bitmapA);
     expect(layerA.presentationBounds).toEqual({ x: 999, y: 999, width: 1, height: 1 });
 
     const layerB = result.layers['layer-b'];
@@ -130,10 +130,10 @@ describe('projectDurableRender', () => {
     expect(layerA.blendMode).toBe('screen');
     expect(result.layers['layer-c'].opacity).toBe(0.8);
     expect(result.layers['layer-c'].blendMode).toBe('screen');
-    expect(result.layers['layer-c'].tmpCanvas).toBe(bitmapC);
+    expect(result.layers['layer-c'].bitmap).toBe(bitmapC);
   });
 
-  it('borrows tmpCanvas and presentationBounds from materialized layers for visible layers', () => {
+  it('borrows bitmap and presentationBounds from materialized layers for visible layers', () => {
     const replay = makeReplay({ 'visible-layer': replayLayer('visible-layer', true, 0) });
     const matBitmap = { width: 40 } as unknown as BitmapSource;
     const materialized = {
@@ -142,7 +142,7 @@ describe('projectDurableRender', () => {
 
     const result = projectDurableRender(replay, { status: 'durable', materializedLayers: materialized });
 
-    expect(result.layers['visible-layer'].tmpCanvas).toBe(matBitmap);
+    expect(result.layers['visible-layer'].bitmap).toBe(matBitmap);
     expect(result.layers['visible-layer'].presentationBounds).toEqual({ x: 10, y: 12, width: 30, height: 18 });
   });
 
