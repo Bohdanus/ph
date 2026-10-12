@@ -544,7 +544,7 @@ function projectionMatchesPresentation(
     projection.documentId === publication.documentId &&
     projection.documentRevision === publication.documentRevision &&
     projection.branchRevision === publication.branchRevision &&
-    projection.historyCursor === publication.historyIndex &&
+    projection.historyCursor === publication.record.cursor &&
     projection.durableRevision === publication.durableRevision
   );
 }

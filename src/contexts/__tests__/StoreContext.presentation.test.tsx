@@ -841,6 +841,27 @@ describe('renderSelector contract', () => {
     expect(store().durablePresentation.status).toBe('legacy-fallback');
   });
 
+  it('selects durable when the durable cursor differs from the legacy cursor', async () => {
+    const layer = rasterLayer();
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(makeComposite());
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome).toMatchObject({ status: 'durable', cursor: -1 });
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().renderSelector.historyCursor).toBe(store().historyIndex);
+    expect(store().durablePresentation).toMatchObject({ status: 'durable', cursor: -1 });
+    expect(store().durableRenderProjection?.historyCursor).toBe(-1);
+  });
+
   it('cannot change the selector when a publication is stale', async () => {
     const layer = rasterLayer();
     const composite = makeComposite();

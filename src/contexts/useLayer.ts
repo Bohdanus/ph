@@ -348,6 +348,7 @@ export const useLayers = () => {
       branchRevision = 0,
       documentId,
       documentRevision,
+      durablePresentation,
       durableRenderProjection,
       renderSelector,
       currentArgs: currentArgsRef,
@@ -1215,11 +1216,14 @@ export const useLayers = () => {
     const durableProjection =
       !hasPreview &&
       renderSelector.source === 'durable' &&
+      renderSelector.historyCursor === historyIndex &&
+      durablePresentation.status === 'durable' &&
+      durablePresentation.cursor !== null &&
       durableRenderProjection &&
       durableRenderProjection.documentId === documentId &&
       durableRenderProjection.documentRevision === documentRevision &&
       durableRenderProjection.branchRevision === branchRevision &&
-      durableRenderProjection.historyCursor === historyIndex &&
+      durableRenderProjection.historyCursor === durablePresentation.cursor &&
       documentFrameEquals(durableRenderProjection.frame, documentFrame) &&
       documentFrameEquals(renderSelector.frame, documentFrame)
         ? durableRenderProjection
@@ -1248,6 +1252,7 @@ export const useLayers = () => {
     documentFrame,
     documentId,
     documentRevision,
+    durablePresentation,
     durableRenderProjection,
     historyIndex,
     layers,
