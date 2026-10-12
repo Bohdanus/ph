@@ -209,6 +209,13 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     }
 
     commitShape(start, end);
+
+    // The committed layer will be rendered by the document surface. Clear the shared preview
+    // backing store after a successful commit so the same shape is not composited twice.
+    const ctx = overlayCtxRef.current;
+    if (ctx) {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
   };
 
   /**
