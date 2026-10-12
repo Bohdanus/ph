@@ -902,4 +902,64 @@ describe('renderSelector contract', () => {
     expect(store().durableRenderProjection).toBeNull();
     expect(store().durableStatus).toBe('stale');
   });
+
+  it('retains a published projection lease until its document exits', async () => {
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const sourceBitmap = createMockImageBitmap(pos.width, pos.height);
+    const layer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      bitmap: sourceBitmap,
+      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+    };
+    const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
+    const releaseMaterialized = vi.fn();
+    const materialized: MaterializedLayer = {
+      layerId,
+      bitmap: materializedBitmap,
+      bounds: pos,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      lease: {
+        key: 'published-projection-retirement',
+        bitmap: materializedBitmap,
+        byteSize: pos.width * pos.height * 4,
+        metadata: pos,
+        release: releaseMaterialized,
+      },
+    };
+    const layers = { [layerId]: materialized };
+    const releaseDetached = vi.fn(() => releaseMaterialized());
+    const composite: DurableComposite = {
+      bitmap: materializedBitmap,
+      frame: defaultFrame,
+      layers,
+      takeLayers: () => ({ layers, release: releaseDetached }),
+      release: vi.fn(),
+    };
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(composite);
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome?.status).toBe('durable');
+    expect(store().durableRenderProjection?.layers[layerId].tmpCanvas).toBe(materializedBitmap);
+    expect(releaseMaterialized).not.toHaveBeenCalled();
+
+    replaceDocument(dispatch(), { [layerId]: layer }, 'doc-2');
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(store().documentId).toBe('doc-2');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(releaseMaterialized).toHaveBeenCalledOnce();
+  });
 });
