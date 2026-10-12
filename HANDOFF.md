@@ -3353,48 +3353,6 @@ reads. `scripts/__tests__/suite-budgets.test.mjs` already derives every spawning
 and asserts the derived set against a hard-coded list, so the mechanism for a derived inventory
 exists here already.
 
-## 221. The unit suite still has brittle assertion and fixture gaps
-
-**Problem.** A hardening pass over the suite raised the net test count by 96 and replaced the
-assertions that pass on any non-null value, but three classes of test defects remain, each with the
-evidence and concrete fix below.
-
-The remaining test defects, each with the fix that was proven to work:
-
-- Over a hundred layout assertions in eight files assert a Tailwind class string through
-  `toHaveClass`, concentrated in `HistoryTab.test.tsx`, `LayersTab.test.tsx`,
-  `ToolbarHorizontal.test.tsx`, `SidebarLeft.tablet.test.tsx`, `SidebarRight.test.tsx`,
-  `SidebarLeft.workspace.test.tsx`, `SidebarLeft.flyout-hardening.test.tsx` and `ToolTooltip.test.tsx`.
-  jsdom applies no stylesheet, so each claim is that a token is present in the class attribute; two
-  visually identical states can carry different tokens and two visually different states can carry
-  none. `ToolTooltip.test.tsx` is the extreme case: its entire content is class-token assertions.
-  Where the source exposes state — an `aria-expanded`, an `aria-selected`, a `hidden` attribute —
-  assert that instead. Where it exposes nothing, the class string is the only observable and the entry
-  should be closed as a source gap rather than a test gap.
-- `src/__tests__/fixtures/canvas.ts` exports a third `createMockCanvasContext` under the same name as
-  the one in `src/test/setup.ts`, and it is the narrower of the two: no `filter`, and no
-  `getImageData`, `putImageData` or `createImageData`. It does carry `quadraticCurveTo`, so the
-  earlier claim that it lacked that method was wrong. Because the fixture has no `filter` key at all,
-  every one of its consumers — 28 files under `src/` — receives a context without one, so a
-  `ctx.filter` or read-back assertion added to one of them silently compares against `undefined`.
-  Aligning it with `src/test/setup.ts` is the fix, and it is not free: adding `getImageData` changes
-  what the production code believes a canvas can do, so those consumers have to be re-run and read.
-- The client-to-canvas coordinate conversion is covered in exactly one place. Every tool-area suite
-  mocks `usePointerPosition` with `getLocalCoords` as the identity function, so every expected
-  coordinate in them is a product of that mock, and the mock is not a simplification production could
-  satisfy: against a store whose container is a bare div, jsdom's all-zero `getBoundingClientRect()`
-  gives the contain fit a zero scale to divide by. A wrong zoom or offset conversion — the defect that
-  would misalign every stroke under a crop — is therefore pinned only by
-  `src/hooks/__tests__/usePointerPosition.test.ts` and by e2e. Whoever wants a component suite to
-  reach it has to give the store a measured rect, not another mock.
-
-**Provenance.** Found 2026-10-04 on `test/harden-units` by a three-way read-only triage of every test
-file. The authors mutated their own new assertions to show they could fail, and two independent
-reviewers who had read neither the triage nor the authors' reasoning then found more: a
-cannot-fail style assertion whose double started on the asserted value, two hand-copied literals with
-no independent derivation, and an arithmetic restatement of a sibling assertion. The fixture
-divergence was left unfixed because the mandate was test files only.
-
 ## 223. The harvest gate sequence cannot dispose the worktree the harvest just gated
 
 **The problem.** `scripts/dispose-worktree.mjs` refuses `derived-live-writer` when the inventory
