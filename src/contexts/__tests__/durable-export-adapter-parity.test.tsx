@@ -212,7 +212,8 @@ describe('FileProvider durable export adapter parity', () => {
 
     const expectedLayer = expect.objectContaining({
       id: 'durable-layer',
-      tmpCanvas: composite.layers['durable-layer']!.bitmap,
+      bitmap: composite.layers['durable-layer']!.bitmap,
+      tmpCanvas: null,
       pos: { x: 12, y: 13, width: 20, height: 16 },
     });
     if (format === 'psd') {

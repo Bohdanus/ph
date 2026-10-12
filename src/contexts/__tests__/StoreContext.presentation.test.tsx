@@ -1018,7 +1018,8 @@ describe('renderSelector contract', () => {
     });
 
     expect(outcome?.status).toBe('durable');
-    expect(store().durableRenderProjection?.layers[layerId].tmpCanvas).toBe(materializedBitmap);
+    expect(store().durableRenderProjection?.layers[layerId].bitmap).toBe(materializedBitmap);
+    expect(store().durableRenderProjection?.layers[layerId].tmpCanvas).toBeNull();
     expect(releaseMaterialized).not.toHaveBeenCalled();
 
     replaceDocument(dispatch(), { [layerId]: layer }, 'doc-2');
