@@ -163,7 +163,9 @@ export function durablePresentationIsRendererIdentical(
   return (
     replayLayer.operations.length === 0 &&
     isEqual(bounds, existing.pos) &&
-    (replayLayer.snapshot.source.kind === 'raster' || replayLayer.snapshot.source.kind === 'blank')
+    (replayLayer.snapshot.source.kind === 'raster' ||
+      replayLayer.snapshot.source.kind === 'blank' ||
+      replayLayer.snapshot.source.kind === 'vector')
   );
 }
 

@@ -129,7 +129,7 @@ describe('durable render presentation guard', () => {
         existing,
         existing.pos
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
