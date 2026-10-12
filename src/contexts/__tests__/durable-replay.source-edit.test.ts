@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { planHistoryAppend, decideDurableAppend } from '../history-append.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import {
   DURABLE_SCHEMA_VERSION,
@@ -10,6 +11,12 @@ import {
   type EditableDurableLayerSource,
   type PlainObject,
 } from '../history-model.ts';
+import type { HistoryItem } from '../history-types.ts';
+import type { HistoryTimeline } from '../history-timeline.ts';
+import type { ToolArgs } from '../tool-types.ts';
+import type { ToolLayerSource } from '../layer-types.ts';
+import { TOOL_ACTION } from '../../util/constants.ts';
+import type { ActionType } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const frame = { x: 0, y: 0, width: 400, height: 300 };
@@ -218,5 +225,128 @@ describe('replayDurableDocument replace-layer-source', () => {
     expect(snapshot.source.toolName).toBe('rectangle');
     expect(snapshot.source.sourcePos).toStrictEqual(secondBox);
     expect(snapshot.pos).toStrictEqual(secondBox);
+  });
+});
+
+const REPLACE_LAYER_SOURCE_ACTION = 'edit layer source' as ActionType;
+
+const firstText: ToolArgs = {
+  toolName: 'text',
+  align: 'left',
+  bold: false,
+  color: '#000000',
+  fontFamily: 'Inter',
+  fontSize: 24,
+  italic: false,
+  lineHeight: 1.2,
+  text: 'First draft',
+};
+const secondText: ToolArgs = { ...firstText, text: 'Second draft', fontSize: 48 };
+
+function toolSource(args: ToolArgs, box = firstBox): ToolLayerSource {
+  return { kind: 'tool', args, isBedrock: false, pos: { ...box } };
+}
+
+function item(source: ToolLayerSource = toolSource(secondText, secondBox), id = 'retype'): HistoryItem {
+  return { id, actionName: REPLACE_LAYER_SOURCE_ACTION, layerId, args: { source } };
+}
+
+function timeline(entries: HistoryItem[] = [], cursor = entries.length - 1, branchRevision = 0): HistoryTimeline {
+  return { entries, cursor, branchRevision };
+}
+
+describe('preview -> commit -> durable replay round-trip', () => {
+  it('plans, commits, and replays a source edit with identical source and position', () => {
+    // Preview: plan the source edit using planHistoryAppend
+    const plannedResult = planHistoryAppend({
+      item: item(),
+      timeline: timeline([{ id: 'baseline', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } }]),
+      currentFrame: frame,
+      id: 'retype',
+    });
+
+    expect(plannedResult.diagnostics).toEqual([]);
+    expect(plannedResult.durableEntry).not.toBeNull();
+    const plannedEntry = plannedResult.durableEntry!;
+    expect(plannedEntry.operation.kind).toBe('replace-layer-source');
+    if (plannedEntry.operation.kind !== 'replace-layer-source') throw new Error('not a source edit');
+
+    // Verify the planned entry has the expected source and position
+    expect(plannedEntry.operation.source.kind).toBe('text');
+    expect(plannedEntry.operation.source.args).toMatchObject({ text: 'Second draft', fontSize: 48 });
+    expect(plannedEntry.operation.pos).toStrictEqual(secondBox);
+    expect(plannedEntry.operation.source.sourcePos).toStrictEqual(secondBox);
+    expect(plannedEntry.operation.source.size).toStrictEqual({ width: secondBox.width, height: secondBox.height });
+
+    // Commit: publish the planned entry using decideDurableAppend
+    const base: DurableDocument = {
+      documentId: 'source-edit-roundtrip',
+      documentRevision: 0,
+      branchRevision: 0,
+      durableRevision: 0,
+      baseline: {
+        frame,
+        layers: [
+          {
+            id: layerId,
+            name: 'Headline',
+            isBedrock: false,
+            visible: true,
+            opacity: 1,
+            locked: false,
+            blendMode: 'source-over',
+            order: 0,
+            pos: { ...firstBox },
+            source: {
+              kind: 'text',
+              toolName: 'text',
+              args: { toolName: 'text', text: 'First draft', fontSize: 24 },
+              size: { width: firstBox.width, height: firstBox.height },
+              sourcePos: { ...firstBox },
+              isBedrock: false,
+            },
+          },
+        ],
+        selections: { selections: [], activeSelectionId: null },
+        activeLayerId: layerId,
+      },
+      history: [],
+      cursor: -1,
+    };
+
+    const prior = timeline([
+      { id: 'baseline', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } },
+    ]);
+    const next = timeline([...prior.entries, plannedResult.entry]);
+
+    const decision = decideDurableAppend({
+      documentId: 'source-edit-roundtrip',
+      base,
+      prior,
+      next,
+      entry: plannedResult.entry,
+      planned: plannedEntry,
+      documentRevision: 0,
+    });
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') throw new Error('not published');
+
+    const committedDocument = decision.document;
+    expect(committedDocument.history).toHaveLength(1);
+    expect(committedDocument.history[0]?.id).toBe('retype');
+    expect(committedDocument.cursor).toBe(0);
+
+    // Durable replay: replay the committed document
+    const replay = replayDurableDocument(committedDocument);
+    const snapshot = replay.layers[layerId]?.snapshot;
+    if (!snapshot) throw new Error('the replayed layer is missing');
+    if (snapshot.source.kind !== 'text') throw new Error('the installed source is not a text source');
+
+    // Verify the replayed snapshot matches the planned entry exactly
+    expect(snapshot.source.args).toStrictEqual(plannedEntry.operation.source.args);
+    expect(snapshot.pos).toStrictEqual(plannedEntry.operation.pos);
+    expect(snapshot.source.sourcePos).toStrictEqual(plannedEntry.operation.source.sourcePos);
+    expect(snapshot.source.size).toStrictEqual(plannedEntry.operation.source.size);
   });
 });

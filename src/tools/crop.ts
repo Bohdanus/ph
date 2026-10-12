@@ -4,7 +4,11 @@ import type { RectXYSorted } from '../contexts/general-types.ts';
 
 export const CROP_OVERLAYS = ['ruleOfThirds', 'grid', 'diagonal', 'triangle', 'goldenRatio', 'goldenSpiral'] as const;
 export type CropOverlayType = (typeof CROP_OVERLAYS)[number];
-export type CropOverlayOrientation = 'normal' | 'flipped';
+export type CropOverlayOrientation = number | 'normal' | 'flipped';
+export type CropOverlayVisibility = 'always' | 'auto' | 'never';
+export const GRID_DIVISIONS_DEFAULT = 10;
+export const GRID_DIVISIONS_MIN = 2;
+export const GRID_DIVISIONS_MAX = 100;
 
 export type CropToolArgs = {
   rect?: RectXYSorted | null;
@@ -27,6 +31,8 @@ export type CropToolArgs = {
   angle?: number;
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
+  overlayVisibility?: CropOverlayVisibility;
+  gridDivisions?: number;
 
   toolName: 'crop';
 };

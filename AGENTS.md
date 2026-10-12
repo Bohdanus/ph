@@ -183,9 +183,11 @@ each entry needs a validated problem, affected files, and an actionable fix. Fix
 
 ## Architecture status
 
-`HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**. The durable document is mounted only
-as a **navigation presentation cache**; it remains subordinate to legacy replay, while render,
-export, and logical replay stay legacy-authoritative. Re-read the code,
+`HistoryItem[]` remains the **PRODUCTION LOGICAL REPLAY AUTHORITY**. Durable navigation now
+publishes a guarded complete render projection selected by pending/durable/legacy identity, and
+durable materialization also supplies the guarded raster/PSD export projection; unsupported or
+stale work falls back atomically to legacy replay. Logical append, branch, preview, undo/redo,
+and mobile/tablet controls remain legacy-authoritative. Re-read the code,
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`HANDOFF.md`](HANDOFF.md) §1 before
 designing across this legacy/durable boundary.
 

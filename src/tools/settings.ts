@@ -98,7 +98,15 @@ export const defaultSettings = {
 
     toolName: 'transform',
   } satisfies TransformToolArgs,
-  crop: { aspectRatio: null, rect: null, toolName: 'crop' } satisfies CropToolArgs,
+  crop: {
+    aspectRatio: null,
+    rect: null,
+    overlayType: 'ruleOfThirds',
+    overlayOrientation: 0,
+    overlayVisibility: 'always',
+    gridDivisions: 10,
+    toolName: 'crop',
+  } satisfies CropToolArgs,
   draw: {
     ...savedDrawPerPen['pen'],
     color: '#000000',

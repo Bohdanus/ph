@@ -2472,4 +2472,155 @@ test.describe('Text tool', () => {
     });
     expect(await redBoundsIn(page, iconRegion), 'the overflow icon was baked into the committed layer').toBeNull();
   });
+
+  /**
+   * Center alignment: the committed ink's left and right insets are balanced,
+   * unlike left or right alignment where one inset is small and the other is large.
+   *
+   * `renderTextInto` resolves `'center'` to
+   * `boxLeft + (boxRight - boxLeft - width) / 2`, so the first glyph starts midway
+   * between the rectangle's left edge and the right edge minus the ink width. The
+   * `inset` field measures how far INSIDE the rectangle each edge of the ink sits,
+   * so for a centered band `inset.left` and `inset.right` are equal by construction.
+   */
+  test('center alignment centers the committed ink within the dragged rectangle', async ({ page }, testInfo) => {
+    const box = await canvasBox(page);
+    const alignSelect = page.locator('#align-select');
+    const [left, center] = await commitStyledSeries(page, testInfo, box, 'WAVE', [
+      { name: 'text-align-left', rect: DRAFT_RECT, apply: async () => undefined },
+      {
+        name: 'text-align-center',
+        rect: SECOND_DRAFT_RECT,
+        apply: async () => {
+          await expect(alignSelect, 'alignment is not enabled on a paragraph draft').toBeEnabled();
+          await alignSelect.selectOption({ value: 'center' });
+          await expect(alignSelect).toHaveValue('center');
+        },
+      },
+    ]);
+
+    // Left-aligned (baseline): the ink hugs the left edge and recedes from the right.
+    expect(left.inset.left, 'left-aligned text did not start near the left edge').toBeLessThan(20);
+    expect(left.inset.right, 'left-aligned text did not reach away from the right edge').toBeGreaterThan(50);
+
+    // Center-aligned: balanced insets — left and right distances are roughly equal.
+    expect(
+      Math.abs(center.inset.left - center.inset.right),
+      'center-aligned text is not centered in the rectangle'
+    ).toBeLessThan(15);
+    // And the center commit's left inset is larger than the left-aligned one's,
+    // because centering moves the first glyph away from the left edge.
+    expect(
+      center.inset.left - left.inset.left,
+      'center alignment did not move the ink away from the left edge'
+    ).toBeGreaterThan(20);
+
+    expectInkInsideRect(left, box, DRAFT_RECT, 'the left-aligned commit');
+    expectInkInsideRect(center, box, SECOND_DRAFT_RECT, 'the center-aligned commit');
+  });
+
+  /**
+   * Zero line height stacks every line on the first baseline, collapsing three
+   * wrapped lines to a single-line band of ink.
+   *
+   * `resolveTextStyle` accepts 0 as finite and drawable — its own comment states
+   * the case directly. The line-height slider is a range input whose `min` is
+   * `MIN_LINE_HEIGHT` (0.5), so the browser sanitizes any value below 0.5 and the
+   * handler never sees 0 through the control. The bypass invokes the handler
+   * directly via the React fiber, feeding it `{ target: { value: '0' } }` — the
+   * exact shape `handleLineHeightChange` reads.
+   *
+   * **The bypass runs BEFORE the drag, not after.** `publishStyle` spreads the
+   * current `toolArgs` and re-derives the rect through `calculateNewRect`, which
+   * returns `null` for a box that does not exist yet — and a draft's rect does
+   * not exist until the drag places it. Publishing `lineHeight` while
+   * `toolArgs.rect` is null therefore hands `onChange` a record with `rect: null`
+   * (the `?? rect` fallback is the null it already had), so the published args
+   * carry no box and `TextEditOverlay`'s `editing` stays false: the overlay never
+   * mounts, and the readout's `0.0` is the only thing left on screen. Setting the
+   * leading first, then dragging, puts the zero into the args the drag's own
+   * `publishStyle` reads and the draft opens holding it.
+   */
+  test('zero line height stacks all lines on one baseline', async ({ page, context }, testInfo) => {
+    const box = await canvasBox(page);
+    const lineHeightReadout = page.locator('label[for="line-height-slider"] span[aria-hidden="true"]');
+
+    await setTextToolColor(page, TEXT_COLOR);
+
+    // Invoke the handler directly via the React fiber to bypass the slider's min.
+    await page.evaluate(() => {
+      const slider = document.querySelector('#line-height-slider');
+      if (!slider) throw new Error('zero LH: no line-height slider mounted');
+      const fiberKey = Object.keys(slider).find((k) => k.startsWith('__reactFiber'));
+      if (!fiberKey) throw new Error('zero LH: no React fiber found on slider');
+      const fiber = (slider as unknown as Record<string, unknown>)[fiberKey] as unknown;
+      const onChange = (fiber as { memoizedProps?: unknown })?.memoizedProps;
+      const handler = (onChange as { onChange?: (event: { target: { value: string } }) => void })?.onChange;
+      if (!handler) throw new Error('zero LH: no onChange handler in memoizedProps');
+      handler({ target: { value: '0' } });
+    });
+
+    // The readout shows style.lineHeight.toFixed(1); '0.0' confirms the state is zero.
+    await expect(lineHeightReadout, 'line height was not set to zero').toHaveText('0.0');
+
+    await dragDraftRect(page, box, DRAFT_RECT);
+
+    // 'I\nI\nI' — three hard breaks, always three lines regardless of wrap width.
+    await replaceDraftLines(page, context, 'I\nI\nI');
+    await commitButton(page).click();
+
+    // Wait for the committed ink, then measure the band height over the whole canvas.
+    await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
+      description: 'red text pixels from the zero line-height commit',
+    });
+    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-zero-line-height');
+    const image = await loadImageData(capture);
+    const ink = await scanPixelsForBounds(image, isRedInk);
+    expect(ink.found, 'no red pixels found for the zero line-height commit').toBe(true);
+    const css = imageBoundsToCss({ width: image.width, height: image.height }, box, ink);
+
+    // At 64px Arial, a single glyph row is about 44 CSS px tall. With three lines
+    // stacked on one baseline (zero leading), the band cannot exceed a single line.
+    // With any positive leading, three lines would be at least ~120px tall.
+    expect(css.bottom - css.top, 'zero line height did not collapse the band to a single baseline').toBeLessThan(60);
+  });
+
+  /**
+   * The Adobe minimum font size (0.01) commits a layer but renders ink too small to
+   * clear the red-pixel threshold, proving the clamp reaches the renderer and not just
+   * the field.
+   *
+   * `handleFontSizeCommit` clamps to `[FONT_SIZE_MIN, FONT_SIZE_MAX]`, so 0 clamps to
+   * 0.01. That value is finite and accepted by `resolveTextStyle`, which passes it to
+   * `renderText` — but 0.01px at the document's scale is a sub-pixel quantity, so
+   * `fillText` draws nothing a pixel predicate that requires red > 180 can see.
+   */
+  test('the Adobe minimum font size commits a layer but renders ink below the red threshold', async ({
+    page,
+  }, testInfo) => {
+    const size = page.locator('#font-size-input');
+    const commit = commitButton(page);
+    const layerRows = page.getByTitle('Drag to reorder');
+    const box = await canvasBox(page);
+
+    // Clamp to the Adobe minimum: 0 → 0.01.
+    await size.fill('0');
+    await size.press('Enter');
+    await expect(size, 'a zero size was not clamped to the Adobe minimum').toHaveValue('0.01');
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box, DRAFT_RECT);
+    await replaceDraftText(page, 'X');
+    await commit.click();
+
+    // A layer IS created — 0.01 is a valid size, not a refusal.
+    await expect(layerRows, 'the minimum font size created no layer').toHaveCount(2);
+    await expect(layerRows.nth(0), 'the committed layer is not a text layer').toHaveText(TOOL_LAYER_NAME);
+
+    // But the ink is too small to clear the red pixel threshold.
+    const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-size-min');
+    const image = await loadImageData(capture);
+    const ink = await scanPixelsForBounds(image, isRedInk);
+    expect(ink.found, 'a 0.01px font rendered red ink above the isRedInk threshold').toBe(false);
+  });
 });

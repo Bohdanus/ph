@@ -311,6 +311,8 @@ export function drawEvaluatedPresentation(
   const y = target.kind === 'bounds' ? -evaluation.localBounds.y : evaluation.position.y - (target.frame?.y ?? 0);
 
   ctx.filter = evaluation.filter;
+  // Paint-layer extents are pixel-addressed; never introduce a second, implicit
+  // resampling pass while compositing a retained presentation.
   ctx.imageSmoothingEnabled = false;
   if (isIdentityAffineTransform(evaluation.affine)) {
     ctx.drawImage(bitmap as CanvasImageSource, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height);
