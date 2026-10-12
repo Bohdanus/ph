@@ -1306,30 +1306,6 @@ outstanding.
 
 ---
 
-## 107. `docs/ORCHESTRATION.md` cites a handoff section and a source line that both point at the wrong thing
-
-The pointer in the document every other worktree rule defers to: `docs/ORCHESTRATION.md`
-§"Four traps that cost real debugging time" cited
-`db.mjs`'s `holdFiles()` signature line for the `lock.agent_id !== who` conflict test. The lock-level
-comparisons are in `scripts/lib/agent-board/db.mjs` — one inside `holdFiles()` and one inside
-`lockFile`; the claim-level ones are in `createIssue()`, `claimIssue()`, `holdFileInTransaction()` and
-`releaseIssueLocksInTransaction()`.
-
-It matters more than an ordinary stale citation because it sits inside a rule an agent is told to
-obey rather than to check — the section that ends "Only `e2e-run/<…>/<digits>` is probed" — and
-because the wrong line names a function rather than a comparison, so a reader who opens that
-`holdFiles()` signature
-sees something that looks like the rule and is not.
-
-A second, now-corrected pointer: `docs/ORCHESTRATION.md` §"Landing" attributed the `git stash` rule to
-"HANDOFF §69", which was an eraser-preview defect, not the stash rule, and the real rule's own entry
-restated `docs/ORCHESTRATION.md` back at it. Both entries are now deleted and the dangling pointer
-went with them, so `docs/ORCHESTRATION.md` carries the stash rule once and on its own.
-
-**Files.** `docs/ORCHESTRATION.md` §"Four traps that cost real debugging time" and §"Landing",
-`scripts/lib/agent-board/db.mjs` — `holdFiles()`, `createIssue()`, `claimIssue()`,
-`holdFileInTransaction()`, `releaseIssueLocksInTransaction()`
-
 ## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
 
 The skill's own header says every `file:line` was "last re-verified on 2026-09-28", and `main` has
