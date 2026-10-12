@@ -65,6 +65,7 @@ import {
 } from './history-append.ts';
 import { replayDurableAtCursor, replayDurableDocument, type DurableReplayLayer } from './durable-replay.ts';
 import { composeDurableDocument, DurableCompositionRefusal } from './durable-compositor.ts';
+import { projectDurableRender, type DurableRenderProjection } from './durable-render-projection.ts';
 import { getAssetRegistry, type DocumentAssetTransaction } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -229,6 +230,11 @@ export type StoreData = {
   durableDiagnostics: readonly MigrationDiagnostic[];
   /** Dev-only evidence of the last durable navigation publication decision. */
   durablePresentation: DurablePresentationRecord;
+  /**
+   * A leased, runtime-shaped durable render snapshot. It is state only for the
+   * staged cutover: render, export, and legacy replay still ignore it.
+   */
+  durableRenderProjection: DurableRenderProjection | null;
   viewStateRef: { current: ViewState };
   viewState: ViewState;
   setViewState: (partial: Partial<ViewState>) => void;
@@ -253,6 +259,7 @@ type StoreUpdates = Partial<
     | 'durableDocument'
     | 'durableStatus'
     | 'durableDiagnostics'
+    | 'durableRenderProjection'
     | 'promoteLayerPresentation'
     | 'publishRuntimePresentation'
     | 'adoptLayerBitmaps'
@@ -389,7 +396,7 @@ type InternalAction =
   | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
   | {
       type: 'SET_DURABLE_PRESENTATION';
-      payload: DurablePresentationPublication;
+      payload: DurablePresentationPublication & { projection: DurableRenderProjection | null };
     };
 
 type StoreAction = Action | InternalAction;
@@ -474,6 +481,7 @@ const initialState: StoreData = {
   durableStatus: 'unavailable',
   durableDiagnostics: [],
   durablePresentation: EMPTY_DURABLE_PRESENTATION,
+  durableRenderProjection: null,
 
   color: '#000000',
   backgroundColor: '#ffffff',
@@ -497,6 +505,22 @@ function appendBoundaryDiagnostics(
   return diagnostics.some((diagnostic) => diagnostic.severity === 'error')
     ? { ...merged, document: null, status: 'unavailable' }
     : normalizeDurableProjection(merged);
+}
+
+function projectionMatchesPresentation(
+  projection: DurableRenderProjection | null,
+  publication: DurablePresentationPublication
+): boolean {
+  if (publication.record.status !== 'durable') return projection === null;
+  return (
+    projection !== null &&
+    projection.status === 'durable' &&
+    projection.documentId === publication.documentId &&
+    projection.documentRevision === publication.documentRevision &&
+    projection.branchRevision === publication.branchRevision &&
+    projection.historyCursor === publication.historyIndex &&
+    projection.durableRevision === publication.durableRevision
+  );
 }
 
 /**
@@ -539,6 +563,7 @@ function projectPublishedTimeline(
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
     durablePresentation: EMPTY_DURABLE_PRESENTATION,
+    durableRenderProjection: null,
     hasUnsavedChanges: true,
   };
 }
@@ -577,6 +602,7 @@ function projectReplacedDocument(
     durableStatus: durable.status,
     durableDiagnostics: durable.diagnostics,
     durablePresentation: EMPTY_DURABLE_PRESENTATION,
+    durableRenderProjection: null,
     history: payload.history,
     historyIndex: payload.historyIndex ?? payload.history.length - 1,
   };
@@ -723,6 +749,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         totalSize: action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
       };
     case 'SET_TOOL_NAME':
       return { ...state, toolName: action.payload };
@@ -738,6 +765,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         layers: action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
       };
     case 'SET_ACTIVE_LAYER':
       if (state.activeLayerId === action.payload) {
@@ -755,13 +783,14 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         activeLayerId: action.payload.activeLayerId,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
         hasUnsavedChanges: true,
       };
     case 'PUBLISH_RUNTIME_PRESENTATION':
       // Presentation-only publication of already-known layer records. The
       // dispatcher proves the payload differs from the stored layers only by a
       // promoted cache, so this transition cannot move durable logical state,
-      // records no history, and does not invalidate the durable shadow.
+      // records no history, and does not invalidate the durable projection.
       return { ...state, layers: action.payload.layers };
     case 'SET_DURABLE_PRESENTATION': {
       const publication = action.payload;
@@ -771,13 +800,15 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         state.branchRevision !== publication.branchRevision ||
         state.historyIndex !== publication.historyIndex ||
         state.durableStatus !== 'current' ||
-        state.durableDocument?.durableRevision !== publication.durableRevision
+        state.durableDocument?.durableRevision !== publication.durableRevision ||
+        !projectionMatchesPresentation(action.payload.projection, publication)
       ) {
         return state;
       }
       return {
         ...state,
         durablePresentation: Object.freeze({ ...publication.record }),
+        durableRenderProjection: action.payload.projection,
       };
     }
     case 'PROMOTE_LAYER_PRESENTATIONS': {
@@ -811,6 +842,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
       };
     case 'REORDER_LAYERS': {
       if (!action.historyItem || !action.durableProjection) return state;
@@ -876,6 +908,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         durableStatus: action.payload.status,
         durableDiagnostics: action.payload.diagnostics,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
+        durableRenderProjection: null,
       };
     case 'SET_SELECTIONS':
       // Selection state only; no durable input moves.
@@ -1020,7 +1053,11 @@ function imageSourceBitmap(value: unknown): BitmapSource | null {
   return candidate.kind === 'image' && candidate.bitmap ? candidate.bitmap : null;
 }
 
-function collectLivePresentationBitmaps(next: LayersRecord, history: readonly HistoryItem[]): Set<BitmapSource> {
+function collectLivePresentationBitmaps(
+  next: LayersRecord,
+  history: readonly HistoryItem[],
+  projection: DurableRenderProjection | null
+): Set<BitmapSource> {
   const live = new Set<BitmapSource>();
   const add = (bitmap: BitmapSource | null | undefined) => {
     if (bitmap) live.add(bitmap);
@@ -1031,6 +1068,9 @@ function collectLivePresentationBitmaps(next: LayersRecord, history: readonly Hi
     add(imageSourceBitmap(layer.source));
   };
   for (const layer of Object.values(next)) addLayerAliases(layer);
+  if (projection) {
+    for (const layer of Object.values(projection.layers)) addLayerAliases(layer);
+  }
   for (const entry of history) {
     add(imageSourceBitmap(entry.layerSource));
     add(imageSourceBitmap(entry.args));
@@ -1060,7 +1100,9 @@ function retireDepartedPresentationBitmaps(
   // record, and a document the scope has published nothing for has nothing to
   // retire, so walking the unbounded history to answer a question that cannot change
   // the outcome is the regression this defers behind the scope's ownership check.
-  presentationScope.retireUnreferenced(documentId, () => collectLivePresentationBitmaps(state.layers, state.history));
+  presentationScope.retireUnreferenced(documentId, () =>
+    collectLivePresentationBitmaps(state.layers, state.history, state.durableRenderProjection)
+  );
 }
 
 /** Ids whose candidate record is not the stored record, added or removed ids included. */
@@ -1112,7 +1154,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     durableCursor: number
   ): Promise<DurableNavigationPresentationOutcome> => {
     const replay = replayDurableAtCursor(document, durableCursor);
-    const publishRecord = (record: DurablePresentationRecord): boolean => {
+    const publishRecord = (
+      record: DurablePresentationRecord,
+      projection: DurableRenderProjection | null = null
+    ): boolean => {
       const action: Extract<InternalAction, { type: 'SET_DURABLE_PRESENTATION' }> = {
         type: 'SET_DURABLE_PRESENTATION',
         payload: {
@@ -1122,6 +1167,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           historyIndex: state.historyIndex,
           durableRevision: document.durableRevision,
           record,
+          projection,
         },
       };
       const latest = latestStateRef.current;
@@ -1228,6 +1274,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           'Durable navigation presentation changed logical layer state'
         );
       }
+      const projection = projectDurableRender(replay, {
+        status: 'durable',
+        materializedLayers: detached.layers,
+      });
 
       for (const layerId of visibleLayerIds) {
         const materialized = detached.layers[layerId];
@@ -1240,11 +1290,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       };
       latestStateRef.current = reducer(latest, action);
       rawDispatch(action);
-      publishRecord({
-        status: 'durable',
-        cursor: durableCursor,
-        reason: null,
-      });
+      publishRecord(
+        {
+          status: 'durable',
+          cursor: durableCursor,
+          reason: null,
+        },
+        projection
+      );
       retireDepartedPresentationBitmaps(presentationScope, state.documentId, latestStateRef.current);
       detached = undefined;
       return { status: 'durable', layers: nextLayers, frame: replay.frame, cursor: durableCursor };
