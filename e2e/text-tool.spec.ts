@@ -2529,13 +2529,23 @@ test.describe('Text tool', () => {
    * handler never sees 0 through the control. The bypass invokes the handler
    * directly via the React fiber, feeding it `{ target: { value: '0' } }` — the
    * exact shape `handleLineHeightChange` reads.
+   *
+   * **The bypass runs BEFORE the drag, not after.** `publishStyle` spreads the
+   * current `toolArgs` and re-derives the rect through `calculateNewRect`, which
+   * returns `null` for a box that does not exist yet — and a draft's rect does
+   * not exist until the drag places it. Publishing `lineHeight` while
+   * `toolArgs.rect` is null therefore hands `onChange` a record with `rect: null`
+   * (the `?? rect` fallback is the null it already had), so the published args
+   * carry no box and `TextEditOverlay`'s `editing` stays false: the overlay never
+   * mounts, and the readout's `0.0` is the only thing left on screen. Setting the
+   * leading first, then dragging, puts the zero into the args the drag's own
+   * `publishStyle` reads and the draft opens holding it.
    */
   test('zero line height stacks all lines on one baseline', async ({ page, context }, testInfo) => {
     const box = await canvasBox(page);
     const lineHeightReadout = page.locator('label[for="line-height-slider"] span[aria-hidden="true"]');
 
     await setTextToolColor(page, TEXT_COLOR);
-    await dragDraftRect(page, box, DRAFT_RECT);
 
     // Invoke the handler directly via the React fiber to bypass the slider's min.
     await page.evaluate(() => {
@@ -2552,6 +2562,8 @@ test.describe('Text tool', () => {
 
     // The readout shows style.lineHeight.toFixed(1); '0.0' confirms the state is zero.
     await expect(lineHeightReadout, 'line height was not set to zero').toHaveText('0.0');
+
+    await dragDraftRect(page, box, DRAFT_RECT);
 
     // 'I\nI\nI' — three hard breaks, always three lines regardless of wrap width.
     await replaceDraftLines(page, context, 'I\nI\nI');
