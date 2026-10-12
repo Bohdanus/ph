@@ -44,6 +44,11 @@ When no phrase is given, the helper falls back to the most recent top-level sess
 repositories (use `FIND_SESSION_VERBOSE=1` to verify the directory). If the database cannot be opened
 or no session matches, the helper exits non-zero with a message on stderr.
 
+Phrase searches are time-bounded to the last 7 days by default (override with
+`FIND_SESSION_DAYS=N`); this keeps the query fast on multi-gigabyte databases where a full scan
+can take tens of seconds. Passing no phrase skips the time bound, since the no-phrase query only
+reads the small `session` table.
+
 If the helper is unavailable, fall back to a manual read-only search:
 
 ```sh
@@ -54,12 +59,17 @@ sqlite3 -readonly "$HOME/.local/share/kilo/kilo.db" "
   JOIN message m ON m.session_id = s.id
   JOIN part p ON p.message_id = m.id
   WHERE s.parent_id IS NULL
+    AND s.time_updated >= (strftime('%s','now')-604800)*1000
     AND json_extract(p.data, '$.type') = 'text'
     AND lower(json_extract(p.data, '$.text')) LIKE '%distinctive%current%task%phrase%'
   ORDER BY s.time_updated DESC
   LIMIT 10;
 "
 ```
+
+The `s.time_updated` filter limits the scan to sessions from the last 7 days
+(adjust `604800` seconds as needed); without it the query scans the entire
+`part` table and can take tens of seconds on a large database.
 
 Confirm the candidate's title, repository directory, and timestamps match the current chat. If the
 current session is absent or multiple candidates remain, do not guess; use the session host's

@@ -61,6 +61,123 @@ describe('pointsBoundingPos', () => {
 
     expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
   });
+
+  it('rounds outward for every fractional drag, never inward', () => {
+    for (const lineWidth of [0.5, 1, 2, 3, 3.5, 7]) {
+      for (const points of [
+        [
+          { x: 10.4, y: 20.6 },
+          { x: 50.2, y: 80.9 },
+        ],
+        [
+          { x: -3.7, y: -1.2 },
+          { x: 99.9, y: 12.05 },
+        ],
+        [
+          { x: 0.5, y: 0.5 },
+          { x: 0.5, y: 0.5 },
+        ],
+      ]) {
+        const bounds = pointsBoundingPosOutward({ points, lineWidth });
+        const label = `lw=${lineWidth} ${points[0].x},${points[0].y} -> ${points[1].x},${points[1].y}`;
+
+        expect(bounds.x, label).toBeLessThanOrEqual(Math.min(points[0].x, points[1].x) - lineWidth);
+        expect(bounds.y, label).toBeLessThanOrEqual(Math.min(points[0].y, points[1].y) - lineWidth);
+        expect(bounds.x + bounds.width, label).toBeGreaterThanOrEqual(Math.max(points[0].x, points[1].x) + lineWidth);
+        expect(bounds.y + bounds.height, label).toBeGreaterThanOrEqual(Math.max(points[0].y, points[1].y) + lineWidth);
+        expect(Number.isInteger(bounds.x), label).toBe(true);
+        expect(Number.isInteger(bounds.y), label).toBe(true);
+        expect(Number.isInteger(bounds.width), label).toBe(true);
+        expect(Number.isInteger(bounds.height), label).toBe(true);
+      }
+    }
+  });
+
+  it('is the identity on integer geometry with an integral lineWidth', () => {
+    const bounds = pointsBoundingPosOutward({
+      points: [
+        { x: 10, y: 20 },
+        { x: 50, y: 60 },
+      ],
+      lineWidth: 2,
+    });
+
+    expect(bounds).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+  });
+
+  it('rounds fractional bounds outward to integer raster dimensions', () => {
+    // §163: pointer coordinates divided by the contain fit are fractional, and the
+    // Draw tool must use its outward-rounded bounds before allocating the layer bitmap,
+    // because `new OffscreenCanvas(width, height)` truncates fractional dimensions —
+    // the declared box disagrees with its own raster by up to a pixel, and the composite
+    // path draws back at the untruncated size with bilinear smoothing on.
+    //
+    // The fix mirrors shapeGeometryBounds: floor the origin, ceil the far edge.
+    const result = pointsBoundingPosOutward({
+      points: [
+        { x: 10.25, y: 20.75 },
+        { x: 50.5, y: 40.125 },
+      ],
+      lineWidth: 1.5,
+    });
+
+    // minX - lw = 8.75 → floor → 8; minY - lw = 19.25 → floor → 19
+    // maxX + lw = 52 → ceil → 52; maxY + lw = 41.625 → ceil → 42
+    // width = 52 - 8 = 44; height = 42 - 19 = 23
+    expect(result).toEqual({ x: 8, y: 19, width: 44, height: 23 });
+    expect(Number.isInteger(result.x)).toBe(true);
+    expect(Number.isInteger(result.y)).toBe(true);
+    expect(Number.isInteger(result.width)).toBe(true);
+    expect(Number.isInteger(result.height)).toBe(true);
+  });
+
+  it('rounds outward on every axis for a fractional drag, never inward', () => {
+    // Mirrors the shapeGeometryBounds sweep: the guarantee that matters is the direction
+    // of the rounding. Inward rounding would clip a stroke the geometry genuinely covers,
+    // and that only shows up on the axis whose fraction happens to round the wrong way.
+    const lineWidths = [1, 2, 3, 3.5, 7, 7.5];
+    const pointSets = [
+      [
+        { x: 0.3, y: 0.7 },
+        { x: 10.4, y: 5.2 },
+      ],
+      [
+        { x: -3.7, y: -1.2 },
+        { x: 50.2, y: 80.9 },
+      ],
+      [
+        { x: 0.5, y: 0.5 },
+        { x: 99.9, y: 12.05 },
+      ],
+      [{ x: 12.3, y: 7.8 }],
+    ];
+
+    for (const lineWidth of lineWidths) {
+      for (const points of pointSets) {
+        const result = pointsBoundingPosOutward({ points, lineWidth });
+        const xs = points.map((p) => p.x);
+        const ys = points.map((p) => p.y);
+        const minX = Math.min(...xs);
+        const minY = Math.min(...ys);
+        const maxX = Math.max(...xs);
+        const maxY = Math.max(...ys);
+
+        // Outward rounding: the box must contain the padded geometry.
+        expect(result.x, String(result)).toBeLessThanOrEqual(minX - lineWidth);
+        expect(result.y, String(result)).toBeLessThanOrEqual(minY - lineWidth);
+        expect(result.x + result.width, String(result)).toBeGreaterThanOrEqual(maxX + lineWidth);
+        expect(result.y + result.height, String(result)).toBeGreaterThanOrEqual(maxY + lineWidth);
+        // And every field is an integer, so the OffscreenCanvas constructor agrees.
+        expect(Number.isInteger(result.x), String(result)).toBe(true);
+        expect(Number.isInteger(result.y), String(result)).toBe(true);
+        expect(Number.isInteger(result.width), String(result)).toBe(true);
+        expect(Number.isInteger(result.height), String(result)).toBe(true);
+        // A valid canvas size: ceil is identity, so the buffer is no larger than declared.
+        expect(Math.ceil(result.width), String(result)).toBe(result.width);
+        expect(Math.ceil(result.height), String(result)).toBe(result.height);
+      }
+    }
+  });
 });
 
 describe('bezierSmoothedLine', () => {

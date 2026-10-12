@@ -14,7 +14,7 @@ import {
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { cssPointToImage, type CssBox, type Point } from './helpers/screenshot-scale';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
@@ -694,6 +694,281 @@ test.describe('Layers panel', () => {
     await layerRow(page, 'Blank 1').getByRole('button', { name: 'Remove layer' }).click();
     await expect(layerRows(page)).toHaveCount(0);
     await expect(page.getByText('No layers yet.')).toBeVisible();
+  });
+
+  /**
+   * A rename that resolves to empty (blank, spaces, or whitespace-only) must be refused: the
+   * name stays as-is and no history entry is written. `handleNameChange` in `LayersTab.tsx`
+   * guards on `Boolean(trimmed && trimmed !== layers[layerId]?.name)`, so an empty trim is
+   * the no-op branch that writes nothing. This pins that guard at the E2E layer rather than
+   * relying on the unit assertion alone.
+   *
+   * The count is measured AGAINST, not just asserted after: a rename that appended entries
+   * for the clear, the space, and the Enter would still leave zero new rows if the component
+   * never called `updateLayer`, but the count is what says it did not.
+   */
+  test('blank or whitespace-only rename is rejected and writes nothing to history', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+
+    // First row is the topmost layer. Captured before any rename so the locator survives
+    // the name change (or lack thereof, for a refused rename).
+    const row = page.getByTestId(LAYER_ROW).first();
+    await expect(row).toContainText('draw 2');
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const beforeRename = await historyRows.count();
+
+    await enterRenameMode(row);
+    // Ctrl/Cmd+A then Delete clears the contenteditable span.
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Enter');
+
+    await expect(row, 'the row still carries its original name').toContainText('draw 2');
+    await expect(row).not.toContainText('Discarded');
+    await expect(row.getByTestId(LAYER_NAME)).toHaveAttribute('contenteditable', 'false');
+    // No history entry for a refused rename.
+    await expect(historyRows, 'a blank rename left no trace on the timeline').toHaveCount(beforeRename);
+
+    // Whitespace-only is the same refusal: trimmed is empty.
+    await enterRenameMode(row);
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('   ');
+    await page.keyboard.press('Enter');
+
+    await expect(row).toContainText('draw 2');
+    await expect(historyRows, 'a whitespace rename left no trace on the timeline').toHaveCount(beforeRename);
+  });
+
+  /**
+   * A rename committed via blur (clicking away from the name span) must commit the same way
+   * Enter does and produce the same single history entry. The blur path runs `handleNameChange`
+   * through the `onBlur` handler (`LayersTab.tsx:279-281`), which is a different code path than
+   * `onKeyDown`'s Enter branch — same destination, different trigger. Pinning both means a
+   * regression in one does not pass through the other.
+   */
+  test('blur commits a valid rename as one history entry', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+
+    // First row is the topmost layer ("draw 2" after one stroke). Captured before rename
+    // so the locator survives the name change.
+    const row = page.getByTestId(LAYER_ROW).first();
+    await expect(row).toContainText('draw 2');
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    const beforeRename = await historyRows.count();
+
+    await enterRenameMode(row);
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('Sky');
+    await expect(row.getByTestId(LAYER_NAME)).toHaveText('Sky');
+
+    // Click the canvas to blur the name span — the blur fires `handleNameChange`.
+    // Use evaluate to blur the focused element directly, as a canvas click can be intercepted
+    // by pointer-event overlays in some layouts.
+    await page.evaluate(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+    });
+
+    await expect(row).toContainText('Sky');
+    await expect(row.getByTestId(LAYER_NAME)).toHaveAttribute('contenteditable', 'false');
+    // `RENAME_LAYER_ACTION = 'rename'`, matched case-insensitively as the HistoryTab lowercases it.
+    await expect(historyRows, 'the blur produced exactly one rename history entry').toHaveCount(beforeRename + 1);
+    await expect(historyRows.filter({ hasText: /rename/i })).toHaveCount(1);
+  });
+
+  /**
+   * Double-clicking a NON-TEXT layer must NOT switch the tool to Text — `enterTextLayer`
+   * in `LayersTab.tsx` returns early when `textLayerEditTarget` is null, and that early
+   * return is the contract being pinned here. A double-click that silently landed a text
+   * cursor would be invisible to the canvas and leave the document in the wrong tool.
+   *
+   * The draw tool is the page's default (`DEFAULT_TOOL = 'draw'` in `src/util/constants.ts`),
+   * and after drawing it stays selected — so "draw is still selected" is the negative
+   * assertion that proves nothing happened.
+   */
+  test('double-clicking a non-text layer does not switch to the Text tool', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+
+    await expect(page.getByTestId(LAYER_ROW)).toHaveCount(2);
+    await expectToolSelected(page, 'draw');
+
+    const row = page.getByTestId(LAYER_ROW).first();
+    await row.dblclick();
+
+    // The draw tool stays active — double-click was a no-op, not a text-tool entry.
+    await expectToolSelected(page, 'draw');
+    await expect(page.getByTestId(LAYER_ROW)).toHaveCount(2);
+  });
+
+  /**
+   * A drawn stroke creates a second layer on top of the bedrock, so `canConvertBackground`
+   * (`LayersTab.tsx:110`) is `Object.keys(layers).length === 1` — false — and the button
+   * must stay hidden. The sponge-tool spec covers the VISIBILITY of the button on a lone
+   * background; this test pins the opposite guard: the button vanishes the moment a second
+   * layer exists.
+   */
+  test('the Layer from Background button is absent when the document has more than one layer', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    // Before any stroke: one layer, bedrock. The button is visible.
+    await expect(page.getByTestId('layers-convert-background-button')).toBeVisible();
+
+    await stroke('#ff0000', RED_STROKE);
+    await expect(page.getByTestId(LAYER_ROW)).toHaveCount(2);
+
+    // After the stroke: two layers. The button must not be present.
+    await expect(page.getByTestId('layers-convert-background-button')).toHaveCount(0);
+  });
+
+  /**
+   * On a lone bedrock layer the button IS exposed, and clicking it converts the backing
+   * image into an editable layer — `convertBedrockLayer` dispatches `NEW_LAYER_ACTION`
+   * with a non-bedrock source (`useLayer.ts:1280-1322`), and the undo button wakes up.
+   *
+   * This is the layers-panel perspective on a route the sponge-tool spec exercises through
+   * a tonal tool; here the assertion is scoped to the panel: the button disappears, the
+   * undo becomes enabled, and a single history entry lands.
+   */
+  test('Layer from Background converts a lone bedrock into an editable layer', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const historyRows = page.getByTitle(HISTORY_ROW_TITLE);
+    // The document open is the only row on a fresh document.
+    await expect(historyRows, 'a fresh document opens with one history row').toHaveCount(1);
+
+    const convert = page.getByTestId('layers-convert-background-button');
+    await expect(convert, 'a fresh document exposes the Background conversion route').toBeVisible();
+
+    await convert.click();
+
+    await expect(convert, 'the button is consumed by the conversion').toHaveCount(0);
+    await expect(historyRows, 'the conversion appended exactly one history entry').toHaveCount(2);
+  });
+
+  /**
+   * The trash button calls `e.stopPropagation()` before `handleConfirmRemove`
+   * (`LayersTab.tsx:318-321`), so clicking it must NOT also fire the row's `onClick`,
+   * which would call `selectLayer` and change which layer is active.
+   *
+   * The test activates one layer, then clicks trash on the OTHER layer and checks that
+   * the first is still active by its resolved `backgroundColor` — `bg-white` for the
+   * active row, `bg-transparent` for an inactive one. Reading the fill, not the click,
+   * is what makes the assertion hold: if the active layer had changed, the clicked row
+   * would be white and the originally-active row would be transparent.
+   */
+  test('clicking the trash button does not select the layer', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+    await stroke('#00aa00', GREEN_STROKE);
+
+    const rows = page.getByTestId(LAYER_ROW);
+    await expect(rows).toHaveCount(3);
+
+    // draw 3 (green, topmost) is the active layer by default after the second stroke.
+    const greenRow = layerRow(page, 'draw 3');
+    const redRow = layerRow(page, 'draw 2');
+    await activateRow(greenRow, redRow);
+
+    // Click away to clear any hover fill before reading computed styles.
+    await page.mouse.move(0, 0);
+
+    // Click trash on the RED row (the one that is NOT active).
+    await redRow.getByRole('button', { name: 'Remove layer' }).click();
+    await expect(redRow).toHaveCount(0);
+
+    // The green row must still be the active one.
+    await page.mouse.move(0, 0);
+    await expect
+      .poll(async () => (await rowFill(greenRow)) !== TRANSPARENT_FILL, {
+        message: "the active layer did not change after clicking a different row's trash",
+      })
+      .toBe(true);
+  });
+
+  /**
+   * Same stop-propagation contract as the trash button applies to the eye: the handler
+   * calls `e.stopPropagation()` before `toggleVisibility`, so the row's `onClick` never
+   * fires and the active layer is not moved.
+   */
+  test('clicking the eye button does not select the layer', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+    await stroke('#00aa00', GREEN_STROKE);
+
+    const rows = page.getByTestId(LAYER_ROW);
+    await expect(rows).toHaveCount(3);
+
+    const greenRow = layerRow(page, 'draw 3');
+    const redRow = layerRow(page, 'draw 2');
+    await activateRow(greenRow, redRow);
+
+    await page.mouse.move(0, 0);
+
+    // Click the eye on the RED row, which must not steal the active layer.
+    await redRow.getByRole('button', { name: /^(Hide|Show) layer$/ }).click();
+
+    await page.mouse.move(0, 0);
+    await expect
+      .poll(async () => (await rowFill(greenRow)) !== TRANSPARENT_FILL, {
+        message: "the active layer did not change after clicking a different row's eye",
+      })
+      .toBe(true);
+  });
+
+  /**
+   * `LayersTab.tsx:292-312` puts `textOverflow: 'ellipsis'`, `maxWidth: '111px'`, and
+   * `whiteSpace: 'nowrap'` on the name span for every layer. A name longer than 111px is
+   * clipped by the browser, and `scrollWidth > clientWidth` is the one DOM signal that the
+   * ellipsis is actually serving its overflow — a name that fits produces no ellipsis and
+   * `scrollWidth === clientWidth` regardless of the CSS class.
+   */
+  test('long layer names are truncated with an ellipsis', async ({ page }) => {
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
+
+    const { stroke } = await setup(page);
+    await stroke('#ff0000', RED_STROKE);
+
+    // First row is the topmost layer. Captured before rename so the locator survives the name change.
+    const row = page.getByTestId(LAYER_ROW).first();
+    await expect(row).toContainText('draw 2');
+    await enterRenameMode(row);
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('AVeryLongLayerNameThatExceedsOneHundredElevenPixelsLimit');
+    await page.keyboard.press('Enter');
+
+    const nameSpan = row.getByTestId(LAYER_NAME);
+    await expect(nameSpan).toHaveText(/A.*PixelsLimit/);
+    const style = await nameSpan.evaluate((node) => {
+      const computed = getComputedStyle(node);
+      return {
+        textOverflow: computed.textOverflow,
+        whiteSpace: computed.whiteSpace,
+        maxWidth: computed.maxWidth,
+        overflow: computed.overflow,
+        scrollWidth: node.scrollWidth,
+        clientWidth: node.clientWidth,
+      };
+    });
+
+    expect(style.textOverflow, 'the name span clips overflow with an ellipsis').toBe('ellipsis');
+    expect(style.whiteSpace).toBe('nowrap');
+    expect(style.maxWidth).toBe('111px');
+    expect(style.overflow).toBe('hidden');
+    expect(style.scrollWidth, 'the name is genuinely wider than the span').toBeGreaterThan(style.clientWidth);
   });
 });
 

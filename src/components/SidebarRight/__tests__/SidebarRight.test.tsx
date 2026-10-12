@@ -395,12 +395,12 @@ describe('SidebarRight', () => {
 
       const before = shares();
 
-      // UP by 100px of a 600px column, which is a sixth of the column: the top panel's share
+      // DOWN by 100px of a 600px column, which is a sixth of the column: the top panel's share
       // rises by exactly that and the bottom one's falls by the same amount, because they
       // share one divider. "All groups that share the divider are resized."
       const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
       fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 300 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 200 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 400 });
       fireEvent.pointerUp(document, { pointerId: 1 });
 
       const after = shares();

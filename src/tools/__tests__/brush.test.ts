@@ -538,9 +538,13 @@ describe('matchPaintPreset', () => {
     expect(matchPaintPreset(duplicated, hardRound)).toBe('First');
   });
 
-  it('reads a freshly seeded brush as the opening preset', () => {
+  it('reads a freshly seeded paint tool as its opening preset', () => {
+    // Both seeds are named tips, not hand-tuned ones: the brush opens on `Hard Round`
+    // and the pencil on `Hard Pencil`, each at the fully opaque default opacity. A seed
+    // that matched no preset would render as `Custom` on a fresh document (HANDOFF §183),
+    // so this pins the fix rather than the defect it replaced.
     expect(matchPaintPreset(brushPresets, defaultSettings.brush)).toBe('Hard Round');
-    expect(matchPaintPreset(pencilPresets, defaultSettings.pencil)).toBe('');
+    expect(matchPaintPreset(pencilPresets, defaultSettings.pencil)).toBe('Hard Pencil');
   });
 });
 

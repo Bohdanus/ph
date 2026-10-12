@@ -32,7 +32,7 @@ import { shape } from '../shape.ts';
 import { sharpen } from '../sharpen.ts';
 import { smudge } from '../smudge.ts';
 import { sponge } from '../sponge.ts';
-import { text } from '../text.ts';
+import { clearTextRasterCache, text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
@@ -528,6 +528,7 @@ describe('toolProcessors registry', () => {
 describe('paint tool raster processors', () => {
   beforeEach(() => {
     RecordingOffscreenCanvas.instances = [];
+    clearTextRasterCache();
     vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
   });
 
@@ -1297,6 +1298,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     // returning, because the only thing asked was that something came back.
     for (const [toolName, outcome, expectedWidth, expectedHeight] of defaultsOutcomeTable) {
       RecordingOffscreenCanvas.instances = [];
+      if (toolName === 'text') clearTextRasterCache();
       const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
         ...defaultSettings[toolName],
       } as never);
@@ -1337,13 +1339,13 @@ describe('toolProcessors dispatch for every tool name', () => {
     );
   });
 
-  it('cannot consume the seeded crop defaults at all (the crop processor in src/tools/crop.ts)', () => {
-    // Every other tool runs straight off its defaults; crop destructures `rect!` and the
-    // seeded rect is null, so the document-operation commit needs a real rect first.
+  it('consumes the seeded crop defaults as a no-op copy (the crop processor in src/tools/crop.ts)', () => {
+    // Crop's live document operation needs a real rect, but the registered processor must still
+    // tolerate the persisted default record during replay and return the source unchanged.
     expect(defaultSettings.crop.rect).toBeNull();
-    expect(() => toolProcessors.crop.imageProcessor({ size, bitmap })({ ...defaultSettings.crop } as never)).toThrow(
-      TypeError
-    );
+    const result = toolProcessors.crop.imageProcessor({ size, bitmap })({ ...defaultSettings.crop } as never);
+    expect(result).toEqual([bitmap]);
+    expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
   });
 
   it('collapses both lasso tools to a 1x1 canvas for the default empty point list', () => {

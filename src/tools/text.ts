@@ -154,6 +154,8 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
+  /** Rotation of the text box in degrees, around its centre. */
+  angle?: number;
   /** True only for a newly placed placeholder that has not received user input yet. */
   placeholderUntouched?: boolean;
   /** Present only while re-entering this committed layer; never persisted in source settings. */
@@ -778,6 +780,12 @@ export function renderText(ctx: Ctx2D, args: TextToolArgs, options: RenderTextOp
   // the only context-touching function left open, and it is the one that runs most often.
   ctx.save();
   try {
+    if (args.angle) {
+      const center = { x: (rect.x1 + rect.x2) / 2, y: (rect.y1 + rect.y2) / 2 };
+      ctx.translate(center.x, center.y);
+      ctx.rotate((args.angle * Math.PI) / 180);
+      ctx.translate(-center.x, -center.y);
+    }
     renderTextInto(ctx, style, kind, text, rect, options);
   } finally {
     ctx.restore();
@@ -1067,13 +1075,50 @@ export function domOverlayStyle(ctx: Ctx2D | null | undefined, style: ResolvedTe
   };
 }
 
+const textRasterCache = new Map<string, OffscreenCanvas>();
+
+export function clearTextRasterCache(): void {
+  textRasterCache.clear();
+}
+
+function textCacheKey(size: { width: number; height: number }, args: TextToolArgs): string {
+  return JSON.stringify({
+    size,
+    text: args.text ?? '',
+    kind: args.kind ?? 'point',
+    align: args.align,
+    bold: args.bold,
+    color: args.color,
+    fontFamily: args.fontFamily,
+    fontSize: args.fontSize,
+    italic: args.italic,
+    lineHeight: args.lineHeight,
+    allCaps: args.allCaps ?? false,
+    smallCaps: args.smallCaps ?? false,
+    strikethrough: args.strikethrough ?? false,
+    tracking: args.tracking ?? 0,
+    underline: args.underline ?? false,
+    angle: args.angle ?? 0,
+    rect: args.rect ?? null,
+  });
+}
+
 export const text =
   ({ size }: CreatorToolParams) =>
   (args: TextToolArgs) => {
+    const key = textCacheKey(size, args);
+    const cached = textRasterCache.get(key);
+    if (cached) return [cached];
+
     const canvas = new OffscreenCanvas(size.width, size.height);
-    const ctx = canvas.getContext('2d')!;
+    // A platform may expose OffscreenCanvas without a usable 2D context. Returning the allocated
+    // blank canvas keeps the creator total and lets the caller preserve the layer rather than
+    // throwing from a force-unwrap during replay or export.
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return [canvas];
 
     renderText(ctx, args);
 
+    textRasterCache.set(key, canvas);
     return [canvas];
   };

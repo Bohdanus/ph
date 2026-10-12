@@ -443,6 +443,31 @@ test.describe('Crop history', () => {
   // gives for its own viewport, for a different reason.
   test.use({ viewport: { width: 1600, height: 1200 } });
 
+  test('the crop overlay selector exposes six guides and O cycles the active guide', async ({ page }) => {
+    await openDocument(page);
+    await openCropTool(page);
+
+    const overlaySelect = page.locator('#crop-overlay');
+    await expect(overlaySelect, 'the crop overlay selector is visible').toBeVisible();
+    expect(await overlaySelect.locator('option').allTextContents()).toEqual([
+      'Rule of Thirds',
+      'Grid',
+      'Diagonal',
+      'Triangle',
+      'Golden Ratio',
+      'Golden Spiral',
+    ]);
+    await expect(overlaySelect, 'Rule of Thirds is the default guide').toHaveValue('ruleOfThirds');
+
+    await page.keyboard.press('o');
+    await expect(overlaySelect, 'O advances to Grid').toHaveValue('grid');
+
+    await overlaySelect.selectOption('goldenSpiral');
+    await overlaySelect.evaluate((element) => (element as HTMLSelectElement).blur());
+    await page.keyboard.press('o');
+    await expect(overlaySelect, 'O wraps after Golden Spiral').toHaveValue('ruleOfThirds');
+  });
+
   test('a committed crop is one history entry that one undo restores in full', async ({ page }) => {
     await openDocument(page);
     const opening = await documentSize(page);
@@ -838,6 +863,27 @@ test.describe('Crop history', () => {
         'the timeline is the opening entry and this one crop, so one undo reaching the start is the ' +
           'growth being a single entry rather than a frame commit plus a fill'
       ).toBeDisabled();
+    });
+
+    test('the crop corner exposes a rotation cursor and dragging it rotates the pending box', async ({ page }) => {
+      await openDocument(page);
+      const fit = await openCropTool(page);
+      await dragOnCanvas(page, fit, { x: CROP_LEFT_X, y: CROP_TOP_Y }, { x: CROP_RIGHT_X, y: CROP_BOTTOM_Y });
+
+      const surface = page.locator('.cursor-crop');
+      const corner = documentPoint(fit, CROP_LEFT_X - 10, CROP_TOP_Y - 10);
+      await page.mouse.move(corner.x, corner.y);
+      await expect(surface, 'the rotation hotspot uses the horizontal arrow cursor').toHaveCSS('cursor', 'ew-resize');
+
+      await page.mouse.down();
+      const rotatedCorner = documentPoint(fit, CROP_RIGHT_X - 160, CROP_TOP_Y - 180);
+      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.up();
+
+      await expect(surface, 'the pending crop keeps the rotated angle').toHaveAttribute(
+        'data-rotation',
+        /8[5-9]|9[0-5]/
+      );
     });
   });
 });

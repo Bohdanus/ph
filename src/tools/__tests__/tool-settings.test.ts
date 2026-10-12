@@ -465,16 +465,15 @@ describe('defaultSettings assumptions baked into the registry', () => {
     expect(result[0].height).toBe(size.height);
   });
 
-  it('is the one default set the crop processor cannot consume as-is (the crop processor in src/tools/crop.ts)', () => {
-    // Every other tool runs on its seeded defaults; crop destructures `rect!` and the
-    // seeded rect is null, so the document-operation commit needs a real rect first.
+  it('lets the crop processor consume its seeded defaults as a no-op copy', () => {
+    // The live document operation needs a real rect, but the registered processor must still
+    // tolerate the persisted default record during replay.
     expect(defaultSettings.crop.rect).toBeNull();
-    expect(() =>
-      findToolProcessor('crop')!.imageProcessor({
-        size: { width: 40, height: 24 },
-        bitmap: createMockImageBitmap(40, 24),
-      })(defaultSettings.crop as never)
-    ).toThrow(TypeError);
+    const bitmap = createMockImageBitmap(40, 24);
+    const result = findToolProcessor('crop')!.imageProcessor({ size: { width: 40, height: 24 }, bitmap })(
+      defaultSettings.crop as never
+    );
+    expect(result).toEqual([bitmap]);
   });
 
   it('feeds the remaining settings straight into the composed CSS filters', () => {

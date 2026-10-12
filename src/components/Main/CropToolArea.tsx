@@ -5,7 +5,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { sortRoundRect } from '../../util/rect.ts';
 import { HANDLE_SIZE } from '../../util/constants.ts';
 import type { ContainDimensions } from '../../util/contain-fit.ts';
-import { CROP_OVERLAYS, type CropToolArgs } from '../../tools/crop.ts';
+import { CROP_OVERLAYS, type CropToolArgs, type CropOverlayType } from '../../tools/crop.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point, Pos, RectXYSorted, Size } from '../../contexts/general-types.ts';
@@ -179,12 +179,24 @@ function cropOverhangPieces(rect: RectXYSorted, frameSize: Size, fit: ContainDim
 }
 
 export const CropToolArea = ({ className }: cropToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
+  const [{ containerRef, toolOverlayRef, canvasRef, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { applyDocumentCrop } = useLayers();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect, overlayType = 'ruleOfThirds', overlayOrientation = 'normal' } = args;
+  const {
+    aspectRatio,
+    rect,
+    angle = 0,
+    overlayType = 'ruleOfThirds',
+    overlayOrientation = 0,
+    overlayVisibility = 'always',
+    gridDivisions = 10,
+  } = args;
+  const clearDraft = () =>
+    args.angle === undefined
+      ? { ...args, rect: null, preRatioRect: null }
+      : { ...args, angle: 0, rect: null, preRatioRect: null };
 
   /**
    * Photoshop commits a crop with Enter and abandons it with Escape, so the panel's Apply and Clear
@@ -209,12 +221,12 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     cropKeysRef.current = {
       commit: () => {
         if (args.rect && applyDocumentCrop(args.rect)) {
-          setToolArgs({ ...args, rect: null, preRatioRect: null });
+          setToolArgs(clearDraft());
         }
       },
       cancel: () => {
         if (!args.rect && !args.preRatioRect) return;
-        setToolArgs({ ...args, rect: null, preRatioRect: null });
+        setToolArgs(clearDraft());
       },
     };
   });
@@ -229,25 +241,44 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
         return;
       if (event.key.toLowerCase() === 'o') {
         event.preventDefault();
+        event.stopPropagation();
         const current = overlayKeysRef.current;
         if (event.shiftKey && (current.overlayType === 'triangle' || current.overlayType === 'goldenSpiral')) {
+          const orientationCount = current.overlayType === 'triangle' ? 4 : 8;
+          const currentOrientation =
+            typeof current.overlayOrientation === 'number'
+              ? current.overlayOrientation
+              : current.overlayOrientation === 'flipped'
+                ? 1
+                : 0;
           setToolArgs({
             ...current.args,
             overlayType: current.overlayType,
-            overlayOrientation: current.overlayOrientation === 'normal' ? 'flipped' : 'normal',
+            overlayOrientation: (currentOrientation + 1) % orientationCount,
           });
         } else if (!event.shiftKey) {
           const index = CROP_OVERLAYS.indexOf(current.overlayType);
-          setToolArgs({ ...current.args, overlayType: CROP_OVERLAYS[(index + 1) % CROP_OVERLAYS.length] });
+          setToolArgs({
+            ...current.args,
+            overlayType: CROP_OVERLAYS[(index + 1) % CROP_OVERLAYS.length] as CropOverlayType,
+            overlayOrientation: 0,
+          });
         }
         return;
       }
-      if (event.key === 'Enter') cropKeysRef.current.commit();
-      else if (event.key === 'Escape') cropKeysRef.current.cancel();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        cropKeysRef.current.commit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        cropKeysRef.current.cancel();
+      }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [setToolArgs]);
 
   /**
@@ -281,8 +312,15 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     // Crop is the one consumer whose box may run off the frame, so it keeps the overhang instead
     // of snapping back to the frame edge.
     allowOutsideCanvas: true,
+    rotationEnabled: true,
+    rotation: angle,
+    onRotationChange: (nextAngle: number) => setToolArgs({ ...overlayKeysRef.current.args, angle: nextAngle }),
     overlayType,
     overlayOrientation,
+    overlayVisibility,
+    gridDivisions,
+
+    documentCanvasRef: canvasRef,
 
     onRepaint: (sortedRect: RectXYSorted) => {
       // Read after this render has bound `pointerState`. The closure runs from inside `drawMask`,
@@ -321,7 +359,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   const dash = painted ? OUTLINE_DASH / painted.fit.scale : 0;
 
   return (
-    <div className={`${className} cursor-crop`} {...pointerHandlers}>
+    <div className={`${className} cursor-crop`} data-rotation={angle} {...pointerHandlers}>
       {overhangPieces.length > 0 && painted && (
         /**
          * `pointer-events: none` is inherited, so this one declaration takes the whole subtree out
@@ -345,7 +383,11 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
             style={{
               width: totalSize.width,
               height: totalSize.height,
-              transform: `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale})`,
+              transformOrigin: `${(painted.rect.x1 + painted.rect.x2) / 2}px ${(painted.rect.y1 + painted.rect.y2) / 2}px`,
+              transform:
+                angle === 0
+                  ? `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale})`
+                  : `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale}) rotate(${angle}deg)`,
             }}
           >
             {overhangPieces.map((piece) => (

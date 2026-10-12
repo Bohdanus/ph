@@ -109,6 +109,68 @@ describe('useRect', () => {
     expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
+  it('draws distinct triangle orientations around a golden-ratio anchor', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 10, y: 20, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle');
+    expect(ctx.moveTo.mock.calls).toEqual([
+      [10, 20],
+      [310, 20],
+      [10, 220],
+    ]);
+    expect(ctx.lineTo.mock.calls).toEqual([
+      [310, 220],
+      [195.4, 143.6],
+      [195.4, 143.6],
+    ]);
+
+    vi.clearAllMocks();
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 'flipped');
+    expect(ctx.moveTo.mock.calls).toEqual([
+      [310, 20],
+      [10, 20],
+      [310, 220],
+    ]);
+    expect(ctx.lineTo.mock.calls[0]).toEqual([10, 220]);
+    expect(ctx.lineTo.mock.calls[1][0]).toBeCloseTo(124.6);
+    expect(ctx.lineTo.mock.calls[1][1]).toBeCloseTo(143.6);
+    expect(ctx.lineTo.mock.calls[2][0]).toBeCloseTo(124.6);
+    expect(ctx.lineTo.mock.calls[2][1]).toBeCloseTo(143.6);
+  });
+
+  it('draws all 4 numeric triangle orientations', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 10, y: 20, width: 300, height: 200 };
+
+    // Orientation 0 (normal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 0);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 1 (flipped)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 1);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 2 (rotated 180)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 2);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 3 (flipped + rotated 180)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 3);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
   it('draws both orientations of the golden spiral', () => {
     const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
     drawCropOverlay(
@@ -124,6 +186,91 @@ describe('useRect', () => {
     );
     expect(ctx.arc).toHaveBeenCalledTimes(6);
     expect(ctx.stroke).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws all 8 numeric golden spiral orientations', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    for (let i = 0; i < 8; i++) {
+      vi.clearAllMocks();
+      drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'goldenSpiral', i);
+      expect(ctx.arc).toHaveBeenCalledTimes(3);
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('respects gridDivisions parameter for grid overlay', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    // Default 10 divisions = 18 lines (9 vertical + 9 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 10);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(18);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(18);
+
+    vi.clearAllMocks();
+    // 5 divisions = 8 lines (4 vertical + 4 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 5);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(8);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(8);
+
+    vi.clearAllMocks();
+    // 2 divisions = 2 lines (1 vertical + 1 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 2);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('respects overlayVisibility: never', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'ruleOfThirds', 'normal', 1, null, 'never');
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('respects overlayVisibility: always', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'ruleOfThirds', 'normal', 1, null, 'always');
+    expect(ctx.moveTo).toHaveBeenCalledTimes(4);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(4);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows auto overlays only while dragging', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      rect,
+      'ruleOfThirds',
+      'normal',
+      1,
+      null,
+      'auto',
+      10,
+      false
+    );
+    expect(ctx.stroke).not.toHaveBeenCalled();
+
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      rect,
+      'ruleOfThirds',
+      'normal',
+      1,
+      null,
+      'auto',
+      10,
+      true
+    );
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
   let testContext: ReturnType<typeof createTestContext>;
@@ -149,6 +296,9 @@ describe('useRect', () => {
       initialRect?: { x1: number; y1: number; x2: number; y2: number } | null;
       isMoveTool?: boolean;
       hideBlend?: boolean;
+      rotationEnabled?: boolean;
+      rotation?: number;
+      onRotationChange?: UseRectProps['onRotationChange'];
       onRepaint?: UseRectProps['onRepaint'];
       onChange?: UseRectProps['onChange'];
       onChangeEnd?: UseRectProps['onChangeEnd'];
@@ -161,6 +311,9 @@ describe('useRect', () => {
       initialRect: options.initialRect ?? null,
       hideBlend: options.hideBlend ?? false,
       isMoveTool: options.isMoveTool ?? false,
+      rotationEnabled: options.rotationEnabled ?? false,
+      rotation: options.rotation ?? 0,
+      onRotationChange: options.onRotationChange,
       containerRef: { current: containerElement },
       overlayRef: { current: overlayCanvas },
       onRepaint: options.onRepaint ?? vi.fn(),
@@ -377,6 +530,49 @@ describe('useRect', () => {
   });
 
   describe('handlePointerMove', () => {
+    it('shows a rotation cursor and rotates the rect from a corner hotspot', () => {
+      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+      const onRotationChange = vi.fn();
+      const { result } = renderUseRect({ initialRect, rotationEnabled: true, onRotationChange });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 90, clientY: 90, target }))
+        ).toBe(true);
+      });
+      expect(target.style.cursor).toBe(CURSOR_MAP.rotate);
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 90, clientY: 90, target })
+        );
+        usePointerPositionMock.mockData.isMouseDown.current = true;
+        result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 285, clientY: 65, target }));
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(onRotationChange).toHaveBeenCalled();
+      expect(onRotationChange.mock.lastCall?.[0]).toBeCloseTo(90, 0);
+    });
+
+    it('keeps the painted handles hit-testable after the rect rotates', () => {
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        rotationEnabled: true,
+        rotation: 90,
+      });
+
+      // The local top-left corner (100,100) rotates to (275,75) around (200,175).
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: 275, clientY: 75, target: createMockTarget() })
+          )
+        ).toBe(true);
+      });
+    });
+
     it('reports a hit for every handle and edge of the rect, and a miss off it', () => {
       // `isMouseDown` is owned by the (mocked) pointer-position hook and is false here, so a move is
       // a HOVER: it reports whether an edge is under the pointer and resizes nothing. The drag

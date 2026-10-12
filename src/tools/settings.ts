@@ -98,7 +98,15 @@ export const defaultSettings = {
 
     toolName: 'transform',
   } satisfies TransformToolArgs,
-  crop: { aspectRatio: null, rect: null, toolName: 'crop' } satisfies CropToolArgs,
+  crop: {
+    aspectRatio: null,
+    rect: null,
+    overlayType: 'ruleOfThirds',
+    overlayOrientation: 0,
+    overlayVisibility: 'always',
+    gridDivisions: 10,
+    toolName: 'crop',
+  } satisfies CropToolArgs,
   draw: {
     ...savedDrawPerPen['pen'],
     color: '#000000',
@@ -203,7 +211,7 @@ export const defaultSettings = {
     toolName: 'brush',
   } satisfies PaintToolArgs,
   pencil: {
-    alpha: 0.9,
+    alpha: 1,
     color: '#000000',
     penType: 'pen',
     lineWidth: 3,
