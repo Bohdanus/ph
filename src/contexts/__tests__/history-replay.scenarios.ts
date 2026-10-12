@@ -4,6 +4,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource, LayersRecord } from '../layer-types.ts';
 import type { SharpenToolArgs } from '../../tools/sharpen.ts';
 import type { TextToolArgs } from '../../tools/text.ts';
+import type { ShapeToolArgs } from '../../tools/shape.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -31,7 +32,7 @@ import { imageDataFrom } from '../../__tests__/fixtures/pixelCanvas.ts';
  * STATE, and the pixel suite passes the real one because it compares replay PIXELS.
  *
  * Nothing in this module imports a canvas or a registry. A scenario is a `HistoryItem[]` plus
- * the frame both models must report at the tip, so the same twelve rows drive both suites.
+ * the frame both models must report at the tip, so the same thirteen rows drive both suites.
  */
 
 export const paritySize: Size = { width: 400, height: 300 };
@@ -166,6 +167,18 @@ export const textArgs: TextToolArgs = {
   rect: { x1: 10, y1: 15, x2: 140, y2: 55 },
 };
 
+export const vectorArgs: ShapeToolArgs = {
+  toolName: 'shape',
+  alpha: 1,
+  color: '#0000ff',
+  backgroundColor: '#ffffff',
+  hasFill: true,
+  figure: 'oval',
+  lineWidth: 2,
+  start: { x: 20, y: 20 },
+  end: { x: 100, y: 80 },
+};
+
 export const transformArgs: TransformToolArgs = {
   toolName: 'transform',
   rotate: 17,
@@ -188,7 +201,7 @@ export type ReplayParityScenario = Readonly<{
 }>;
 
 /**
- * The twelve scenarios, in the order the logical differential has always asserted them.
+ * The thirteen scenarios, in the order the logical differential has always asserted them.
  */
 export const replayParityScenarios: readonly ReplayParityScenario[] = [
   {
@@ -310,6 +323,23 @@ export const replayParityScenarios: readonly ReplayParityScenario[] = [
     ],
   },
   {
+    name: 'vector source',
+    history: [
+      baselineEntry(),
+      {
+        id: 'shape',
+        actionName: NEW_LAYER_ACTION,
+        layerId: 'shape-layer',
+        layerSource: {
+          kind: 'tool',
+          args: vectorArgs,
+          isBedrock: false,
+          pos: { x: 20, y: 20, width: 80, height: 60 },
+        },
+      },
+    ],
+  },
+  {
     name: 'selection',
     history: [
       baselineEntry(),
@@ -327,7 +357,7 @@ export const replayParityScenarios: readonly ReplayParityScenario[] = [
  * WHY IT IS SEPARATE. It exercises `commit: 'raster'`, the arm `history-adapter.ts` converts
  * into an `apply-raster-processor` operation and `replayHistory()` routes through
  * `dependencies.applyRasterTool` — the one dependency the logical suite stubs to identity, and
- * the one path where a REAL processor runs on both sides. None of the twelve carries a
+ * the one path where a REAL processor runs on both sides. None of the thirteen carries a
  * `commit: 'raster'` tool, so without this row the whole raster-processor axis would be wired
  * and never entered.
  *
