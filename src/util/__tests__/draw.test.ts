@@ -63,14 +63,14 @@ describe('pointsBoundingPos', () => {
   });
 
   it('rounds fractional bounds outward to integer raster dimensions', () => {
-    // §163: pointer coordinates divided by the contain fit are fractional, and
-    // pointsBoundingPos passes them through with no rounding. The layer bitmap is then
-    // allocated with `new OffscreenCanvas(width, height)`, whose constructor truncates —
+    // §163: pointer coordinates divided by the contain fit are fractional, and the
+    // Draw tool must use its outward-rounded bounds before allocating the layer bitmap,
+    // because `new OffscreenCanvas(width, height)` truncates fractional dimensions —
     // the declared box disagrees with its own raster by up to a pixel, and the composite
     // path draws back at the untruncated size with bilinear smoothing on.
     //
     // The fix mirrors shapeGeometryBounds: floor the origin, ceil the far edge.
-    const result = pointsBoundingPos({
+    const result = pointsBoundingPosOutward({
       points: [
         { x: 10.25, y: 20.75 },
         { x: 50.5, y: 40.125 },
@@ -111,7 +111,7 @@ describe('pointsBoundingPos', () => {
 
     for (const lineWidth of lineWidths) {
       for (const points of pointSets) {
-        const result = pointsBoundingPos({ points, lineWidth });
+        const result = pointsBoundingPosOutward({ points, lineWidth });
         const xs = points.map((p) => p.x);
         const ys = points.map((p) => p.y);
         const minX = Math.min(...xs);
