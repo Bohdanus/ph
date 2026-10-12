@@ -360,6 +360,7 @@ test.describe('Undo and redo', () => {
     await getUndoButton(page).click();
     await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink after undo' });
     await expectPresentationDecision(page);
+    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
 
     expect(await hasDarkPixels(await capture(page, clip)), 'undo left ink on the canvas').toBe(false);
     await expect(getRedoButton(page)).toBeEnabled();
@@ -368,6 +369,7 @@ test.describe('Undo and redo', () => {
     await getRedoButton(page).click();
     await waitForBands(page, [wholeCanvasBand(box)], [true], { description: 'the redone rectangle to be back' });
     await expectPresentationDecision(page);
+    await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
 
     const redone = await getDarkPixelBounds(await capture(page, clip));
     expect(redone, 'redo left the canvas empty').toBeTruthy();

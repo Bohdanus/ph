@@ -139,6 +139,38 @@ describe('useRect', () => {
     expect(ctx.lineTo.mock.calls[2][1]).toBeCloseTo(143.6);
   });
 
+  it('draws all 4 numeric triangle orientations', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 10, y: 20, width: 300, height: 200 };
+
+    // Orientation 0 (normal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 0);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 1 (flipped)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 1);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 2 (rotated 180)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 2);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    // Orientation 3 (flipped + rotated 180)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'triangle', 3);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(3);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(3);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
   it('draws both orientations of the golden spiral', () => {
     const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
     drawCropOverlay(
@@ -154,6 +186,91 @@ describe('useRect', () => {
     );
     expect(ctx.arc).toHaveBeenCalledTimes(6);
     expect(ctx.stroke).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws all 8 numeric golden spiral orientations', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    for (let i = 0; i < 8; i++) {
+      vi.clearAllMocks();
+      drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'goldenSpiral', i);
+      expect(ctx.arc).toHaveBeenCalledTimes(3);
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('respects gridDivisions parameter for grid overlay', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    // Default 10 divisions = 18 lines (9 vertical + 9 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 10);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(18);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(18);
+
+    vi.clearAllMocks();
+    // 5 divisions = 8 lines (4 vertical + 4 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 5);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(8);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(8);
+
+    vi.clearAllMocks();
+    // 2 divisions = 2 lines (1 vertical + 1 horizontal)
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'grid', 'normal', 1, null, 'always', 2);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(2);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('respects overlayVisibility: never', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'ruleOfThirds', 'normal', 1, null, 'never');
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('respects overlayVisibility: always', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(ctx as unknown as CanvasRenderingContext2D, rect, 'ruleOfThirds', 'normal', 1, null, 'always');
+    expect(ctx.moveTo).toHaveBeenCalledTimes(4);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(4);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows auto overlays only while dragging', () => {
+    const ctx = createMockCanvasContext({ canvas: createMockCanvas() });
+    const rect = { x: 0, y: 0, width: 300, height: 200 };
+
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      rect,
+      'ruleOfThirds',
+      'normal',
+      1,
+      null,
+      'auto',
+      10,
+      false
+    );
+    expect(ctx.stroke).not.toHaveBeenCalled();
+
+    drawCropOverlay(
+      ctx as unknown as CanvasRenderingContext2D,
+      rect,
+      'ruleOfThirds',
+      'normal',
+      1,
+      null,
+      'auto',
+      10,
+      true
+    );
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
   let testContext: ReturnType<typeof createTestContext>;

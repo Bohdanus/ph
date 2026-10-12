@@ -8,13 +8,13 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 ## Authority
 
 The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
-now stages a durable-composed presentation cache into those legacy layers, and
-render and export consume that cache through `getLayerBitmap()`; logical
-undo/redo remains legacy-authoritative. `durableDocument` is a mounted
-navigation presentation cache as well as the durable state model. The migration
-is not complete until one replay/materialization authority feeds undo, redo,
-navigation, render, export and history-panel state without a second logical
-state writer.
+now stages a complete durable render projection beside the legacy logical layers;
+`renderSelector` holds the pending/durable/legacy canvas authority, while export
+consumes its own guarded durable projection. Logical undo/redo remains
+legacy-authoritative. `durableDocument` is a mounted navigation projection as
+well as the durable state model. The migration is not complete until one
+replay/materialization authority feeds undo, redo, navigation, render, export and
+history-panel state without a second logical state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
 sources, asset registry, immutable operation cloning, and append boundary are
@@ -158,21 +158,21 @@ variant or an equivalent atomic history action.
 3. The source-edit durable slice is in: `replace-layer-source` is derived,
    planned, replayed and cloned. Logical replay parity, history-panel parity, the
    browser authority seam, options-bar rehydration, and the pixel/export
-   differential now exist alongside it. The export matrix still needs to exercise
-   the production `durableExportRecords()` adapter directly, and the browser seam
-   still needs a forced durable-publication case. The two scenarios jsdom cannot
-   render in either direction and the pinned `args.enabled` divergence remain
-   proof gaps, not permission to weaken the authority gate.
+   differential now exist alongside it. The production `durableExportRecords()`
+   adapter is exercised by the cursor matrix, and FileProvider coverage proves
+   raster/PSD routing, refusal fallback, stale fallback, and exactly-once release.
+   The browser seam still needs a forced durable-publication case. The two
+   scenarios jsdom cannot render in either direction and the pinned `args.enabled`
+   divergence remain proof gaps, not permission to weaken the authority gate.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
 5. Measure replay and build the cooperative, manually accepted slow-replay path
    only after the empty-history and transactional-baseline invariants are safe.
 6. Keep the staged durable projection as the authority for supported runtime
-   presentation and both raster/PSD export paths. Ownership checks and atomic
-   failure fallback are closed; the production export adapter still needs to be
-   wired into the full parity matrix, and unsupported documents still use the
-   complete legacy compatibility path. The next authority work is to widen typed
-   vector-source admission one proven source family at a time, then retire legacy
+   presentation and both raster/PSD export paths. Ownership checks, production
+   adapter parity, and atomic failure fallback are closed; unsupported documents
+   still use the complete legacy compatibility path. The next authority work is
+   to prove append/preview and unsupported-source behavior, then retire legacy
    logical replay only after durable replay can provide the same complete state for
    append, branch, preview, and compatibility fallback.
 

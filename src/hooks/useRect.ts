@@ -17,7 +17,7 @@ import { resetOverlayAlpha } from '../util/canvas.ts';
 import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import type { Layer } from '../contexts/layer-types.ts';
-import type { CropOverlayOrientation, CropOverlayType } from '../tools/crop.ts';
+import type { CropOverlayOrientation, CropOverlayType, CropOverlayVisibility } from '../tools/crop.ts';
 
 export type UseRectProps = {
   aspectRatio?: number | null;
@@ -97,6 +97,8 @@ export type UseRectProps = {
   /** Optional composition guide for the crop consumer. Other rectangle tools leave this absent. */
   overlayType?: CropOverlayType;
   overlayOrientation?: CropOverlayOrientation;
+  overlayVisibility?: CropOverlayVisibility;
+  gridDivisions?: number;
 
   /** The document canvas, sampled to pick an overlay-guide color that inverts the underlying pixels. */
   documentCanvasRef?: RefObject<HTMLCanvasElement | null>;
@@ -174,8 +176,14 @@ export function drawCropOverlay(
   overlayType: CropOverlayType = 'ruleOfThirds',
   orientation: CropOverlayOrientation = 'normal',
   scale = 1,
-  documentCanvas: HTMLCanvasElement | null = null
+  documentCanvas: HTMLCanvasElement | null = null,
+  overlayVisibility: CropOverlayVisibility = 'always',
+  gridDivisions = 10,
+  isDragging = true
 ) {
+  // Respect overlay visibility setting
+  if (overlayVisibility === 'never' || (overlayVisibility === 'auto' && !isDragging)) return;
+
   const { x, y, width, height } = rect;
   const vertical = (ratio: number) => x + width * ratio;
   const horizontal = (ratio: number) => y + height * ratio;
@@ -197,24 +205,38 @@ export function drawCropOverlay(
       line(x, horizontal(1 / 3), x + width, horizontal(1 / 3));
       line(x, horizontal(2 / 3), x + width, horizontal(2 / 3));
       break;
-    case 'grid':
-      for (let index = 1; index < 10; index += 1) {
-        const ratio = index / 10;
+    case 'grid': {
+      const divisions = Math.max(2, Math.min(100, gridDivisions));
+      for (let index = 1; index < divisions; index += 1) {
+        const ratio = index / divisions;
         line(vertical(ratio), y, vertical(ratio), y + height);
         line(x, horizontal(ratio), x + width, horizontal(ratio));
       }
       break;
+    }
     case 'diagonal':
       line(x, y, x + width, y + height);
       line(x + width, y, x, y + height);
       break;
     case 'triangle': {
-      const flip = orientation === 'flipped';
+      const orientationCount = 4;
+      const currentOrientation =
+        typeof orientation === 'number' ? orientation % orientationCount : orientation === 'flipped' ? 1 : 0;
+      // 0: top-left to bottom-right diagonal, anchor at bottom-right
+      // 1: top-right to bottom-left diagonal (flipped), anchor at bottom-left
+      // 2: bottom-left to top-right diagonal, anchor at top-right
+      // 3: bottom-right to top-left diagonal, anchor at top-left
+      const flip = currentOrientation === 1 || currentOrientation === 3;
       const diagonalStart = flip ? { x: x + width, y } : { x, y };
       const diagonalEnd = flip ? { x, y: y + height } : { x: x + width, y: y + height };
       const anchor = flip
         ? { x: x + width * 0.382, y: y + height * 0.618 }
         : { x: x + width * 0.618, y: y + height * 0.618 };
+      // Rotate anchor for orientations 2 and 3
+      if (currentOrientation >= 2) {
+        anchor.x = x + width - anchor.x + x;
+        anchor.y = y + height - anchor.y + y;
+      }
       line(diagonalStart.x, diagonalStart.y, diagonalEnd.x, diagonalEnd.y);
       line(flip ? x : x + width, y, anchor.x, anchor.y);
       line(flip ? x + width : x, y + height, anchor.x, anchor.y);
@@ -227,19 +249,26 @@ export function drawCropOverlay(
       line(x, horizontal(0.618), x + width, horizontal(0.618));
       break;
     case 'goldenSpiral': {
-      const direction = orientation === 'flipped' ? -1 : 1;
+      const orientationCount = 8;
+      const currentOrientation =
+        typeof orientation === 'number' ? orientation % orientationCount : orientation === 'flipped' ? 4 : 0;
+      // 8 orientations: 4 rotations × 2 flips
+      const flip = currentOrientation >= 4;
+      const rotation = (currentOrientation % 4) * (Math.PI / 2);
       const cx = x + width / 2;
       const cy = y + height / 2;
       const radius = Math.min(width, height) / 2;
-      ctx.arc(cx, cy, radius, direction > 0 ? 0 : Math.PI, direction > 0 ? Math.PI * 1.5 : Math.PI * 2.5);
-      ctx.arc(
-        cx,
-        cy,
-        radius * 0.618,
-        direction > 0 ? Math.PI * 1.5 : Math.PI / 2,
-        direction > 0 ? Math.PI * 2 : Math.PI * 2.5
-      );
-      ctx.arc(cx, cy, radius * 0.382, direction > 0 ? 0 : Math.PI, direction > 0 ? Math.PI / 2 : Math.PI * 1.5);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rotation);
+      if (flip) ctx.scale(-1, 1);
+
+      ctx.arc(0, 0, radius, 0, Math.PI * 1.5);
+      ctx.arc(0, 0, radius * 0.618, Math.PI * 1.5, Math.PI * 2);
+      ctx.arc(0, 0, radius * 0.382, 0, Math.PI / 2);
+
+      ctx.restore();
       break;
     }
   }
@@ -274,6 +303,8 @@ export function useRect({
   onRotationChange,
   overlayType,
   overlayOrientation = 'normal',
+  overlayVisibility = 'always',
+  gridDivisions = 10,
   documentCanvasRef,
 
   containerRef,
@@ -653,7 +684,10 @@ export function useRect({
           overlayType,
           overlayOrientation,
           scale,
-          documentCanvasRef?.current
+          documentCanvasRef?.current,
+          overlayVisibility,
+          gridDivisions,
+          isMouseDown.current
         );
       } else {
         ctx.save();
@@ -665,7 +699,10 @@ export function useRect({
           overlayType,
           overlayOrientation,
           scale,
-          documentCanvasRef?.current
+          documentCanvasRef?.current,
+          overlayVisibility,
+          gridDivisions,
+          isMouseDown.current
         );
         ctx.restore();
       }
