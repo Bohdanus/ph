@@ -312,6 +312,7 @@ export function drawEvaluatedPresentation(
 
   ctx.filter = evaluation.filter;
   if (isIdentityAffineTransform(evaluation.affine)) {
+    ctx.imageSmoothingEnabled = false;
     ctx.drawImage(bitmap as CanvasImageSource, x, y, evaluation.sourceSize.width, evaluation.sourceSize.height);
     return;
   }
