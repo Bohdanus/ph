@@ -759,6 +759,61 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     expect(store().layers[layerId]).toBe(before);
     expect(store().layers[layerId].operations).toEqual([]);
   });
+
+  it('accepts a payload that differs only by identity affine operations, publishing stored record with caches', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+    const before = store().layers[layerId];
+    const identityAffineOp = {
+      id: 'identity-affine',
+      kind: 'affine-transform' as const,
+      transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+      enabled: true,
+    };
+    const stagedCanvas = canvas();
+    const payloadLayer = { ...before, operations: [identityAffineOp], tmpCanvas: stagedCanvas };
+
+    act(() => {
+      store().publishRuntimePresentation({ [layerId]: payloadLayer });
+    });
+
+    // Publication accepted: no error logged.
+    expect(consoleError).not.toHaveBeenCalled();
+    // Stored record is published with the cache but without the identity operation.
+    const after = store().layers[layerId];
+    expect(after.tmpCanvas).toBe(stagedCanvas);
+    expect(after.operations).toEqual([]);
+    // Other durable fields unchanged.
+    expect(after.pos).toEqual(before.pos);
+    expect(after.source).toBe(before.source);
+  });
+
+  it('refuses a payload with a non-identity affine operation', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+    const before = store().layers[layerId];
+    const nonIdentityAffineOp = {
+      id: 'scale-affine',
+      kind: 'affine-transform' as const,
+      transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 },
+      enabled: true,
+    };
+    const payloadLayer = { ...before, operations: [nonIdentityAffineOp] };
+
+    act(() => {
+      store().publishRuntimePresentation({ [layerId]: payloadLayer });
+    });
+
+    // Publication refused: error logged.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message] = consoleError.mock.calls[0];
+    expect(String(message)).toContain('PUBLISH_RUNTIME_PRESENTATION');
+    expect(String(message)).toContain('layer-1');
+    // Stored record unchanged.
+    expect(store().layers[layerId]).toBe(before);
+  });
 });
 
 describe('renderSelector contract', () => {
