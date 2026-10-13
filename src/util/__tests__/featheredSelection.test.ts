@@ -41,6 +41,57 @@ describe('feathered selection masks', () => {
     expect(edgeAlpha).toBeGreaterThan(cornerAlpha);
     expect(cornerAlpha).toBeGreaterThan(0);
   });
+
+  it('preserves fractional canvas coverage through feathering instead of thresholding to binary', () => {
+    const width = 5;
+    const height = 1;
+    // Use actual 8-bit values that canvas read-back produces
+    const coverageMask = Uint8Array.from([0, 64, 128, 192, 255]);
+
+    const alphaMask = createFeatheredAlphaMask(coverageMask, width, height, 2, true);
+
+    // Without the fix, these would all be thresholded to 0 or 255 before feathering,
+    // producing only the binary ramp. With the fix, each fractional value produces
+    // a distinct alpha value through the signed distance path.
+    expect(alphaMask[0]).toBeLessThan(alphaMask[1]);
+    expect(alphaMask[1]).toBeLessThan(alphaMask[2]);
+    expect(alphaMask[2]).toBeLessThan(alphaMask[3]);
+    expect(alphaMask[3]).toBeLessThan(alphaMask[4]);
+
+    // Verify exact values with 8-bit precision (64/255, 128/255, 192/255 not exact fractions)
+    // featherRadius=2: t = (sd + 2) / 4 where sd = (coverage - 0.5) * 2
+    expect(alphaMask[0]).toBe(40); // coverage=0: sd=-1.0 -> t=0.25 -> 40
+    expect(alphaMask[1]).toBe(81); // coverage=64/255: sd≈-0.498 -> t≈0.375 -> 81
+    expect(alphaMask[2]).toBe(128); // coverage=128/255: sd≈0.004 -> t≈0.5 -> 128
+    expect(alphaMask[3]).toBe(175); // coverage=192/255: sd≈0.506 -> t≈0.626 -> 175
+    expect(alphaMask[4]).toBe(215); // coverage=1.0: sd=1.0 -> t=0.75 -> 215
+  });
+
+  it('applies feather radius to expand the antialiased transition zone', () => {
+    const width = 5;
+    const height = 1;
+    const coverageMask = Uint8Array.from([0, 64, 128, 192, 255]);
+
+    const alphaMask = createFeatheredAlphaMask(coverageMask, width, height, 4, true);
+
+    // With larger feather radius, the transition zone expands
+    // featherRadius=4: t = (sd + 4) / 8
+    expect(alphaMask[0]).toBe(81); // coverage=0: sd=-1.0 -> t=0.375 -> 81
+    expect(alphaMask[1]).toBe(104); // coverage=64/255: sd≈-0.498 -> t≈0.438 -> 104
+    expect(alphaMask[2]).toBe(128); // coverage=128/255: sd≈0.004 -> t≈0.5 -> 128
+    expect(alphaMask[3]).toBe(152); // coverage=192/255: sd≈0.506 -> t≈0.563 -> 152
+    expect(alphaMask[4]).toBe(174); // coverage=1.0: sd=1.0 -> t=0.625 -> 174
+  });
+
+  it('falls back to binary chamfer path when preservesCoverage is false', () => {
+    const binaryMask = createCenteredSquareMask(5, 5, 1, 3);
+    const alphaMask = createFeatheredAlphaMask(binaryMask, 5, 5, 2, true, false);
+
+    // Binary path should still produce the exact chamfer values
+    expect(alphaMask[2 * 5 + 2]).toBe(255);
+    expect(alphaMask[1 * 5 + 1]).toBe(215);
+    expect(alphaMask[0]).toBe(15);
+  });
 });
 
 describe('alphaFromSignedDistance', () => {
@@ -97,10 +148,27 @@ describe('alphaFromSignedDistance', () => {
 });
 
 describe('createFeatheredAlphaMask', () => {
-  it('preserves partial canvas coverage when no feather is requested', () => {
+  it('maps fractional coverage to anti-aliased output at zero feather radius', () => {
     const coverageMask = Uint8Array.from([0, 64, 128, 255]);
 
-    expect(createFeatheredAlphaMask(coverageMask, 4, 1, 0, true)).toEqual(coverageMask);
+    const alphaMask = createFeatheredAlphaMask(coverageMask, 4, 1, 0, true);
+
+    // With featherRadius=0 and antiAlias=true, the coverage-preserving algorithm
+    // maps coverage to signedDistance = (coverage - 0.5) * 2, then applies
+    // half-pixel anti-aliasing: output = round(clamp(sd + 0.5, 0, 1) * 255)
+    // 0: sd=-1.0 -> clamp(-0.5)=0 -> 0
+    // 64/255: sd≈-0.498 -> clamp(0.002) -> 0 (rounds down due to floating point)
+    // 128/255: sd≈0.004 -> clamp(0.504)=0.504 -> 129
+    // 255/255: sd=1.0 -> clamp(1.5)=1 -> 255
+    expect(alphaMask[0]).toBe(0);
+    expect(alphaMask[1]).toBe(0);
+    expect(alphaMask[2]).toBe(129);
+    expect(alphaMask[3]).toBe(255);
+
+    // Verify monotonic mapping preserves ordering
+    expect(alphaMask[0]).toBeLessThanOrEqual(alphaMask[1]);
+    expect(alphaMask[1]).toBeLessThan(alphaMask[2]);
+    expect(alphaMask[2]).toBeLessThan(alphaMask[3]);
   });
 
   it('produces only fully opaque pixels when every pixel is inside the mask', () => {

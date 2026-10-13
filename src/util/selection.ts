@@ -637,31 +637,30 @@ export function createFeatheredAlphaMask(
   // remains a 0/1 mask. The explicit flag keeps a canvas pixel with alpha 1 distinguishable
   // from that fallback's selected value.
   const useCoverage = preservesCoverage || binaryMask.some((value) => value > 1);
+  const alphaMask = new Uint8Array(binaryMask.length);
+
+  if (useCoverage) {
+    for (let i = 0; i < binaryMask.length; i++) {
+      const coverage = binaryMask[i] / 255;
+      const signedDistance = (coverage - 0.5) * 2;
+      alphaMask[i] = alphaFromSignedDistance(signedDistance, featherRadius, antiAlias);
+    }
+    return alphaMask;
+  }
+
   const outsideSeeds = new Uint8Array(binaryMask.length);
   const insideSeeds = new Uint8Array(binaryMask.length);
 
   for (let i = 0; i < binaryMask.length; i++) {
-    if (useCoverage) {
-      insideSeeds[i] = binaryMask[i] === 255 ? 1 : 0;
-      outsideSeeds[i] = binaryMask[i] === 0 ? 1 : 0;
-    } else {
-      insideSeeds[i] = binaryMask[i];
-      outsideSeeds[i] = binaryMask[i] ? 0 : 1;
-    }
+    insideSeeds[i] = binaryMask[i];
+    outsideSeeds[i] = binaryMask[i] ? 0 : 1;
   }
 
   const distanceToOutside = chamferDistanceFromSeeds(outsideSeeds, width, height);
   const distanceToInside = chamferDistanceFromSeeds(insideSeeds, width, height);
-  const alphaMask = new Uint8Array(binaryMask.length);
 
   for (let i = 0; i < binaryMask.length; i++) {
-    const coverage = binaryMask[i] / 255;
-    const signedDistance =
-      useCoverage && binaryMask[i] > 0 && binaryMask[i] < 255
-        ? coverage - 0.5
-        : binaryMask[i]
-          ? distanceToOutside[i]
-          : -distanceToInside[i];
+    const signedDistance = binaryMask[i] ? distanceToOutside[i] : -distanceToInside[i];
     alphaMask[i] = alphaFromSignedDistance(signedDistance, featherRadius, antiAlias);
   }
 
