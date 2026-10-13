@@ -251,12 +251,9 @@ export const eraser =
           const coverage = selectionMask[index] / 255;
           const erasedAlpha = original.data[offset + 3] - image.data[offset + 3];
           image.data[offset + 3] = Math.round(original.data[offset + 3] - erasedAlpha * coverage);
-          if (coverage === 0) {
-            image.data[offset] = original.data[offset];
-            image.data[offset + 1] = original.data[offset + 1];
-            image.data[offset + 2] = original.data[offset + 2];
-            image.data[offset + 3] = original.data[offset + 3];
-          }
+          image.data[offset] = original.data[offset];
+          image.data[offset + 1] = original.data[offset + 1];
+          image.data[offset + 2] = original.data[offset + 2];
         }
         ctx.putImageData(image, 0, 0);
       }
