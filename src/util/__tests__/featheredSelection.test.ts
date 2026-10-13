@@ -41,75 +41,6 @@ describe('feathered selection masks', () => {
     expect(edgeAlpha).toBeGreaterThan(cornerAlpha);
     expect(cornerAlpha).toBeGreaterThan(0);
   });
-
-  it('preserves fractional canvas coverage at edges while deep interior saturates to opaque', () => {
-    const width = 5;
-    const height = 1;
-    // Simulate canvas read-back: exterior(0), fractional edge pixels, deep interior(255)
-    const coverageMask = Uint8Array.from([0, 64, 128, 192, 255]);
-
-    const alphaMask = createFeatheredAlphaMask(coverageMask, width, height, 2, true);
-
-    // Fractional edge pixels (indices 1,2,3) use coverage-based signed distance
-    expect(alphaMask[0]).toBeLessThan(alphaMask[1]);
-    expect(alphaMask[1]).toBeLessThan(alphaMask[2]);
-    expect(alphaMask[2]).toBeLessThan(alphaMask[3]);
-
-    // Deep interior (index 4, value=255) uses spatial chamfer distance -> saturates to 255
-    expect(alphaMask[4]).toBe(255);
-
-    // Exterior (index 0, value=0) uses negative spatial distance -> 0
-    expect(alphaMask[0]).toBe(0);
-
-    // Exact fractional values at featherRadius=2:
-    // index 1: coverage=64/255≈0.251 -> sd≈-0.249 -> t≈0.438 -> 104
-    // index 2: coverage≈0.502 -> sd≈0.002 -> t≈0.5 -> 128
-    // index 3: coverage≈0.753 -> sd≈0.253 -> t≈0.563 -> 152
-    expect(alphaMask[1]).toBe(104);
-    expect(alphaMask[2]).toBe(128);
-    expect(alphaMask[3]).toBe(152);
-  });
-
-  it('spatial feather radius controls transition width for interior/exterior, not fractional edges', () => {
-    const width = 5;
-    const height = 1;
-    const coverageMask = Uint8Array.from([0, 64, 128, 192, 255]);
-
-    const alphaMaskR2 = createFeatheredAlphaMask(coverageMask, width, height, 2, true);
-    const alphaMaskR4 = createFeatheredAlphaMask(coverageMask, width, height, 4, true);
-
-    // Deep interior saturates to 255 at both radii (spatial distance 4 > both radii)
-    expect(alphaMaskR2[4]).toBe(255);
-    expect(alphaMaskR4[4]).toBe(255);
-
-    // Exterior is 0 at both radii
-    expect(alphaMaskR2[0]).toBe(0);
-    expect(alphaMaskR4[0]).toBe(0);
-
-    // Fractional edge pixels: larger radius narrows their transition toward middle gray (128)
-    // t = 0.5 + sd/(2r), so larger r pulls t toward 0.5
-    // Negative sd (index 1): larger r -> higher output (closer to 128)
-    // Positive sd (index 3): larger r -> lower output (closer to 128)
-    expect(alphaMaskR4[1]).toBeGreaterThan(alphaMaskR2[1]); // -0.249 -> closer to 128
-    expect(alphaMaskR4[3]).toBeLessThan(alphaMaskR2[3]); // +0.253 -> closer to 128
-
-    // Exact values at featherRadius=4 (computed):
-    // index 1: sd≈-0.249 -> t = 0.5 - 0.249/8 ≈ 0.469 -> smoothStep≈0.454 -> 116
-    // index 3: sd≈0.253 -> t = 0.5 + 0.253/8 ≈ 0.532 -> smoothStep≈0.549 -> 140
-    expect(alphaMaskR4[1]).toBe(116);
-    expect(alphaMaskR4[2]).toBe(128);
-    expect(alphaMaskR4[3]).toBe(140);
-  });
-
-  it('falls back to binary chamfer path when preservesCoverage is false', () => {
-    const binaryMask = createCenteredSquareMask(5, 5, 1, 3);
-    const alphaMask = createFeatheredAlphaMask(binaryMask, 5, 5, 2, true, false);
-
-    // Binary path should still produce the exact chamfer values
-    expect(alphaMask[2 * 5 + 2]).toBe(255);
-    expect(alphaMask[1 * 5 + 1]).toBe(215);
-    expect(alphaMask[0]).toBe(15);
-  });
 });
 
 describe('alphaFromSignedDistance', () => {
@@ -166,25 +97,10 @@ describe('alphaFromSignedDistance', () => {
 });
 
 describe('createFeatheredAlphaMask', () => {
-  it('maps fractional coverage to anti-aliased output at zero feather radius', () => {
+  it('preserves partial canvas coverage when no feather is requested', () => {
     const coverageMask = Uint8Array.from([0, 64, 128, 255]);
 
-    const alphaMask = createFeatheredAlphaMask(coverageMask, 4, 1, 0, true);
-
-    // With featherRadius=0 and antiAlias=true, the hybrid algorithm:
-    // - Exterior (0): spatial sd=-3 -> clamp(-2.5)=0 -> 0
-    // - Fractional (64): coverage sd≈-0.249 -> clamp(0.251)=0.251 -> 64
-    // - Fractional (128): coverage sd≈0.002 -> clamp(0.502)=0.502 -> 128
-    // - Deep interior (255): spatial sd=3 -> clamp(3.5)=1 -> 255
-    expect(alphaMask[0]).toBe(0);
-    expect(alphaMask[1]).toBe(64);
-    expect(alphaMask[2]).toBe(128);
-    expect(alphaMask[3]).toBe(255);
-
-    // Verify monotonic mapping preserves ordering
-    expect(alphaMask[0]).toBeLessThan(alphaMask[1]);
-    expect(alphaMask[1]).toBeLessThan(alphaMask[2]);
-    expect(alphaMask[2]).toBeLessThan(alphaMask[3]);
+    expect(createFeatheredAlphaMask(coverageMask, 4, 1, 0, true)).toEqual(coverageMask);
   });
 
   it('produces only fully opaque pixels when every pixel is inside the mask', () => {
