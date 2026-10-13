@@ -799,6 +799,103 @@ describe('durable baseline parity with legacy replay', () => {
     expect(convertedWithFrame.document.baseline.frame).toEqual(initialFrame);
     registry.shutdown();
   });
+
+  it('a disabled first entry with documentSource respects caller initialFrame over disabled entry size', () => {
+    const registry = new AssetRegistry();
+    const disabledOpen = openingEntry('baseline', true);
+    const initialFrame = { x: 10, y: 20, width: 800, height: 600 };
+    const emptyInitialSize = { width: 1, height: 1 };
+
+    const converted = legacyHistoryToDurable([disabledOpen], {
+      documentId: 'test-doc',
+      registry,
+      initialFrame,
+    });
+    const legacy = replayHistory([disabledOpen], 0, emptyInitialSize, unreachableDependencies, initialFrame);
+
+    // The disabled documentSource must not contribute its size; caller initialFrame wins.
+    expect(legacy.documentFrame).toEqual(initialFrame);
+    expect(converted.document.baseline.frame).toEqual(legacy.documentFrame);
+    expect(converted.document.baseline.layers).toEqual([]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
+    expect(converted.diagnostics).toMatchObject([
+      {
+        historyId: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+      },
+    ]);
+    registry.shutdown();
+  });
+
+  it('a disabled first entry without documentSource or bedrock falls back to 1x1 frame', () => {
+    const registry = new AssetRegistry();
+    const disabledTool: HistoryItem = {
+      id: 'tool-1',
+      actionName: TOOL_ACTION,
+      layerId: 'layer-1',
+      disabled: true,
+      args: { toolName: 'brush', color: '#000000' },
+    };
+    const emptyInitialSize = { width: 1, height: 1 };
+
+    const converted = legacyHistoryToDurable([disabledTool], { documentId: 'test-doc', registry });
+    const legacy = replayHistory([disabledTool], 0, emptyInitialSize, unreachableDependencies);
+    const emptyInitialFrame = { x: 0, y: 0, ...emptyInitialSize };
+
+    // No documentSource, no bedrock, disabled -> both models use the default 1x1 frame.
+    // The converter reports an error for the unavailable layer; legacy replay skips silently.
+    expect(legacy.layers).toEqual({});
+    expect(converted.document.baseline.layers).toEqual([]);
+    expect(legacy.documentFrame).toEqual(emptyInitialFrame);
+    expect(converted.document.baseline.frame).toEqual(legacy.documentFrame);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
+    expect(converted.diagnostics).toMatchObject([
+      {
+        historyId: 'tool-1',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+      },
+    ]);
+    registry.shutdown();
+  });
+
+  it('a disabled first entry without documentSource respects caller initialFrame', () => {
+    const registry = new AssetRegistry();
+    const disabledTool: HistoryItem = {
+      id: 'tool-1',
+      actionName: TOOL_ACTION,
+      layerId: 'layer-1',
+      disabled: true,
+      args: { toolName: 'brush', color: '#000000' },
+    };
+    const initialFrame = { x: -5, y: -6, width: 111, height: 222 };
+    const emptyInitialSize = { width: 1, height: 1 };
+
+    const converted = legacyHistoryToDurable([disabledTool], {
+      documentId: 'test-doc',
+      registry,
+      initialFrame,
+    });
+    const legacy = replayHistory([disabledTool], 0, emptyInitialSize, unreachableDependencies, initialFrame);
+
+    // Caller initialFrame must be used when first entry is disabled and has no documentSource.
+    expect(legacy.documentFrame).toEqual(initialFrame);
+    expect(converted.document.baseline.frame).toEqual(legacy.documentFrame);
+    expect(converted.document.baseline.layers).toEqual([]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
+    expect(converted.diagnostics).toMatchObject([
+      {
+        historyId: 'tool-1',
+        actionName: TOOL_ACTION,
+        severity: 'error',
+        code: 'unsupported-history-feature',
+      },
+    ]);
+    registry.shutdown();
+  });
 });
 
 /**
