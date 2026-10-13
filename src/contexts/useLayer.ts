@@ -82,17 +82,22 @@ type EditableToolLayerSource = {
 };
 
 /**
- * Extend only a stroked draw path from the previous preview.
+ * Extend only a stroked draw path or block-stamp path from the previous preview.
  *
- * A segment needs the previous endpoint as its first point; a spray or block stroke cannot
- * replay that endpoint without depositing it twice, so those paths keep the full-raster fallback.
+ * A stroked segment needs the previous endpoint as its first point to stay connected;
+ * a block stamp deposits an independent square at each point, so re-stamping the shared
+ * endpoint would double-deposit it. Stroked paths therefore keep the shared endpoint
+ * in the delta, while block-stamp paths return only the newly added points.
+ *
+ * A spray stroke keeps the full-raster fallback: each point carries a time-tagged dab
+ * and the delta contract does not generalise to it.
  */
 export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: ToolArgs): DrawToolArgs | null => {
   if (toolArgs.toolName !== 'draw' || !previousToolArgs || previousToolArgs.toolName !== 'draw') return null;
 
   const drawArgs = toolArgs as DrawToolArgs;
   const previousDrawArgs = previousToolArgs as DrawToolArgs;
-  if (drawArgs.penType === 'spray' || drawArgs.blockStamp) return null;
+  if (drawArgs.penType === 'spray') return null;
   if (previousDrawArgs.penType !== drawArgs.penType || previousDrawArgs.blockStamp !== drawArgs.blockStamp) return null;
 
   const currentPoints = drawArgs.points;
@@ -111,7 +116,11 @@ export const getIncrementalStrokeArgs = (toolArgs: ToolArgs, previousToolArgs?: 
     return null;
   }
 
-  return { ...drawArgs, points: currentPoints.slice(previousPoints.length - 1) };
+  // Block stamps deposit an independent square at every point, so re-stamping the shared
+  // endpoint would double-deposit it: return only the newly added points. A stroked segment
+  // needs the previous endpoint as its first point to remain connected.
+  const deltaStart = drawArgs.blockStamp ? previousPoints.length : previousPoints.length - 1;
+  return { ...drawArgs, points: currentPoints.slice(deltaStart) };
 };
 
 /**
