@@ -762,6 +762,73 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
 });
 
 describe('renderSelector contract', () => {
+  type LeaseProbe = {
+    store: ReturnType<typeof renderWithProbe>['store'];
+    dispatch: ReturnType<typeof renderWithProbe>['dispatch'];
+    materializedBitmap: BitmapSource;
+    releaseMaterialized: ReturnType<typeof vi.fn>;
+    layer: Layer;
+  };
+
+  /**
+   * Sets up a durable navigation publication whose composite carries a
+   * materialized bitmap. The publication sets tmpCanvas on the layer record
+   * to the materialized bitmap and registers releaseMaterialized as the lease
+   * release callback via trackPublishedLease. Both new tests share this setup.
+   */
+  async function publishDurableWithLease(leaseKey: string): Promise<LeaseProbe> {
+    const pos = { x: 0, y: 0, width: 100, height: 80 };
+    const sourceBitmap = createMockImageBitmap(pos.width, pos.height);
+    const layer: Layer = {
+      ...createMockLayer({ id: layerId, pos }),
+      bitmap: sourceBitmap,
+      source: { kind: 'image', bitmap: sourceBitmap, isBedrock: false, pos },
+    };
+    const materializedBitmap = createMockImageBitmap(pos.width, pos.height);
+    const releaseMaterialized = vi.fn();
+    const materialized: MaterializedLayer = {
+      layerId,
+      bitmap: materializedBitmap,
+      bounds: pos,
+      visible: true,
+      opacity: 1,
+      blendMode: 'source-over',
+      lease: {
+        key: leaseKey,
+        bitmap: materializedBitmap,
+        byteSize: pos.width * pos.height * 4,
+        metadata: pos,
+        release: releaseMaterialized,
+      },
+    };
+    const layers = { [layerId]: materialized };
+    const releaseDetached = vi.fn(() => releaseMaterialized());
+    const composite: DurableComposite = {
+      bitmap: materializedBitmap,
+      frame: defaultFrame,
+      layers,
+      takeLayers: () => ({ layers, release: releaseDetached }),
+      release: vi.fn(),
+    };
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(composite);
+
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+    expect(outcome?.status).toBe('durable');
+    expect(store().layers[layerId].tmpCanvas).toBe(materializedBitmap);
+    expect(store().durableRenderProjection).not.toBeNull();
+    expect(releaseMaterialized).not.toHaveBeenCalled();
+
+    return { store, dispatch, materializedBitmap, releaseMaterialized, layer };
+  }
+
   function rasterLayer(id = layerId, pos = { x: 0, y: 0, width: 100, height: 80 }): Layer {
     const bitmap = createMockImageBitmap(pos.width, pos.height);
     const source: ImageLayerSource = { kind: 'image', bitmap, isBedrock: false, pos };
@@ -1029,6 +1096,68 @@ describe('renderSelector contract', () => {
 
     expect(store().documentId).toBe('doc-2');
     expect(store().durableRenderProjection).toBeNull();
+    expect(releaseMaterialized).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a projection lease live after a presentation-only commit, because tmpCanvas survives in the layer record', async () => {
+    // HANDOFF §63 invariant: every presentation bitmap borrowed by the AssetRegistry
+    // is represented by the layer/history liveness set BEFORE retireUnreferenced
+    // can close it. The projection clears on a logical append, but if the layer
+    // record that the commit carries still names the bitmap via tmpCanvas, the
+    // walk in collectLivePresentationBitmaps must keep the lease from firing.
+    const { store, dispatch, materializedBitmap, releaseMaterialized } = await publishDurableWithLease(
+      'commit-preserves-tmp-canvas-lease'
+    );
+
+    // A presentation-only commit (SET_LAYER_OPACITY_ACTION) preserves tmpCanvas
+    // in the updated layer record. The projection is cleared, but the bitmap
+    // survives via layer.tmpCanvas in the liveness walk.
+    const updatedLayer = { ...store().layers[layerId], opacity: 0.5 };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().layers[layerId].tmpCanvas).toBe(materializedBitmap);
+    // The lease must NOT fire: tmpCanvas still names the bitmap in the live set.
+    expect(releaseMaterialized).not.toHaveBeenCalled();
+  });
+
+  it('releases a projection lease after a commit that drops tmpCanvas from the layer record', async () => {
+    const { store, dispatch, releaseMaterialized } = await publishDurableWithLease('commit-drops-tmp-canvas-lease');
+
+    // A commit that explicitly nulls tmpCanvas removes the bitmap from the live set;
+    // the projection is already cleared, so retirement must fire the lease.
+    const updatedLayer = { ...store().layers[layerId], opacity: 0.5, tmpCanvas: null };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit-2',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().layers[layerId].tmpCanvas).toBeNull();
     expect(releaseMaterialized).toHaveBeenCalledOnce();
   });
 });
