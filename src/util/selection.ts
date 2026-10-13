@@ -640,14 +640,42 @@ export function createFeatheredAlphaMask(
   const alphaMask = new Uint8Array(binaryMask.length);
 
   if (useCoverage) {
+    // Build chamfer distances for spatial feathering of interior/exterior pixels
+    const outsideSeeds = new Uint8Array(binaryMask.length);
+    const insideSeeds = new Uint8Array(binaryMask.length);
+
     for (let i = 0; i < binaryMask.length; i++) {
-      const coverage = binaryMask[i] / 255;
-      const signedDistance = (coverage - 0.5) * 2;
+      insideSeeds[i] = binaryMask[i] === 255 ? 1 : 0;
+      outsideSeeds[i] = binaryMask[i] === 0 ? 1 : 0;
+    }
+
+    const distanceToOutside = chamferDistanceFromSeeds(outsideSeeds, width, height);
+    const distanceToInside = chamferDistanceFromSeeds(insideSeeds, width, height);
+
+    for (let i = 0; i < binaryMask.length; i++) {
+      const value = binaryMask[i];
+      let signedDistance: number;
+
+      if (value > 0 && value < 255) {
+        // Fractional edge pixel: use canvas coverage for sub-pixel precision
+        // coverage/255 in (0,1) -> signedDistance in (-0.5, 0.5)
+        const coverage = value / 255;
+        signedDistance = coverage - 0.5;
+      } else if (value === 255) {
+        // Deep interior: spatial distance from edge
+        signedDistance = distanceToOutside[i];
+      } else {
+        // Exterior: negative spatial distance from edge
+        signedDistance = -distanceToInside[i];
+      }
+
       alphaMask[i] = alphaFromSignedDistance(signedDistance, featherRadius, antiAlias);
     }
+
     return alphaMask;
   }
 
+  // CPU binary fallback: original chamfer path
   const outsideSeeds = new Uint8Array(binaryMask.length);
   const insideSeeds = new Uint8Array(binaryMask.length);
 

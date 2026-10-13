@@ -1084,9 +1084,8 @@ describe('canvas snapshot helpers', () => {
 
       // With the coverage-preserving algorithm, the anti-aliased edge produces
       // smooth fractional alphas instead of thresholding to 0/255. At x=8 on the
-      // 18-wide mask, the gradient gives coverage ~0.5 -> signedDistance ~0 ->
-      // output ~128 (exact value depends on the gradient shape).
-      expect(alphaAt(8, 1)).toBe(129);
+      // 17-wide mask (center), the gradient gives coverage ~0.5 -> output ~128.
+      expect(alphaAt(8, 1)).toBe(128);
 
       // Verify the fix: the output has smooth transitions, not binary thresholding.
       // Sample a few points across the edge to confirm fractional values exist.
@@ -1267,10 +1266,9 @@ describe('mask rasterization on the HTMLCanvasElement fallback path', () => {
   it('preserves partial canvas coverage on the HTMLCanvasElement path', () => {
     const alphaAt = copyWithDomContexts(installPixelDomContexts(['all-opaque', 'partial-alpha']));
 
-    // With the coverage-preserving algorithm, the gradient at x=6 (center of 12-wide
-    // mask) gives coverage ~0.5 -> output ~128. The exact value is 65 due to the
-    // specific gradient shape and the signed-distance mapping at featherRadius=0.
-    expect(alphaAt(6, 1)).toBe(65);
+    // With the coverage-preserving algorithm, the gradient at x=6 (near center of 12-wide
+    // mask) gives coverage ~0.38 -> output ~96.
+    expect(alphaAt(6, 1)).toBe(96);
 
     // Verify smooth transition across the edge.
     const alphas = [
