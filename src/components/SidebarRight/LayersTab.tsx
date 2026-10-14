@@ -12,6 +12,8 @@ import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts'
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
+import { BedrockIcon } from '../Icons/BedrockIcon.tsx';
+import { LayerTypeIcon } from '../Icons/LayerTypeIcon.tsx';
 import {
   ICON_TOGGLE_BUTTON_VISIBLE,
   ICON_TOGGLE_BUTTON_HIDDEN,
@@ -331,6 +333,8 @@ export default function LayersTab() {
                   </button>
 
                   <LayerThumbnail layer={previewLayer} />
+
+                  {layer.isBedrock ? <BedrockIcon /> : <LayerTypeIcon source={layer.source} />}
 
                   <DragHandleIcon disabled={isPickedLayer || layer.isBedrock || layer.locked} />
 
