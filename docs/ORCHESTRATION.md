@@ -599,28 +599,13 @@ shared source of truth.
 node scripts/worktree-inventory.mjs            # regenerate
 node scripts/worktree-inventory.mjs --check    # exit 1 if stale OR absent, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
-npm run inventory:verify                       # REPORT about THIS machine's worktrees
 ```
 
-The last line is a different program with a different job: it asks about the worktrees
-that exist right now rather than generating a file, it is wired into no hook and no CI
-job, and its exit code is its own verdict rather than something a push can be blocked
-on. It exits non-zero on a finding — a worktree holding the only copy of some work that
-would be reported as disposable, a stale curated flag on one, a curated `landed: true`
-claim git contradicts, or a recorded session id that is not a real top-level session
-inside the committed audit's window — and on a check that could not run: a worktree
-holding work on no ref that could not be classified, facts git could not be read for, or
-a session audit that could not run. A checkout with no resolvable base ref, including one
-too SHALLOW for ancestry to mean anything, is a third shape again: it prints one line
-beginning `UNREADABLE: ` and returns, printing no summary line at all, so there is no
-"clean" line to misread. Every other run ends on one of two summary forms — `OK - no rule
-violated. ` with the count of worktrees holding work on no ref and the sentence that every
-one is protected, or a non-zero verdict that is either `FINDINGS - see above.` or
-`INCOMPLETE - no finding, but the session audit could not run, so this is not a clean
-report.` "Git could not be asked" is not "nothing is at risk", so read the exit line before
-acting on the number. The gated suite asserts the same rules over a synthetic fleet of ten
-`git worktree list` entries it builds itself;
-[`docs/TESTING.md#gates`](docs/TESTING.md#gates) is where the report/gate split is stated.
+There is no separate `inventory:verify` npm command. `--check` only verifies whether the
+generated snapshot is fresh; it does not replace a live ownership or disposal audit. For current
+worktree state, regenerate the inventory and run `npm run repo:state` for any worktree whose Git
+operation state matters. For branch-only refs, also run `npm run branches:orphan`. A failed or
+unreadable report is not a clean result and must remain a recovery case.
 
 ## Branches nobody holds
 
