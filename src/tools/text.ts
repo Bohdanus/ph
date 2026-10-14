@@ -890,19 +890,14 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
   // overlay wearing the Type tool's typography every time a box was recomputed. This is the same
   // leak `resetOverlayAlpha` exists for, and unlike that helper it was not closed.
   return withTextStyle(ctx as Ctx2D, style, () => {
-    // The overlay context may be DPR-scaled (ctx.scale(dpr, dpr)). Reset transform to identity
-    // so measureText returns document-pixel widths, not device-pixel widths.
-    const currentTransform = ctx.getTransform();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    try {
-      const spacing = trackingPx(style);
-      const wrapWidth = kind === 'paragraph' && args.rect ? textWrapWidth(args.rect) : Infinity;
-      const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
+    const spacing = trackingPx(style);
+    // The widest WRAPPED line for a paragraph box, and the widest explicit line for a point box —
+    // which is the same number as before this revision, because an infinite wrap width leaves the
+    // layout a plain split on hard breaks.
+    const wrapWidth = kind === 'paragraph' && args.rect ? textWrapWidth(args.rect) : Infinity;
+    const { lines } = layoutText(ctx as Ctx2D, style, args.text ?? '', wrapWidth);
 
-      return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
-    } finally {
-      ctx.setTransform(currentTransform);
-    }
+    return lines.reduce((widest, line) => Math.max(widest, inkWidth(ctx as Ctx2D, line, spacing)), 0);
   });
 }
 

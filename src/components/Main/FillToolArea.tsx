@@ -9,7 +9,6 @@ import type { BitmapSource, Point, Size } from '../../contexts/general-types.ts'
 import type { Layer } from '../../contexts/layer-types.ts';
 import { stageProcessorInput, type ProcessorStaging } from '../../contexts/presentation-evaluator.ts';
 import { documentPointToLayerLocal } from '../../util/layer-space.ts';
-import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type FillToolAreaProps = {
@@ -99,15 +98,7 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
   // The state object is kept whole as well as destructured, because the foreground colour is read
   // off it INSIDE the click handler rather than captured here — see the commit below.
   const [store] = useStore();
-  const {
-    containerRef,
-    layers,
-    activeLayerId,
-    totalSize,
-    documentFrame: currentFrame,
-    selections,
-    activeSelectionId,
-  } = store;
+  const { containerRef, layers, activeLayerId, totalSize, documentFrame: currentFrame } = store;
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { updateLayerByTool } = useLayers();
   const { toolArgs } = useCurrentTool();
@@ -177,8 +168,6 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     // gesture leaves no history entry that changed nothing.
     if (!region) return;
 
-    const selectionSnapshot = snapshotSelection(staged.bounds);
-
     // Photoshop's bucket fills the foreground colour AS IT IS AT THE MOMENT OF THE CLICK, so the
     // read belongs here and not in the options bar: the user can change the foreground while the
     // bucket stays selected, and a value mirrored into the tool args when a bar mounted would fill
@@ -195,44 +184,9 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     // `ProcessorToolParams`, so an args-level `size` was a second, unread source of it that the
     // durable replay path could not honour. `FillToolArgs` no longer declares the field.
     const commitArgs =
-      args.toolName === 'paint-bucket'
-        ? {
-            ...args,
-            color: store.color,
-            pos: layerSeed,
-            ...(selectionSnapshot ? { selection: selectionSnapshot } : {}),
-          }
-        : { ...args, pos: layerSeed, ...(selectionSnapshot ? { selection: selectionSnapshot } : {}) };
+      args.toolName === 'paint-bucket' ? { ...args, color: store.color, pos: layerSeed } : { ...args, pos: layerSeed };
 
     updateLayerByTool({ toolArgs: commitArgs });
-  };
-
-  /**
-   * Snapshots the active selection into the same local-raster coordinate space as the staged fill
-   * bitmap, following `EraserToolArea`'s `selectionSnapshotRef` pattern.
-   *
-   * The points are rebased by `presentationBounds` — the origin of the staged raster in document
-   * space, exactly the same offset `documentPointToLayerLocal` applies to the click seed. This
-   * makes the snapshot durable/replayable: the processor builds its mask from this snapshot and
-   * never reads live store state. `featherRadius` and `antiAlias` ride along so fractional edge
-   * alpha composes correctly under replay.
-   */
-  const snapshotSelection = (presentationBounds: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  }): FillToolArgs['selection'] => {
-    const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
-    if (!activeSelection) return undefined;
-
-    return {
-      points: getSelectionAbsolutePoints(activeSelection).map((point) =>
-        documentPointToLayerLocal(point, presentationBounds)
-      ),
-      featherRadius: activeSelection.metadata?.featherRadius ?? 0,
-      antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
-    };
   };
 
   // No drag and no preview overlay: Photoshop commits the fill on the click itself, so a

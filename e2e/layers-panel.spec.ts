@@ -14,7 +14,7 @@ import {
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { cssPointToImage, type CssBox, type Point } from './helpers/screenshot-scale';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { clickToolButton, expectToolSelected } from './helpers/toolbar-helpers';
+import { clickToolButton, expectToolSelected, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
@@ -576,7 +576,8 @@ test.describe('Layers panel', () => {
     // `setActiveLayer` observable. The draw tool could not: it commits a new layer every
     // time and never touches the one that was active. It is a secondary member of the brush
     // group, so it comes out of the flyout.
-    await clickToolButton(page, 'eraser');
+    await openToolFlyout(page, 'brush');
+    await selectFromFlyout(page, { toolName: 'eraser', label: 'Eraser Tool' });
     // Read separately, once per tool, and that re-read is sound — but not for the reason it
     // used to be given. The eraser bar and the draw bar really are different heights, and
     // that is what used to be recorded here as the canvas box MOVING. It does not move: both

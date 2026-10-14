@@ -31,13 +31,10 @@ describe('SidebarLeft rendering', () => {
       'eyedropper',
       'crop',
       'brush',
-      'eraser',
-      'spot-healing',
-      'paint-bucket',
-      'gradient',
       'clone-stamp',
       'red-eye',
       'blur',
+      'gradient',
       'dodge',
       'draw',
       'pen',
@@ -92,8 +89,6 @@ describe('SidebarLeft rendering', () => {
 
     expect(hasFlyoutIndicator('freehand-lasso')).toBe(true);
     expect(hasFlyoutIndicator('brush')).toBe(true);
-    expect(hasFlyoutIndicator('eraser')).toBe(true);
-    expect(hasFlyoutIndicator('spot-healing')).toBe(true);
     expect(hasFlyoutIndicator('pen')).toBe(true);
     expect(hasFlyoutIndicator('shape')).toBe(true);
     // The marquee, quick-selection, focus and tonal tiles are multi-item flyouts, so each
@@ -115,9 +110,9 @@ describe('SidebarLeft rendering', () => {
     expect(hasFlyoutIndicator('clone-stamp')).toBe(false);
     expect(hasFlyoutIndicator('draw')).toBe(false);
     expect(hasFlyoutIndicator('text')).toBe(false);
-    // The Gradient is its own single-tool tile. The Paint Bucket is now its own single-tool tile
-    // as well, per the Photoshop-faithful B/E/G group split.
+    // The Gradient is its own single-tool tile. The Paint Bucket is NOT listed anywhere as a
+    // tile because it is a flyout item of the erase-and-fill group, which is where main keeps
+    // it and what `erase-fill-eyedropper.spec.ts` drives it by.
     expect(hasFlyoutIndicator('gradient')).toBe(false);
-    expect(hasFlyoutIndicator('paint-bucket')).toBe(false);
   });
 });

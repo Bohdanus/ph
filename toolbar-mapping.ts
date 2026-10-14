@@ -89,30 +89,23 @@ export const toolbarMap = [
   ],
   [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
-    // Brush group — `B` selects Brush; `Shift+B` cycles Pencil and Color Replacement.
-    // Adobe binds `B` to the Brush tool only; the other two are reached by cycling.
+    // The Brush stays the tile's default tool, so the eraser-family tools are appended
+    // rather than inserted: `renderToolGroup` derives the tile's default identity from the
+    // first entry (`SidebarLeft.tsx:578`). Six entries is the same length as the Pen family
+    // flyout below, so this is not an outlier.
     [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },
       { label: 'Color Replacement Tool', name: 'color-replacement' },
-    ],
-    // Eraser group — `E` selects Eraser; `Shift+E` cycles Magic Eraser.
-    // Adobe binds `E` to the Eraser tool; Magic Eraser has no shortcut of its own.
-    [
-      { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
-      { label: 'Magic Eraser Tool', name: 'magic-eraser' },
-    ],
-    // Healing group — no shortcut; Photoshop binds `J` to the Healing Brush family.
-    // This app selects Healing Brush directly via `J` and exposes the rest from its flyout.
-    [
       { label: 'Spot Healing Brush Tool', name: 'spot-healing' },
       { label: 'Healing Brush Tool', name: 'healing-brush' },
       { label: 'Patch Tool', name: 'patch' },
+      { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
+      // Photoshop binds the Magic Eraser to nothing, so it is declared without a shortcut rather
+      // than given one that would collide with the Paint Bucket's `G`.
+      { label: 'Magic Eraser Tool', name: 'magic-eraser' },
+      { label: 'Paint Bucket Tool', name: 'paint-bucket', shortcut: 'G' },
     ],
-    // Paint Bucket group — `G` selects Paint Bucket; `Shift+G` cycles Gradient.
-    // Adobe binds `G` to Paint Bucket; Gradient is the cycling partner.
-    [{ label: 'Paint Bucket Tool', name: 'paint-bucket', shortcut: 'G' }],
-    [{ label: 'Gradient Tool', name: 'gradient' }],
     // Photoshop's Stamp flyout is its own tile immediately after the Brush group; the
     // pattern and patch stamps behind it are not implemented and stay out of the map.
     [{ label: 'Clone Stamp Tool', name: 'clone-stamp', shortcut: 'S' }],
@@ -122,6 +115,9 @@ export const toolbarMap = [
       { label: 'Sharpen Tool', name: 'sharpen' },
       { label: 'Smudge Tool', name: 'smudge' },
     ],
+    // The Gradient gets its own tile rather than joining the erase-and-bucket flyout above,
+    // so the existing six-entry group keeps the identity and order the e2e helpers drive it by.
+    [{ label: 'Gradient Tool', name: 'gradient' }],
     [
       { label: 'Dodge Tool', name: 'dodge', shortcut: 'O' },
       { label: 'Burn Tool', name: 'burn' },

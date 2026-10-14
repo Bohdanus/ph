@@ -302,20 +302,18 @@ describe('useRect mask drawing', () => {
 describe('useRect overlay teardown', () => {
   beforeEach(resetPointerMock);
 
-  it('clears the logical frame bounds on unmount, so a marquee cannot outlive the tool switch', () => {
+  it('clears the whole backing store on unmount, so a marquee cannot outlive the tool switch', () => {
     const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: RECT });
     // The mount paint is cleared from the record so the assertion can only be about the teardown.
     vi.mocked(ctx.clearRect).mockClear();
 
     unmount();
 
-    // With DPR scaling, the overlay context is scaled, so clearRect uses logical frame bounds
-    // (imageSize) rather than the full canvas backing store. The test runs at 1x DPR, so
-    // logical == device pixels, but the semantics are frame-relative.
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+    // 800x600 is the CANVAS, and `imageSize` above is 320x240.
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
-  it('clears the logical frame bounds on unmount even when nothing was ever painted', () => {
+  it('clears the whole backing store on unmount even when nothing was ever painted', () => {
     // Unconditional on purpose. A teardown gated on "did this instance paint something" is a
     // landmine, and the abandoned-drag case is precisely the one where the content was painted by
     // a frame that never became `initialRect`.
@@ -324,7 +322,7 @@ describe('useRect overlay teardown', () => {
 
     unmount();
 
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
   it('drops a queued repaint rather than letting it repaint the marquee over the teardown clear', () => {
@@ -345,7 +343,7 @@ describe('useRect overlay teardown', () => {
 
     // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
     expect(ctx.strokeRect).not.toHaveBeenCalled();
-    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 320, 240);
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
   });
 
   it('does not throw on unmount when the overlay canvas has no 2d context', () => {

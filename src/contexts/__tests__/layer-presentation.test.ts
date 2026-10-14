@@ -11,7 +11,6 @@ import {
   DocumentPresentationScope,
   isSamePresentationCanvas,
   layersDifferOnlyByPresentation,
-  layersDifferOnlyByPresentationAndIdentityAffine,
   materializePresentationBitmap,
   type LayerPresentationRequest,
 } from '../layer-presentation.ts';
@@ -171,83 +170,6 @@ describe('layersDifferOnlyByPresentation', () => {
     };
 
     expect(layersDifferOnlyByPresentation(current, next)).toBe(false);
-  });
-});
-
-describe('layersDifferOnlyByPresentationAndIdentityAffine', () => {
-  const identityAffineOp = {
-    id: 'identity-affine',
-    kind: 'affine-transform' as const,
-    transform: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
-    enabled: true,
-  };
-  const nonIdentityAffineOp = {
-    id: 'scale-affine',
-    kind: 'affine-transform' as const,
-    transform: { a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 },
-    enabled: true,
-  };
-
-  it('accepts a record that only adds an identity affine operation', () => {
-    const current = { a: createMockLayer({ id: 'a', tmpCanvas: staged() }) };
-    const next = { a: { ...current.a, operations: [identityAffineOp], bitmap: createMockImageBitmap() } as Layer };
-
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, next)).toBe(true);
-  });
-
-  it('accepts a record that only removes an identity affine operation', () => {
-    const current = { a: createMockLayer({ id: 'a', operations: [identityAffineOp], tmpCanvas: staged() }) };
-    const next = { a: { ...current.a, operations: [], bitmap: createMockImageBitmap() } as Layer };
-
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, next)).toBe(true);
-  });
-
-  it('accepts a record that swaps an identity affine operation for a cache promotion', () => {
-    const current = { a: createMockLayer({ id: 'a', operations: [identityAffineOp] }) };
-    const next = { a: { ...current.a, tmpCanvas: staged(), bitmap: createMockImageBitmap() } as Layer };
-
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, next)).toBe(true);
-  });
-
-  it('refuses a record with a non-identity affine operation', () => {
-    const current = { a: createMockLayer({ id: 'a', tmpCanvas: staged() }) };
-    const next = { a: { ...current.a, operations: [nonIdentityAffineOp], bitmap: createMockImageBitmap() } as Layer };
-
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, next)).toBe(false);
-  });
-
-  it('refuses a record that changes both an identity affine operation and a durable field', () => {
-    const current = { a: createMockLayer({ id: 'a', tmpCanvas: staged() }) };
-    const next = {
-      a: { ...current.a, operations: [identityAffineOp], pos: { x: 5, y: 5, width: 100, height: 100 } } as Layer,
-    };
-
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, next)).toBe(false);
-  });
-
-  it('refuses a record that adds a non-affine operation', () => {
-    const current = { a: createMockLayer({ id: 'a', tmpCanvas: staged() }) };
-    const next = {
-      a: {
-        ...current.a,
-        operations: [{ id: 'op-1', args: { toolName: 'blur', radius: 2 }, enabled: true }],
-        bitmap: createMockImageBitmap(),
-      } as Layer,
-    };
-
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, next)).toBe(false);
-  });
-
-  it('refuses a record that adds or removes a layer', () => {
-    const current = createMockLayers(2);
-
-    expect(
-      layersDifferOnlyByPresentationAndIdentityAffine(current, { ...current, extra: createMockLayer({ id: 'extra' }) })
-    ).toBe(false);
-
-    const missing: LayersRecord = { ...current };
-    delete missing[Object.keys(current)[0]];
-    expect(layersDifferOnlyByPresentationAndIdentityAffine(current, missing)).toBe(false);
   });
 });
 

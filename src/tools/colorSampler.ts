@@ -140,7 +140,7 @@ export const sampleColorAt = (
   width: number,
   height: number,
   point: Point,
-  sampleSize: number
+  sampleSize: EyedropperSampleSize
 ): string | null => {
   const centerX = Math.floor(point.x);
   const centerY = Math.floor(point.y);

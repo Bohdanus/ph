@@ -13,7 +13,6 @@ import type { MigrationDiagnostic } from './history-adapter.ts';
 import type { DurableDocument } from './history-model.ts';
 import { durableEntryTitle } from './history-provenance.ts';
 import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
-import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -146,8 +145,6 @@ export const useHistory = () => {
     dispatch,
   ] = useStore();
 
-  const dpr = useDevicePixelRatio();
-
   function canUndo() {
     return historyIndex > 0;
   }
@@ -172,7 +169,7 @@ export const useHistory = () => {
 
   function drawReplay(layers: LayersRecord, frame: DocumentFrame) {
     const canvas = canvasRef.current;
-    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame, undefined, dpr);
+    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame);
   }
 
   async function resetHistoryTo(
@@ -254,10 +251,7 @@ export const useHistory = () => {
         outcome.status === 'durable'
           ? (() => {
               const canvas = canvasRef.current;
-              return (
-                !canvas ||
-                drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame, undefined, dpr)
-              );
+              return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame);
             })()
           : drawReplay(replay.layers, replay.documentFrame);
       if (!painted) throw new Error('Unable to publish replayed history presentation');

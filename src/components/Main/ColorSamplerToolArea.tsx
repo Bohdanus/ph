@@ -15,7 +15,6 @@ import {
   syncColorSamplerFrameSize,
   useColorSamplers,
 } from '../../tools/color-sampler-store.ts';
-import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 
 type ColorSamplerToolAreaProps = {
   className?: string;
@@ -126,7 +125,6 @@ export const ColorSamplerToolArea = ({ className, overlayCtxRef }: ColorSamplerT
   const [{ canvasRef, containerRef, totalSize }] = useStore();
   const { toolArgs } = useCurrentTool();
   const samplers = useColorSamplers();
-  const dpr = useDevicePixelRatio();
 
   const { getLocalCoords, dimensionsRef, isPointerDownValid, isPointerMoveValid, isPointerUpValid } =
     usePointerPosition({ ref: containerRef, imageSize: totalSize });
@@ -187,7 +185,7 @@ export const ColorSamplerToolArea = ({ className, overlayCtxRef }: ColorSamplerT
     // A press on empty canvas places. The cap refuses loudly and changes nothing; see
     // `samplerCapReached` for why it refuses rather than replacing.
     const args = toolArgs as ColorSamplerToolArgs;
-    const readback = readColorSampler(canvasRef.current, pointer, args.sampleSize, dpr);
+    const readback = readColorSampler(canvasRef.current, pointer, args.sampleSize);
     if (!readback.ok) {
       console.error(readback.reason, 'the color sampler cannot read the composited canvas');
       return;

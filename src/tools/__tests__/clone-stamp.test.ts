@@ -15,12 +15,6 @@ import { makeMockImageData } from '../../__tests__/canvas-mock.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { Rgba } from '../../util/pixels.ts';
 
-const createSelectionAlphaMaskMock = vi.hoisted(() => vi.fn());
-
-vi.mock('../../util/selection.ts', () => ({
-  createSelectionAlphaMask: createSelectionAlphaMaskMock,
-}));
-
 /**
  * THE FIXTURE: a 9x5 document whose top-left 4x2 block is the clone SOURCE and whose
  * remainder is one flat colour the stroke runs over.
@@ -153,7 +147,6 @@ class RecordingOffscreenCanvas {
 
 beforeEach(() => {
   RecordingOffscreenCanvas.instances = [];
-  createSelectionAlphaMaskMock.mockReset();
   vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
 });
 
@@ -635,70 +628,5 @@ describe('clone stamp processor', () => {
       // first run's output and drift.
       expect(pixelsOf(run(smear))).toEqual(pixelsOf(run(smear)));
     });
-  });
-});
-
-describe('active selection clipping', () => {
-  it('keeps the no-selection processor path unchanged', () => {
-    const canvas = run();
-
-    expect(createSelectionAlphaMaskMock).not.toHaveBeenCalled();
-    expect(at(canvas, 6, 3)).toEqual(src(1, 1));
-  });
-
-  it('writes only where the committed selection mask allows the dab', () => {
-    const mask = new Uint8Array(DOCUMENT.width * DOCUMENT.height);
-    mask[3 * DOCUMENT.width + 6] = 255;
-    createSelectionAlphaMaskMock.mockReturnValue(mask);
-
-    const canvas = run({
-      selection: {
-        points: [{ x: 0, y: 0 }],
-        featherRadius: 0,
-        antiAlias: true,
-      },
-    });
-
-    expect(at(canvas, 6, 3)).toEqual(src(1, 1));
-    expect(at(canvas, 5, 3)).toEqual(DEST);
-    expect(createSelectionAlphaMaskMock).toHaveBeenCalledWith([{ x: 0, y: 0 }], DOCUMENT, {
-      points: [{ x: 0, y: 0 }],
-      featherRadius: 0,
-      antiAlias: true,
-    });
-  });
-
-  it('multiplies feathered selection coverage with the clone tip weight', () => {
-    const mask = new Uint8Array(DOCUMENT.width * DOCUMENT.height);
-    mask[3 * DOCUMENT.width + 6] = 128;
-    createSelectionAlphaMaskMock.mockReturnValue(mask);
-
-    const canvas = run({
-      selection: {
-        points: [{ x: 0, y: 0 }],
-        featherRadius: 4,
-        antiAlias: true,
-      },
-    });
-
-    expect(at(canvas, 6, 3)).toEqual({ r: 106, g: 32, b: 128, a: 255 });
-    expect(at(canvas, 5, 3)).toEqual(DEST);
-  });
-
-  it('replays the same selection snapshot after JSON serialization', () => {
-    const selection = {
-      points: [{ x: 0, y: 0 }],
-      featherRadius: 3,
-      antiAlias: false,
-    };
-    const replayed = JSON.parse(JSON.stringify(selection)) as typeof selection;
-    const mask = new Uint8Array(DOCUMENT.width * DOCUMENT.height);
-    mask[3 * DOCUMENT.width + 6] = 255;
-    createSelectionAlphaMaskMock.mockReturnValue(mask);
-
-    const canvas = run({ selection: replayed });
-
-    expect(at(canvas, 6, 3)).toEqual(src(1, 1));
-    expect(createSelectionAlphaMaskMock).toHaveBeenCalledWith(replayed.points, DOCUMENT, replayed);
   });
 });

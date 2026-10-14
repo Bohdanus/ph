@@ -5,8 +5,6 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { EyedropperSampleSize, EyedropperToolArgs } from '../../tools/eyedropper.ts';
 import { readColorSampler } from '../../tools/color-sampler-readback.ts';
 import { addColorSampler, colorSamplerAt, removeColorSampler } from '../../tools/color-sampler-store.ts';
-import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
-import { documentFrameSize } from '../../contexts/document-frame.ts';
 
 type EyedropperToolAreaProps = {
   className?: string;
@@ -69,9 +67,8 @@ const toHexColor = (red: number, green: number, blue: number): string =>
  * `getImageData` wants.
  */
 export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
-  const [{ canvasRef, containerRef, totalSize, documentFrame }, dispatch] = useStore();
+  const [{ canvasRef, containerRef, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
-  const dpr = useDevicePixelRatio();
 
   const args = toolArgs as EyedropperToolArgs;
 
@@ -121,7 +118,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
         removeColorSampler(hit.id);
         return;
       }
-      const samplerReadback = readColorSampler(canvas, { x: centerX, y: centerY }, args.sampleSize, dpr);
+      const samplerReadback = readColorSampler(canvas, { x: centerX, y: centerY }, args.sampleSize);
       if (!samplerReadback.ok) {
         console.error(samplerReadback.reason, 'the color sampler cannot read the composited canvas');
         return;
@@ -139,30 +136,23 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     //
     // The centre pixel must be inside the canvas before the clipping math below is safe: `getLocalCoords`
     // returns frame-space coordinates, and a click in the contain-fit padding (outside the canvas bitmap
-    // but inside the container) can be negative or past the frame width. With `sampleSize === 1` the
+    // but inside the container) can be negative or past `canvas.width`. With `sampleSize === 1` the
     // `right <= left` guard at the next step catches every out-of-bounds case, but with a larger sample
     // size the clipped block CAN be non-empty while the centre pixel is outside it, which would index
     // a negative offset into the pixel array — `Uint8ClampedArray` returns `undefined` for negative
     // indices, so the alpha check would read the wrong byte and the average would include padding.
     // `sampleColorAt` makes the same check (`src/tools/colorSampler.ts:146`).
-    const frameSize = documentFrameSize(documentFrame);
-    if (centerX < 0 || centerY < 0 || centerX >= frameSize.width || centerY >= frameSize.height) return;
+    if (centerX < 0 || centerY < 0 || centerX >= canvas.width || centerY >= canvas.height) return;
 
     const sampleSize: EyedropperSampleSize = args.sampleSize;
     const half = Math.floor(sampleSize / 2);
     const left = Math.max(0, centerX - half);
     const top = Math.max(0, centerY - half);
-    const right = Math.min(frameSize.width, centerX + half + 1);
-    const bottom = Math.min(frameSize.height, centerY + half + 1);
+    const right = Math.min(canvas.width, centerX + half + 1);
+    const bottom = Math.min(canvas.height, centerY + half + 1);
     if (right <= left || bottom <= top) return;
 
-    // The canvas backing store is DPR-scaled and the context is scaled by DPR, so getImageData
-    // coordinates are in device pixels. Convert frame-space coordinates to device pixels.
-    const dl = left * dpr;
-    const dt = top * dpr;
-    const dr = right * dpr;
-    const db = bottom * dpr;
-    const { data } = ctx.getImageData(dl, dt, dr - dl, db - dt);
+    const { data } = ctx.getImageData(left, top, right - left, bottom - top);
     const sampleCount = Math.floor(data.length / 4);
     if (sampleCount === 0) return;
 

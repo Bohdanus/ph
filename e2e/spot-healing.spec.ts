@@ -1,9 +1,9 @@
 import { expect, test } from './fixtures/extended-test';
 import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout } from './helpers/toolbar-helpers';
 
 test.describe('Spot Healing Brush Tool', () => {
-  test('is reachable from its Photoshop healing group and commits one replayable raster action', async ({ page }) => {
+  test('is reachable from the Brush flyout and commits one replayable raster action', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     const canvas = getWorkspaceCanvas(page);
     await expect(canvas).toBeVisible();
@@ -12,7 +12,8 @@ test.describe('Spot Healing Brush Tool', () => {
 
     await clickToolButton(page, 'draw');
     await drawLine(page, box, 260, 200, 310, 200, { steps: 8 });
-    await clickToolButton(page, 'spot-healing');
+    await openToolFlyout(page, 'brush');
+    await page.locator('[data-testid^="tool-flyout-item-spot-healing-"]').click();
 
     await expect(page.locator('#spot-healing-size')).toBeVisible();
     await drawLine(page, box, 285, 200, 289, 200, { steps: 2 });

@@ -140,30 +140,24 @@ export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentF
 
 type SnapshotSurface = OffscreenCanvas | HTMLCanvasElement;
 
-function createSnapshotSurface(size: Size, backingScale = 1): SnapshotSurface {
-  if (typeof OffscreenCanvas !== 'undefined')
-    return new OffscreenCanvas(size.width * backingScale, size.height * backingScale);
+function createSnapshotSurface(size: Size): SnapshotSurface {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(size.width, size.height);
   const snapshot = document.createElement('canvas');
-  resizeCanvas(snapshot, size.width, size.height, backingScale);
+  resizeCanvas(snapshot, size.width, size.height);
   return snapshot;
 }
 
-function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size, backingScale = 1): SnapshotSurface | null {
+function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size): SnapshotSurface | null {
   try {
-    let snapshot = createSnapshotSurface(size, backingScale);
+    let snapshot = createSnapshotSurface(size);
     let context = snapshot.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
     if (!context || typeof context.drawImage !== 'function') {
       const fallback = document.createElement('canvas');
-      resizeCanvas(fallback, size.width, size.height, backingScale);
+      resizeCanvas(fallback, size.width, size.height);
       snapshot = fallback;
       context = fallback.getContext('2d') as CanvasRenderingContext2D | null;
     }
     if (!context) return null;
-    // Snapshot pixels are copied 1:1 from the visible backing store. The fallback canvas was
-    // resized through resizeCanvas, which applies a logical DPR transform, so reset only this
-    // destination context before the raw blit. The source canvas transform is irrelevant to
-    // drawImage and must not be mutated.
-    context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(canvas, 0, 0);
     return snapshot;
   } catch (error) {
@@ -180,20 +174,12 @@ function snapshotVisibleCanvas(canvas: HTMLCanvasElement, size: Size, backingSca
  * So this runs as soon as a target write is attempted, and blits the snapshot back even when the
  * dimensions already matched — the wipe it reverses then is the clear, not a resize.
  */
-function restoreVisibleCanvas(
-  canvas: HTMLCanvasElement,
-  size: Size,
-  backingScale: number,
-  snapshot: SnapshotSurface | null
-): void {
+function restoreVisibleCanvas(canvas: HTMLCanvasElement, size: Size, snapshot: SnapshotSurface | null): void {
   try {
-    resizeCanvas(canvas, size.width, size.height, backingScale);
+    resizeCanvas(canvas, size.width, size.height);
     if (!snapshot) return;
     const context = canvas.getContext('2d');
     if (!context) return;
-    // The snapshot was created with the same backingScale, so its backing store holds device pixels.
-    // The target context is scaled by backingScale, so reset to identity for the blit.
-    context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(snapshot, 0, 0);
   } catch (error) {
     console.error('Unable to restore runtime layer presentation', error);
@@ -210,13 +196,12 @@ export function drawLayersToCanvas(
   canvas: HTMLCanvasElement,
   layers: readonly Layer[],
   documentFrame: DocumentFrame,
-  silentMissingLayerIds?: ReadonlySet<string>,
-  backingScale = 1
+  silentMissingLayerIds?: ReadonlySet<string>
 ): boolean {
   if (typeof document === 'undefined') return true;
   const size = documentFrameSize(documentFrame);
   const stagingCanvas = document.createElement('canvas');
-  resizeCanvas(stagingCanvas, size.width, size.height, backingScale);
+  resizeCanvas(stagingCanvas, size.width, size.height);
   const stagingContext = stagingCanvas.getContext('2d');
   if (!stagingContext) return false;
 
@@ -259,26 +244,17 @@ export function drawLayersToCanvas(
   let snapshot: SnapshotSurface | null = null;
   let needsRestore = false;
   try {
-    // Validate that the target canvas has a 2d context before doing any work.
-    // This preserves the behavior that a missing context fails early without
-    // resizing the canvas.
-    const validationContext = canvas.getContext('2d');
-    if (!validationContext) return false;
-    snapshot = snapshotVisibleCanvas(canvas, previousSize, backingScale);
-    if (!snapshot) return false;
-    needsRestore = true;
-    resizeCanvas(canvas, size.width, size.height, backingScale);
     const context = canvas.getContext('2d');
     if (!context) return false;
+    snapshot = snapshotVisibleCanvas(canvas, previousSize);
+    if (!snapshot) return false;
+    needsRestore = true;
+    resizeCanvas(canvas, size.width, size.height);
     context.clearRect(0, 0, size.width, size.height);
-    // The staging canvas was rendered with a context scaled by backingScale, so its backing store
-    // already holds device pixels. The target context is also scaled by backingScale, so a direct
-    // drawImage would double-scale. Reset to identity for the blit, then the staging pixels copy 1:1.
-    context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(stagingCanvas, 0, 0);
     return true;
   } catch (error) {
-    if (needsRestore) restoreVisibleCanvas(canvas, previousSize, backingScale, snapshot);
+    if (needsRestore) restoreVisibleCanvas(canvas, previousSize, snapshot);
     console.error('Unable to publish runtime layer presentation', error);
     return false;
   }

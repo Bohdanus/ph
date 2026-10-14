@@ -39,11 +39,20 @@ const rectUtilsMock = vi.hoisted(() => ({
 }));
 
 // The path resolves: `useRect.ts` imports `'../util/rect.ts'` from `src/hooks/`, which is
-// the same `src/util/rect.ts` this resolves to, so the mock IS live. `getCanvasSize` was
-// a MEASUREMENT, not geometry — it read the backing-store dimensions off a real canvas.
-// With DPR scaling, the backing store is larger than the frame, so clamping now uses the
-// frame size (`imageSize` prop) directly instead of `getCanvasSize`. The mock is kept for
-// any other callers but is no longer invoked by the paint path.
+// the same `src/util/rect.ts` this resolves to, so the mock IS live. `getCanvasSize` is a
+// MEASUREMENT, not geometry — it is the one thing here that would otherwise be read off a
+// real canvas — and it is the only export left stubbed.
+//
+// Every other export delegates to the real implementation, and each one that did not was
+// the same hazard the aspect-ratio stubs were: a stub that agrees with production today
+// makes every assertion about the result invariant to whether the real code ran, so a
+// regression in the real code ships green. `sortRect` and `trimRect` were identity stubs
+// and made the whole aspect-ratio block blind to whether sorting ran at all, which is the
+// one thing that block exists to pin; `trimRect` internally calls `sortRect`, so an
+// identity stub there neutralised both the commit path and the paint path. `posToSortedRect`
+// was a byte-equivalent hand-copy of `util/rect.ts:95-104`, which is the strongest version
+// of the same defect: it is guaranteed to agree with production, so it can never fail and
+// can never catch anything.
 vi.mock('../../util/rect.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../util/rect.ts')>();
   return {
@@ -457,7 +466,7 @@ describe('useRect', () => {
     it('creates rect from layer when clicking on layer', () => {
       const layer = createMockLayer();
       const onRepaint = vi.fn();
-      const { result } = renderUseRect({ onRepaint });
+      const { result, overlayRef } = renderUseRect({ onRepaint });
 
       const event = createPointerEvent({ button: 0, clientX: 150, clientY: 150, target: createMockTarget() });
       act(() => {
@@ -473,11 +482,19 @@ describe('useRect', () => {
       // could only ever prove the mock was live, never that the conversion was right.
       expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
 
-      // The paint is clamped by the frame size (imageSize), not the backing store.
-      // With DPR scaling, the canvas backing store is larger than the frame, so the
-      // clamp uses imageSize (document pixels) instead of getCanvasSize (device pixels).
-      // The getCanvasSize mock is no longer invoked by this code path.
-      expect(rectUtilsMock.getCanvasSize).not.toHaveBeenCalled();
+      // The paint is clamped by a measurement of the hook's own OVERLAY ref, and the real
+      // `getCanvasSize(canvasRef)` reads `canvasRef.current.width/height` — so the argument is
+      // the REF, by identity, and neither the size it returns nor the `imageSize` prop. A bare
+      // `toHaveBeenCalled()` accepted the container ref, a freshly built ref object, or any size.
+      // Exactly once, because this hook had no rect on mount and the adoption is the one paint.
+      //
+      // That one line also rules out the container ref, so a `not.toHaveBeenCalledWith(containerRef)`
+      // beside it said nothing the call count and identity had not already said. The claim it did
+      // not reach is the one the sibling suite owns: that the measurement is what CLAMPS the paint
+      // rather than `imageSize`, which `useRect.drag.test.ts` pins in
+      // `clamps the painted geometry to the canvas but reports the unclamped rect` with an
+      // `imageSize` deliberately unlike the canvas.
+      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalledExactlyOnceWith(overlayRef);
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {

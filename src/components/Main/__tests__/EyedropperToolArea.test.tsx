@@ -21,9 +21,7 @@ const SamplerProbe = () => {
 const dispatchMock = vi.hoisted(() => vi.fn());
 const workspaceCanvas = vi.hoisted(() => document.createElement('canvas'));
 const storeState = vi.hoisted(
-  (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({
-    documentFrame: { x: 0, y: 0, width: 4, height: 4 },
-  })
+  (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({ documentFrame: null })
 );
 const toolState = vi.hoisted(
   (): { toolArgs: { sampleSize: 1 | 3 | 5 | 11 | 31 | 51 | 101; sampleAllLayers: boolean; toolName: string } } => ({
@@ -151,7 +149,7 @@ describe('EyedropperToolArea', () => {
 
   beforeEach(() => {
     dispatchMock.mockClear();
-    storeState.documentFrame = { x: 0, y: 0, width: 4, height: 4 };
+    storeState.documentFrame = null;
     toolState.toolArgs = { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' };
     composited = createCompositedImageData(4, 4);
     workspaceCanvas.width = 4;
@@ -454,7 +452,6 @@ describe('EyedropperToolArea', () => {
       { sampleSize: 101, left: 14, sampled: '#818181' },
     ];
 
-    storeState.documentFrame = { x: 0, y: 0, width: 128, height: 128 };
     composited = createSplitField(128);
     workspaceCanvas.width = 128;
     workspaceCanvas.height = 128;
@@ -496,7 +493,7 @@ describe('EyedropperToolArea Shift-click, which places a color sampler', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     resetColorSamplersForTest();
-    storeState.documentFrame = { x: 0, y: 0, width: 4, height: 4 };
+    storeState.documentFrame = null;
     toolState.toolArgs = { sampleSize: 1, sampleAllLayers: false, toolName: 'eyedropper' };
     composited = createCompositedImageData(4, 4);
     workspaceCanvas.width = 4;

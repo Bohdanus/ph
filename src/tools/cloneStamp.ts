@@ -6,7 +6,6 @@ import {
   type BrushTipSettings,
 } from '../util/brush-engine.ts';
 import { blendPixel, clampPointToSize, forEachPixelInRect, readRgba } from '../util/pixels.ts';
-import { createSelectionAlphaMask } from '../util/selection.ts';
 import type { Point, Size } from '../contexts/general-types.ts';
 import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
@@ -18,12 +17,6 @@ export type CloneStampToolArgs = {
   aligned: boolean;
   points: Point[];
   toolName: 'clone-stamp';
-  /** Selection snapshot in processor-raster coordinates. */
-  selection?: {
-    points: Point[];
-    featherRadius: number;
-    antiAlias: boolean;
-  };
 };
 
 export type CloneStampToolSettings = Omit<CloneStampToolArgs, 'points'>;
@@ -148,8 +141,7 @@ const cloneDab = (
   raster: Size,
   center: Point,
   offset: Point,
-  settings: BrushTipSettings,
-  selectionMask: Uint8Array | null
+  settings: BrushTipSettings
 ): void => {
   const radius = settings.size / 2;
   const span = dabSpan(center, radius, raster.width, raster.height);
@@ -167,11 +159,8 @@ const cloneDab = (
     // `blendPixel` no-ops on a non-positive weight too; this is the cheap half of it.
     if (!(weight > 0)) return;
 
-    const selectionCoverage = selectionMask ? selectionMask[y * raster.width + x] / 255 : 1;
-    if (!(selectionCoverage > 0)) return;
-
     const from = clampPointToSize({ x: x + deltaX, y: y + deltaY }, raster);
-    blendPixel(outputData, byteOffset, readRgba(sourceData, from.x, from.y, raster.width), weight * selectionCoverage);
+    blendPixel(outputData, byteOffset, readRgba(sourceData, from.x, from.y, raster.width), weight);
   });
 };
 
@@ -197,8 +186,7 @@ const cloneStroke = (
   source: Point,
   points: Point[],
   aligned: boolean,
-  settings: BrushTipSettings,
-  selectionMask: Uint8Array | null
+  settings: BrushTipSettings
 ): void => {
   if (points.length === 0 || !(settings.opacity > 0) || settings.size <= 0) return;
 
@@ -224,7 +212,7 @@ const cloneStroke = (
 
   const offset = cloneOffset(source, points, aligned);
   for (const center of centers) {
-    cloneDab(sourceData, outputData, raster, center, offset, settings, selectionMask);
+    cloneDab(sourceData, outputData, raster, center, offset, settings);
   }
 
   ctx.putImageData(image, 0, 0);
@@ -264,7 +252,7 @@ const cloneStroke = (
  */
 export const cloneStamp =
   ({ bitmap, size }: ProcessorToolParams) =>
-  ({ size: tipSize, hardness, alpha, source, aligned, points, selection }: CloneStampToolArgs): ToolResult => {
+  ({ size: tipSize, hardness, alpha, source, aligned, points }: CloneStampToolArgs): ToolResult => {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
 
@@ -284,8 +272,7 @@ export const cloneStamp =
       spacing: CLONE_STAMP_SPACING_PERCENT,
     });
 
-    const selectionMask = selection ? createSelectionAlphaMask(selection.points, size, selection) : null;
-    cloneStroke(ctx, size, source, points, aligned, settings, selectionMask);
+    cloneStroke(ctx, size, source, points, aligned, settings);
 
     return [canvas];
   };
