@@ -465,6 +465,17 @@ describe('LayersTab inline rename', () => {
     expect(span).toHaveStyle({ background: '#fff' });
   });
 
+  it('turns the name span into an editable region on a touch press', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.pointerDown(span, { pointerId: 9, pointerType: 'touch' });
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
+  });
+
   it('suspends dragging for the layer that is being renamed', () => {
     render(<LayersTab />);
     const span = getNameSpan('Top Layer');
@@ -679,6 +690,83 @@ describe('LayersTab drag and drop guards', () => {
     });
 
     expect(document.body).toHaveClass('cursor-grabbing');
+  });
+
+  it('reorders a movable layer from a touch pointer gesture', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const target = screen.getAllByRole('listitem')[2]!;
+    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const elementFromPoint = vi.fn(() => target);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(source, { pointerId: 7, pointerType: 'touch', clientX: 10, clientY: 10 });
+        fireEvent.pointerMove(source, { pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerUp(source, { pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 20 });
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(elementFromPoint).toHaveBeenCalledWith(20, 20);
+      expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', 'layer-1');
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+
+  it('supports dropping a touch drag after the last layer', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const target = screen.getByTestId('layers-bottom-drop-target');
+    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const elementFromPoint = vi.fn(() => target);
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementFromPoint });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(source, { pointerId: 8, pointerType: 'touch', clientX: 10, clientY: 10 });
+        fireEvent.pointerMove(source, { pointerId: 8, pointerType: 'touch', clientX: 20, clientY: 20 });
+        fireEvent.pointerUp(source, { pointerId: 8, pointerType: 'touch', clientX: 20, clientY: 20 });
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', undefined);
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
+  });
+
+  it('releases a touch drag when the window loses focus', () => {
+    render(<LayersTab />);
+    const source = getLayerDivs()[0]!;
+    const target = screen.getAllByRole('listitem')[2]!;
+    Object.defineProperty(source, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(source, 'releasePointerCapture', { value: vi.fn() });
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: vi.fn(() => target) });
+
+    try {
+      act(() => {
+        fireEvent.pointerDown(source, { pointerId: 9, pointerType: 'touch', clientX: 10, clientY: 10 });
+        fireEvent.pointerMove(source, { pointerId: 9, pointerType: 'touch', clientX: 20, clientY: 20 });
+      });
+      expect(document.body).toHaveClass('cursor-grabbing');
+
+      act(() => {
+        fireEvent.blur(window);
+        fireEvent.pointerUp(source, { pointerId: 9, pointerType: 'touch', clientX: 20, clientY: 20 });
+      });
+
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: originalElementFromPoint });
+    }
   });
 
   it('publishes the dragged layer id and drag image through the data transfer', () => {

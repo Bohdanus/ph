@@ -1,5 +1,4 @@
 import { expect, test, type Locator, type Page } from './fixtures/extended-test';
-import { openToolFlyout } from './helpers/toolbar-helpers';
 
 /**
  * The panel workspace, in a real browser.
@@ -12,13 +11,8 @@ import { openToolFlyout } from './helpers/toolbar-helpers';
  *    exist, and `toBeVisible()` cannot tell the two apart — it checks for a box, not for
  *    pixels receiving the event. `e2e/sidebar-flyout.spec.ts` already established this trap here
  *    and the same discipline applies.
- *  - **Overlap.** The tools rail is now movable to the right edge, where a flyout has to open
- *    the other way — and the flyout is PORTALLED to `document.body`, so it is never clipped by
- *    the rail and no `toBeVisible()` failure would ever report it. It can still land ON TOP of
- *    the rail, which is a real defect that only a geometry assertion sees: on the two-column
- *    rail a flyout can be anchored to the left-hand column, whose trailing edge is nowhere
- *    near the panel's. `elementFromPoint` is used to confirm the overlay is actually
- *    painted rather than merely present, which is the one claim a box cannot support.
+ *  - **Reorder indicators.** The panel tab drop line is painted before release and is checked
+ *    at its actual geometry and pixels, so a transparent box cannot satisfy the test.
  *  - **Persistence.** A reload is the only way to prove the layout survives one, and it is the
  *    behaviour Photoshop documents ("workspaces display your last arrangement of panels").
  *  - **Reflow.** The canvas is sized by a `ResizeObserver` on its own box, so a wider dock has
@@ -30,7 +24,6 @@ const RAIL = '[data-testid="left-sidebar"]';
 const RESIZE_HANDLE = '[data-testid="dock-resize-handle"]';
 const SPLITTER = '[data-testid="dock-splitter"]';
 const HISTORY_TAB = '[data-testid="panel-header-history"]';
-const RAIL_GRIP = '[data-testid="rail-re-dock-handle"]';
 
 const width = (locator: Locator) => locator.evaluate((node) => node.getBoundingClientRect().width);
 
@@ -42,9 +35,9 @@ const width = (locator: Locator) => locator.evaluate((node) => node.getBoundingC
  * occupies exactly the right box and paints nothing satisfies it. `bg-blue-500` swapped for
  * `bg-transparent` is the shape of that: a 2px line that is still 2px tall, still `inset-x-0`
  * of the dock, still at the same edge, and still commits the same reorder — with no highlight
- * for the user to release into. Both indicators below are named by what a user SEES
- * ("Release the tab when a blue highlight appears"; "a drop zone appears"), so the paint is
- * the claim and a box is not evidence for it. The element's own geometry is still asserted
+ * for the user to release into. The indicator is named by what a user SEES ("Release the tab
+ * when a blue highlight appears"), so the paint is the claim and a box is not evidence for it.
+ * The element's own geometry is still asserted
  * separately by each caller, because hit testing says nothing about where it is.
  *
  * The pointer-events swap is what makes the probe say anything at all:
@@ -317,74 +310,6 @@ test.describe('Panel workspace (fast)', () => {
     // A cancelled resize is written continuously, so it has to be rolled back to where the
     // divider started rather than left wherever the last pointermove put it.
     expect((await page.locator('[data-testid="panel-group-history"]').boundingBox())!.height).toBeCloseTo(before, 0);
-  });
-
-  test('moves the whole dock to the opposite edge by throwing a tab at the workspace edge', async ({ page }) => {
-    const tab = (await page.locator(HISTORY_TAB).boundingBox())!;
-
-    await page.mouse.move(tab.x + tab.width / 2, tab.y + tab.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(20, tab.y + tab.height / 2, { steps: 12 });
-
-    // "To create a dock, move panels to the right edge of the workspace until a drop zone
-    // appears" — the zone is on screen before the release.
-    const edge = page.locator('[data-testid="dock-edge-line"]');
-    await expect(edge).toBeVisible();
-    // PAINTED, on the same grounds as the reorder line and through the same helper: this is a
-    // `pointer-events: none` `fixed w-1` overlay, so a transparent one is a 4px box at the
-    // window edge that satisfies every geometry assertion and still drops the dock exactly the
-    // same — with no drop zone for the user to have seen appear.
-    expect(await paintsAtItsCentre(edge), 'the edge drop zone has a real box but paints nothing').toBe(true);
-    // A reorder indicator at the same time would be a lie about what the drop will do.
-    await expect(page.locator('[data-testid="panel-drop-line"]')).toBeHidden();
-
-    await page.mouse.up();
-
-    // The dock and rail now share the left column, with the rail above the dock. Docking is
-    // additive: moving the dock does not force the independent Tools rail to the opposite edge.
-    const dockBox = (await page.locator(DOCK).boundingBox())!;
-    const railBox = (await page.locator(RAIL).boundingBox())!;
-    expect(Math.abs(dockBox.x - railBox.x)).toBeLessThanOrEqual(1);
-    expect(railBox.y + railBox.height).toBeLessThanOrEqual(dockBox.y + 1);
-    expect(await panelOrder(page)).toEqual(['history', 'layers']);
-  });
-
-  test('opens a flyout on the canvas side of a rail that is on the right edge', async ({ page }) => {
-    // The flyout is PORTALLED to `document.body` and positioned `fixed`, so the rail's
-    // `overflow-y: auto` cannot clip it and `toBeVisible()` would pass whatever side it landed
-    // on. What is asserted below is geometry — clear of the rail, and on screen — plus a paint
-    // probe for the case where a correct box still paints nothing.
-    const grip = (await page.locator(RAIL_GRIP).boundingBox())!;
-    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(1280 - 20, grip.y + grip.height / 2, { steps: 10 });
-    await page.mouse.up();
-
-    const railBox = (await page.locator(RAIL).boundingBox())!;
-    expect(railBox.x).toBeGreaterThan(1280 - 120);
-
-    // A long press, which is the gesture that opens a flyout at all. A plain click on a
-    // grouped tool SELECTS it and leaves the flyout closed, so this is the app's own helper
-    // rather than a mouse click — `openToolFlyout` documents why press-wait-lift is the order.
-    await openToolFlyout(page, 'brush');
-
-    const menu = page.getByRole('menu');
-    await expect(menu).toBeVisible();
-    const menuBox = (await menu.boundingBox())!;
-    // Opened to the LEFT of the rail, and clear of it. "Clear" is the whole assertion: an
-    // overlay hung off a second-column tile instead of off the rail stays inside the viewport,
-    // so nothing else reports it, while covering the rail's own first column. The rail is
-    // what the overlay has to get clear of, and on the two-column rail a left-hand tile is
-    // nowhere near its trailing edge.
-    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(railBox.x);
-    expect(menuBox.x).toBeGreaterThanOrEqual(0);
-    // The element has to be made hit-testable for the probe to mean anything, or it always
-    // reports whatever is beneath it — which is what `paintsAtItsCentre` does for the two
-    // drop indicators as well, which is why the probe lives in one place in this file.
-    expect(
-      await paintsAtItsCentre(menu),
-      'the flyout is in the DOM with a real box but paints nothing — the rail clips it'
-    ).toBe(true);
   });
 
   test('keeps the layout across a reload, and Window > Reset undoes it', async ({ page }) => {

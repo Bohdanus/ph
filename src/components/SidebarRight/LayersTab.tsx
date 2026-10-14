@@ -100,6 +100,20 @@ export default function LayersTab() {
 
   const [editingLayerId, setEditingLayerId] = useState<LayerId | null>(null);
 
+  // Touch and pen input do not start HTML5 drag events, so keep a separate pointer-capture
+  // gesture while leaving the desktop data-transfer path unchanged.
+  const pointerDragRef = useRef<{
+    pointerId: number;
+    layerId: LayerId;
+    startX: number;
+    startY: number;
+    active: boolean;
+    targetId: LayerId | null;
+    overBottom: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const LAYER_REORDER_DRAG_THRESHOLD = 3;
+
   const [animatingLayerId, setAnimatingLayerId] = useState<LayerId | null>(null);
   const [isShrinking, setIsShrinking] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
@@ -159,6 +173,23 @@ export default function LayersTab() {
         lockedRef.current = false;
         unlockDragCursor();
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const cancelPointerDrag = () => {
+      if (!pointerDragRef.current) return;
+      pointerDragRef.current = null;
+      suppressClickRef.current = false;
+      setDraggedLayerId(null);
+      setDropTargetId(null);
+      setIsOverBottom(false);
+    };
+    window.addEventListener('blur', cancelPointerDrag);
+    document.addEventListener('visibilitychange', cancelPointerDrag);
+    return () => {
+      window.removeEventListener('blur', cancelPointerDrag);
+      document.removeEventListener('visibilitychange', cancelPointerDrag);
     };
   }, []);
   /////
@@ -222,6 +253,70 @@ export default function LayersTab() {
     setEditingLayerId(null);
   }
 
+  function clearPointerDrag(event?: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag) return;
+    if (event && event.pointerId !== pointerDrag.pointerId) return;
+    try {
+      event?.currentTarget.releasePointerCapture(pointerDrag.pointerId);
+    } catch {
+      // Capture may already have been released before pointerup/pointercancel arrives.
+    }
+    pointerDragRef.current = null;
+    setDraggedLayerId(null);
+    setDropTargetId(null);
+    setIsOverBottom(false);
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLDivElement>, layerId: LayerId) {
+    if (event.pointerType === 'mouse' || editingLayerId === layerId || !isMovableLayer(layerId)) return;
+    pointerDragRef.current = {
+      pointerId: event.pointerId,
+      layerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      targetId: null,
+      overBottom: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    if (!pointerDrag.active) {
+      const distance = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
+      if (distance < LAYER_REORDER_DRAG_THRESHOLD) return;
+      pointerDrag.active = true;
+      suppressClickRef.current = true;
+      setDraggedLayerId(pointerDrag.layerId);
+    }
+
+    const pointed = document.elementFromPoint(event.clientX, event.clientY);
+    const target = pointed?.closest<HTMLElement>('[data-testid="layer-row"]');
+    const overBottom = Boolean(!target && pointed?.closest<HTMLElement>('[data-testid="layers-bottom-drop-target"]'));
+    const targetId = (target?.dataset.layerId as LayerId | undefined) ?? null;
+    const targetIndex = targetId ? sortedLayers.findIndex((layer) => layer.id === targetId) : -1;
+    const sourceIsImmediatelyAboveTarget = targetIndex > 0 && sortedLayers[targetIndex - 1]?.id === pointerDrag.layerId;
+    pointerDrag.targetId =
+      targetId && targetId !== pointerDrag.layerId && !sourceIsImmediatelyAboveTarget && layers[targetId]
+        ? targetId
+        : null;
+    pointerDrag.overBottom = overBottom;
+    setDropTargetId(pointerDrag.targetId);
+    setIsOverBottom(overBottom);
+    event.preventDefault();
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    const pointerDrag = pointerDragRef.current;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
+    const { active, layerId, targetId, overBottom } = pointerDrag;
+    clearPointerDrag(event);
+    if (active && isMovableLayer(layerId) && (targetId || overBottom)) animateMove(layerId, targetId ?? undefined);
+  }
+
   return (
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
       {activeLayer && <LayerOpacityControl key={activeLayer.id} layer={activeLayer} updateLayer={updateLayer} />}
@@ -246,6 +341,7 @@ export default function LayersTab() {
               <li
                 key={layer.id}
                 data-testid="layer-row"
+                data-layer-id={layer.id}
                 ref={(el) => {
                   listItemRefs.current[layer.id] = el;
                 }}
@@ -306,7 +402,20 @@ export default function LayersTab() {
                     e.preventDefault();
                     animateMove(draggedLayerId, layer.id);
                   }}
-                  onClick={() => selectLayer(layer.id)}
+                  onPointerDown={(event) => handlePointerDown(event, layer.id)}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={(event) => {
+                    clearPointerDrag(event);
+                    suppressClickRef.current = false;
+                  }}
+                  onClick={() => {
+                    if (suppressClickRef.current) {
+                      suppressClickRef.current = false;
+                      return;
+                    }
+                    selectLayer(layer.id);
+                  }}
                   onDoubleClick={() => enterTextLayer(layer.id)}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
@@ -343,6 +452,11 @@ export default function LayersTab() {
                       data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
+                      onPointerDown={(e) => {
+                        if (e.pointerType === 'mouse') return;
+                        e.stopPropagation();
+                        if (!isEditable) setEditingLayerId(layer.id);
+                      }}
                       onMouseDown={(e: React.MouseEvent<HTMLDivElement>) => {
                         e.stopPropagation();
                         if (isEditable) return;
@@ -424,6 +538,7 @@ export default function LayersTab() {
         </button>
       )}
       <div
+        data-testid="layers-bottom-drop-target"
         className="flex-1 min-h-[20px]"
         onDragOver={(e) => {
           e.stopPropagation();
