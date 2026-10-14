@@ -85,7 +85,12 @@ export type LegacyConversionResult = Readonly<{
   legacyCursorToDurableCursor: readonly number[];
 }>;
 
-export type DurableConversionStatus = 'current' | 'unavailable';
+/**
+ * `partial` means conversion produced entry-level diagnostics, so a prefix may
+ * be useful for diagnostics, but no exact durable document is publishable yet.
+ * The safe boundary deliberately returns no document or cursor map for it.
+ */
+export type DurableConversionStatus = 'current' | 'partial' | 'unavailable';
 
 export type DurableConversionAttempt = Readonly<{
   status: DurableConversionStatus;
@@ -1132,10 +1137,17 @@ export function convertLegacyHistorySafely(
     if (converted.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
       transaction?.rollback();
       return {
-        status: 'unavailable',
+        // This is a conversion-quality failure, not an infrastructure throw.
+        // Keep it distinct from `unavailable` so callers can report that a
+        // partial projection exists without ever treating it as exact.
+        status: 'partial',
         document: null,
         diagnostics: converted.diagnostics,
-        legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
+        // A conversion error makes the fold after the offending entry
+        // unproven: later operations may have been derived from stale state.
+        // The document is withheld, so exposing that map would let a caller
+        // pair legacy cursors with a durable timeline that is not available.
+        legacyCursorToDurableCursor: [],
       };
     }
     transaction?.commit();

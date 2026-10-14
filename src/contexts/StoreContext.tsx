@@ -105,11 +105,12 @@ import {
  *    can therefore only enter the document through a `SELECTION_ACTION` history
  *    entry, and a layer operation only through a history entry. This holds
  *    whichever rule seeds the baseline, because both read the timeline.
- * 2. `stale` is sticky. Every action that writes one of the six inputs either
- *    marks `stale` or reconverts and writes the resulting status, so no
- *    non-reconverting transition can ever clear a `stale` that a durable input
- *    produced. A transition that stops marking `stale` therefore cannot unblock
- *    a publication that a genuine divergence had blocked.
+ * 2. Non-current statuses are sticky. Every action that writes one of the six
+ *    inputs either marks a current shadow `stale` or reconverts and writes the
+ *    resulting status, so no non-reconverting transition can clear a `stale`,
+ *    `partial`, or `unavailable` state. A transition that stops marking `stale`
+ *    therefore cannot unblock a publication that a genuine divergence or
+ *    conversion diagnostic had blocked.
  *
  * The append gate (`decideDurableAppend`, reached at the `base:` argument of the
  * `COMMIT_DOCUMENT_EDIT` dispatcher branch) additionally re-checks
@@ -515,6 +516,9 @@ const initialState: StoreData = {
 };
 
 function normalizeDurableProjection(projection: DurableProjection): DurableProjection {
+  // Partial and unavailable projections are diagnostic states only. Keeping
+  // their document out of StoreData prevents navigation, export, reorder, and
+  // tool hydration from treating an inexact shadow as authoritative.
   return projection.status === 'current' ? projection : { ...projection, document: null };
 }
 
@@ -844,7 +848,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         totalSize: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
         durableRenderProjection: null,
         renderSelector: legacyRenderSelector(
@@ -867,7 +871,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         layers: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
         durableRenderProjection: null,
         renderSelector: legacyRenderSelector(
@@ -892,7 +896,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
         ...state,
         layers: action.payload.layers,
         activeLayerId: action.payload.activeLayerId,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
         durableRenderProjection: null,
         renderSelector: legacyRenderSelector(
@@ -968,7 +972,7 @@ function reducer(state: StoreData, action: StoreAction): StoreData {
       return {
         ...state,
         ...action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+        durableStatus: state.durableStatus === 'current' ? 'stale' : state.durableStatus,
         durablePresentation: EMPTY_DURABLE_PRESENTATION,
         durableRenderProjection: null,
         renderSelector: legacyRenderSelector(

@@ -1024,7 +1024,7 @@ describe('disabled durable baseline reporting', () => {
     });
 
     // The SEVERITY is what this pins. `convertLegacyHistorySafely` rolls the asset
-    // transaction back and returns `status: 'unavailable'` with a NULL document on
+    // transaction back and returns `status: 'partial'` with a NULL document on
     // the first error diagnostic, so an error-severity naming of this divergence
     // would discard every later entry over a defect the legacy timeline already
     // tolerates — a strictly worse outcome than the divergence it reports.

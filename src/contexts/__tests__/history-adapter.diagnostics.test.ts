@@ -369,7 +369,7 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     expect(result.document).toBeNull();
     expect(reconcile).not.toHaveBeenCalled();
   });
@@ -390,7 +390,7 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
       registry
     );
 
-    expect(result.status).toBe('unavailable');
+    expect(result.status).toBe('partial');
     const registeredIds = register.mock.results.map((call) => call.value as AssetId).filter((id) => id !== existingId);
     expect(registeredIds).toHaveLength(1);
     // The transaction rolled the asset registered by the failed conversion back...

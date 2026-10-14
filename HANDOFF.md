@@ -113,6 +113,13 @@ introducing a partial status without tracing these paths could either discard th
 let an incomplete shadow appear exact. Represent partial availability explicitly and keep it out of
 paths that require an exact projection; do not remove the severity gate alone.
 
+**Decision implemented in the current worktree.** `DurableConversionStatus` now includes `partial`.
+An error-severity entry diagnostic returns `partial` with no durable document and no cursor map;
+`normalizeDurableProjection()` and all exact-projection consumers continue to admit only `current`.
+This resolves the status vocabulary without pretending that a prefix document is publishable. The
+remaining work is the asset-owner design and a proven prefix/suffix boundary before retaining any
+partial document or cursor mapping.
+
 **Asset-lifetime blocker confirmed.** `convertLegacyHistorySafely` currently rolls back the
 transaction on any error; on success it commits and calls `reconcileDocumentAssets` with
 `collectDurableAssetIds(converted.document)`. The contract documented by
