@@ -18,11 +18,11 @@ import type { ToolName, ToolPatch } from '../../contexts/tool-types.ts';
  * flyout tiles. The arrays are the mapping's groups, not a guess: a shortcut that
  * disagrees with the map disagrees with the flyout the user just clicked.
  *
- * `brushGroup` is the Brush flyout — brush, pencil, color replacement and now the eraser,
- * which `toolbar-mapping.ts:70` puts in the same tile and also gives its own `E`. Both
- * are correct: `E` selects the eraser outright, Shift+B reaches it by cycling.
+ * `brushGroup` is the Brush flyout — brush, pencil and color replacement. Eraser has its own
+ * Photoshop `E` group, so `Shift+B` must not cross into it and `Shift+E` cycles its Magic Eraser.
  */
-const brushGroup = ['brush', 'pencil', 'color-replacement', 'eraser'] as const satisfies readonly ToolName[];
+const brushGroup = ['brush', 'pencil', 'color-replacement'] as const satisfies readonly ToolName[];
+const eraserGroup = ['eraser', 'magic-eraser'] as const satisfies readonly ToolName[];
 const lassoGroup = [
   'freehand-lasso',
   'polygonal-lasso',
@@ -136,6 +136,16 @@ export const AppKeyboardShortcuts = () => {
     }
 
     goToTool(brushGroup.includes(toolName as (typeof brushGroup)[number]) ? toolName : 'brush');
+  };
+
+  const selectEraserTool = (shiftKey = false) => {
+    if (shiftKey) {
+      const current = eraserGroup.includes(toolName as (typeof eraserGroup)[number]) ? toolName : 'eraser';
+      goToTool(cycleToolGroup(current as ToolName, eraserGroup as readonly ToolName[]));
+      return;
+    }
+
+    goToTool(eraserGroup.includes(toolName as (typeof eraserGroup)[number]) ? toolName : 'eraser');
   };
 
   const selectMeasurementTool = (shiftKey = false) => {
@@ -677,7 +687,15 @@ export const AppKeyboardShortcuts = () => {
     key: 'e',
     mod: false,
     enabled: hasImage,
-    onKeyDown: () => goToTool('eraser'),
+    onKeyDown: (event) => selectEraserTool(event.shiftKey),
+  });
+
+  useKeyDownShortcut({
+    key: 'e',
+    mod: false,
+    shift: true,
+    enabled: hasImage,
+    onKeyDown: (event) => selectEraserTool(event.shiftKey),
   });
 
   useKeyDownShortcut({

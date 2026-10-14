@@ -46,21 +46,29 @@ describe('MobileBottomBar', () => {
     }
   });
 
-  it('reaches the four tools the old hand-written list predated', () => {
+  it('reaches the tools that the old hand-written list predated', () => {
     // The old list was `MOBILE_TOOLS: MobileToolItem[]` — a literal that nothing
     // type-checked against `ToolName`, so `eraser`, `magic-eraser`,
     // `paint-bucket` and `eyedropper` (commit 80eb207) simply never appeared. A
-    // tile is the desktop rail's group, so these four arrive on the owning tile's
-    // group and are selected from the tool sheet's picker for that group
-    // (see MobileToolSheet.test.tsx).
+    // tile is the desktop rail's group, so these tools now each have their own
+    // Photoshop-faithful group (Brush/E/G split) and are selected from the tool
+    // sheet's picker for that group (see MobileToolSheet.test.tsx).
     render(<MobileBottomBar isToolSheetOpen={false} onToggleToolSheet={vi.fn()} onOpenLayers={vi.fn()} />);
 
-    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eraser'))!;
+    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('brush'))!;
     expect(brushGroup.primaryTool).toBe('brush');
-    expect(brushGroup.matchingTools).toEqual(
-      expect.arrayContaining(['brush', 'eraser', 'magic-eraser', 'paint-bucket', 'color-replacement', 'pencil'])
-    );
+    expect(brushGroup.matchingTools).toEqual(['brush', 'pencil', 'color-replacement']);
     expect(screen.getByRole('button', { name: 'Brush Tool' })).toBeInTheDocument();
+
+    const eraserGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eraser'))!;
+    expect(eraserGroup.primaryTool).toBe('eraser');
+    expect(eraserGroup.matchingTools).toEqual(['eraser', 'magic-eraser']);
+    expect(screen.getByRole('button', { name: 'Eraser Tool' })).toBeInTheDocument();
+
+    const paintBucketGroup = mobileToolGroups.find((group) => group.matchingTools.includes('paint-bucket'))!;
+    expect(paintBucketGroup.primaryTool).toBe('paint-bucket');
+    expect(paintBucketGroup.matchingTools).toEqual(['paint-bucket']);
+    expect(screen.getByRole('button', { name: 'Paint Bucket Tool' })).toBeInTheDocument();
 
     const eyedropperGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eyedropper'))!;
     expect(eyedropperGroup.primaryTool).toBe('eyedropper');
