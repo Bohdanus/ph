@@ -72,6 +72,7 @@ import {
   DocumentPresentationScope,
   isSamePresentationCanvas,
   layersDifferOnlyByPresentation,
+  layersDifferOnlyByPresentationAndIdentityAffine,
   materializePresentationBitmap,
   type LayerPresentationBatch,
   type LayerPresentationPromotion,
@@ -1512,7 +1513,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (action.type === 'PUBLISH_RUNTIME_PRESENTATION') {
-      if (!layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)) {
+      const payloadLayers = action.payload.layers;
+      // First check: pure presentation-only difference (caches only).
+      const purePresentation = layersDifferOnlyByPresentation(currentState.layers, payloadLayers);
+      // Second check: presentation-only plus identity affine operations.
+      const presentationWithIdentityAffine = layersDifferOnlyByPresentationAndIdentityAffine(
+        currentState.layers,
+        payloadLayers
+      );
+      if (!purePresentation && !presentationWithIdentityAffine) {
         // A refused publication is a contained no-op: the layer keeps rendering
         // from its tmpCanvas and no logical state moves. Two refusals share that
         // outcome and mean different things, so only one of them is reported.
@@ -1528,12 +1537,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         console.error(
           'Refused a runtime presentation publication that also changes durable layer state ' +
             '(invariant: PUBLISH_RUNTIME_PRESENTATION carries presentation caches only, never logical layer state). ' +
-            `Offending layer ids: ${divergentLayerIds(currentState.layers, action.payload.layers).join(', ')}`
+            `Offending layer ids: ${divergentLayerIds(currentState.layers, payloadLayers).join(', ')}`
         );
         return;
       }
-      latestStateRef.current = reducer(currentState, action);
-      rawDispatch(action);
+      // If the only durable difference is identity affine operations, publish the
+      // stored record with the payload's presentation caches instead of the payload
+      // itself. This prevents identity affine operations from polluting the durable
+      // layer state while still allowing the presentation cache promotion to proceed.
+      let layersToPublish = payloadLayers;
+      if (presentationWithIdentityAffine && !purePresentation) {
+        layersToPublish = { ...currentState.layers };
+        for (const [id, payloadLayer] of Object.entries(payloadLayers)) {
+          const storedLayer = currentState.layers[id];
+          if (!storedLayer) continue;
+          layersToPublish[id] = {
+            ...storedLayer,
+            bitmap: payloadLayer.bitmap,
+            tmpCanvas: payloadLayer.tmpCanvas,
+            presentationBounds: payloadLayer.presentationBounds,
+          };
+        }
+      }
+      latestStateRef.current = reducer(currentState, {
+        ...action,
+        payload: { layers: layersToPublish },
+      });
+      rawDispatch({ ...action, payload: { layers: layersToPublish } });
       return;
     }
     if (action.type === 'REORDER_LAYERS') {

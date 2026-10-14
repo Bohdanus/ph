@@ -49,15 +49,9 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * Toolbar placement (`toolbar-mapping.ts`): `eyedropper` is the tile of the `I` family and at the
  * suite's 1280x720 the rail fills its slot, so its seven visible tiles are the first seven of its
- * fifteen groups and the eyedropper — the fifth — is one of them: `clickToolButton(page,
- * 'eyedropper')` selects it directly. Its flyout now exists (the Ruler joined it) but nothing here
- * needs it, because the Eyedropper is its own first entry and a tile click selects that. The other three share ONE
- * flyout whose primary tool is `brush` (six entries: brush, pencil, color-replacement, eraser,
- * magic-eraser, paint-bucket), so `clickToolButton(page, 'brush')` only ever selects the Brush
- * and the other three need `openToolFlyout` + `selectFromFlyout` — through the BRUSH TILE at that
- * window, because the brush group is the SEVENTH of the fifteen and so is the LAST tile the rail
- * shows there: it is on the rail, and `openToolFlyout` long-presses that tile instead of taking
- * its three-dots branch. The fold begins one group further down, at the Clone Stamp (the eighth).
+ * groups and the eyedropper is one of them. Eraser, Paint Bucket and Spot Healing now own distinct
+ * Photoshop-faithful groups, so this spec uses `clickToolButton` for every target; that helper
+ * handles either a visible tile or the three-dots overflow without encoding the rail fold point.
  *
  * Geometry: the app seeds an 800x600 opaque white `Blank 1` base layer on load (there is no
  * file input and no "open image" gesture), so every colour a tool acts on in this spec is
@@ -326,43 +320,12 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
   );
 }
 
-/**
- * Selects one of the three eraser-family tools out of the six-item `brush` flyout.
- *
- * `from` is the tile that currently owns the group, because the tile's `data-testid` follows its
- * CURRENT primary tool (`SidebarLeft.tsx:238`). It is `brush` until one of the family is chosen,
- * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
- * tile currently leads it.
- *
- * At 1280x720 that tile IS on the rail: the rail folds a SUFFIX, the brush group is the SEVENTH
- * of the fifteen, and seven tiles fit at that window, so the Brush is the LAST of them. This
- * helper's `openToolFlyout` therefore reaches the flyout by long-pressing the Brush's own tile
- * rather than through its collapse branch, and the selection is proved on `aria-pressed` of that
- * tile. The fold begins at the Clone Stamp (the eighth), and it is the three-dots tile that
- * stands for a collapsed tool and nothing else.
- *
- * That tile is read as SELECTION STATE, not as an accessible name, and `expectToolSelected` picks
- * the right channel for whichever of the two kinds of tile it is handed. It is the Brush's own
- * tile on this spec's path; the three-dots tile is the helper's other branch, and it deliberately
- * renders NO `aria-pressed` (`SidebarLeft.tsx:635` — a control that opens a menu must
- * not also claim to be a pressed toggle for a tool the user cannot see), so what it does still
- * render for the selected member of the collapsed set is the lit class
- * `TOOL_BUTTON_ACTIVE_CLASS`, painted off the same `group.some(tool => tool.name === toolName)`
- * predicate the attribute used to expose. Its failure message therefore names the tool by slug;
- * `label` remains what the flyout item itself is matched on.
- *
- * `verifyPrimaryTool` cannot answer the same question for a different reason: it asserts a tile's
- * ACCESSIBLE NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name
- * is "More Tools" and never the tool's label. It now says exactly that when a tool has no tile of
- * its own, instead of failing on an empty text content. The eyedropper tests below do NOT share
- * that reason: the eyedropper is the fifth of the fifteen and the fifth of the seven the rail
- * shows at 720, so it has a tile of its own and the helper selects it directly. They confirm the
- * selection through the eyedropper's own options bar all the same, because that is the one
- * element in the document driven by `toolName` itself.
- */
-async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
-  await openToolFlyout(page, from);
-  await selectFromFlyout(page, { toolName, label });
+/** Selects a raster tool regardless of whether its tile is visible or in overflow. */
+async function selectBrushFamilyTool(page: Page, _from: string, toolName: string, _label: string): Promise<void> {
+  // The family members now occupy separate groups. `clickToolButton` handles both a visible tile
+  // and the overflow flyout, while preserving the old call sites' intent without assuming a
+  // particular group owner.
+  await clickToolButton(page, toolName);
   await expectToolSelected(page, toolName);
 }
 

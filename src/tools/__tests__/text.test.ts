@@ -9,6 +9,7 @@ import {
   TRACKING_MAX,
   TRACKING_MIN,
   domOverlayStyle,
+  drawOverflowIndicator,
   fontShorthand,
   getTextLineCount,
   getTextWidth,
@@ -703,7 +704,33 @@ describe('layoutText', () => {
     // about — and it is the collapsible space's behaviour that is the control.
     expect(layoutText(ctx, style, 'ab\u00A0', 2 * CH).overflow).toBe(true);
     expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(false);
-    expect(layoutText(ctx, style, 'ab ', 2 * CH).overflow).toBe(true);
+  });
+
+  it('treats an empty body as one empty line, whatever the wrap width', () => {
+    // `text.split('\n')` on `''` yields `['']` — one line, not zero — and that line measures nothing.
+    // The empty line must never be read as a WIDTH overflow: a box with no usable interior used to raise
+    // Adobe's icon for a body with no ink in it at all.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '', 5 * CH).lines).toEqual(['']);
+    expect(layoutText(ctx, style, '', 5 * CH).overflow).toBe(false);
+    // A zero-height box overflows because the required line step (size * leading + padding) exceeds 0,
+    // even though the empty line carries no ink horizontally.
+    expect(layoutText(ctx, style, '', 5 * CH, 0).overflow).toBe(true);
+    // A box tall enough to hold one line does not overflow an empty body.
+    expect(layoutText(ctx, style, '', 5 * CH, 100).overflow).toBe(false);
+  });
+
+  it('splits a body of only newlines into that many empty lines, never merging them', () => {
+    // Each `\n` is a hard break and the canvas has no hard break of its own: a body of bare newlines
+    // is the degenerate case where a splitter that collapsed them would report one line instead of
+    // three, and a renderer that drew them would ink a single line with spaces where the breaks are.
+    const ctx = makeTextCtx();
+    const style = resolveTextStyle(baseArgs);
+
+    expect(layoutText(ctx, style, '\n\n\n', Infinity).lines).toEqual(['', '', '', '']);
+    expect(layoutText(ctx, style, '\n\n\n', 5 * CH).lines).toEqual(['', '', '', '']);
   });
 });
 
@@ -1617,6 +1644,18 @@ describe('text processor', () => {
     expect((first[0] as unknown as RecordingOffscreenCanvas).ctx.fillText).toHaveBeenCalledTimes(1);
   });
 
+  it('rasterizes with no rect at all, because renderText guards on it and the canvas is still built', () => {
+    // A text layer outlives the drag that made it, and `rect` is optional on the args. The creator
+    // must still allocate and return a canvas — the guard in `renderText` draws nothing, but the
+    // layer has to be constructible from a record that never carried a box.
+    const [result] = text({ size: { width: 200, height: 120 } })({ ...baseArgs, rect: null });
+
+    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+    expect(canvas.width).toBe(200);
+    expect(canvas.ctx.fillText).not.toHaveBeenCalled();
+    expect(result).toBeTruthy();
+  });
+
   it('does not reuse an unrotated raster for a rotated replay', () => {
     const params = { size: { width: 40, height: 20 } };
     const processor = text(params);
@@ -1991,5 +2030,48 @@ describe('PLACEHOLDER_TEXT and domOverlayStyle', () => {
       expect(styledDuringDraw(ctx, 'letterSpacing')).toBe('1.6px');
       expect(styledDuringDraw(ctx, 'fontVariantCaps')).toBe('all-small-caps');
     });
+  });
+});
+
+describe('drawOverflowIndicator', () => {
+  it('strokes at the arithmetic corner of a zero-width box rather than clamping or skipping', () => {
+    // A zero-width box has no bottom-right corner to sit in: the icon still strokes, at coordinates
+    // derived from `x2 - TEXT_PADDING - size`, which is the honest arithmetic rather than a clamp.
+    // What this pins is the bracket: the icon writes `strokeStyle` and `lineWidth`, and both must be
+    // restored to the seed so the shared overlay is not left wearing them.
+    const ctx = makeTextCtx();
+    const zeroRect: RectXYSorted = { x1: 0, y1: 0, x2: 0, y2: 0 };
+
+    drawOverflowIndicator(ctx, zeroRect, '#ff0000');
+
+    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+    expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
+    expect(ctx.lineWidth).toBe(1);
+  });
+
+  it('strokes with an empty colour string, because the colour is assigned unconditionally', () => {
+    // The icon takes whatever colour it is handed — the draft's type colour, always — and assigns it
+    // to `strokeStyle` without a guard. An empty string is a transparent stroke, which is the honest
+    // outcome; a branch that skipped the draw on a falsy colour would be a second place for the
+    // colour to disagree with the ink.
+    const ctx = makeTextCtx();
+
+    drawOverflowIndicator(ctx, rect, '');
+
+    expect(ctx.strokeRect).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the caller stroke state even when the box is degenerate', () => {
+    // The icon's own bracket is the assertion, not a particular coordinate: `strokeStyle` and
+    // `lineWidth` are written only by this function, so a restored seed is that bracket closing.
+    // Without it the stroke colour outlived the call on the shared overlay.
+    const ctx = makeTextCtx();
+    const degenerate: RectXYSorted = { x1: 100, y1: 100, x2: 101, y2: 101 };
+
+    drawOverflowIndicator(ctx, degenerate, '#00ff00');
+
+    expect(ctx.strokeStyle).toBe(SEED_STROKE_STYLE);
+    expect(ctx.lineWidth).toBe(1);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });

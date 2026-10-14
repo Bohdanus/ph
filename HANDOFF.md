@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -686,39 +686,28 @@ one closes its parent exactly as `## 15a.` does.
 ## 78. Three rail defects §74 does not name, and no test can catch any of them
 
 **Validated by an independent audit pass over `toolbar-mapping.ts` against Adobe's own
-documentation, 2026-09-29.** §74 carries the inventory; these are the _mechanical_ consequences,
+documentation, 2026-09-29.** §74 carries the inventory; these are the mechanical consequences,
 and each is a one-line fix.
 
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
-The `draw` entry in `toolbarMap` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
-the Brush's own entry gives. The badge is rendered from the map
-(`SidebarLeft.tsx` — the `<kbd>` badge inside `renderToolGroup()`), so the user is told the Draw Tool
-answers to `B`; and
-`AppKeyboardShortcuts.tsx` — `brushGroup` = `['brush','pencil','color-replacement','eraser']` puts
-`b` on the brush group,
-so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
-is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
+The `draw` entry in `toolbarMap` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same
+letter the Brush entry gives. The badge is rendered from the map, while
+`AppKeyboardShortcuts.tsx` puts `b` on the brush group, so pressing it can never select `draw`.
 
-**2. Three Photoshop groups are collapsed into one flyout, and the evidence for the split is
-Adobe's own shortcut table, not a third-party diagram.** The app has one six-entry flyout —
-Brush, Pencil, Color Replacement, Eraser, Magic Eraser, Paint Bucket. Adobe's table binds
-`B` to Brush, `E` to Eraser and `G` to Paint bucket, with `Shift+G` for "Switch between Paint
-bucket and Gradient tool": distinct letters are how Adobe proves the three groups are three. The
-app's own `G` handler already cycles a Gradient/Paint-Bucket pair, and the Gradient sits in its
-**own single-tool tile** rather than sharing `G` — so the one grouping fact Adobe states outright
-is the one the rail contradicts. This matters independently of §74's unresolved order questions:
-group membership is settled, only position is not.
+**2. Three Photoshop groups are collapsed into one flyout.** The app's six-entry flyout combines
+Brush, Pencil, Color Replacement, Eraser, Magic Eraser and Paint Bucket, while Adobe's shortcut
+table distinguishes the B, E and G groups. The app's G handler already cycles Gradient and Paint
+Bucket, but Gradient remains in its own tile.
 
-**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts` — the
-`it('only declares U as the shape shortcut')` title
-checks the `U` group and nothing else, so a `B`/`B` collision is invisible to the suite. One
-`expect` over the flattened map's `shortcut` values would have found defect 1 on the day it
-shipped. Note the trap it must not fall into: `draw` and `pen` variants legitimately share a
-letter with their group leader, so the assertion is "no letter is claimed by two _different_
-groups", not "no letter repeats".
+**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts` checks the
+shape shortcut group but does not assert that different groups do not claim the same shortcut. The
+future assertion must allow variants that legitimately share a group leader's letter.
 
-**These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
-doing them here would land the deletion without the replacement rail.
+**These are filed, not fixed.** Deleting `draw` and regrouping the flyout are §74's work; doing
+either here would land a deletion without the replacement rail.
+
+**Files.** `toolbar-mapping.ts`, `src/components/SidebarLeft/SidebarLeft.tsx`,
+`src/components/AppKeyboardShortcuts.tsx`, `src/components/SidebarLeft/toolbar-mapping.test.ts`
 
 ## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
 
@@ -1696,47 +1685,6 @@ git remote get-url origin                                       # .../drguz69/li
 **Files.** `scripts/lib/worktree-inventory/git.mjs` — `listWorktrees()`,
 `scripts/worktree-inventory.mjs`,
 `docs/ORCHESTRATION.md` (where the upstream-rewrite rule has to be written)
-
-## 122. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
-
-**Problem.** A selection is a coverage limit on every raster operation. In this app it is a limit on
-none of them. Measured against current `main`:
-
-```
-git show main:src/tools/eraser.ts     | grep -ci selection   # 0
-git show main:src/tools/cloneStamp.ts | grep -ci selection   # 0
-git show main:src/tools/fill.ts       | grep -ci selection   # 0
-git grep -niE "multiplyBySelection|applySelectionMask|selectionAlpha|constrainToSelection" main -- 'src/**'   # 0
-```
-
-There is no shared seam to hang a fix on, and `src/contexts/useLayer.ts`'s commit path never reads
-selection state at all. So selecting a region and painting outside it paints outside it.
-
-**Reproduce.** Make a selection, switch to the Eraser or the Paint Bucket, and stroke well outside
-the selection's bounds. The stroke is not clipped.
-
-**Fix.** Multiply the selection's alpha into the region write, per processor, because each computes
-coverage differently: the eraser has a stroke mask, the flood fills a fill mask, the clone stamp a
-displaced fetch. There is no shared region-write primitive to hang a common helper on, so this is a
-per-processor change and needs its own tests — a "clip the whole result afterwards" approach
-re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
-
-**Replay contract.** Capture the effective selection input with each committed raster operation, or
-undo/redo will read the current selection rather than the one that constrained the original edit.
-`replayHistory()` and durable materialization rerun processors from stored args; clipping only from
-live store state is not replay-safe. Preserve feathered alpha and selection geometry in that
-snapshot, and avoid duplicating a full-document alpha plane per history entry without measuring its
-memory cost.
-
-**Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
-now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
-different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
-`eraseToHistory` plumbing it described no longer exists on main at all, and its blast-radius note is
-addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
-
-**Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
-`src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
-`src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 

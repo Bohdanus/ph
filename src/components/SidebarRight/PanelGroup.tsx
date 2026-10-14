@@ -47,9 +47,9 @@ export interface PanelGroupProps {
   /** Rolled up to the tab bar by a double-click on the header. */
   isRolledUp: boolean;
   onToggleRolledUp: () => void;
-  /** A reorder or re-dock drag is in flight on THIS panel. */
+  /** A reorder drag is in flight on THIS panel. */
   isDragging: boolean;
-  /** Whether this header exposes the optional panel relocation gesture. */
+  /** Whether this header exposes the panel reorder gesture. */
   isDraggable?: boolean;
   /**
    * `flex` shorthand for the group's own box, so the dock can hand out shares of the column

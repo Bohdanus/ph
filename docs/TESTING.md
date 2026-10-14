@@ -169,7 +169,7 @@ Two of the four hooks wrap a `package.json` script — `pre-commit` ends at
 `npm run gate:commit`, and `pre-push` ends at `npm run gate:push` after the stale-branch
 check. The other two run
 `scripts/*.mjs` directly — `pre-merge-commit` at `merge-takeover-guard.mjs`, `post-merge` at
-`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Worktrees and dev servers** is
+`merge-release.mjs` — and [`AGENTS.md`](../AGENTS.md) under **Coordination Rules** is
 where the takeover guard is documented.
 
 The headless E2E gate requires **zero failures**; do not adopt known failures as

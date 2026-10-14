@@ -25,21 +25,20 @@ the desktop tool and panel contract; it must not become a separate phone product
 
 **Current Implementation (as of CANVAS-RESOLUTION-PLAN.md):**
 
-| Area                                                                                        | Status                     | Notes                                                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Paint algorithms** (10 tools)                                                             | ✅ **DPR-proof**           | All geometry paths are DPR-invariant; pointer mapping is exact at any DPR (pinned by test). No `ctx.scale`/`setTransform` in paint paths.                                                     |
-| **Pointer mapping**                                                                         | ✅ **Correct**             | `usePointerPosition` derives scale from layout pixels only; test at `devicePixelRatio = 3` passes.                                                                                            |
-| **Export / persistence / clipboard**                                                        | ✅ **Decoupled & correct** | Export uses detached canvas at document resolution; display canvas scaling no longer affects export.                                                                                          |
-| **Option-bar thumbnails** (Draw, Paint, Shape)                                              | ✅ **Fixed (D2a)**         | Backing store multiplied by `dpr`; `drawImage` at 1:1.                                                                                                                                        |
-| **Overlay chrome** (marching ants, selection anchors)                                       | ✅ **Fixed (D3)**          | All four painters divide CSS px constants by contain-fit scale.                                                                                                                               |
-| **Display surfaces** (workspace canvas, tool overlay, rect overlay, selection ants overlay) | ❌ **1× only (D2c open)**  | Backing stores are document pixels; CSS `object-contain` upscales by `scale × dpr`. Retouching cannot fix this — the resolution simply is not there. See `CANVAS-RESOLUTION-PLAN.md` Phase 4. |
+| Area                                                                                        | Status                     | Notes                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Paint algorithms** (10 tools)                                                             | ✅ **DPR-proof**           | All geometry paths are DPR-invariant; pointer mapping is exact at any DPR (pinned by test). No `ctx.scale`/`setTransform` in paint paths.                      |
+| **Pointer mapping**                                                                         | ✅ **Correct**             | `usePointerPosition` derives scale from layout pixels only; test at `devicePixelRatio = 3` passes.                                                             |
+| **Export / persistence / clipboard**                                                        | ✅ **Decoupled & correct** | Export uses detached canvas at document resolution; display canvas scaling no longer affects export.                                                           |
+| **Option-bar thumbnails** (Draw, Paint, Shape)                                              | ✅ **Fixed (D2a)**         | Backing store multiplied by `dpr`; `drawImage` at 1:1.                                                                                                         |
+| **Overlay chrome** (marching ants, selection anchors)                                       | ✅ **Fixed (D3)**          | All four painters divide CSS px constants by contain-fit scale.                                                                                                |
+| **Display surfaces** (workspace canvas, tool overlay, rect overlay, selection ants overlay) | ✅ **DPR-scaled (D2c)**    | Backing stores scale with the injected device-pixel ratio while drawing and pointer geometry remain in document pixels; export remains at document resolution. |
 
-**Fragile sites for D2c (display resolution increase):**
+**D2c follow-up sites:**
 
 ```
-- EyedropperToolArea.tsx: clips sample window against canvas.width/canvas.height (would sample half-size physical region at 2x)
-- rect.ts / text.ts: text tool measures on overlay context but bakes into layer-sized OffscreenCanvas (diverge at 2x)
-- useRect.ts: clears with document imageSize but clamps with overlay backing store (different units that coincide only at 1x)
+- `useSelectionAnts.ts`: clears the logical document frame rather than the DPR-scaled backing store.
+- New canvas/overlay code must thread the injected ratio and keep geometry in document pixels.
 ```
 
 ## Engineering Rules

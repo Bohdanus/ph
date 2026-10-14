@@ -15,6 +15,7 @@ import {
   REMOVE_ACTION,
   REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -697,6 +698,98 @@ describe('useLayers layer mutation commands', () => {
     });
 
     expect(result.current.store.activeLayerId).toBeNull();
+  });
+
+  it('toggles visibility for an unknown layer without touching the document', () => {
+    const { result } = setup({ layers: { only: makeLayer('only', 0) }, activeLayerId: 'only' });
+
+    act(() => {
+      result.current.layers.toggleVisibility('missing');
+    });
+
+    expect(result.current.store.layers.only!.visible).toBe(true);
+    expect(result.current.store.history).toEqual([]);
+  });
+
+  it('sets opacity to zero and back to one through the opacity action', () => {
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.updateLayer('edited', { opacity: 0 }, SET_LAYER_OPACITY_ACTION);
+    });
+    expect(result.current.store.layers.edited!.opacity).toBe(0);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_OPACITY_ACTION,
+      layerId: 'edited',
+      args: { opacity: 0 },
+    });
+
+    act(() => {
+      result.current.layers.updateLayer('edited', { opacity: 1 }, SET_LAYER_OPACITY_ACTION);
+    });
+    expect(result.current.store.layers.edited!.opacity).toBe(1);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_OPACITY_ACTION,
+      layerId: 'edited',
+      args: { opacity: 1 },
+    });
+  });
+
+  it('applies a blend-mode patch with the opacity action and records the intent', () => {
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.updateLayer('edited', { blendMode: 'multiply' }, SET_LAYER_OPACITY_ACTION);
+    });
+
+    expect(result.current.store.layers.edited!.blendMode).toBe('multiply');
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_OPACITY_ACTION,
+      layerId: 'edited',
+      args: { blendMode: 'multiply' },
+    });
+  });
+
+  it('moves a layer to the bottom when the anchor is null', () => {
+    const { result } = setup({
+      layers: { bottom: makeLayer('bottom', 0), middle: makeLayer('middle', 1), top: makeLayer('top', 2) },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.moveLayerAfter('top', null);
+    });
+
+    const store = result.current.store;
+    const orderOf = (id: string) => store.layers[id]!.order;
+    expect(orderOf('top')).toBe(-1);
+    expect(orderOf('bottom')).toBe(0);
+    expect(orderOf('middle')).toBe(1);
+    expect(store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      layerId: 'top',
+      args: { layerToMoveId: 'top', afterWhichLayerId: null },
+    });
+  });
+
+  it('returns null and leaves the layer untouched when the replacement source cannot be rendered', () => {
+    const source = {
+      kind: 'tool' as const,
+      args: { toolName: 'shape', figure: 'rectangle', color: '#000000' } as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    };
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0, { source }) }, activeLayerId: 'edited' });
+
+    const before = result.current.store.history.length;
+    const replaced = result.current.layers.replaceLayerSource('edited', {
+      kind: 'tool',
+      args: { toolName: 'no-such-tool' } as unknown as ToolArgs,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    });
+
+    expect(replaced).toBeNull();
+    expect(result.current.store.layers.edited!.source).toEqual(source);
+    expect(result.current.store.history).toHaveLength(before);
   });
 });
 

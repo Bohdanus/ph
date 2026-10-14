@@ -9,6 +9,7 @@ export const DragHandleIcon = ({ disabled }: Props) => {
       className="h-4 w-4"
       fill="none"
       aria-hidden="true"
+      data-testid="drag-handle-icon"
       style={{
         cursor: disabled ? 'not-allowed' : 'grab',
         opacity: disabled ? 0.1 : undefined,

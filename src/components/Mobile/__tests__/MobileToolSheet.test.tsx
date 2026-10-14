@@ -113,52 +113,32 @@ describe('MobileToolSheet', () => {
     render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
 
     const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('brush'))!;
-    expect(brushGroup.tools.map((tool) => tool.name)).toEqual([
-      'brush',
-      'pencil',
-      'color-replacement',
-      'spot-healing',
-      'healing-brush',
-      'patch',
-      'eraser',
-      'magic-eraser',
-      'paint-bucket',
-    ]);
+    expect(brushGroup.tools.map((tool) => tool.name)).toEqual(['brush', 'pencil', 'color-replacement']);
 
     for (const tool of brushGroup.tools) {
       expect(screen.getByRole('button', { name: tool.label })).toBeInTheDocument();
     }
 
-    await user.click(screen.getByRole('button', { name: 'Eraser Tool' }));
-    expect(goToToolMock).toHaveBeenCalledWith('eraser');
+    await user.click(screen.getByRole('button', { name: 'Pencil Tool' }));
+    expect(goToToolMock).toHaveBeenCalledWith('pencil');
   });
 
   it('marks only the active member of the group as pressed', () => {
-    // `eraser` is in the Brush group and is not that group's primary, which is the condition
+    // `pencil` is in the Brush group and is not that group's primary, which is the condition
     // the old `levels`-in-the-Colors-tile case set up: pressed must be resolved per member of
     // the group rather than by handing the whole tile to the one active tool.
     //
     // `color`/`levels`/`transform` carry no rail entry any more — they are `Image ▸
     // Adjustments` and `Edit ▸ Transform` commands, so `mobileToolGroups` has no group for
-    // them and the sheet has no picker to mark. The Brush group is a live seven-member group.
-    setTool('eraser');
+    // them and the sheet has no picker to mark. The Brush group is a live three-member group.
+    setTool('pencil');
     render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
 
-    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('eraser'))!;
-    expect(screen.getByRole('button', { name: 'Eraser Tool' })).toHaveAttribute('aria-pressed', 'true');
+    const brushGroup = mobileToolGroups.find((group) => group.matchingTools.includes('pencil'))!;
+    expect(screen.getByRole('button', { name: 'Pencil Tool' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Brush Tool' })).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByRole('button', { name: 'Pencil Tool' })).toHaveAttribute('aria-pressed', 'false');
-    expect(brushGroup.matchingTools).toEqual([
-      'brush',
-      'pencil',
-      'color-replacement',
-      'spot-healing',
-      'healing-brush',
-      'patch',
-      'eraser',
-      'magic-eraser',
-      'paint-bucket',
-    ]);
+    expect(screen.getByRole('button', { name: 'Color Replacement Tool' })).toHaveAttribute('aria-pressed', 'false');
+    expect(brushGroup.matchingTools).toEqual(['brush', 'pencil', 'color-replacement']);
   });
 
   it('keeps the full-width overlay out of hit testing, and the card inside it in', () => {

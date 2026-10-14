@@ -503,22 +503,26 @@ test.describe('Single row and single column marquee', () => {
   });
 
   // Shift+M walks the marquee group in its declared order (`AppKeyboardShortcuts.tsx:40`), and
-  // each step is identified by a control unique to that tool's own options bar — the convention
-  // `keyboard-shortcuts.spec.ts:162` follows, because the tile is group-level and cannot say
-  // which member is up.
+  // The rectangular and elliptical steps are identified by their contextual hints, while the
+  // row and column steps expose distinct options-bar controls. The tile is group-level and cannot
+  // say which member is up.
   test('M selects the rectangular marquee and Shift+M walks the group to the row and column bands', async ({
     page,
   }) => {
     await page.keyboard.press('m');
     await expect(
-      page.getByText('Draw a rectangle and copy selected bitmap area.'),
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.'),
       'M lands on the rectangular marquee'
     ).toBeVisible();
-    await expect(page.getByRole('combobox', { name: 'Style' })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Style' })).toBeVisible();
     await expect(rowBar(page)).toHaveCount(0);
     await expect(columnBar(page)).toHaveCount(0);
 
     await page.keyboard.press('Shift+m');
+    await expect(
+      page.getByText('Drag to draw an ellipse. Hold Shift for a circle, Alt to draw from the centre.'),
+      'rectangular -> elliptical'
+    ).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Style' }), 'rectangular -> elliptical').toBeVisible();
 
     await page.keyboard.press('Shift+m');
@@ -535,7 +539,10 @@ test.describe('Single row and single column marquee', () => {
 
     await page.keyboard.press('Shift+m');
     await expect(columnBar(page), 'the cycle wraps back to the group tile').toHaveCount(0);
-    await expect(page.getByText('Draw a rectangle and copy selected bitmap area.'), 'the cycle wraps').toBeVisible();
+    await expect(
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.'),
+      'the cycle wraps'
+    ).toBeVisible();
   });
 
   test('the marquee flyout lists both 1-pixel tools by label', async ({ page }) => {
