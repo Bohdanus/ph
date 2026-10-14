@@ -242,6 +242,53 @@ describe('hexToRgb', () => {
   });
 });
 
+/** Test-only copy of `clampTextOrigin` (`src/util/rect.ts:112`), which is private. */
+function clampTextOrigin(rect: RectXYSorted, imageSize: Size): RectXYSorted {
+  const sorted = sortRect(rect);
+  const x1 = Math.min(Math.max(0, sorted.x1), imageSize.width);
+  const y1 = Math.min(Math.max(0, sorted.y1), imageSize.height);
+  return { x1, y1, x2: Math.max(x1, sorted.x2), y2: Math.max(y1, sorted.y2) };
+}
+
+describe('clampTextOrigin', () => {
+  const size: Size = { width: 1000, height: 800 };
+
+  it('leaves a rect fully inside the document untouched', () => {
+    const rect: RectXYSorted = { x1: 100, y1: 50, x2: 400, y2: 300 };
+    expect(clampTextOrigin(rect, size)).toEqual(rect);
+  });
+
+  it('clamps an origin that sits outside the document to the boundary', () => {
+    const rect: RectXYSorted = { x1: -50, y1: -30, x2: 400, y2: 300 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 0, y1: 0, x2: 400, y2: 300 });
+  });
+
+  it('clamps an origin past the far edge to the document boundary', () => {
+    const rect: RectXYSorted = { x1: 1200, y1: 900, x2: 1500, y2: 1200 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 1000, y1: 800, x2: 1500, y2: 1200 });
+  });
+
+  it('clamps an origin exactly at the document boundary and leaves the far edge alone', () => {
+    const rect: RectXYSorted = { x1: 1000, y1: 800, x2: 1500, y2: 1200 };
+    expect(clampTextOrigin(rect, size)).toEqual(rect);
+  });
+
+  it('floors the far edge at the clamped origin, so a rect wholly on the negative side does not report a negative extent', () => {
+    const rect: RectXYSorted = { x1: -200, y1: -150, x2: -100, y2: -50 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 0, y1: 0, x2: 0, y2: 0 });
+  });
+
+  it('sorts an inverted input before clamping, so a right-to-left drag keeps a positive extent', () => {
+    const rect: RectXYSorted = { x1: 400, y1: 300, x2: 100, y2: 50 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 100, y1: 50, x2: 400, y2: 300 });
+  });
+
+  it('preserves the far edge beyond the document, which is the point of the clamp', () => {
+    const rect: RectXYSorted = { x1: 950, y1: 100, x2: 1400, y2: 300 };
+    expect(clampTextOrigin(rect, size)).toEqual({ x1: 950, y1: 100, x2: 1400, y2: 300 });
+  });
+});
+
 describe('calculateNewRect', () => {
   const imageSize: Size = { width: 1000, height: 1000 };
   const baseArgs = {
