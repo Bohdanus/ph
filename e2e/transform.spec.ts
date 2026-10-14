@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures/extended-test';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 import {
   drawLine,
   documentToCanvasOffset,
@@ -102,6 +103,7 @@ async function openTransformTool(page: Parameters<typeof clickToolButton>[0]): P
 }
 
 test.describe('Transform tool', () => {
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
   // The canvas is laid out to a fixed aspect ratio and overflows the default 1280x720
   // viewport: the workspace canvas box is 974x840 starting at y=100, so its bottom 220
   // pixels sit below the fold. A bar drawn low on the layer would then be outside every

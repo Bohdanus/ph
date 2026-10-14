@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './fixtures/extended-test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
+import { PAINT_TOOLS_TEST_TIMEOUT_MS, DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 import { toolbarMap, type ToolbarTool } from '../toolbar-mapping.ts';
 
 /**
@@ -373,6 +373,7 @@ test.describe('Toolbar fit', () => {
       const label = `${twoColumns ? 'two' : 'one'}-col H=${height}`;
       test(`both layouts collapse and stay reachable — ${label}`, async ({ page }) => {
         await open(page, height);
+        test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
         if (twoColumns) await prefersTwoColumns(page);
         else {
           const toggle = page.getByTestId('toolbar-layout-toggle');
