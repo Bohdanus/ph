@@ -7,7 +7,15 @@ import type { BitmapSource, Pos } from '../general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 
-const CONTEXT_METHOD_NAMES = ['save', 'restore', 'translate', 'transform', 'clearRect', 'drawImage'] as const;
+const CONTEXT_METHOD_NAMES = [
+  'save',
+  'restore',
+  'translate',
+  'transform',
+  'setTransform',
+  'clearRect',
+  'drawImage',
+] as const;
 
 function createDrawContext(canvas: HTMLCanvasElement | null = null) {
   return {
@@ -16,6 +24,7 @@ function createDrawContext(canvas: HTMLCanvasElement | null = null) {
     restore: vi.fn(),
     translate: vi.fn(),
     transform: vi.fn(),
+    setTransform: vi.fn(),
     clearRect: vi.fn(),
     drawImage: vi.fn(),
     globalAlpha: 1,
@@ -44,7 +53,8 @@ let consoleError = createConsoleErrorSpy();
 
 const getContextImplementation = function (this: HTMLCanvasElement) {
   contextRequests.push(this);
-  if (nullContextCallIndex === contextRequests.length) return null;
+  const shouldReturnNull = nullContextCallIndex === contextRequests.length;
+  if (shouldReturnNull) return null;
   if (contextOverrides.has(this)) return contextOverrides.get(this) as CanvasRenderingContext2D;
   const created = contextFactory ? contextFactory() : createDrawContext(this);
   contextOverrides.set(this, toContext(created));
@@ -454,8 +464,9 @@ describe('drawLayersToCanvas', () => {
     expect(consoleError).not.toHaveBeenCalled();
     expect(target.canvas.width).toBe(300);
     expect(target.canvas.height).toBe(150);
+    // Staging canvas context is requested first and returns null; target is never touched
     expect(contextRequests).toHaveLength(1);
-    expect(contextRequests).not.toContain(target.canvas);
+    expect(contextRequests[0]).not.toBe(target.canvas);
     expectNoContextCalls(target.context);
   });
 

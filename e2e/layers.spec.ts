@@ -418,12 +418,10 @@ test.describe('Layers', () => {
     const rowCount = await rows.count();
     expect(rowCount, 'a stroke plus the bedrock layer').toBe(2);
 
-    // Each row carries three `aria-hidden` SVGs — DragHandleIcon, EyeIcon, and TrashIcon.
-    // Only the DragHandleIcon sits OUTSIDE a button, so count SVGs that have no button ancestor.
+    // Per-layer glyphs are also decorative SVGs, so identify the drag affordance explicitly.
     const handleCount = await rows.evaluateAll((nodes) =>
       nodes.reduce((count, row) => {
-        const svgs = row.querySelectorAll('svg[aria-hidden="true"]');
-        return count + Array.from(svgs).filter((svg) => !svg.closest('button')).length;
+        return count + row.querySelectorAll('[data-testid="drag-handle-icon"]').length;
       }, 0)
     );
     expect(handleCount, 'every row renders exactly one drag handle').toBe(rowCount);

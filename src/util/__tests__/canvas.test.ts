@@ -12,6 +12,20 @@ function createSpyCanvas(width: number, height: number) {
   const size = { width, height };
   const widthWrites: number[] = [];
   const heightWrites: number[] = [];
+  const attributes = new Map<string, string>();
+
+  // Mock transform state
+  let currentTransform = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+  const mockContext = {
+    getTransform: vi.fn(() => currentTransform),
+    setTransform: vi.fn((a, b, c, d, e, f) => {
+      currentTransform = { a, b, c, d, e, f };
+    }),
+    scale: vi.fn((x, y) => {
+      currentTransform = { a: x, b: 0, c: 0, d: y, e: 0, f: 0 };
+    }),
+  };
 
   const canvas = {
     get width() {
@@ -28,9 +42,13 @@ function createSpyCanvas(width: number, height: number) {
       heightWrites.push(value);
       size.height = value;
     },
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    removeAttribute: (name: string) => attributes.delete(name),
+    getContext: vi.fn(() => mockContext),
   } as unknown as HTMLCanvasElement;
 
-  return { canvas, widthWrites, heightWrites };
+  return { canvas, widthWrites, heightWrites, mockContext, getTransform: () => currentTransform };
 }
 
 describe('resizeCanvas', () => {
