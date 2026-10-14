@@ -35,7 +35,8 @@ for the desktop and tablet shell:
 - `HAVE` — The right dock width is adjustable from its canvas-facing edge and is persisted with the
   workspace. Both panels inherit that width.
 - `HAVE` — The Tools rail remains pinned to the left window edge and the History/Layers dock remains
-  pinned to the right window edge. Rail and panel headers do not re-dock, float, or reorder by drag.
+  pinned to the right window edge. Rail and panel headers do not re-dock or float; panel tabs may
+  reorder within the pinned dock by drag.
 - `HAVE` — Layer rows render a thumbnail preview using the same layer presentation renderer as the
   document. History rows remain text-only; history previews are not invented.
 
@@ -103,7 +104,8 @@ version-sensitive if a source disagrees with it.
 ### 2.1 The tab group — Layers, Channels, Paths
 
 - `HAVE` (partially) — Two tabs, `History` and `Layers`, each a `PanelGroup` with its own roll-up
-  and split ratio. Relocation drag is intentionally disabled by the operator requirement.
+  and split ratio. Relocation drag is intentionally disabled by the operator requirement; in-dock
+  tab reordering remains available.
 - `GAP` — **Channels and Paths do not exist.** `PanelId` is the closed union
   `'history' | 'layers'` (`src/contexts/PanelLayout.tsx`). The omission is a recorded decision,
   not an oversight: the same file's `## Deliberately NOT modelled` note on **Panel tab GROUPS**
@@ -926,17 +928,17 @@ A requirement is not done until a test fails without the change. For this panel 
 
 `In a browser?` is a **platform** verdict, not an app-status one — the app status lives in §3 and §9, and several rows below are `yes` there while the feature is `GAP`.
 
-| Photoshop feature           | Browser capability         | In a browser? | App status | Note                                                                                                                                                                                                                                                      |
-| --------------------------- | -------------------------- | ------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Layer panel rows and scroll | yes                        | yes           | `HAVE`     |                                                                                                                                                                                                                                                           |
-| Live thumbnails             | yes                        | yes           | `HAVE`     | `LayerThumbnail` draws the live preview layer through `drawLayerSource`; Panel Options size/None preferences remain a separate gap                                                                                                                        |
-| Drag-to-reorder             | yes                        | yes           | `HAVE`     | Bedrock rows cannot be dragged or reordered; other rows remain reorderable                                                                                                                                                                                |
-| Mask thumbnails             | yes                        | yes           | `GAP`      | Needs a compositing change, not a platform one                                                                                                                                                                                                            |
-| Panel drag / re-dock        | Pointer Events             | yes           | `HAVE`     | `SidebarRight.tsx` — `SidebarRight`, whose `onPanelDragStart()` / `onPanelDrag()` / `onPanelDragEnd()` trio `renderPanel()` passes to `PanelGroup`                                                                                                        |
-| Color labels                | yes                        | yes           | `GAP`      |                                                                                                                                                                                                                                                           |
-| Blend modes                 | `globalCompositeOperation` | **partial**   | `GAP`      | Canvas supports fewer modes than Photoshop's 27; the `04-blend-modes-and-brush-spec.md` row in `docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching" is the catalogue row pointing at the research file that enumerates them |
-| **Video layers**            | **no**                     | **no**        | `OUT`      | A browser canvas has no video layer and no timeline. Record it in `docs/TOOLS-TOO-HARD.md`, do not stub it                                                                                                                                                |
-| **Artboard filtering**      | **no**                     | **no**        | `OUT`      | The app has no artboards, so one of the nine filter kinds has nothing to filter                                                                                                                                                                           |
+| Photoshop feature                | Browser capability         | In a browser? | App status | Note                                                                                                                                                                                                                                                      |
+| -------------------------------- | -------------------------- | ------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Layer panel rows and scroll      | yes                        | yes           | `HAVE`     |                                                                                                                                                                                                                                                           |
+| Live thumbnails                  | yes                        | yes           | `HAVE`     | `LayerThumbnail` draws the live preview layer through `drawLayerSource`; Panel Options size/None preferences remain a separate gap                                                                                                                        |
+| Drag-to-reorder                  | yes                        | yes           | `HAVE`     | Bedrock rows cannot be dragged or reordered; other rows remain reorderable                                                                                                                                                                                |
+| Mask thumbnails                  | yes                        | yes           | `GAP`      | Needs a compositing change, not a platform one                                                                                                                                                                                                            |
+| Panel tab drag (in-dock reorder) | Pointer Events             | yes           | `HAVE`     | `SidebarRight.tsx` — tabs reorder within the pinned dock; relocation/re-docking is retired                                                                                                                                                                |
+| Color labels                     | yes                        | yes           | `GAP`      |                                                                                                                                                                                                                                                           |
+| Blend modes                      | `globalCompositeOperation` | **partial**   | `GAP`      | Canvas supports fewer modes than Photoshop's 27; the `04-blend-modes-and-brush-spec.md` row in `docs/TOOLS-RESEARCH-BRIEF.md` §"What already exists — read before re-researching" is the catalogue row pointing at the research file that enumerates them |
+| **Video layers**                 | **no**                     | **no**        | `OUT`      | A browser canvas has no video layer and no timeline. Record it in `docs/TOOLS-TOO-HARD.md`, do not stub it                                                                                                                                                |
+| **Artboard filtering**           | **no**                     | **no**        | `OUT`      | The app has no artboards, so one of the nine filter kinds has nothing to filter                                                                                                                                                                           |
 
 ---
 
