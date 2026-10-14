@@ -48,6 +48,9 @@ phone-specific interaction models.
 - Never run the malformed `node scripts/worktree-inventory.mjs -- --quiet`; it is rejected. Use
   the documented inventory commands and read their exit status. Repository ownership uses
   `npm run swarm`, not Kilo's session-only `board_read`/`board_post`.
+- `board_post` caps the formatted message at **4096 bytes**; budget about **3800 ASCII** or **1200**
+  multibyte characters. Put longer evidence in a file and reference it from the board. Details live
+  in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
 - Never merge into dirty shared `main`, stage another agent's paths, or use `git stash`. Dispose
   only through `npm run dispose -- <name>` after proving the owner and every descendant subagent
   are dead, checking the live overlay, and previewing `npm run swarm -- doctor --dry-run`.
