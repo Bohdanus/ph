@@ -615,7 +615,15 @@ export function useRect({
 
   function setMouseCursor(edge: string | null, event: PointerEvent<HTMLDivElement>) {
     const eventTarget = event.target as HTMLDivElement;
-    const cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
+    let cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
+
+    if (edge === 'rotate' && rotationEnabled) {
+      const angle = rotationRef.current;
+      const baseSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M24 16a8 8 0 1 1-1.7-5.9"/><path d="M8 16a8 8 0 1 0 1.7 5.9"/><path d="M24 8l4-4-4-4"/><path d="M8 24l-4 4 4 4"/></svg>`;
+      const rotatedSvg = baseSvg.replace('<svg ', `<svg transform="rotate(${angle} 16 16)" `);
+      const encodedSvg = encodeURIComponent(rotatedSvg);
+      cursor = `url("data:image/svg+xml,${encodedSvg}") 16 16, ew-resize`;
+    }
 
     eventTarget.style.cursor = cursor ?? '';
     if (event.currentTarget) event.currentTarget.style.cursor = cursor ?? '';

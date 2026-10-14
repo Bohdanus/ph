@@ -541,7 +541,7 @@ describe('useRect', () => {
           result.current.pointerHandlers.onPointerMove(createPointerEvent({ clientX: 90, clientY: 90, target }))
         ).toBe(true);
       });
-      expect(target.style.cursor).toBe(CURSOR_MAP.rotate);
+      expect(target.style.cursor).toMatch(/url\(.*rotate.*\) 16 16, ew-resize/);
 
       act(() => {
         result.current.pointerHandlers.onPointerDown(
