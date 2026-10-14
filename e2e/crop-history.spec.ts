@@ -873,7 +873,7 @@ test.describe('Crop history', () => {
       const surface = page.locator('.cursor-crop');
       const corner = documentPoint(fit, CROP_LEFT_X - 10, CROP_TOP_Y - 10);
       await page.mouse.move(corner.x, corner.y);
-      await expect(surface, 'the rotation hotspot uses the horizontal arrow cursor').toHaveCSS('cursor', 'ew-resize');
+      await expect(surface, 'the rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
 
       await page.mouse.down();
       const rotatedCorner = documentPoint(fit, CROP_RIGHT_X - 160, CROP_TOP_Y - 180);
