@@ -1,6 +1,6 @@
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Selection } from '../contexts/general-types.ts';
-import { type DocumentFrame, documentToCanvasPoint } from '../contexts/document-frame.ts';
+import { type DocumentFrame, documentFrameSize, documentToCanvasPoint } from '../contexts/document-frame.ts';
 import { getSelectionAbsolutePoints } from '../util/selection.ts';
 import { resetOverlayAlpha } from '../util/canvas.ts';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
@@ -94,7 +94,8 @@ export function useSelectionMarchingAnts({
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const { width, height } = documentFrameSize(documentFrameRef.current);
+    ctx.clearRect(0, 0, width, height);
   }, [overlayRef]);
 
   // Reads the latest shapes and frame through refs rather than closing over them, so that
@@ -131,7 +132,8 @@ export function useSelectionMarchingAnts({
         return;
       }
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const { width, height } = documentFrameSize(documentFrameRef.current);
+      ctx.clearRect(0, 0, width, height);
       const offset = dashOffsetRef.current;
 
       ctx.save();
