@@ -72,6 +72,9 @@ chronological changelog.
 - Duplicate-id handling must distinguish resolver-only skips from omitted edits. Keeping the fold
   advanced preserves legacy suffix derivation, but an enabled omitted operation cannot remain
   `current` merely because the raw converter can continue.
+- Operations without a canonical snapshot no-op proof are conservatively treated as state-changing
+  when duplicated. That may withhold a durable shadow, but it cannot publish a false-current render;
+  add operation-specific proofs before relaxing the gate.
 - Do not implement a full durable authority cutover as a cleanup of legacy code. It is an
   architectural migration requiring independent parity and ownership evidence.
 

@@ -640,6 +640,19 @@ describe('durable entry id uniqueness', () => {
     expect(result.document?.history).toHaveLength(1);
   });
 
+  it('fails closed for repeated raster operations until canonical no-op parity is proven', () => {
+    const registry = new AssetRegistry();
+    const first = blurItem('shared-id');
+    const result = convertSafely([first, { ...first }], registry);
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+  });
+
   it('keeps a duplicate removal current when the repeated removal targets an absent layer', () => {
     const registry = new AssetRegistry();
     const remove = { id: 'shared-id', actionName: REMOVE_ACTION, layerId } satisfies HistoryItem;
