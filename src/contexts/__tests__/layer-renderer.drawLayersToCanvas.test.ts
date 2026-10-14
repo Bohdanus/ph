@@ -739,6 +739,24 @@ describe('drawLayersToCanvas', () => {
     ]);
   });
 
+  it('keeps HiDPI backing dimensions stable across repeated publication', () => {
+    const target = createTargetCanvas();
+    const targetResizes = trackCanvasResizes(target.canvas);
+    const documentFrame = frame(0, 0, 640, 480);
+
+    expect(drawLayersToCanvas(target.canvas, [], documentFrame, undefined, 2)).toBe(true);
+    expect(target.canvas.width).toBe(1280);
+    expect(target.canvas.height).toBe(960);
+    expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe('2');
+    const firstPublicationResizes = [...targetResizes];
+
+    expect(drawLayersToCanvas(target.canvas, [], documentFrame, undefined, 2)).toBe(true);
+    expect(targetResizes).toEqual(firstPublicationResizes);
+    expect(target.canvas.width).toBe(1280);
+    expect(target.canvas.height).toBe(960);
+    expect(target.canvas.getAttribute('data-hidpi-ratio')).toBe('2');
+  });
+
   it('resizes only the staging canvas when composition fails', () => {
     const target = createTargetCanvas();
     const { stagingResizes } = trackStagingCanvasResizes();
