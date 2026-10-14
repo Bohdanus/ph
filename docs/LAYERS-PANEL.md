@@ -35,7 +35,8 @@ for the desktop and tablet shell:
 - `HAVE` — The right dock width is adjustable from its canvas-facing edge and is persisted with the
   workspace. Both panels inherit that width.
 - `HAVE` — The Tools rail remains pinned to the left window edge and the History/Layers dock remains
-  pinned to the right window edge. Rail and panel headers do not re-dock, float, or reorder by drag.
+  pinned to the right window edge. Rail and panel headers do not re-dock or float; panel tabs may
+  reorder within the pinned dock by drag.
 - `HAVE` — Layer rows render a thumbnail preview using the same layer presentation renderer as the
   document. History rows remain text-only; history previews are not invented.
 
@@ -103,7 +104,8 @@ version-sensitive if a source disagrees with it.
 ### 2.1 The tab group — Layers, Channels, Paths
 
 - `HAVE` (partially) — Two tabs, `History` and `Layers`, each a `PanelGroup` with its own roll-up
-  and split ratio. Relocation drag is intentionally disabled by the operator requirement.
+  and split ratio. Relocation drag is intentionally disabled by the operator requirement; in-dock
+  tab reordering remains available.
 - `GAP` — **Channels and Paths do not exist.** `PanelId` is the closed union
   `'history' | 'layers'` (`src/contexts/PanelLayout.tsx`). The omission is a recorded decision,
   not an oversight: the same file's `## Deliberately NOT modelled` note on **Panel tab GROUPS**

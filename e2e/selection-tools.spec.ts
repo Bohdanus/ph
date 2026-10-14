@@ -838,12 +838,16 @@ test.describe('Elliptical marquee', () => {
   test('an elliptical marquee is reachable with the M shortcut', async ({ page }) => {
     // M is the marquee TILE, not the elliptical member of it: the tile's primary tool is the
     // rectangular marquee, and Shift+M cycles within the group. Reaching the elliptical tool
-    // therefore needs both keys, and asserting the elliptical bar is what proves the cycle
-    // advanced rather than merely re-selecting the primary.
+    // therefore needs both keys; the distinct contextual hint proves the cycle advanced.
     await page.keyboard.press('m');
-    await expect(page.getByText('Draw a rectangle and copy selected bitmap area.')).toBeVisible();
-    await expect(marqueeBar(page)).toHaveCount(0);
+    await expect(
+      page.getByText('Drag to draw a rectangle. Hold Shift for a square, Alt to draw from the centre.')
+    ).toBeVisible();
+    await expect(marqueeBar(page)).toBeVisible();
     await page.keyboard.press('Shift+m');
+    await expect(
+      page.getByText('Drag to draw an ellipse. Hold Shift for a circle, Alt to draw from the centre.')
+    ).toBeVisible();
     await expect(marqueeBar(page)).toBeVisible();
   });
 
