@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../..');
-const DOCUMENTS = ['AGENTS.md', 'docs/ORCHESTRATION.md'];
+const DOCUMENTS = ['AGENTS.md', 'docs/ORCHESTRATION.md', 'docs/TESTING.md'];
 
 function referencedNpmScripts() {
   const references = new Map();
