@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { isEqual } from 'lodash-es';
 
 import type { DocumentFrame } from './document-frame.ts';
 import { documentFrameFromSize, isValidDocumentFrame } from './document-frame.ts';
@@ -647,8 +648,57 @@ function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagn
 }
 
 export function isEntryEnabled(item: HistoryItem): boolean {
-  const nested = item.args as { enabled?: unknown } | undefined;
-  return !item.disabled && nested?.enabled !== false;
+  // `HistoryItem.disabled` is the only legacy replay gate. An `enabled` field
+  // nested in action args belongs to that action's payload and must not make
+  // the durable fold skip an entry that replayHistory will apply.
+  return !item.disabled;
+}
+
+function duplicateChangesLegacyState(
+  operation: DurableOperation,
+  layersBefore: ReadonlyMap<LayerId, DurableLayerSnapshot>,
+  frameBefore: DocumentFrame,
+  selectionsBefore: SelectionSnapshot
+): boolean {
+  switch (operation.kind) {
+    case 'set-layer-properties': {
+      const layer = layersBefore.get(operation.layerId);
+      if (!layer) return false;
+      const before = layer as unknown as Record<string, unknown>;
+      return Object.entries(operation.patch).some(([key, value]) => !isEqual(before[key], value));
+    }
+    case 'remove-layer':
+      return layersBefore.has(operation.layerId);
+    case 'reposition-layer': {
+      const layer = layersBefore.get(operation.layerId);
+      if (!layer) return false;
+      if (operation.move && (layer.pos.x !== operation.move.x || layer.pos.y !== operation.move.y)) {
+        return true;
+      }
+      if (operation.resize && !isEqual(layer.pos, operation.resize)) {
+        return true;
+      }
+      return false;
+    }
+    case 'reorder-layers':
+      return Object.entries(operation.orderByLayerId).some(
+        ([layerId, order]) => layersBefore.get(layerId)?.order !== order
+      );
+    case 'set-document-frame':
+      return !isEqual(frameBefore, operation.next);
+    case 'set-selection':
+      return !isEqual(selectionsBefore, operation.after);
+    case 'replace-layer-source': {
+      const layer = layersBefore.get(operation.layerId);
+      if (!layer) return false;
+      return !isEqual(layer.source, operation.source) || !isEqual(layer.pos, operation.pos);
+    }
+    default:
+      // Creation, merge, raster, filter, and affine operations are retained
+      // operations even when their arguments happen to repeat; they change the
+      // durable operation stream and cannot be proven no-op from the snapshot.
+      return true;
+  }
 }
 
 export function operationForTool(
@@ -804,10 +854,10 @@ export function legacyHistoryToDurable(
   // would disable a different edit in each model. Skipping the repeat keeps them
   // aligned. Replay is not part of this: `replayDurableDocument` addresses
   // history by ARRAY INDEX (`durable-replay.ts:56-59`), so no replay is misresolved
-  // either way — the alignment of the two id resolvers is the whole reason this
-  // is a warning. An error diagnostic would withhold the shadow outright
-  // (`convertLegacyHistorySafely` voids on the first one), which is not a price
-  // worth paying for a timeline that still replays correctly.
+  // either way. Disabled repeats are resolver-only warnings because legacy replay
+  // skips them. An enabled repeat is different: legacy applies an edit that the
+  // durable history cannot publish, so the safe wrapper must withhold the exact
+  // projection rather than call it current.
   //
   // Only ids that actually reached `entries` are recorded, except for the
   // document-source baseline. That source is not a durable entry, but its id is
@@ -818,13 +868,31 @@ export function legacyHistoryToDurable(
   const publishedEntryIds = new Set<string>(baselineEntryId ? [baselineEntryId] : []);
 
   for (const item of legacyHistory) {
+    const enabled = isEntryEnabled(item);
+    const layersBefore = new Map(currentLayers);
+    const frameBefore = { ...currentFrame };
+    const selectionsBefore = currentSelections;
     if (item !== first && item.documentSource && publishedEntryIds.has(item.id)) {
+      diagnostics.push({
+        historyId: item.id,
+        actionName: item.actionName,
+        // A disabled duplicate is a parity-preserving resolver warning. An
+        // enabled duplicate represents a legacy edit that the durable history
+        // cannot publish, so the safe boundary must fail closed as partial.
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`,
+      });
+      legacyCursorToDurableCursor.push(entries.length - 1);
+      continue;
+    }
+    if (!enabled && publishedEntryIds.has(item.id)) {
       diagnostics.push({
         historyId: item.id,
         actionName: item.actionName,
         severity: 'warning',
         code: 'invalid-history-entry',
-        message: `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`,
+        message: `History entry ${item.id} (${item.actionName}) repeats an id already published as a durable entry, but legacy replay skips this disabled entry. It was not published again so legacy and durable id resolvers continue to target the first occurrence.`,
       });
       legacyCursorToDurableCursor.push(entries.length - 1);
       continue;
@@ -855,7 +923,6 @@ export function legacyHistoryToDurable(
       continue;
     }
     let operation: DurableOperation | null = null;
-    const enabled = isEntryEnabled(item);
     try {
       const source = item.layerSource ?? asLegacyLayerSource(item.args);
       if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
@@ -1086,12 +1153,18 @@ export function legacyHistoryToDurable(
         // `set-selection` applies `after` only — so this is a latent hazard for
         // the day something does, not a live wrong answer.
         //
-        // Only the publication is withheld. The cursor map below records the
-        // preceding durable index, the same handling a dropped rename gets.
+        // Disabled repeats preserve parity because legacy replay skips them.
+        // Enabled repeats are partial only when the operation changes the
+        // legacy snapshot. Proven idempotent or absent-layer no-ops remain
+        // warning-only. The cursor map below remains useful to the raw
+        // converter but is removed by convertLegacyHistorySafely for errors.
         diagnostics.push({
           historyId: item.id,
           actionName: item.actionName,
-          severity: 'warning',
+          severity:
+            enabled && operation && duplicateChangesLegacyState(operation, layersBefore, frameBefore, selectionsBefore)
+              ? 'error'
+              : 'warning',
           code: 'invalid-history-entry',
           message: isBaselineId
             ? `History entry ${item.id} (${item.actionName}) reuses the id of the baseline document-source entry, so it was not published as a durable entry. The baseline is not itself in durable history, but its id is already meaningful to the legacy timeline and must remain unique.`
@@ -1126,6 +1199,9 @@ export function convertLegacyHistorySafely(
   history: readonly HistoryItem[] | DurableDocument,
   options: LegacyConversionOptions = {}
 ): DurableConversionAttempt {
+  if (Array.isArray(history) && options.documentId === undefined) {
+    throw new Error('convertLegacyHistorySafely: documentId is required when converting a legacy history array');
+  }
   const registry = options.registry ?? getAssetRegistry();
   const isDurableDocument = (h: readonly HistoryItem[] | DurableDocument): h is DurableDocument =>
     !Array.isArray(h) && 'documentId' in h;

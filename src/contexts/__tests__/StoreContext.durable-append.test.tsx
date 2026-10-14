@@ -494,7 +494,7 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
     expect(store().durableDiagnostics).toEqual([warning]);
   });
 
-  it('voids the durable projection when the boundary reports an error', () => {
+  it('marks the durable projection partial when the boundary reports a conversion error', () => {
     const { store, dispatch } = openDocument();
     const error: MigrationDiagnostic = {
       severity: 'error',
@@ -504,7 +504,7 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
 
     commitCrop(dispatch(), crop(), null, [error]);
 
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
     expect(store().durableDocument).toBeNull();
     expect(store().durableDiagnostics).toContainEqual(error);
   });

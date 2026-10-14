@@ -533,9 +533,21 @@ function appendBoundaryDiagnostics(
   // Boundary errors describe an append that the durable side cannot trust. A
   // warning is deliberately retained without changing a current document into
   // an unavailable one; severity is part of the diagnostic contract.
-  return diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-    ? { ...merged, document: null, status: 'unavailable' }
-    : normalizeDurableProjection(merged);
+  const hasError = diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+  if (!hasError) return normalizeDurableProjection(merged);
+
+  // Entry-level conversion failures describe an inexact history projection and
+  // use the diagnostic-only partial state. Append-contract mismatches and
+  // thrown conversion failures are stronger boundary/infrastructure failures
+  // and remain unavailable. Both paths withhold the document.
+  const hasInfrastructureFailure = diagnostics.some(
+    (diagnostic) => diagnostic.code === 'conversion-failed' || diagnostic.code === 'durable-append-mismatch'
+  );
+  return {
+    ...merged,
+    document: null,
+    status: hasInfrastructureFailure ? 'unavailable' : 'partial',
+  };
 }
 
 function projectionMatchesPresentation(

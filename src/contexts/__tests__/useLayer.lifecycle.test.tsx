@@ -825,10 +825,9 @@ describe('useLayers applyDocumentCrop', () => {
         nextFrame: { x: 100, y: 50, width: 800, height: 600 },
       },
     });
-    // This harness intentionally starts with no legacy timeline. The append is
-    // still published through the legacy authority, while the durable shadow
-    // reports the undefined cursor mapping instead of claiming parity.
-    expect(store.durableStatus).toBe('unavailable');
+    // An empty legacy timeline has a valid append cursor at zero, so the first
+    // crop can publish a current durable projection without a baseline row.
+    expect(store.durableStatus).toBe('current');
   });
 
   it('refuses a crop that trims to nothing and records no history', () => {

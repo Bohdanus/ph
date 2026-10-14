@@ -142,7 +142,7 @@ describe('StoreContext durable conversion boundary', () => {
 
     expect(threw).toBe(false);
     const after = getProbe().store;
-    // The failed conversion explicitly marks the durable state unavailable
+    // The failed conversion explicitly marks the durable state partial
     // rather than silently presenting a partially converted document as current.
     expect(after.durableDocument).toBeNull();
     expect(after.durableStatus).toBe('partial');
@@ -154,6 +154,35 @@ describe('StoreContext durable conversion boundary', () => {
       code: 'unsupported-history-feature',
     });
     expect(after.durableDiagnostics[0]?.message).toMatch(/pen/);
+  });
+
+  it('marks an enabled duplicate-id edit partial instead of publishing a false-current shadow', () => {
+    const { getProbe, dispatch } = renderWithProbe();
+
+    act(() => {
+      withSilencedConsole(() => {
+        dispatch()({
+          type: 'REPLACE_DOCUMENT',
+          payload: {
+            documentId: 'doc-duplicate',
+            updates: {},
+            history: [
+              baselineItem(),
+              toolItem('shared-id', 'blur', { radius: 4 }),
+              toolItem('shared-id', 'color', { grayscale: 0.5 }),
+              toolItem('after-duplicate', 'color', { grayscale: 0.25 }),
+            ],
+          },
+        });
+      });
+    });
+
+    const store = getProbe().store;
+    expect(store.durableStatus).toBe('partial');
+    expect(store.durableDocument).toBeNull();
+    expect(store.durableDiagnostics).toEqual([
+      expect.objectContaining({ historyId: 'shared-id', severity: 'error', code: 'invalid-history-entry' }),
+    ]);
   });
 
   it('recovers durable conversion via a subsequent valid document replacement', () => {

@@ -17,6 +17,15 @@ chronological changelog.
   or `unavailable` into `stale`.
 - `layer transparency` remains a legacy diagnostic label but is no longer a legal `ActionType`:
   there is no writer, durable translator, or replay arm for it.
+- A duplicate history id is classified against legacy replay: state-changing enabled duplicates
+  produce an error diagnostic and `partial` status, while idempotent/absent-layer duplicates and
+  disabled duplicates remain warning-only because they do not change the legacy snapshot.
+- `convertLegacyHistorySafely()` requires `documentId` for legacy arrays so successful asset
+  conversions cannot create an unreachable random registry owner; durable-document pass-through
+  still derives its identity from the document.
+- Empty legacy timelines accept append cursor `0`; the append validator rejects only negative,
+  non-integer, or out-of-range positions. The first crop/edit can therefore produce a `current`
+  durable document without an opening baseline row.
 - Legacy `HistoryItem[]` remains logical authority. Durable navigation is a staged presentation
   projection with legacy fallback, not a completed undo/redo authority cutover.
 
@@ -36,6 +45,9 @@ chronological changelog.
    timeline. The selection undo tests are load-bearing tripwires.
 6. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
    accept `partial`; keep the exhaustive status record test when adding states.
+7. **Navigation atomicity.** `resetHistoryTo()` still advances logical history before staged
+   presentation acceptance. A failed late draw can leave a cursor/frame that the user did not see;
+   add an acceptance boundary before making durable replay logical authority.
 
 ## Recommended Sequence
 
@@ -57,6 +69,9 @@ chronological changelog.
   map is safer than claiming a partial timeline is exact.
 - A type union change requires tracing reducers, export/navigation gates, diagnostics UI, fixtures,
   and exhaustive tests. The `partial` addition touched all of those surfaces.
+- Duplicate-id handling must distinguish resolver-only skips from omitted edits. Keeping the fold
+  advanced preserves legacy suffix derivation, but an enabled omitted operation cannot remain
+  `current` merely because the raw converter can continue.
 - Do not implement a full durable authority cutover as a cleanup of legacy code. It is an
   architectural migration requiring independent parity and ownership evidence.
 

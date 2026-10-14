@@ -991,7 +991,7 @@ describe('decideDurableAppend', () => {
 
       const converted = legacyHistoryToDurable(duplicateNext.entries, { documentId: 'doc-1', registry });
       expect(converted.diagnostics).toContainEqual(
-        expect.objectContaining({ historyId: 'duplicate-id', severity: 'warning' })
+        expect.objectContaining({ historyId: 'duplicate-id', severity: 'error' })
       );
       expect(converted.document.history.map((entry) => entry.id)).toEqual(['duplicate-id']);
       const toggled = toggleDurableEntry(converted.document, 'duplicate-id');

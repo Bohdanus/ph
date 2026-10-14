@@ -1062,7 +1062,7 @@ describe('disabled durable baseline reporting', () => {
     registry.shutdown();
   });
 
-  it('counts a nested args.enabled false as a disabled opening entry, which legacy replay still applies', () => {
+  it('ignores nested args.enabled false because legacy replay gates only on item.disabled', () => {
     const registry = new AssetRegistry();
     const nested: HistoryItem = {
       id: 'nested-row',
@@ -1079,27 +1079,9 @@ describe('disabled durable baseline reporting', () => {
     const converted = legacyHistoryToDurable([nested], { documentId: 'test-doc', registry });
     const legacy = replayHistory([nested], 0, initialSize, unreachableToolDependencies);
 
-    // The second half of `isEntryEnabled` (`history-adapter.ts:433-436`): a
-    // disabled entry is `item.disabled` OR a nested `args.enabled === false`.
-    expect(converted.diagnostics).toHaveLength(1);
-    expect(converted.diagnostics[0]).toMatchObject({
-      historyId: 'nested-row',
-      severity: 'warning',
-      code: 'invalid-history-entry',
-    });
-    expect(converted.diagnostics[0]?.message).toContain('nested-row');
-    // `isEntryEnabled` treats a nested `args.enabled === false` as disabled, and
-    // the baseline is gated on exactly that predicate — so the durable baseline is
-    // empty here.
-    //
-    // KNOWN OVER-BREADTH, pinned as-is rather than endorsed: `replayHistory` gates
-    // on `item.disabled` ALONE (`history-replay.ts:74`), so it APPLIES this
-    // document source and the legacy timeline describes a full document. The two
-    // models therefore DISAGREE on this row, and the warning is what names it.
-    // Whether the guard should be scoped to `item.disabled` is left open; what the
-    // code does today is pinned.
+    expect(converted.diagnostics).toEqual([]);
     expect(Object.keys(legacy.layers)).toEqual(['layer-1']);
-    expect(Object.keys(replayDurableDocument(converted.document).layers)).toEqual([]);
+    expect(Object.keys(replayDurableDocument(converted.document).layers)).toEqual(['layer-1']);
     expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
     registry.shutdown();
   });

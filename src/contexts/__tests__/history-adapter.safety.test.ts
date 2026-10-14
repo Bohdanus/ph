@@ -251,6 +251,17 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
 });
 
 describe('convertLegacyHistorySafely boundary (P0.1)', () => {
+  it('requires a document id before converting a legacy history array', () => {
+    const registry = new AssetRegistry();
+    const beginTransaction = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+
+    expect(() => convertLegacyHistorySafely(baselineHistory(), { registry })).toThrow(
+      'documentId is required when converting a legacy history array'
+    );
+    expect(beginTransaction).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
   it('returns partial status with a diagnostic and null document for an unsupported tool entry', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
