@@ -67,6 +67,11 @@ chronological changelog.
 - `npm run tsc` passing.
 - `npm run build` passing.
 - Independent read-only reviews found no blocking issues.
+- Full `npm run test` reached 8,993 passing tests with one unrelated pre-existing
+  `scripts/__tests__/worktree-inventory.test.mjs` transcript-count failure.
+- Full headless E2E reached 489 passing, 11 failing, and 2 skipped. The three crop-history
+  undo failures reproduce on committed `main`; the other eight failures are unrelated UI/tool
+  failures. Do not attribute these baseline failures to this migration branch.
 
-The branch is intentionally uncommitted until `main` is merged into it and the post-merge gates
-are rerun. Shared `main` must only receive the reviewed branch after that step.
+The implementation commits are ready to land after `main` is merged into this branch and the
+post-merge gates are rerun. Shared `main` must only receive the reviewed branch after that step.
