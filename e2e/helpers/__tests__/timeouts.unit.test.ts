@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { DEFAULT_TEST_TIMEOUT_MS, PAINT_TOOLS_TEST_TIMEOUT_MS } from '../timeouts';
+import { DEFAULT_TEST_TIMEOUT_MS, PAINT_TOOLS_TEST_TIMEOUT_MS, SEARCH_TEST_TIMEOUT_MS } from '../timeouts';
 
 const E2E_DIR = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -153,6 +153,7 @@ describe('per-test timeouts are named, not inlined', () => {
     // most-used names resolve to the values the suite was passing inline before.
     expect(DEFAULT_TEST_TIMEOUT_MS).toBe(60_000);
     expect(PAINT_TOOLS_TEST_TIMEOUT_MS).toBe(120_000);
+    expect(SEARCH_TEST_TIMEOUT_MS).toBe(180_000);
   });
 });
 

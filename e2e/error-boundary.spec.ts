@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures/extended-test';
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * `src/components/Common/ErrorBoundary.tsx` in a browser, which is the only environment where
@@ -109,6 +110,7 @@ const throwOnToolOverlayTwoDimensionalContext = () => {
 };
 
 test.describe('ErrorBoundary: a throw from the canvas region', () => {
+  test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
   test('publishes nothing at all while the canvas region is healthy', async ({ page }) => {
     // The negative case first, and it is not a formality. Every assertion below is about markup
     // that appears only after a catch, and markup that appears only after a catch is trivially
