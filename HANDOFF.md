@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1696,47 +1696,6 @@ git remote get-url origin                                       # .../drguz69/li
 **Files.** `scripts/lib/worktree-inventory/git.mjs` — `listWorktrees()`,
 `scripts/worktree-inventory.mjs`,
 `docs/ORCHESTRATION.md` (where the upstream-rewrite rule has to be written)
-
-## 122. No pixel tool honours an active selection — the eraser, the magic eraser, the paint bucket and the clone stamp all ignore it
-
-**Problem.** A selection is a coverage limit on every raster operation. In this app it is a limit on
-none of them. Measured against current `main`:
-
-```
-git show main:src/tools/eraser.ts     | grep -ci selection   # 0
-git show main:src/tools/cloneStamp.ts | grep -ci selection   # 0
-git show main:src/tools/fill.ts       | grep -ci selection   # 0
-git grep -niE "multiplyBySelection|applySelectionMask|selectionAlpha|constrainToSelection" main -- 'src/**'   # 0
-```
-
-There is no shared seam to hang a fix on, and `src/contexts/useLayer.ts`'s commit path never reads
-selection state at all. So selecting a region and painting outside it paints outside it.
-
-**Reproduce.** Make a selection, switch to the Eraser or the Paint Bucket, and stroke well outside
-the selection's bounds. The stroke is not clipped.
-
-**Fix.** Multiply the selection's alpha into the region write, per processor, because each computes
-coverage differently: the eraser has a stroke mask, the flood fills a fill mask, the clone stamp a
-displaced fetch. There is no shared region-write primitive to hang a common helper on, so this is a
-per-processor change and needs its own tests — a "clip the whole result afterwards" approach
-re-reads and re-writes the bounding box on every stroke and is what makes this expensive.
-
-**Replay contract.** Capture the effective selection input with each committed raster operation, or
-undo/redo will read the current selection rather than the one that constrained the original edit.
-`replayHistory()` and durable materialization rerun processors from stored args; clipping only from
-live store state is not replay-safe. Preserve feathered alpha and selection geometry in that
-snapshot, and avoid duplicating a full-document alpha plane per history entry without measuring its
-memory cost.
-
-**Where this came from.** The abandoned branch `ps-pixel-tools` (worktree `ps-pixel-tools`, 12k lines,
-now harvested) filed it as handoff items 34/35 of a different numbering. Its code is superseded by a
-different architecture, so this is a rebuild, not a merge. Two of that branch's items are dead: the
-`eraseToHistory` plumbing it described no longer exists on main at all, and its blast-radius note is
-addressed (`useLayer.ts` now wraps the processor in a `try`/`catch` that logs and returns).
-
-**Files.** `src/tools/eraser.ts`, `src/tools/cloneStamp.ts`, `src/tools/fill.ts`,
-`src/contexts/useLayer.ts` (the commit path), `src/contexts/tool-types.ts`,
-`src/contexts/history-replay.ts`, `src/contexts/history-adapter.ts`
 
 ## 123. Most pointer moves of a stroke still re-rasterize the stroke's whole bounding box
 
