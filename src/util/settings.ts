@@ -59,10 +59,11 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings.eraser = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
     // Same reasoning, and `pos` is the per-gesture geometry the `draw` and `crop` arms also drop:
-    // persisting it would restore the last click's position into the next fill. It is the only
-    // omission key left because `FillToolArgs` no longer declares a `size` for the arm to drop.
+    // persisting it would restore the last click's position into the next fill. `selection` goes
+    // the same way — it is the snapshot of the active selection at click time, not a setting, and
+    // restoring it would arm the next fill with a selection the user may have cleared or moved.
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
-      omit(args as unknown as FillToolArgs, 'pos')
+      omit(args as unknown as FillToolArgs, 'pos', 'selection')
     ) as ToolArgs;
   } else if (toolName === 'color-replacement') {
     // A typed arm, NOT the bare-`{ toolName }` group below. That group discarded every setting

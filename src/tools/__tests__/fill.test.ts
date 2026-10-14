@@ -322,3 +322,191 @@ describe('fill registry delegation', () => {
     expect(rgbAt(0, 0, 2)).toBe(0);
   });
 });
+
+/**
+ * The selection snapshot carried by the committed args, clipped to the fill region.
+ *
+ * The processor allocates three OffscreenCanvases in order: the output canvas, the source
+ * readback canvas, and the selection-mask canvas inside `createSelectionAlphaMask`. The mock
+ * global in `beforeEach` gives every one a real context whose drawing calls are no-ops, so
+ * the mask canvas would rasterize from its initial source pixels instead of the polygon.
+ * The spy below returns `null` for the third allocation onward, forcing `rasterizePolygonMask`
+ * through its CPU `isPointInPolygon` fallback — the same trick the eraser brush test uses.
+ */
+describe('fill with selection snapshot', () => {
+  const withCpuSelectionMask = (): (() => void) => {
+    const originalGetContext = RecordingOffscreenCanvas.prototype.getContext;
+    const spy = vi.spyOn(RecordingOffscreenCanvas.prototype, 'getContext').mockImplementation(function (
+      this: RecordingOffscreenCanvas
+    ) {
+      if (RecordingOffscreenCanvas.instances.length > 2) return null as unknown as MockCtx;
+      return originalGetContext.call(this);
+    });
+    return () => spy.mockRestore();
+  };
+
+  /**
+   * A 2×1 strip covering only the top row (y = 0) of the 4×4 grid. The flood fill from
+   * (0,0) at tolerance 0 reaches (0,0), (1,0) and (0,1) — the L's three connected pixels.
+   * With this selection, (0,0) and (1,0) are inside and (0,1) is clipped.
+   */
+  const topRowSelection = (
+    overrides: Partial<NonNullable<FillToolArgs['selection']>> = {}
+  ): NonNullable<FillToolArgs['selection']> => ({
+    points: [
+      { x: 0, y: 0 },
+      { x: 2, y: 0 },
+      { x: 2, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    featherRadius: 0,
+    antiAlias: false,
+    ...overrides,
+  });
+
+  describe('paint bucket', () => {
+    it('clips pixels outside the selection snapshot to the untouched source', () => {
+      const restore = withCpuSelectionMask();
+      try {
+        run('paint-bucket', {
+          color: '#0000FF',
+          tolerance: 0,
+          alpha: 1,
+          selection: topRowSelection(),
+        });
+
+        // (0,0) and (1,0) are inside the selection → filled blue.
+        expect(rgbAt(0, 0, 2)).toBe(255);
+        expect(rgbAt(0, 0, 0)).toBe(0);
+        expect(rgbAt(1, 0, 2)).toBe(255);
+        expect(rgbAt(1, 0, 0)).toBe(0);
+        // (0,1) is in the flood-fill region but outside the selection → untouched, stays red.
+        expect(rgbAt(0, 1, 2)).toBe(0);
+        expect(rgbAt(0, 1, 0)).toBe(255);
+      } finally {
+        restore();
+      }
+    });
+
+    it('preserves fractional selection edge alpha so opacity composes with coverage', () => {
+      const restore = withCpuSelectionMask();
+      try {
+        run('paint-bucket', {
+          color: '#0000FF',
+          tolerance: 0,
+          alpha: 1,
+          selection: topRowSelection({ featherRadius: 2, antiAlias: true }),
+        });
+
+        // Feathered over 2px: the covered row sits one step inside the edge, so the chamfer
+        // distance gives it ~84% coverage (215/255). The clipped row is one step outside,
+        // getting ~16% coverage (40/255). Coverage × alpha × fill composites accordingly.
+        //
+        // 215/255 ≈ 0.8431 → blendPixel writes R = 255 × (1 − 0.8431) ≈ 40, B = 255 × 0.8431 ≈ 215.
+        // 40/255 ≈ 0.1569 → R = 255 × (1 − 0.1569) ≈ 215, B = 255 × 0.1569 ≈ 40.
+        expect(rgbAt(0, 0, 2)).toBeCloseTo(215, 0);
+        expect(rgbAt(0, 0, 0)).toBeCloseTo(40, 0);
+        expect(rgbAt(0, 1, 2)).toBeCloseTo(40, 0);
+        expect(rgbAt(0, 1, 0)).toBeCloseTo(215, 0);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe('magic eraser', () => {
+    it('clips pixels outside the selection snapshot to the untouched source', () => {
+      const restore = withCpuSelectionMask();
+      try {
+        run('magic-eraser', {
+          tolerance: 0,
+          alpha: 1,
+          selection: topRowSelection(),
+        });
+
+        // (0,0) and (1,0) are inside → fully erased. (0,1) is clipped → stays opaque.
+        expect(alphaAt(0, 0)).toBe(0);
+        expect(alphaAt(1, 0)).toBe(0);
+        expect(alphaAt(0, 1)).toBe(255);
+      } finally {
+        restore();
+      }
+    });
+
+    it('preserves fractional selection edge alpha so opacity composes with coverage', () => {
+      const restore = withCpuSelectionMask();
+      try {
+        run('magic-eraser', {
+          tolerance: 0,
+          alpha: 1,
+          selection: topRowSelection({ featherRadius: 2, antiAlias: true }),
+        });
+
+        // ~84% erased → alpha ≈ 255 × (1 − 0.8431) ≈ 40.
+        // ~16% erased → alpha ≈ 255 × (1 − 0.1569) ≈ 215.
+        expect(alphaAt(0, 0)).toBeCloseTo(40, 0);
+        expect(alphaAt(0, 1)).toBeCloseTo(215, 0);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe('no-selection compatibility', () => {
+    it('is byte-for-byte identical whether the selection field is absent or undefined', () => {
+      // The `coverage = 1` fast path must produce the exact same bytes as the pre-selection code.
+      run('paint-bucket', { color: '#0000FF', tolerance: 0, alpha: 1 });
+      const withoutSelection = writtenPixels().slice();
+
+      RecordingOffscreenCanvas.written = [];
+      run('paint-bucket', { color: '#0000FF', tolerance: 0, alpha: 1, selection: undefined });
+      const withUndefinedSelection = writtenPixels().slice();
+
+      expect(withUndefinedSelection).toEqual(withoutSelection);
+    });
+
+    it('leaves the magic eraser unchanged when no selection snapshot is present', () => {
+      run('magic-eraser', { tolerance: 0, alpha: 1 });
+      const withoutSelection = writtenPixels().slice();
+
+      RecordingOffscreenCanvas.written = [];
+      run('magic-eraser', { tolerance: 0, alpha: 1, selection: undefined });
+      const withUndefinedSelection = writtenPixels().slice();
+
+      expect(withUndefinedSelection).toEqual(withoutSelection);
+    });
+  });
+
+  describe('replay args', () => {
+    it('survives a JSON round-trip and clips identically on replay', () => {
+      const restore = withCpuSelectionMask();
+      try {
+        const args = fillArgs('paint-bucket', {
+          color: '#0000FF',
+          tolerance: 0,
+          alpha: 1,
+          selection: topRowSelection(),
+        }) as unknown as FillToolArgs;
+
+        // Simulate the durable history path: args are frozen and JSON-serialised.
+        const replayed = JSON.parse(JSON.stringify(args)) as unknown as FillToolArgs;
+        expect(replayed.selection).toBeDefined();
+        expect(replayed.selection!.points).toEqual(args.selection!.points);
+        expect(replayed.selection!.featherRadius).toBe(args.selection!.featherRadius);
+        expect(replayed.selection!.antiAlias).toBe(args.selection!.antiAlias);
+
+        const params = { size: SIZE, bitmap: createMockImageBitmap(SIZE.width, SIZE.height) };
+        RecordingOffscreenCanvas.instances = [];
+        RecordingOffscreenCanvas.written = [];
+        paintBucket(params as never)(replayed as unknown as ToolArgs);
+
+        // The replayed selection clips (0,1) the same way the live commit did.
+        expect(rgbAt(0, 0, 2)).toBe(255); // inside → blue
+        expect(rgbAt(0, 1, 2)).toBe(0); // clipped → stays red
+        expect(rgbAt(0, 1, 0)).toBe(255);
+      } finally {
+        restore();
+      }
+    });
+  });
+});

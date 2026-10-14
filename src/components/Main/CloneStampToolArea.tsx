@@ -10,6 +10,7 @@ import { canvasToDocumentPoint, documentFrameFromSize, documentToCanvasPoint } f
 import type { DocumentFrame } from '../../contexts/document-frame.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../tools/cloneStamp.ts';
+import { getActiveSelection, getSelectionAbsolutePoints } from '../../util/selection.ts';
 
 type cloneStampToolAreaProps = {
   className?: string;
@@ -190,7 +191,9 @@ const drawCloneSourceMarker = (
  * which is why the two live in different code paths and cannot be confused.
  */
 export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolAreaProps) => {
-  const [{ containerRef, activeLayerId, layers, totalSize, documentFrame: currentFrame }] = useStore();
+  const [
+    { containerRef, activeLayerId, layers, totalSize, documentFrame: currentFrame, selections, activeSelectionId },
+  ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { tempUpdateLayer, updateLayerByTool } = useLayers();
   const { toolArgs, patchToolArgs } = useCurrentTool();
@@ -218,6 +221,14 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
    */
   const altHoverCanvasRef = useRef<Point | null>(null);
   const markerFrameRef = useRef<number | null>(null);
+  const selectionSnapshotRef = useRef<
+    | {
+        points: Point[];
+        featherRadius: number;
+        antiAlias: boolean;
+      }
+    | undefined
+  >(undefined);
   const [isAltDown, setIsAltDown] = useState(false);
 
   useEffect(() => {
@@ -312,12 +323,30 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
       ...args,
       source: documentPointToLayerLocal(source, origin),
       points: documentPointsToLayerLocal(points, origin),
+      ...(selectionSnapshotRef.current
+        ? {
+            selection: {
+              ...selectionSnapshotRef.current,
+              points: documentPointsToLayerLocal(selectionSnapshotRef.current.points, origin),
+            },
+          }
+        : {}),
     };
   };
 
   const { onPointerDown, onPointerMove, onPointerUp, onPointerLeave } = usePaintStroke(
     { imageSize: totalSize, containerRef, enabled: isEnabled },
     {
+      onStart: () => {
+        const activeSelection = getActiveSelection(selections ?? [], activeSelectionId ?? null);
+        selectionSnapshotRef.current = activeSelection
+          ? {
+              points: getSelectionAbsolutePoints(activeSelection),
+              featherRadius: activeSelection.metadata?.featherRadius ?? 0,
+              antiAlias: activeSelection.metadata?.magneticLasso?.antiAlias ?? true,
+            }
+          : undefined;
+      },
       onMove: (points) => {
         if (!activeLayerId) return;
         const layerArgs = buildLayerArgs(points);
@@ -333,9 +362,14 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
         const layerArgs = buildLayerArgs(points);
         if (!layerArgs) return;
 
+        selectionSnapshotRef.current = undefined;
+
         // A fresh copy from the hook, so the history item this reaches does not alias a ref
         // the hook is about to reset.
         await updateLayerByTool({ id: activeLayerId, toolArgs: layerArgs });
+      },
+      onCancel: () => {
+        selectionSnapshotRef.current = undefined;
       },
     }
   );
@@ -375,6 +409,7 @@ export const CloneStampToolArea = ({ className, overlayCtxRef }: cloneStampToolA
     altHoverCanvasRef.current = null;
     if (isAltDown) requestMarkerRedraw();
     onPointerLeave(event);
+    selectionSnapshotRef.current = undefined;
   };
 
   return (

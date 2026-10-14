@@ -726,89 +726,6 @@ Sources:
 
 ---
 
-### Spot Healing Brush Tool
-
-`spot-healing`
-
-Repairs small marks by blending nearby texture into a soft brush stroke.
-
-Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.
-
-**Options bar**
-
-| Control   | Photoshop                                                                                                                                              | In this app                                                              |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Size      | Tip diameter in pixels.                                                                                                                                | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
-| Hardness  | Controls the falloff at the tip edge.                                                                                                                  | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
-| Opacity   | Per-dab healing strength from 0 to 100 percent.                                                                                                        | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
-| Type      | Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented. | `missing`                                                                |
-| Sample    | Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.                                 | `missing`                                                                |
-| Diffusion | Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.                                                        | `missing`                                                                |
-
-**Shortcuts**
-
-- `J` — Selects the healing-tool flyout family.
-
-**In this app:** `partial` — The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.
-
-Implementation:
-
-- `src/tools/spotHealing.ts:1`
-- `src/components/Main/SpotHealingToolArea.tsx:1`
-- `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1`
-
-Sources:
-
-- <https://www.adobe.com/products/photoshop/spot-heal.html>
-- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
-- <https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
-
----
-
-### Healing Brush Tool
-
-`healing-brush`
-
-Blends sampled texture into a brush stroke while preserving destination lighting and tone.
-
-Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.
-
-**Options bar**
-
-| Control   | Photoshop                                                                      | In this app                                                                |
-| --------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| Size      | Tip diameter in pixels.                                                        | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
-| Hardness  | Controls the falloff at the tip edge.                                          | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
-| Opacity   | Per-dab healing strength from 0 to 100 percent.                                | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
-| Aligned   | Keeps the sampled offset continuous across the stroke or resets it per stroke. | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
-| Source    | Sampled source via Alt/Option-click; Pattern is deferred.                      | `partial` — `src/components/Main/HealingBrushToolArea.tsx:1`               |
-| Sample    | Current & Below and All Layers are deferred; the MVP edits the active layer.   | `missing`                                                                  |
-| Diffusion | Adobe’s 1–7 diffusion control is deferred.                                     | `missing`                                                                  |
-
-**Modifiers**
-
-- **Alt/Option-click** — Sets the sampled source point without creating history.
-
-**Shortcuts**
-
-- `J` — Selects the healing-tool family; this app selects Healing Brush directly.
-
-**In this app:** `partial` — Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.
-
-Implementation:
-
-- `src/tools/healingBrush.ts:1`
-- `src/components/Main/HealingBrushToolArea.tsx:1`
-- `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1`
-
-Sources:
-
-- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
-- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
-- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
-
----
-
 ### Eraser Tool
 
 `eraser` · **E**
@@ -923,6 +840,89 @@ Sources:
 - <https://www.photoshopforphotographers.com/CC_2013/Help_guide/tp/Magic_eraser.html>
 - <https://www.teachucomp.com/the-magic-eraser-tool-in-photoshop-elements-instructions/>
 - <https://community.adobe.com/questions-712/why-does-the-magic-eraser-tool-delete-everything-1055165>
+
+---
+
+### Spot Healing Brush Tool
+
+`spot-healing`
+
+Repairs small marks by blending nearby texture into a soft brush stroke.
+
+Photoshop’s Spot Healing Brush repairs a spot or short stroke without an explicit source point. This implementation provides a deterministic Proximity Match approximation: each dab samples an outward ring from the active layer and blends it through the brush tip. Content-Aware and Create Texture synthesis are intentionally deferred because Adobe does not publish a deterministic algorithm for them.
+
+**Options bar**
+
+| Control   | Photoshop                                                                                                                                              | In this app                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Size      | Tip diameter in pixels.                                                                                                                                | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Hardness  | Controls the falloff at the tip edge.                                                                                                                  | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Opacity   | Per-dab healing strength from 0 to 100 percent.                                                                                                        | `present` — `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1` |
+| Type      | Content-Aware, Proximity Match and Create Texture are documented Photoshop modes; only the deterministic Proximity Match approximation is implemented. | `missing`                                                                |
+| Sample    | Sample All Layers is required for non-destructive healing on a new layer; the current MVP edits the active layer only.                                 | `missing`                                                                |
+| Diffusion | Adobe’s 1–5 diffusion control is not exposed; tip hardness supplies the available edge falloff.                                                        | `missing`                                                                |
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool flyout family.
+
+**In this app:** `partial` — The stroke is one replayable raster history action and uses the active layer’s presented raster. The processor is deterministic and does not claim Photoshop Content-Aware fidelity.
+
+Implementation:
+
+- `src/tools/spotHealing.ts:1`
+- `src/components/Main/SpotHealingToolArea.tsx:1`
+- `src/components/ToolbarsRight/SpotHealing/SpotHealing.tsx:1`
+
+Sources:
+
+- <https://www.adobe.com/products/photoshop/spot-heal.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/ca/photoshop/desktop/repair-retouch/clean-restore-images/healing-brush-tool.html>
+
+---
+
+### Healing Brush Tool
+
+`healing-brush`
+
+Blends sampled texture into a brush stroke while preserving destination lighting and tone.
+
+Photoshop’s Healing Brush uses an Alt/Option-clicked source and blends its texture into the target. This deterministic MVP supports sampled source pixels, aligned or non-aligned offsets, size, hardness, opacity and one replayable active-layer stroke. Pattern, Sample Layers, Diffusion, pressure and blend-mode controls remain deferred.
+
+**Options bar**
+
+| Control   | Photoshop                                                                      | In this app                                                                |
+| --------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Size      | Tip diameter in pixels.                                                        | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Hardness  | Controls the falloff at the tip edge.                                          | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Opacity   | Per-dab healing strength from 0 to 100 percent.                                | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Aligned   | Keeps the sampled offset continuous across the stroke or resets it per stroke. | `present` — `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1` |
+| Source    | Sampled source via Alt/Option-click; Pattern is deferred.                      | `partial` — `src/components/Main/HealingBrushToolArea.tsx:1`               |
+| Sample    | Current & Below and All Layers are deferred; the MVP edits the active layer.   | `missing`                                                                  |
+| Diffusion | Adobe’s 1–7 diffusion control is deferred.                                     | `missing`                                                                  |
+
+**Modifiers**
+
+- **Alt/Option-click** — Sets the sampled source point without creating history.
+
+**Shortcuts**
+
+- `J` — Selects the healing-tool family; this app selects Healing Brush directly.
+
+**In this app:** `partial` — Healing uses source texture with a destination-luminance correction, not Adobe’s private Poisson or Content-Aware implementation. It is deterministic and replayable through the raster processor path.
+
+Implementation:
+
+- `src/tools/healingBrush.ts:1`
+- `src/components/Main/HealingBrushToolArea.tsx:1`
+- `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx:1`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/healing-brush-tool.html>
+- <https://helpx.adobe.com/photoshop/using/healing-examples.html>
+- <https://helpx.adobe.com/photoshop/using/nondestructive-editing.html>
 
 ---
 
@@ -1091,6 +1091,71 @@ Sources:
 
 Long-form research, provenance and unverified claims: [`src/tools/descriptions/focus.notes.md`](../src/tools/descriptions/focus.notes.md).
 
+### Gradient Tool
+
+`gradient`
+
+Fills a selection or layer with a gradient you define by dragging: the click sets the first colour stop, the release the second.
+
+The Gradient tool fills the current layer, or the selection when there is one, with a smooth blend between two or more colours. Where you click is where the first stop sits and where you release is where the second sits, so the drag sets the length and the angle of the gradient at once, and the gradient clamps to its ends beyond the drag rather than fading to transparent - which is why a short drag fills everything. The bar runs from a tool-preset picker, past the Tool Mode dropdown, to the gradient swatch and then through the five gradient types, the Dither and Reverse checkboxes and a Method dropdown, and every one of those controls belongs to the tool itself rather than to a brush. A blend Mode, an Opacity and a Transparency checkbox are also part of the Gradient tool, but only on the older destructive Classic gradient: on the live tool they are layer properties in the Layers panel instead. From 24.5 the bar also offers that Tool Mode dropdown, which picks between the two, and the live gradient can be corrected after the fact by dragging its handles on the canvas.
+
+**Options bar**
+
+| Control                    | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | In this app                                                          |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Tool Preset Picker         | The button at the left end of the bar, before everything else, which opens the drop-down of saved tool presets for the Gradient tool. Photoshop ships one - a "Circular Rainbow" - and it is the control every tool carries for recalling a saved bar configuration, so it is the bar's first stop rather than a Gradient-specific setting.                                                                                                                                                                                                                                                                                                                                                                                       | `missing`                                                            |
+| Tool Mode                  | The dropdown immediately to the right of the Tool Preset picker, picking between "Gradient" and "Classic gradient". It exists only in 24.5 and later, and it is not cosmetic: the choice changes which options follow it, since Mode, Opacity and Transparency belong to the Classic one alone. The classic tool is destructive and must be reapplied after Dither or Reverse changes; the live one writes an editable gradient adjustment layer instead.                                                                                                                                                                                                                                                                         | `missing`                                                            |
+| Gradient preset picker     | The gradient swatch just to the right of the Tool Mode dropdown. Clicking it opens the Gradient Editor, where the stops, their locations, their colours, their opacity stops and their midpoints are edited and the preset saved; its dropdown arrow opens the presets library instead. It is two controls in one swatch, and the two do different things. On the live tool the Gradient Editor cannot be opened this way at all - the swatch is read-only there, and a live gradient is edited from its adjustment layer instead.                                                                                                                                                                                                | `missing`                                                            |
+| Gradient Type              | Five buttons: Linear, a straight ramp from the start point to the end point; Radial, a circle from the start point at its centre to the end point at its outer edge; Angle, a sweep in the direction the drag points; Reflected, a linear ramp mirrored about the start point; and Diamond, a rhombus radiating from it. Linear is the default, and Angle, Reflected and Diamond are the three most often left off a smaller implementation.                                                                                                                                                                                                                                                                                      | `partial` — `src/components/ToolbarsRight/Gradient/Gradient.tsx:13`  |
+| Mode                       | The blend mode the gradient is composited with, Normal by default, which is how a gradient is used to tint or to knock back whatever is beneath it rather than to replace it. It is a control of the Classic gradient only: on the live (default) Gradient tool there is no Mode in the bar at all, because the gradient is written as an adjustment layer and the blend mode is a property of that layer in the Layers panel instead.                                                                                                                                                                                                                                                                                            | `missing`                                                            |
+| Opacity                    | The opacity of the whole gradient, 0-100% and 100% by default. It scales the fill and is not a third stop: the gradient keeps its own alpha ramp, and this multiplies it. It is a control of the Classic gradient only - the teachucomp walkthrough is explicit that the Mode and Opacity drop-downs "do not appear in the Options bar Control panel if using the new Gradient Tool, as it applies its gradient adjustment in a separate adjustment layer", and on the live tool opacity is the adjustment layer's own property. So this row describes a control that is not on the 27.x bar for the default tool, and the app's status is partial because it renders a slider in a place Photoshop has moved the setting out of. | `partial` — `src/components/ToolbarsRight/Gradient/Gradient.tsx:129` |
+| Dither                     | It adds noise at the boundaries of each colour in the interpolation so transitions appear smoother, which is what stops an 8-bit ramp from showing visible banding. On a live gradient the setting is live, so ticking it updates the existing gradient immediately; on the Classic tool it has to be reapplied. No Adobe page states a default for it, and a third-party walkthrough is the only one that calls it one, describing Dither-on and Perceptual as "both the default settings".                                                                                                                                                                                                                                      | `missing`                                                            |
+| Transparency               | Enables the gradient pattern transparency. It is not available on the new Gradient tool at all - the checkbox belongs to the Classic gradient only - and with it off the opacity stops in the gradient are ignored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `missing`                                                            |
+| Reverse                    | Swaps the gradient ends, so the colour that was at the first stop moves to the second. As with Dither it is live on a live gradient and requires reapplying the gradient on the Classic tool, and as with Dither no page I opened states a default for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missing`                                                            |
+| Method                     | The interpolation method: Perceptual, which is the default and interpolates in the OKLab colour space so the ramp looks natural to the eye; Linear, which interpolates in linear colour space; and Classic, the interpolation Photoshop used for decades, kept for backwards compatibility. Perceptual became the default in 23.0, so gradients made in 22.x or earlier render differently in 23.0 and later unless this is set back to Classic.                                                                                                                                                                                                                                                                                  | `missing`                                                            |
+| On-canvas gradient handles | Not an options-bar control but the tool defining editing surface, and the load-bearing one. After the drag, two round handles mark the gradient ends and a small diamond between them sets the midpoint, all draggable straight on the canvas. Dragging a handle re-aims the gradient and changes its length; dragging the line itself - avoiding the dots and the diamond - moves the whole gradient rather than one end of it, and no modifier is involved. Photoshop added these on-canvas controls together with an automatic live preview in 24.5.                                                                                                                                                                           | `missing`                                                            |
+
+**Modifiers**
+
+- **Shift** — Constrains the drag to multiples of 45 degrees, so a linear gradient lands on a square angle.
+
+**Shortcuts**
+
+- `G` — Reaches the Gradient tool, but only on the second press: a plain G selects the Paint Bucket, and it is Shift+G that cycles the pair. The Gradient tile declares no shortcut letter of its own, while the Paint Bucket's declares G.
+- `Delete` — Removes the stop under the pointer from the on-canvas gradient line.
+
+**In this app:** `partial` — The fill itself is right: the drag sets both endpoints, the projection clamps to the ends rather than fading to transparent, and a linear ramp puts the exact mean of the two stops at the midpoint of the axis. Everything around it is thinner than the bar. The bar has four controls where Photoshop's bar has eleven, and it does not even start where Photoshop's does: the Tool Preset picker is the control at the left end of the Photoshop bar and this bar opens with `Type` instead, so there is no saved-preset recall at all. Gradient Type offers only Linear and Radial - Angle, Reflected and Diamond have no representation in a fixed from/to pair. The Radial is also a different fill: the app's holds its end colour past the circle through the second stop, and no page I opened states that Photoshop mirrors there, so that difference is recorded as a structural consequence of the fixed `from`/`to` args rather than as a Photoshop behaviour. Dither, Reverse and the Method dropdown are all missing, and Method is the most consequential omission of the three: the app interpolates the two stops as plain per-channel RGB, which is closest to the Classic behaviour that Photoshop stopped defaulting to in 23.0, so every gradient this editor paints is one Method dropdown away from a different ramp. The Tool Mode dropdown is missing too, so there is no live/classic choice at all - the app is permanently the destructive one, and even a Dither checkbox would have had to be reapplied by hand. Transparency is absent, which happens to match the modern tool rather than the Classic one, but for the wrong reason: there is no alpha ramp at all. The Opacity slider is the one control the app carries that Photoshop has taken off the live tool's bar entirely - on the Classic gradient it is a bar dropdown, and on the live one it is the adjustment layer's own property in the Layers panel - so the app shows a control Photoshop moved, which is why that row is `partial` and not `present`. The preset picker and the Gradient Editor are gone, so there are no multi-stop gradients, no per-stop opacity or position, no midpoints, and no gradient styles. The two stops are two colour inputs in the bar rather than a picker, and they are the tool's only gradient state - there is no Foreground-to-Background preset and nothing to reset to. The load-bearing gap is the on-canvas handles: the tool area accepts the overlay context and never draws to it, and from/to are written only by the drag, so once the fill is committed its geometry cannot be changed at all without painting a second gradient over it. Photoshop's live-preview gradient, added in 24.5, is not a refinement of that - it is the difference between a fill and an editable object. Nothing is bound to Shift, so a drag is never constrained to a square angle. The two preset keys are bound nowhere in the app at all: `,` and `.` are on no keyboard handler, and `[` and `]` are registered but as the shared tip-size nudge, which is gated to the tools that carry a tip-size field and the Gradient is not one of them, so both are dead while this tool is active. The only `Delete` bindings belong to the two lasso tool areas, so no key removes a gradient stop. The bar's four controls are not the ones Photoshop sequences, so a user arriving from Photoshop finds neither the Order nor the Method. The verdict is `partial` and not `placeholder` because the fill does reach the document as a real raster with a real history entry; what it commits is not what Photoshop's tool commits, which is a narrower gradient with no editable object left behind.
+
+Implementation:
+
+- `src/components/ToolbarsRight/Gradient/Gradient.tsx:13`
+- `src/components/ToolbarsRight/Gradient/Gradient.tsx:116`
+- `src/components/ToolbarsRight/Gradient/Gradient.tsx:129`
+- `src/components/ToolbarsRight/Gradient/Gradient.tsx:146`
+- `src/tools/gradient.ts:132`
+- `src/tools/settings.ts:243`
+- `src/components/Main/GradientToolArea.tsx:40`
+- `src/components/Main/GradientToolArea.tsx:95`
+- `src/tools/toolProcessors.ts:221`
+
+Sources:
+
+- <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/apply-gradient-fill.html>
+- <https://helpx.adobe.com/photoshop/using/tool-techniques/gradient-tool.html>
+- <https://www.teachucomp.com/how-to-use-the-gradient-tool-in-photoshop-instructions/>
+- <https://www.teachucomp.com/how-to-edit-a-gradient-adjustment-in-photoshop-instructions/>
+- <https://taylorhieber.co/how-to-use-the-improved-gradient-interpolations-in-adobe-photoshop/>
+- <https://www.adobe.com/learn/photoshop/web/blend-two-images-gradient>
+- <https://community.adobe.com/announcements-710/photoshop-24-5-is-now-available-1154445>
+- <https://www.photoshopessentials.com/photo-effects/fade-an-image-to-color-in-photoshop-faster-with-live-gradients/>
+- <https://www.photoshopessentials.com/photo-effects/add-a-vignette-to-a-photo-with-photoshops-live-gradients/>
+- <https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>
+- <https://luminousworks.substack.com/p/grokking-gradients>
+- <https://glensmith.co.uk/photoshop/gradient-tool>
+- <https://digital-photography-school.com/photoshop-gradient-tool/>
+
+---
+
 ### Blur Tool
 
 `blur`
@@ -1237,71 +1302,6 @@ Sources:
 - <https://flylib.com/books/en/2.816.1.11/1/>
 - <https://flylib.com/books/en/2.816.1.14/1/>
 - <https://helpx.adobe.com/si/photoshop-elements/using/painting-overview.html>
-
----
-
-### Gradient Tool
-
-`gradient`
-
-Fills a selection or layer with a gradient you define by dragging: the click sets the first colour stop, the release the second.
-
-The Gradient tool fills the current layer, or the selection when there is one, with a smooth blend between two or more colours. Where you click is where the first stop sits and where you release is where the second sits, so the drag sets the length and the angle of the gradient at once, and the gradient clamps to its ends beyond the drag rather than fading to transparent - which is why a short drag fills everything. The bar runs from a tool-preset picker, past the Tool Mode dropdown, to the gradient swatch and then through the five gradient types, the Dither and Reverse checkboxes and a Method dropdown, and every one of those controls belongs to the tool itself rather than to a brush. A blend Mode, an Opacity and a Transparency checkbox are also part of the Gradient tool, but only on the older destructive Classic gradient: on the live tool they are layer properties in the Layers panel instead. From 24.5 the bar also offers that Tool Mode dropdown, which picks between the two, and the live gradient can be corrected after the fact by dragging its handles on the canvas.
-
-**Options bar**
-
-| Control                    | Photoshop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | In this app                                                          |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Tool Preset Picker         | The button at the left end of the bar, before everything else, which opens the drop-down of saved tool presets for the Gradient tool. Photoshop ships one - a "Circular Rainbow" - and it is the control every tool carries for recalling a saved bar configuration, so it is the bar's first stop rather than a Gradient-specific setting.                                                                                                                                                                                                                                                                                                                                                                                       | `missing`                                                            |
-| Tool Mode                  | The dropdown immediately to the right of the Tool Preset picker, picking between "Gradient" and "Classic gradient". It exists only in 24.5 and later, and it is not cosmetic: the choice changes which options follow it, since Mode, Opacity and Transparency belong to the Classic one alone. The classic tool is destructive and must be reapplied after Dither or Reverse changes; the live one writes an editable gradient adjustment layer instead.                                                                                                                                                                                                                                                                         | `missing`                                                            |
-| Gradient preset picker     | The gradient swatch just to the right of the Tool Mode dropdown. Clicking it opens the Gradient Editor, where the stops, their locations, their colours, their opacity stops and their midpoints are edited and the preset saved; its dropdown arrow opens the presets library instead. It is two controls in one swatch, and the two do different things. On the live tool the Gradient Editor cannot be opened this way at all - the swatch is read-only there, and a live gradient is edited from its adjustment layer instead.                                                                                                                                                                                                | `missing`                                                            |
-| Gradient Type              | Five buttons: Linear, a straight ramp from the start point to the end point; Radial, a circle from the start point at its centre to the end point at its outer edge; Angle, a sweep in the direction the drag points; Reflected, a linear ramp mirrored about the start point; and Diamond, a rhombus radiating from it. Linear is the default, and Angle, Reflected and Diamond are the three most often left off a smaller implementation.                                                                                                                                                                                                                                                                                      | `partial` — `src/components/ToolbarsRight/Gradient/Gradient.tsx:13`  |
-| Mode                       | The blend mode the gradient is composited with, Normal by default, which is how a gradient is used to tint or to knock back whatever is beneath it rather than to replace it. It is a control of the Classic gradient only: on the live (default) Gradient tool there is no Mode in the bar at all, because the gradient is written as an adjustment layer and the blend mode is a property of that layer in the Layers panel instead.                                                                                                                                                                                                                                                                                            | `missing`                                                            |
-| Opacity                    | The opacity of the whole gradient, 0-100% and 100% by default. It scales the fill and is not a third stop: the gradient keeps its own alpha ramp, and this multiplies it. It is a control of the Classic gradient only - the teachucomp walkthrough is explicit that the Mode and Opacity drop-downs "do not appear in the Options bar Control panel if using the new Gradient Tool, as it applies its gradient adjustment in a separate adjustment layer", and on the live tool opacity is the adjustment layer's own property. So this row describes a control that is not on the 27.x bar for the default tool, and the app's status is partial because it renders a slider in a place Photoshop has moved the setting out of. | `partial` — `src/components/ToolbarsRight/Gradient/Gradient.tsx:129` |
-| Dither                     | It adds noise at the boundaries of each colour in the interpolation so transitions appear smoother, which is what stops an 8-bit ramp from showing visible banding. On a live gradient the setting is live, so ticking it updates the existing gradient immediately; on the Classic tool it has to be reapplied. No Adobe page states a default for it, and a third-party walkthrough is the only one that calls it one, describing Dither-on and Perceptual as "both the default settings".                                                                                                                                                                                                                                      | `missing`                                                            |
-| Transparency               | Enables the gradient pattern transparency. It is not available on the new Gradient tool at all - the checkbox belongs to the Classic gradient only - and with it off the opacity stops in the gradient are ignored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `missing`                                                            |
-| Reverse                    | Swaps the gradient ends, so the colour that was at the first stop moves to the second. As with Dither it is live on a live gradient and requires reapplying the gradient on the Classic tool, and as with Dither no page I opened states a default for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missing`                                                            |
-| Method                     | The interpolation method: Perceptual, which is the default and interpolates in the OKLab colour space so the ramp looks natural to the eye; Linear, which interpolates in linear colour space; and Classic, the interpolation Photoshop used for decades, kept for backwards compatibility. Perceptual became the default in 23.0, so gradients made in 22.x or earlier render differently in 23.0 and later unless this is set back to Classic.                                                                                                                                                                                                                                                                                  | `missing`                                                            |
-| On-canvas gradient handles | Not an options-bar control but the tool defining editing surface, and the load-bearing one. After the drag, two round handles mark the gradient ends and a small diamond between them sets the midpoint, all draggable straight on the canvas. Dragging a handle re-aims the gradient and changes its length; dragging the line itself - avoiding the dots and the diamond - moves the whole gradient rather than one end of it, and no modifier is involved. Photoshop added these on-canvas controls together with an automatic live preview in 24.5.                                                                                                                                                                           | `missing`                                                            |
-
-**Modifiers**
-
-- **Shift** — Constrains the drag to multiples of 45 degrees, so a linear gradient lands on a square angle.
-
-**Shortcuts**
-
-- `G` — Reaches the Gradient tool, but only on the second press: a plain G selects the Paint Bucket, and it is Shift+G that cycles the pair. The Gradient tile declares no shortcut letter of its own, while the Paint Bucket's declares G.
-- `Delete` — Removes the stop under the pointer from the on-canvas gradient line.
-
-**In this app:** `partial` — The fill itself is right: the drag sets both endpoints, the projection clamps to the ends rather than fading to transparent, and a linear ramp puts the exact mean of the two stops at the midpoint of the axis. Everything around it is thinner than the bar. The bar has four controls where Photoshop's bar has eleven, and it does not even start where Photoshop's does: the Tool Preset picker is the control at the left end of the Photoshop bar and this bar opens with `Type` instead, so there is no saved-preset recall at all. Gradient Type offers only Linear and Radial - Angle, Reflected and Diamond have no representation in a fixed from/to pair. The Radial is also a different fill: the app's holds its end colour past the circle through the second stop, and no page I opened states that Photoshop mirrors there, so that difference is recorded as a structural consequence of the fixed `from`/`to` args rather than as a Photoshop behaviour. Dither, Reverse and the Method dropdown are all missing, and Method is the most consequential omission of the three: the app interpolates the two stops as plain per-channel RGB, which is closest to the Classic behaviour that Photoshop stopped defaulting to in 23.0, so every gradient this editor paints is one Method dropdown away from a different ramp. The Tool Mode dropdown is missing too, so there is no live/classic choice at all - the app is permanently the destructive one, and even a Dither checkbox would have had to be reapplied by hand. Transparency is absent, which happens to match the modern tool rather than the Classic one, but for the wrong reason: there is no alpha ramp at all. The Opacity slider is the one control the app carries that Photoshop has taken off the live tool's bar entirely - on the Classic gradient it is a bar dropdown, and on the live one it is the adjustment layer's own property in the Layers panel - so the app shows a control Photoshop moved, which is why that row is `partial` and not `present`. The preset picker and the Gradient Editor are gone, so there are no multi-stop gradients, no per-stop opacity or position, no midpoints, and no gradient styles. The two stops are two colour inputs in the bar rather than a picker, and they are the tool's only gradient state - there is no Foreground-to-Background preset and nothing to reset to. The load-bearing gap is the on-canvas handles: the tool area accepts the overlay context and never draws to it, and from/to are written only by the drag, so once the fill is committed its geometry cannot be changed at all without painting a second gradient over it. Photoshop's live-preview gradient, added in 24.5, is not a refinement of that - it is the difference between a fill and an editable object. Nothing is bound to Shift, so a drag is never constrained to a square angle. The two preset keys are bound nowhere in the app at all: `,` and `.` are on no keyboard handler, and `[` and `]` are registered but as the shared tip-size nudge, which is gated to the tools that carry a tip-size field and the Gradient is not one of them, so both are dead while this tool is active. The only `Delete` bindings belong to the two lasso tool areas, so no key removes a gradient stop. The bar's four controls are not the ones Photoshop sequences, so a user arriving from Photoshop finds neither the Order nor the Method. The verdict is `partial` and not `placeholder` because the fill does reach the document as a real raster with a real history entry; what it commits is not what Photoshop's tool commits, which is a narrower gradient with no editable object left behind.
-
-Implementation:
-
-- `src/components/ToolbarsRight/Gradient/Gradient.tsx:13`
-- `src/components/ToolbarsRight/Gradient/Gradient.tsx:116`
-- `src/components/ToolbarsRight/Gradient/Gradient.tsx:129`
-- `src/components/ToolbarsRight/Gradient/Gradient.tsx:146`
-- `src/tools/gradient.ts:132`
-- `src/tools/settings.ts:243`
-- `src/components/Main/GradientToolArea.tsx:40`
-- `src/components/Main/GradientToolArea.tsx:95`
-- `src/tools/toolProcessors.ts:221`
-
-Sources:
-
-- <https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/apply-gradient-fill.html>
-- <https://helpx.adobe.com/photoshop/using/tool-techniques/gradient-tool.html>
-- <https://www.teachucomp.com/how-to-use-the-gradient-tool-in-photoshop-instructions/>
-- <https://www.teachucomp.com/how-to-edit-a-gradient-adjustment-in-photoshop-instructions/>
-- <https://taylorhieber.co/how-to-use-the-improved-gradient-interpolations-in-adobe-photoshop/>
-- <https://www.adobe.com/learn/photoshop/web/blend-two-images-gradient>
-- <https://community.adobe.com/announcements-710/photoshop-24-5-is-now-available-1154445>
-- <https://www.photoshopessentials.com/photo-effects/fade-an-image-to-color-in-photoshop-faster-with-live-gradients/>
-- <https://www.photoshopessentials.com/photo-effects/add-a-vignette-to-a-photo-with-photoshops-live-gradients/>
-- <https://cheat-sheet.org/en/post/photoshop-keyboard-shortcuts/>
-- <https://luminousworks.substack.com/p/grokking-gradients>
-- <https://glensmith.co.uk/photoshop/gradient-tool>
-- <https://digital-photography-school.com/photoshop-gradient-tool/>
 
 ---
 

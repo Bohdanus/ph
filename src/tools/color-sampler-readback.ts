@@ -44,7 +44,8 @@ export type ColorSamplerReadback = { ok: true; color: string | null } | { ok: fa
 export const readColorSampler = (
   canvas: HTMLCanvasElement | null,
   point: Point,
-  sampleSize: EyedropperSampleSize
+  sampleSize: EyedropperSampleSize,
+  backingScale = 1
 ): ColorSamplerReadback => {
   if (!canvas) return { ok: false, reason: COLOR_SAMPLER_READBACK_UNAVAILABLE };
 
@@ -59,8 +60,8 @@ export const readColorSampler = (
       ctx.getImageData(0, 0, canvas.width, canvas.height).data,
       canvas.width,
       canvas.height,
-      point,
-      sampleSize
+      { x: point.x * backingScale, y: point.y * backingScale },
+      sampleSize * backingScale
     ),
   };
 };
