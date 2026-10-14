@@ -5,11 +5,12 @@ Autonomous, token-conscious pass over documented defects and unfinished work. Fi
 ## Operating Rules
 
 - Use one worktree per task. Work serially.
-- Complex problems require websearch.
-- Complex implementation requires focused read-only code-review subagent before landing. Complexity: cross-module behavior, persistence/migration, architecture boundaries, broad regression risk.
+- Photoshop behavior, UX, and non-trivial algorithms require live web research before implementation. Prefer current Adobe sources, verify load-bearing claims with two opened sources when possible, and record URLs, versions, and unresolved claims in the relevant research note or handoff.
+- Every non-trivial implementation requires a fresh read-only code-review subagent before landing. Cross-module behavior, persistence/migration, architecture boundaries, and broad regression risk require two reviewers split by concern. Fix and re-review blocking findings.
 - Security vulnerability → invoke security-review process.
 - Do not run worktree inventory routinely. Run `npm run repo:state` before landing.
 - Tests support confidence; not definition of done. Prefer existing focused tests; smallest necessary regression test only. No new E2E unless behavior unvalidated otherwise. Never weaken gates.
+- A run is complete only when the reviewed branch is landed and released, or when a durable handoff records `blocked`, `unproven`, or `obsolete` with evidence and a next action. A stopped chat is not completion.
 
 ## Phase 1: Find and Rank Candidates
 

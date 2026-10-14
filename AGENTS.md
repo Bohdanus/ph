@@ -1,5 +1,7 @@
 Photoshop clone
 
+The toolbar is a Photoshop clone — HARD REQUIREMENT.
+
 #️ CRITICAL: ALL WORK HAPPENS IN WORKTREE — NEVER IN THE MAIN CHECKOUT
 
 **Every command you run — git, tests — MUST run inside worktree directory under `.kilo/worktrees/`.**
@@ -72,6 +74,10 @@ tools, panels, and canvas fidelity; Retina/high-DPI rendering is a first-class r
 - Use `task` for ordinary research and `agent_manager` only when visible sessions or worktrees are requested.
 - **A task subagent inherits the caller's working directory.** You MUST give it the absolute worktree path in the prompt. Never let two agents edit the same file.
 
+- **Research before implementation.** For Photoshop behavior, user-visible UX, or non-trivial algorithms, use `websearch` with live crawling before choosing an implementation. Prefer current Adobe documentation, then Adobe primary material, original papers/reference implementations, and only then secondary sources. Open the sources, verify load-bearing claims with two independent sources when possible, record URLs and versions in the relevant research note or handoff, and keep unsourced claims under an explicit `Unverified` heading. Local code proves what this app does, not what Photoshop is supposed to do. [`docs/ORCHESTRATION.md#research-before-implementation`](docs/ORCHESTRATION.md#research-before-implementation) is the detailed protocol.
+
+- **Review before merge.** Every non-trivial behavior, removal, or boundary change gets a fresh read-only review using [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md) before landing. Cross-module, persistence, migration, or high-blast-radius changes require two independent reviewers split by concern. Give reviewers the requirement, external behavior contract, and diff, not the implementer's justification; fix and re-review blocking findings.
+
 - **NEVER OMIT `model` AND `provider`.** A FREE SESSION MUST NEVER LAUNCH A GPT SUBAGENT. NO EXCEPTION. A GPT session may launch GPT subagents.
 - A name and a provider are a pair the catalog decides, so no single provider is correct for a family: `GPT Luna Latest` is `openrouter`-only while `GPT-5.6 Luna Fast` is `openai`-only. `agent_manager_models` is that catalog.
 - GPT context cost doubles past 200k for GPT Luna and 270k for GPT Terra/Sol; keep those models below the thresholds.
@@ -103,11 +109,19 @@ Use `npm run test:e2e` for headless Playwright and `npm run probe:console` for o
 
 ## Worktrees and dev servers
 
+- **Before taking over, harvesting, or cleaning work**, verify the checkout with `git rev-parse --show-toplevel`, run `npm run repo:state`, inspect `git status --short`, and read the relevant handoff/requirement documents. Cleanup also runs `npm run branches:orphan`; a worktree inventory alone is incomplete.
+- **Never run `node scripts/worktree-inventory.mjs -- --quiet`.** That malformed inventory invocation can deadlock the shared database and kill active chats. Use the documented inventory command or `npm run inventory:verify` instead.
 - Run slow inventory commands asynchronously; wait for that run to finish before relying on its report. See [`docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson`](docs/ORCHESTRATION.md#the-list-of-worktrees-worktreesjson).
+- A worktree inventory is not a branch inventory. Every sweep also runs `npm run branches:orphan`; branch-only refs must be researched and classified rather than silently left behind. See [`docs/ORCHESTRATION.md#branches-nobody-holds`](docs/ORCHESTRATION.md#branches-nobody-holds).
 - `merge-takeover-guard.mjs` protects committed merges from silently replacing the other side's files. Fast-forwards reach `post-merge`, which cannot block; an unresolved conflict runs no guard until a commit; `--no-verify` bypasses it. [`docs/ORCHESTRATION.md#landing`](docs/ORCHESTRATION.md#landing) is the detailed source.
-- `npm run branches:orphan` reports every branch `main` does not contain that no worktree holds, with its behind-count, its commits `main` lacks, and its conflict count. The inventory and `repo:state` enumerate worktrees; `dispose` acts on one, so none sees unmerged branches without a worktree. [`docs/ORCHESTRATION.md#branches-nobody-holds`](docs/ORCHESTRATION.md#branches-nobody-holds) is the detailed source.
+- `npm run branches:orphan` reports every branch `main` does not contain that no worktree holds, with its behind-count, its commits `main` lacks, and its conflict count. `WORKTREES.json` and `repo:state` are worktree-scoped; neither sees branch-only refs, and `dispose` acts on one named worktree. [`docs/ORCHESTRATION.md#branches-nobody-holds`](docs/ORCHESTRATION.md#branches-nobody-holds) is the detailed source.
+- For repository ownership, use `npm run swarm`; Kilo's built-in `board_read`/`board_post` only carries messages between this session and its children and is not the repository board.
 - Other sessions can change `main`; re-read status and diff before staging, and stage only your paths.
+- **Never merge into a dirty shared `main` checkout.** If `git status --short` shows paths you do not own, stop and let the owner finish or use a clean landing checkout; do not stage, stash, abort, or resolve its work.
 - Remove worktrees only with `npm run dispose -- <name>`; it checks inventory, board claims, locks, and session state.
+- Before disposal, prove the owning chat and every descendant subagent are dead, re-run the live-session overlay, and preview `npm run swarm -- doctor --dry-run`. A quiet or unreadable board is not proof of abandonment.
+
+- **An overnight task is not done when its agent stops.** It is done only after its reviewed branch is landed and released, or after a durable, evidence-backed handoff marks it blocked, unproven, or obsolete. At each phase boundary record the current branch, commit, validation, and next action in the task's canonical note or `swarm` event. A dead or disconnected chat is a recovery case, not permission to delete its work.
 
 ## Test traps
 
@@ -201,9 +215,14 @@ may not absorb a tool that has more than one.
 
 Poolside Laguna S 2.1 is preferred for subagents. Note: rate-limited — at most 2 subagents using it may run at a time.
 
-| Model                   | Provider | Variant  | Note                              |
-| ----------------------- | -------- | -------- | --------------------------------- |
-| Poolside Laguna S 2.1   | kilo     | thinking | Best                              |
-| Nemotron 3 Ultra (free) | kilo     | high     | Thorough, slower                  |
-| Dots3-Note Preview      | kilo     | thinking | Alternative, good summaries, fast |
-| Step 3.7 Flash          | kilo     | high     | Fast, accurate                    |
+When Laguna is at capacity, use `Step 3.7 Flash` for narrow, well-specified execution. Use
+Nemotron or Dots3 only for summaries and lightweight exploration, not architectural decisions,
+medium/complex implementation, or independent review. Always confirm the live model/provider pair
+with `agent_manager_models`; never copy a dated model name from a prior chat.
+
+| Model                   | Provider | Variant  | Note                             |
+| ----------------------- | -------- | -------- | -------------------------------- |
+| Poolside Laguna S 2.1   | kilo     | thinking | Best                             |
+| Nemotron 3 Ultra (free) | kilo     | high     | Summaries/light exploration only |
+| Dots3-Note Preview      | kilo     | thinking | Summaries/light exploration only |
+| Step 3.7 Flash          | kilo     | high     | Fast, accurate                   |
