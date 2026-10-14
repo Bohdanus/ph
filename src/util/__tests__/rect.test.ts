@@ -267,17 +267,58 @@ describe('calculateNewRect', () => {
    * `applyTextStyle` wrote.
    */
   function makeCanvasRef(measureWidth?: number) {
+    const mockDOMMatrix = {
+      a: 1,
+      b: 0,
+      c: 0,
+      d: 1,
+      e: 0,
+      f: 0,
+      m11: 1,
+      m12: 0,
+      m13: 0,
+      m14: 0,
+      m21: 0,
+      m22: 1,
+      m23: 0,
+      m24: 0,
+      m31: 0,
+      m32: 0,
+      m33: 1,
+      m34: 0,
+      m41: 0,
+      m42: 0,
+      m43: 0,
+      m44: 0,
+      is2D: true,
+      isIdentity: true,
+      multiply: vi.fn(),
+      preMultiply: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      rotate: vi.fn(),
+      rotateFromVector: vi.fn(),
+      flipX: vi.fn(),
+      flipY: vi.fn(),
+      inverse: vi.fn(),
+      rotateAxisAngle: vi.fn(),
+      skewX: vi.fn(),
+      skewY: vi.fn(),
+      toFloat32Array: vi.fn(),
+      toFloat64Array: vi.fn(),
+      toJSON: vi.fn(),
+      toString: vi.fn(),
+    } as unknown as DOMMatrix;
+
     const ctx = {
       font: '10px sans-serif',
       measureText: vi.fn((text: string) => ({
         width: measureWidth ?? text.length * (parseFloat(ctx.font) || 10),
       })),
-      // `getTextWidth` brackets its `applyTextStyle` in save/restore because it is handed the live
-      // tool overlay by `calculateNewRect` and would otherwise leave that context wearing the Type
-      // tool's typography. These are `vi.fn()`s and so are not real state, but they have to be
-      // present for the bracket to be callable at all.
       save: vi.fn(),
       restore: vi.fn(),
+      getTransform: vi.fn(() => mockDOMMatrix),
+      setTransform: vi.fn(),
     };
     return { current: { getContext: vi.fn(() => ctx) } } as unknown as RefObject<HTMLCanvasElement | null>;
   }
