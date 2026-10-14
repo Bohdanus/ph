@@ -41,9 +41,9 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
 
   return (
     <div className="flex items-center justify-end gap-2 px-1">
-      <span className="text-xs text-gray-600 dark:text-gray-300">Opacity:</span>
+      <span className="text-xs text-gray-600 dark:text-white">Opacity:</span>
       <details className="relative">
-        <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-700">
+        <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700">
           {opacityPercent}%
         </summary>
         <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
@@ -64,7 +64,9 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
             onBlur={finishGesture}
             className="min-w-0 flex-1"
           />
-          <output aria-live="polite">{opacityPercent}%</output>
+          <output aria-live="polite" className="text-gray-800 dark:text-white">
+            {opacityPercent}%
+          </output>
         </div>
       </details>
     </div>
