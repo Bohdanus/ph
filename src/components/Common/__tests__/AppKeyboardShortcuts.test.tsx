@@ -818,34 +818,30 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('pencil');
   });
 
-  it('keeps the eraser on a bare B, because the eraser is a brush group member', () => {
-    // `toolbar-mapping.ts` puts the eraser in the Brush flyout, so `AppKeyboardShortcuts.tsx:18`
-    // lists it in `brushGroup` as well. It additionally owns a bare `E`; both are correct,
-    // and a bare `B` from the eraser has to stay on the eraser rather than snapping to the
-    // brush.
-    storeState.toolName = 'eraser';
-    renderShortcuts();
-
-    press('b');
-
-    expect(goToTool).toHaveBeenCalledExactlyOnceWith('eraser');
-  });
-
   it.each([
     ['brush', 'pencil'],
     ['pencil', 'color-replacement'],
-    ['color-replacement', 'eraser'],
-    ['eraser', 'brush'],
+    ['color-replacement', 'brush'],
   ])('cycles Shift+B from %s to %s', (from, to) => {
-    // The brush group is four members now, so the cycle has to close: without the
-    // `eraser -> brush` row a regression that dropped the eraser out of the array would
-    // leave the other three rows green.
+    // The brush group is three members now (brush, pencil, color-replacement). Eraser has
+    // its own Photoshop `E` group, so Shift+B must not cross into it.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
     press('b', { shiftKey: true });
 
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([['brush'], ['pencil'], ['color-replacement']])('keeps %s on a bare B', (tool) => {
+    // The bare-key arm of `selectBrushTool` keeps the current tool when it is already in the
+    // group and otherwise falls to the group's anchor (brush).
+    storeState.toolName = tool as ToolName;
+    renderShortcuts();
+
+    press('b');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(tool);
   });
 
   it.each([
@@ -1014,11 +1010,8 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('sponge');
   });
 
-  it.each([
-    ['eraser', 'E'],
-    ['clone-stamp', 'S'],
-  ] as const)('selects %s with a bare %s and with Shift+%s', (toolName, key) => {
-    // The two single-tool tiles get one plain registration each and no `shift: true` twin.
+  it.each([['clone-stamp', 'S']] as const)('selects %s with a bare %s and with Shift+%s', (toolName, key) => {
+    // The single-tool tiles get one plain registration each and no `shift: true` twin.
     // `matchesShortcut` only compares a modifier the registration actually declares
     // (`src/hooks/useKeyboardEvents.tsx:70`), so these keys are unshifted-only by DEFAULT
     // rather than by an explicit `shift: false` — a shifted press falls through to the same
@@ -1032,6 +1025,31 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     press(key, { shiftKey: true });
 
     expect(goToTool.mock.calls).toEqual([[toolName], [toolName]]);
+  });
+
+  it.each([
+    ['eraser', 'magic-eraser'],
+    ['magic-eraser', 'eraser'],
+  ])('cycles Shift+E from %s to %s', (from, to) => {
+    // The eraser group is two members (eraser, magic-eraser). The bare E selects eraser;
+    // Shift+E cycles to magic-eraser and wraps back.
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('e', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([['eraser'], ['magic-eraser']])('keeps %s on a bare E', (tool) => {
+    // The bare-key arm of `goToTool('eraser')` keeps the current tool when it is already in the
+    // group and otherwise falls to the group's anchor (eraser).
+    storeState.toolName = tool as ToolName;
+    renderShortcuts();
+
+    press('e');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(tool);
   });
 
   it.each([

@@ -686,6 +686,7 @@ export const AppKeyboardShortcuts = () => {
   useKeyDownShortcut({
     key: 'e',
     mod: false,
+    shift: false,
     enabled: hasImage,
     onKeyDown: (event) => selectEraserTool(event.shiftKey),
   });
