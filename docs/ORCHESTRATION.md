@@ -37,87 +37,39 @@ that dropped the caller's own locks, and a weakened assertion.
 
 ## The task lifecycle
 
-An autonomous run is a state machine, not a promise in a chat message. The normal path is
-`researching -> implementing -> reviewing -> syncing -> gated -> landed -> released`. The
-terminal exception states are `blocked`, `unproven`, and `obsolete`; each needs evidence and a
-next action. **"Done" means `released`, not "the agent stopped" or "the branch has a green test".**
-
-At every transition, record the branch, worktree, current commit, validation actually run, and
-the next action in the task's canonical note or the swarm event log. This is deliberately small:
-it lets a fresh coordinator resume without replaying an entire transcript, while Git remains the
-authority for code state. A long command is not a checkpoint; a command that was interrupted
-must be re-established from the tree and its artifacts.
+Normal: `researching -> implementing -> reviewing -> syncing -> gated -> landed -> released`.
+Exceptions: `blocked`, `unproven`, `obsolete`; each records evidence and a next action. “Done”
+means released or explicitly handed off, never merely “the chat stopped”. Record branch, worktree,
+commit, validation, and next action at each phase in the task note or swarm log.
 
 ### Research before implementation
 
-For Photoshop behavior, UX, or a non-trivial algorithm, research is a gate before code, not a
-post-hoc justification:
+For Photoshop behavior, UX, or non-trivial algorithms, use live `websearch` before code. Open and
+prefer current Adobe/primary sources, verify load-bearing claims with two sources when possible,
+and record URL, version, claim status (`sourced`, `inferred`, `override`, `Unverified`) in the
+research note or handoff. Resolve source conflicts by version; local code describes this app, not
+Photoshop. See [`docs/TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md).
 
-1. Start with the repository's current requirement and override documents. Separate the desired
-   product behavior from the app's current behavior and from the implementation idea.
-2. Use `websearch` with live crawling preferred. Open the source pages rather than trusting search
-   snippets. Prefer current Adobe Help/developer material, then Adobe primary sources, original
-   papers or reference implementations, and finally secondary sources. `docs/TOOLS-RESEARCH-BRIEF.md`
-   is the detailed Photoshop example.
-3. Verify each load-bearing behavior, formula, default, gesture, or range with two independent
-   opened sources when possible. Record the URL, product/version scope, and whether the claim is
-   observed, sourced, inferred, or an intentional override in the relevant research note,
-   requirement document, or handoff. An inaccessible page is not evidence; put the claim under
-   `Unverified` instead.
-4. Compare the proposed behavior with the local code and tests only after the external contract
-   is clear. Local code establishes the app contract, not Photoshop truth. If sources disagree,
-   preserve both claims, identify the version boundary, and do not silently average them.
-
-The implementation brief sent to a writer must name the accepted contract, the sources, the
-uncertainties, the acceptance tests, and the files it owns. A reviewer receives that contract and
-the diff, **not the writer's rationale**, so the review can challenge the premise rather than
-confirming it.
-
-At minimum, a delegated brief has: **Goal** (one observable result), **Owner** (one accountable
-writer), **Worktree** (absolute path and branch), **Paths** (exclusive write set), **Dependencies**
-(what must land first), **Proof** (commands and expected evidence), and **Handoff** (decisions,
-remaining risk, and next action). A subagent may discover facts outside its path set, but it may
-not edit them without the coordinator changing the contract.
+Every brief names **Goal, Owner, Worktree, Paths, Dependencies, Proof,** and **Handoff**. Reviewers
+receive the contract and diff, not the writer’s rationale; they never edit. Two independent
+reviewers are required for cross-module, persistence, migration, or high-risk changes.
 
 ### Autonomous and overnight runs
 
-- Create and verify the worktree before fan-out. One writer owns each worktree; read-only
-  reviewers may share it, and any writing child gets an explicit file split.
-- Claim the task and merge hazard before editing. Claims and leases are coordination signals, not
-  proof that a chat is alive; a long test or network wait can outlive a lease. Re-check ownership
-  at each destructive transition and immediately before landing or disposal.
-- Work in bounded acceptance slices. After each slice, record the commit, focused validation, and
-  remaining risk. Do not use a running process, an old inventory, or a chat's last message as a
-  checkpoint.
-- Before intentional stop, leave either a validated commit ready for review or an explicit,
-  evidence-backed handoff. A crash may leave dirty work, but the recovery sweep must preserve it
-  before any claim release, merge, or removal. Never call a dirty or unreviewed branch complete.
-- A non-trivial change gets independent review before it can enter `syncing`; a cross-module,
-  persistence, migration, or high-blast-radius change gets **two fresh read-only reviewers split
-  by concern**. Every blocking finding is fixed on the branch and reviewed again. Tests and builds
-  are necessary gates, not substitutes for review or external-behavior evidence.
-- Sync `main` into the branch, run the branch-local gates, and land only from a clean, current
-  landing checkout. Re-read the branch diff, `main` status, `repo:state`, liveness, and `git cherry`
-  immediately before the merge. After landing, verify the merge result, release claims, regenerate
-  the inventory, and dispose only through the sanctioned command.
+- Create and verify the worktree before fan-out; claim files before editing. One writer owns each
+  file and a reviewer is read-only.
+- Work in acceptance slices and record commit, validation, and remaining risk. A running command,
+  old inventory, or last chat message is not a checkpoint.
+- Stop only with a validated review-ready commit or an evidence-backed handoff. Crashed dirty work
+  is preserved before releasing claims, merging, or removing anything.
+- Sync `main` into the branch, rerun gates, and land only from a clean current checkout. Recheck
+  diff, status, `repo:state`, liveness, and `git cherry` immediately before landing/disposal.
 
-If the run cannot safely progress, stop at `blocked` or `unproven` with the exact missing fact and
-the searches/tests already performed. Do not convert uncertainty into a merge, a deletion, or a
-question that external research could answer.
+### Tool limits
 
-### Tool limits that are not safety guarantees
-
-These limits are intentional and must shape the workflow rather than being treated as bugs that a
-caller can route around:
-
-- `main-worktree-guard` runs at commit time. It cannot prevent a subagent from writing in `main`,
-  so the worktree must exist and be named in the brief before fan-out.
-- A swarm claim renews when swarm commands run; a long test, build, or network wait is not a
-  heartbeat. Re-check the live-session overlay and write history before taking or releasing work.
-- `WORKTREES.json` cannot see branch-only refs, and `orphan-branches` reports but does not decide
-  their fate. Every orphan needs an explicit recover, retire, or defer outcome.
-- Merge hooks do not cover fast-forwards or `git merge --squash -X ours`. Never infer that an
-  absent hook event proves the merge preserved the incoming payload.
+`main-worktree-guard` is post-write; worktrees must exist before fan-out. Swarm leases renew on
+swarm commands, not during long waits. Inventory omits branch-only refs; `branches:orphan` reports
+but does not decide them. Merge hooks do not cover fast-forwards or `git merge --squash -X ours`.
 
 ## Worktrees
 
@@ -609,30 +561,10 @@ unreadable report is not a clean result and must remain a recovery case.
 
 ## Branches nobody holds
 
-`WORKTREES.json` is intentionally per-checkout. It cannot see a branch after its worktree was
-removed, so a clean inventory is **not** proof that there are no unmerged branches. Every harvest
-or cleanup begins with both reports:
-
-```bash
-node scripts/worktree-inventory.mjs
-npm run branches:orphan
-```
-
-`branches:orphan` reports branches that `main` does not contain and that no worktree holds. It is
-read-only: it does not decide whether the branch is valuable and it does not delete or land it.
-For every row, record one of these outcomes before ending the sweep:
-
-- **Recover**: create a fresh worktree from the branch, recover the requirement from chat history
-  and current product documentation, then review and land the recovered change.
-- **Retire**: prove patch absorption, obsolescence, or duplication, preserve any unique ref as
-  required, and use the sanctioned disposal/archive path rather than an unreviewed `git branch -D`.
-- **Defer**: record the exact unresolved ownership, policy, or merge fact and the next search or
-  experiment. A branch is not deferred merely because it is old or inconvenient.
-
-Always run `git cherry main <branch>` before calling an orphan unmerged, and search by feature,
-changed paths, and commit subject when the original owner is not attached to the branch. A branch
-with no discoverable owner is `unproven`, not abandoned. Do not silently leave orphan output
-unclassified: that is how useful salvage becomes invisible to the next overnight run.
+`WORKTREES.json` omits branches whose worktree is gone, so every harvest also runs
+`npm run branches:orphan`. The report is read-only. Classify every row as **recover**, **retire**,
+or **defer** before ending the sweep. Run `git cherry main <branch>` before calling one unmerged;
+search by feature, changed paths, and commit subject. No owner is `unproven`, not abandoned.
 
 **Read `action` first.** Every record carries one value, and it is the whole
 answer — which of the six things it is:
