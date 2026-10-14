@@ -2298,10 +2298,7 @@ test.describe('Text tool', () => {
     const surface = page.locator('.cursor-text');
     const corner = { x: overlay!.x - 10, y: overlay!.y - 10 };
     await page.mouse.move(corner.x, corner.y);
-    await expect(surface, 'the text rotation hotspot uses the horizontal arrow cursor').toHaveCSS(
-      'cursor',
-      'ew-resize'
-    );
+    await expect(surface, 'the text rotation hotspot uses the rotate cursor').toHaveCSS('cursor', /url.*ew-resize/);
 
     await page.mouse.down();
     const centerX = overlay!.x + overlay!.width / 2;

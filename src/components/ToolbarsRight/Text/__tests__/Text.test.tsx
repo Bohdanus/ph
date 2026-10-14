@@ -1025,6 +1025,119 @@ describe('Text toolbar', () => {
     });
   });
 
+  describe('font size input validation', () => {
+    /**
+     * The clamp is applied at COMMIT, not while the value is being typed, so every out-of-range
+     * input the field can receive is held verbatim in the draft and resolved on blur. These four
+     * cases are the four ways a size can be invalid: negative, exactly zero, below the minimum
+     * (which is `0.01`, not `0`), and above the maximum. Each asserts the draft survives the
+     * keystroke and the published size is the clamped one.
+     */
+    it('clamps a negative size up to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '-40' } });
+      expect(size.value).toBe('-40');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('clamps a zero size up to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '0' } });
+      expect(size.value).toBe('0');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('clamps a sub-minimum size up to FONT_SIZE_MIN at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      // Between zero and the minimum: a value that is positive but still below the floor.
+      fireEvent.change(size, { target: { value: '0.005' } });
+      expect(size.value).toBe('0.005');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 0.01 }));
+    });
+
+    it('clamps an above-maximum size down to FONT_SIZE_MAX at commit', () => {
+      renderWithProvider(<Text />);
+      const size = screen.getByLabelText(/Font Size/) as HTMLInputElement;
+
+      fireEvent.change(size, { target: { value: '5000' } });
+      expect(size.value).toBe('5000');
+      fireEvent.blur(size);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ fontSize: 1296 }));
+    });
+  });
+
+  describe('Commit flow when createLayerFromTool throws', () => {
+    /**
+     * A throw out of `createLayerFromTool` reaches `window.onerror`, not an error boundary, because
+     * `ToolbarHorizontal` sits outside every boundary in the tree. The old handler cleared the draft
+     * BEFORE the create, so a failure left the user's text gone with no layer, no message, and the
+     * commit disabled — and worse, the re-entrancy guard was armed before the create, so it stayed
+     * armed against a `toolArgs` identity nothing had changed and every later Commit did nothing.
+     *
+     * These two cases pin the two halves of the fix: the draft survives a throw, and the guard is
+     * not consumed by it, so the next Commit works. The swallow is local to this describe — it is
+     * the only place the throw is caught, and `preventDefault` is what marks it handled.
+     */
+    const swallowThrow = (event: ErrorEvent) => event.preventDefault();
+
+    it('leaves the draft untouched when createLayerFromTool throws', () => {
+      window.addEventListener('error', swallowThrow);
+      try {
+        mockCreateLayerFromTool.mockImplementationOnce(() => {
+          throw new Error('Layer width and height must be greater than 0');
+        });
+        renderWithProvider(<Text />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+        // The create was attempted and failed.
+        expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+        // Nothing was cleared: the draft's text and rect are still the ones the bar holds.
+        expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+        expect(toolArgs.text).toBe('Hello');
+        expect(toolArgs.rect).not.toBeNull();
+      } finally {
+        window.removeEventListener('error', swallowThrow);
+      }
+    });
+
+    it('re-arms the guard so a second Commit succeeds after a throw', () => {
+      window.addEventListener('error', swallowThrow);
+      try {
+        mockCreateLayerFromTool.mockImplementationOnce(() => {
+          throw new Error('Layer width and height must be greater than 0');
+        });
+        renderWithProvider(<Text />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+        expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+        expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+
+        // The second click, with a create that works this time.
+        mockCreateLayerFromTool.mockImplementation(() => undefined);
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+        expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(2);
+        expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      } finally {
+        window.removeEventListener('error', swallowThrow);
+      }
+    });
+  });
+
   describe('keyboard navigation', () => {
     it('walks the bar left to right, with the style toggles between Italic and Commit', async () => {
       // The pair is Adobe's edit-mode tell, so it is on the tab path only while a draft is open —

@@ -254,6 +254,38 @@ describe('toolbar mapping shortcut contract', () => {
   });
 
   /**
+   * Photoshop-faithful group shortcut invariant: each group's shortcut letter is unique
+   * across ALL groups. Only the first entry in a group may declare a shortcut; the rest
+   * rely on Shift+<letter> cycling. This prevents the defect where Brush (B), Eraser (E),
+   * and Paint Bucket (G) were collapsed into one flyout but each declared its own letter,
+   * violating Adobe's three-group design.
+   */
+  it('gives each group a unique shortcut letter, declared only on its first entry', () => {
+    const groupShortcuts = new Map<string, string>(); // shortcut -> group description
+
+    for (const group of allGroups) {
+      const entriesWithShortcut = group.filter((tool) => tool.shortcut !== undefined);
+
+      // At most one entry per group may have a shortcut
+      expect(entriesWithShortcut.length).toBeLessThanOrEqual(1);
+
+      // If a group has a shortcut, it must be on the first entry
+      if (entriesWithShortcut.length === 1) {
+        expect(group[0].shortcut).toBe(entriesWithShortcut[0].shortcut);
+
+        // The shortcut letter must not be claimed by another group
+        const shortcut = entriesWithShortcut[0].shortcut!;
+        const groupDesc = group.map((t) => t.label).join(', ');
+        expect(
+          groupShortcuts.has(shortcut),
+          `Shortcut ${shortcut} claimed by multiple groups: ${groupShortcuts.get(shortcut)} and ${groupDesc}`
+        ).toBe(false);
+        groupShortcuts.set(shortcut, groupDesc);
+      }
+    }
+  });
+
+  /**
    * The same invariant, stated from the other side: a key is claimed at most once, counted
    * rather than grouped. This is the assertion that would survive a future edit that made
    * `allTools` contain a tool twice, where the grouped form above would report one pair and

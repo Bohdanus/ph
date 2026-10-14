@@ -686,39 +686,28 @@ one closes its parent exactly as `## 15a.` does.
 ## 78. Three rail defects §74 does not name, and no test can catch any of them
 
 **Validated by an independent audit pass over `toolbar-mapping.ts` against Adobe's own
-documentation, 2026-09-29.** §74 carries the inventory; these are the _mechanical_ consequences,
+documentation, 2026-09-29.** §74 carries the inventory; these are the mechanical consequences,
 and each is a one-line fix.
 
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
-The `draw` entry in `toolbarMap` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
-the Brush's own entry gives. The badge is rendered from the map
-(`SidebarLeft.tsx` — the `<kbd>` badge inside `renderToolGroup()`), so the user is told the Draw Tool
-answers to `B`; and
-`AppKeyboardShortcuts.tsx` — `brushGroup` = `['brush','pencil','color-replacement','eraser']` puts
-`b` on the brush group,
-so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
-is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
+The `draw` entry in `toolbarMap` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same
+letter the Brush entry gives. The badge is rendered from the map, while
+`AppKeyboardShortcuts.tsx` puts `b` on the brush group, so pressing it can never select `draw`.
 
-**2. Three Photoshop groups are collapsed into one flyout, and the evidence for the split is
-Adobe's own shortcut table, not a third-party diagram.** The app has one six-entry flyout —
-Brush, Pencil, Color Replacement, Eraser, Magic Eraser, Paint Bucket. Adobe's table binds
-`B` to Brush, `E` to Eraser and `G` to Paint bucket, with `Shift+G` for "Switch between Paint
-bucket and Gradient tool": distinct letters are how Adobe proves the three groups are three. The
-app's own `G` handler already cycles a Gradient/Paint-Bucket pair, and the Gradient sits in its
-**own single-tool tile** rather than sharing `G` — so the one grouping fact Adobe states outright
-is the one the rail contradicts. This matters independently of §74's unresolved order questions:
-group membership is settled, only position is not.
+**2. Three Photoshop groups are collapsed into one flyout.** The app's six-entry flyout combines
+Brush, Pencil, Color Replacement, Eraser, Magic Eraser and Paint Bucket, while Adobe's shortcut
+table distinguishes the B, E and G groups. The app's G handler already cycles Gradient and Paint
+Bucket, but Gradient remains in its own tile.
 
-**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts` — the
-`it('only declares U as the shape shortcut')` title
-checks the `U` group and nothing else, so a `B`/`B` collision is invisible to the suite. One
-`expect` over the flattened map's `shortcut` values would have found defect 1 on the day it
-shipped. Note the trap it must not fall into: `draw` and `pen` variants legitimately share a
-letter with their group leader, so the assertion is "no letter is claimed by two _different_
-groups", not "no letter repeats".
+**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts` checks the
+shape shortcut group but does not assert that different groups do not claim the same shortcut. The
+future assertion must allow variants that legitimately share a group leader's letter.
 
-**These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
-doing them here would land the deletion without the replacement rail.
+**These are filed, not fixed.** Deleting `draw` and regrouping the flyout are §74's work; doing
+either here would land a deletion without the replacement rail.
+
+**Files.** `toolbar-mapping.ts`, `src/components/SidebarLeft/SidebarLeft.tsx`,
+`src/components/AppKeyboardShortcuts.tsx`, `src/components/SidebarLeft/toolbar-mapping.test.ts`
 
 ## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
 

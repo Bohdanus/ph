@@ -150,6 +150,16 @@ describe('useSelectionMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
+  it('clears logical frame bounds instead of the DPR-scaled backing store', () => {
+    const { ctx, overlayRef } = setup();
+    overlayRef.current!.width = CANVAS_SIZE.width * 2;
+    overlayRef.current!.height = CANVAS_SIZE.height * 2;
+
+    frame();
+
+    expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, FRAME.width, FRAME.height);
+  });
+
   describe('a selection drag', () => {
     /**
      * The whole of the drag-freeze rule in one assertion set: the offset is HELD, the border is
