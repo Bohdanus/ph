@@ -4,7 +4,6 @@ import { usePointerPosition } from './usePointerPosition.ts';
 import { clearSelectionDragPreview, publishSelectionDragPreview } from './selection-drag-preview.ts';
 import {
   angleFromCenter,
-  getCanvasSize,
   posToSortedRect,
   rectCenter,
   rotatePointAround,
@@ -426,7 +425,8 @@ export function useRect({
    *     under-clears after a document resize. `getCanvasSize(overlayRef)` is not usable either:
    *     React detaches refs in the mutation phase, before passive destroys run, so
    *     `overlayRef.current` is already null here — which is also why the ctx is captured in the
-   *     effect BODY.
+   *     effect BODY. With DPR scaling, `getCanvasSize` would also return backing-store dimensions
+   *     (device px) rather than the frame size (document px), so `imageSize` is the correct source.
    *   - `dimensionsRef` is deliberately NOT referenced. It is destructured below this effect, so a
    *     closure over it is built in TDZ: a runtime ReferenceError `tsc` cannot see and that no
    *     test which does not unmount would reach.
@@ -455,7 +455,10 @@ export function useRect({
       endGesture();
 
       if (ctx) {
-        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        // The overlay context is scaled by DPR (via resizeCanvas in Main.tsx), so clearRect
+        // coordinates are in logical/frame pixels. Use imageSize (logical frame bounds) rather
+        // than ctx.canvas.width/height (backing-store device pixels) to avoid over-clearing.
+        ctx.clearRect(0, 0, imageSize.width, imageSize.height);
       }
     };
   }, [endGesture, overlayRef]);
@@ -647,9 +650,7 @@ export function useRect({
     // the clamp dropped, so a rect that lies inside the frame paints identically on both paths and
     // only the part that leaves it differs.
     const sortedRect = sortRect(rect);
-    const { x, y, width, height } = allowOutsideCanvas
-      ? sortRoundRect(sortedRect)
-      : trimRect(sortedRect, getCanvasSize(overlayRef));
+    const { x, y, width, height } = allowOutsideCanvas ? sortRoundRect(sortedRect) : trimRect(sortedRect, imageSize);
     const angle = rotationEnabled ? rotationRef.current : 0;
     const centerX = x + width / 2;
     const centerY = y + height / 2;

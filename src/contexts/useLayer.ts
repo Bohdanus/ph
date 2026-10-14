@@ -19,6 +19,7 @@ import {
   getSortedLayersArray,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
+import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
 
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
@@ -371,6 +372,7 @@ export const useLayers = () => {
 
   const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
+  const dpr = useDevicePixelRatio();
 
   /**
    * Hands adopted rasters to the presentation scope. It has to run *after* the
@@ -1247,7 +1249,7 @@ export const useLayers = () => {
     const sorted = getSortedLayersArray(renderLayers);
     const renderFrame = durableProjection ? durableProjection.frame : documentFrame;
     try {
-      if (!drawLayersToCanvas(canvasRef.current, sorted, renderFrame, new Set(previewLayerIds))) {
+      if (!drawLayersToCanvas(canvasRef.current, sorted, renderFrame, new Set(previewLayerIds), dpr)) {
         console.error('Unable to publish runtime layer presentation');
       }
     } catch (error) {
@@ -1261,6 +1263,7 @@ export const useLayers = () => {
     documentFrame,
     documentId,
     documentRevision,
+    dpr,
     durablePresentation,
     durableRenderProjection,
     historyIndex,

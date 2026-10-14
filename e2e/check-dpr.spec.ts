@@ -14,7 +14,7 @@ const BACKING_STORE_TEST_IDS = [
   'selection-ants-canvas',
 ] as const;
 
-async function expectCanvasBackingStoresMatchDocument(page: Page): Promise<void> {
+async function expectCanvasBackingStoresMatchDocument(page: Page, expectedDpr: number): Promise<void> {
   const workspace = page.getByTestId('workspace-container');
   const widthAttribute = 'data-fit-document-width';
   const heightAttribute = 'data-fit-document-height';
@@ -30,10 +30,13 @@ async function expectCanvasBackingStoresMatchDocument(page: Page): Promise<void>
   expect(Number(documentWidth), 'document width').toBeGreaterThan(0);
   expect(Number(documentHeight), 'document height').toBeGreaterThan(0);
 
+  const expectedWidth = String(Number(documentWidth) * expectedDpr);
+  const expectedHeight = String(Number(documentHeight) * expectedDpr);
+
   for (const testId of BACKING_STORE_TEST_IDS) {
     const canvas = page.getByTestId(testId);
-    await expect(canvas, `${testId} backing-store width`).toHaveAttribute('width', documentWidth);
-    await expect(canvas, `${testId} backing-store height`).toHaveAttribute('height', documentHeight);
+    await expect(canvas, `${testId} backing-store width`).toHaveAttribute('width', expectedWidth);
+    await expect(canvas, `${testId} backing-store height`).toHaveAttribute('height', expectedHeight);
   }
 }
 
@@ -70,8 +73,9 @@ test.describe('Device pixel ratio', () => {
     // EMULATED ratio, because that is the `test.use` above — and the page property is the
     // only place that can confirm the override applied. `cdp-helpers.spec.ts`'s 2x block
     // reads it the same way.
-    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
-    await expectCanvasBackingStoresMatchDocument(page);
+    const dpr = await page.evaluate(() => window.devicePixelRatio);
+    expect(dpr).toBe(2);
+    await expectCanvasBackingStoresMatchDocument(page, dpr);
 
     const canvas = getWorkspaceCanvas(page);
     await expect(canvas).toBeVisible();
@@ -107,7 +111,8 @@ test.describe('Canvas backing store at 1x', () => {
 
   test('all canvas backing stores stay at document resolution', async ({ page }) => {
     await page.goto('/');
-    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1);
-    await expectCanvasBackingStoresMatchDocument(page);
+    const dpr = await page.evaluate(() => window.devicePixelRatio);
+    expect(dpr).toBe(1);
+    await expectCanvasBackingStoresMatchDocument(page, dpr);
   });
 });

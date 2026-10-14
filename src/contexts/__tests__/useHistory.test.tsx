@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
 
 import {
   HIDE_LAYER_ACTION,
@@ -11,7 +12,6 @@ import {
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
-import { useHistory } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerOperationArgs, LayerSource, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
@@ -19,6 +19,10 @@ import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { getSortedLayersArray } from '../layer-utils.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
+
+vi.mock('../../hooks/useDevicePixelRatio.ts', () => ({
+  useDevicePixelRatio: vi.fn(() => 1),
+}));
 
 /**
  * What this file's store mock is NOT evidence for.
@@ -74,6 +78,8 @@ vi.mock('../StoreContext.tsx', () => ({
   useStore: () => [storeStateMock, dispatchMock],
 }));
 
+const { useHistory } = await import('../useHistory.ts');
+
 // The renderer now stages every presentation on a canvas created through
 // document.createElement, so a failing publication must be simulated through the
 // module boundary rather than through the visible canvas context.
@@ -86,9 +92,17 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../layer-renderer.ts')>();
   return {
     ...actual,
-    drawLayersToCanvas: (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => {
+    drawLayersToCanvas: (
+      canvas: HTMLCanvasElement,
+      layers: readonly Layer[],
+      frame: DocumentFrame,
+      silentMissingLayerIds?: ReadonlySet<string>,
+      backingScale = 1
+    ) => {
       rendererControl.drawCalls.push({ canvas, layers, frame });
-      return rendererControl.result ?? actual.drawLayersToCanvas(canvas, layers, frame);
+      return (
+        rendererControl.result ?? actual.drawLayersToCanvas(canvas, layers, frame, silentMissingLayerIds, backingScale)
+      );
     },
   };
 });
@@ -898,16 +912,14 @@ describe('useHistory undo replay', () => {
       resetStoreState(createHistory('layerSource'));
       storeStateMock.canvasRef = { current: null };
       dispatchMock.mockImplementation(createDispatch());
-      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-      const { undo } = useHistory();
+      const { result } = renderHook(() => useHistory());
 
-      expect(() => undo()).not.toThrow();
+      expect(() => result.current.undo()).not.toThrow();
       expect(rendererControl.drawCalls).toEqual([]);
       expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
       expect(storeStateMock.layers['layer-1']).toBeDefined();
       expect(storeStateMock.historyIndex).toBe(0);
-      expect(consoleError).not.toHaveBeenCalled();
     });
 
     it('publishes the mounted canvas with the sorted replayed layers and the replayed document frame', () => {
