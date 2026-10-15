@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { decide, resolveWorktree, run, OVERRIDE_VAR } from '../main-worktree-guard.mjs';
 
@@ -41,6 +41,11 @@ const REPO_ROOT = realpathSync(join(import.meta.dirname, '..', '..'));
 function git(cwd, args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
   return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function commonDir(cwd) {
+  const raw = git(cwd, ['rev-parse', '--git-common-dir']);
+  return raw === null ? null : resolve(cwd, raw);
 }
 
 describe('the main-worktree guard refuses a commit recorded in the main worktree', () => {
@@ -178,9 +183,9 @@ describe('the guard is actually installed', () => {
     // `pre-commit`, and it is quieter here — a merge would go on leaving claims behind and
     // nothing would say so.
     expect(existsSync(join(REPO_ROOT, '.husky', 'post-merge'))).toBe(true);
-    const commonDir = git(REPO_ROOT, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-    expect(commonDir).not.toBeNull();
-    expect(existsSync(join(commonDir, 'hooks-gate', 'post-merge'))).toBe(true);
+    const commonGitDir = commonDir(REPO_ROOT);
+    expect(commonGitDir).not.toBeNull();
+    expect(existsSync(join(commonGitDir, 'hooks-gate', 'post-merge'))).toBe(true);
   });
 
   it('does not let the post-merge hook stop a merge that already happened', () => {
@@ -213,8 +218,8 @@ describe('the guard is actually installed', () => {
     // commit gate skipped silently. A guard inherits that failure exactly, so its
     // installation is asserted rather than assumed. `npm ci` runs `prepare`,
     // which writes it.
-    const commonDir = git(REPO_ROOT, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-    expect(commonDir).not.toBeNull();
-    expect(existsSync(join(commonDir, 'hooks-gate', 'pre-commit'))).toBe(true);
+    const commonGitDir = commonDir(REPO_ROOT);
+    expect(commonGitDir).not.toBeNull();
+    expect(existsSync(join(commonGitDir, 'hooks-gate', 'pre-commit'))).toBe(true);
   });
 });

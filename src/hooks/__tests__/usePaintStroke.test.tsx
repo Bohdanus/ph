@@ -336,6 +336,7 @@ describe('usePaintStroke', () => {
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
     expect(result.current.points).toEqual([]);
     // The capture `usePointerPosition` took has to be released, or it refuses
     // every later pointer-down.
@@ -376,6 +377,7 @@ describe('usePaintStroke', () => {
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('cancels through the imperative handle while a gesture is in flight', () => {

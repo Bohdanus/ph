@@ -30,7 +30,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
-import { validatePinnedNow } from '../worktree-inventory.mjs';
+import { parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
@@ -991,6 +991,8 @@ describe('the pinned clock', () => {
     expect(() => validatePinnedNow(NOW + 1, NOW)).toThrow('--now cannot be in the future');
     expect(() => validatePinnedNow(Number.NaN, NOW)).toThrow('--now must be a finite millisecond timestamp');
     expect(() => validatePinnedNow(NOW - 1, NOW)).not.toThrow();
+    expect(() => parseArgs(['--now', String(Date.now() + 60_000)])).toThrow('--now cannot be in the future');
+    expect(() => parseArgs(['--now', 'not-a-number'])).toThrow('--now must be a finite millisecond timestamp');
   });
 
   it('does not let --now in the past reclassify worktrees as in-use', () => {
