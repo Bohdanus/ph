@@ -409,6 +409,35 @@ describe('convertLegacyHistorySafely asset reconciliation', () => {
     registry.shutdown();
   });
 
+  it('builds an empty safe prefix when the first legacy entry fails', () => {
+    const registry = new AssetRegistry();
+    const result = convertLegacyHistorySafely(
+      [{ id: 'pen-at-zero', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
+      { documentId, initialSize, initialFrame: baselineFrame, registry }
+    );
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(-1);
+    expect(result.safePrefix?.document.history).toEqual([]);
+    result.safePrefix?.release();
+    result.safePrefix?.release();
+    registry.shutdown();
+  });
+
+  it('keeps an empty legacy timeline current without inventing a history row', () => {
+    const registry = new AssetRegistry();
+    const result = convertLegacyHistorySafely([], { documentId, initialSize, initialFrame: baselineFrame, registry });
+
+    expect(result.status).toBe('current');
+    expect(result.document?.history).toEqual([]);
+    expect(result.document?.baseline.frame).toEqual(baselineFrame);
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.diagnostics).toEqual([]);
+    registry.shutdown();
+  });
+
   it('rolls back assets registered by a failed conversion without losing pre-existing baselines', async () => {
     const registry = new AssetRegistry();
     const existing = createOwnedBitmap(4, 4);
@@ -707,6 +736,20 @@ describe('durable entry id uniqueness', () => {
       expect.objectContaining({ historyId: 'shared-id', severity: 'error', code: 'invalid-history-entry' }),
     ]);
     expect(result.legacyCursorToDurableCursor).toEqual([]);
+  });
+
+  it('withholds the suffix after a state-changing duplicate from the partial projection', () => {
+    const registry = new AssetRegistry();
+    const first = blurItem('shared-id');
+    const result = convertSafely([first, { ...first }, colorItem('after-duplicate')], registry);
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.legacyCursorToDurableCursor).toEqual([]);
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(1);
+    expect(result.safePrefix?.document.history.map((entry) => entry.id)).toEqual(['shared-id']);
+    result.safePrefix?.release();
+    registry.shutdown();
   });
 
   it('keeps a duplicate removal current when the repeated removal targets an absent layer', () => {
