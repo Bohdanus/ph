@@ -12,15 +12,16 @@
 Laguna S (Poolside) is the best provider-rated model but rate-limited — run max 1-2 simultaneously.
 Laguna XS is weaker; avoid unless S is unavailable.
 
+## Providers
+
+| Provider   | Free quota        | Notes                           |
+| ---------- | ----------------- | ------------------------------- |
+| kilo       | 200 req/hour (IP) | No credits needed; may log data |
+| openrouter | 50 req/day        | Need $10+ credits for 1K/day    |
+
 ## GPT Subagent Setup
 
-Use openrouter provider explicitly:
-
-```
-task --model "GPT Luna Latest" --provider "openrouter" --variant "xhigh" ...
-```
-
-Never route GPT through `kilo` provider.
+GPT models (Luna, Terra, Sol) are paid — use openrouter provider with `task --model "<model>" --provider "openrouter"`.
 
 ## Constraints
 
@@ -30,8 +31,8 @@ Never route GPT through `kilo` provider.
 
 ## Common Failures
 
-| Failure              | Cause                                      | Fix                                 |
-| -------------------- | ------------------------------------------ | ----------------------------------- |
-| Model name ambiguous | "Nemotron 3 Ultra" matches free + paid     | Use full name with `(free)` suffix  |
-| Rate limited         | Laguna hits per-minute quota               | Retry after ~1m; max 1-2 concurrent |
-| Credit-gated         | Wrong provider — kilo is not free for GPTs | Use openrouter provider             |
+| Failure              | Cause                                  | Fix                                    |
+| -------------------- | -------------------------------------- | -------------------------------------- |
+| Model name ambiguous | "Nemotron 3 Ultra" matches free + paid | Use full name with `(free)` suffix     |
+| Rate limited         | Laguna/IP quota hit                    | Retry after ~1m; max 1-2 concurrent    |
+| Credit-gated         | OpenRouter 50 req/day exhausted        | Use kilo provider instead (200 req/hr) |
