@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import { GradientToolArea } from '../GradientToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { GradientToolArgs } from '../../../tools/gradient.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
@@ -136,6 +137,7 @@ type ToolLayerCall = { id?: string; toolArgs: { from: { x: number; y: number }; 
 
 describe('GradientToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
     createLayerFromToolMock.mockClear();

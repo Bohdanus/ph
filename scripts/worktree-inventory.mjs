@@ -56,7 +56,7 @@ const USAGE = `worktree inventory — regenerate WORKTREES.json
   --stdout            print the inventory instead of writing it
   --base <branch>     compare against <branch> (default: main)
   --window-hours <n>  chat window in hours (default: 24, maximum: 72; the session database is never read older than 3 days)
-  --now <ms>          pin recency evaluation; generatedAt stays on the wall clock
+  --now <ms>          pin recency evaluation; must not be in the future; generatedAt stays on the wall clock
   --out <path>        write somewhere other than WORKTREES.json
   --no-live-writers   declare that NO chat is writing to any worktree right now,
                       and record WHY in the file. Overrides the recency
@@ -87,7 +87,12 @@ function takeValue(argv, i, inline) {
   return { value: next, next: i + 1 };
 }
 
-function parseArgs(argv) {
+export function validatePinnedNow(nowMs, wallNowMs = Date.now()) {
+  if (!Number.isFinite(nowMs)) throw new Error('--now must be a finite millisecond timestamp');
+  if (nowMs > wallNowMs) throw new Error('--now cannot be in the future');
+}
+
+export function parseArgs(argv) {
   const opts = { base: 'main', windowHours: 24, now: null, out: null, noLiveWriters: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -119,6 +124,7 @@ function parseArgs(argv) {
       `--window-hours cannot exceed ${MAX_SESSION_DB_WINDOW_HOURS} (the session database safety limit is 3 days)`
     );
   }
+  if (opts.now !== null) validatePinnedNow(opts.now);
   return opts;
 }
 

@@ -56,6 +56,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -122,6 +123,11 @@ An operator hotfix the operator asked for on main by name is:
  * and a linked worktree answers `.../.git/worktrees/<name>` then
  * `.../.git`.
  *
+ * The common-dir query intentionally omits `--path-format=absolute`: that flag
+ * was added in Git 2.31, while this guard must protect older installations too.
+ * Resolve the older command's relative result against the requested checkout
+ * before comparing real paths.
+ *
  * `realpathSync` on both sides, because the two are equal as strings long before
  * they are equal as paths: git resolves its own directory through the cwd, so a
  * worktree reached through `/tmp` or `/var` — both symlinks on macOS — reports
@@ -136,8 +142,8 @@ An operator hotfix the operator asked for on main by name is:
 export function resolveWorktree(cwd = process.cwd()) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   try {
-    const gitDir = realpathSync(git(['rev-parse', '--absolute-git-dir']));
-    const commonDir = realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    const gitDir = realpathSync(resolve(cwd, git(['rev-parse', '--absolute-git-dir'])));
+    const commonDir = realpathSync(resolve(cwd, git(['rev-parse', '--git-common-dir'])));
     return { gitDir, commonDir, isMainWorktree: gitDir === commonDir };
   } catch {
     return null;
