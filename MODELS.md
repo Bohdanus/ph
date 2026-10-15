@@ -27,3 +27,13 @@ Never route GPT through `kilo` provider.
 - Free sessions must NEVER launch GPT subagents
 - Free models = read-only research only; never Git operations
 - Pass `model` + `provider` together
+
+## Common Failures
+
+| Failure                   | Cause                                           | Fix                                                |
+| ------------------------- | ----------------------------------------------- | -------------------------------------------------- |
+| Model name ambiguous      | "Nemotron 3 Ultra" matches free + paid variants | Use full name: `NVIDIA: Nemotron 3 Ultra (free)`   |
+| Model not on provider     | "Space Bunny Alpha" not on kilo/openrouter      | Search via `agent_manager_models` first            |
+| Rate limited              | Laguna/LiquidAI hits daily quota                | Retry after ~1m; don't parallelize past 1-2 Laguna |
+| Credit-gated rejection    | Free tier exhausted                             | Swap to another free model with same task          |
+| Free session launches GPT | Policy violation (free → paid)                  | Use openrouter provider for GPT                    |
