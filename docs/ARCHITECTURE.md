@@ -315,10 +315,13 @@ The boundary is `history-adapter.ts`: `legacyHistoryToDurable()` in,
 `operationForTool()`. An unsupported tool throws
 `UnsupportedHistoryFeatureError` from `operationForTool()` rather than fabricating
 a no-op. That throw is caught per entry, so the entry is omitted and named by an
-`error` diagnostic, and `convertLegacyHistorySafely()` publishes the rest of the
-document rather than withholding it — it withholds only when the result is
-structurally invalid (decided by `isStructurallyValidConversion()` from the cursor
-map) or when the conversion threw before producing a document.
+`error` diagnostic in the pure converter. The safe boundary then withholds the
+entire durable document for any error-severity diagnostic, rolls back the asset
+transaction, and exposes no cursor map: the fold after the offending entry may have
+been derived from stale state, so a later legacy cursor must not be paired with it.
+That result is `partial`, a diagnostic-only status that exact-projection consumers
+must treat like a fallback; a conversion that throws before producing a document
+is `unavailable`. Warning-only diagnostics can retain a current document.
 
 Rasters are named, not embedded. A durable raster is `{ assetId, width, height }` —
 the `'raster'` arm of `DurableLayerSource` — and an `AssetId` is

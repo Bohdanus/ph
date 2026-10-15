@@ -321,19 +321,19 @@ describe('StoreContext layer action table', () => {
     expect(store().durableStatus).toBe('stale');
   });
 
-  it('keeps the sidecar unavailable instead of downgrading to stale when an edit follows a failure', () => {
+  it('keeps the sidecar partial instead of downgrading to stale after a conversion diagnostic', () => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
       dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('pen-edit', 'pen') } });
     });
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
 
     act(() => {
       dispatch()({ type: 'BATCH_UPDATES', payload: { fileName: 'still-broken.psd' } });
     });
 
-    expect(store().durableStatus).toBe('unavailable');
+    expect(store().durableStatus).toBe('partial');
   });
 });
 

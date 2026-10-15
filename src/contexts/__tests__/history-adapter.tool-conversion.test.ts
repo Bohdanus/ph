@@ -427,7 +427,7 @@ describe('baseline layer materialization', () => {
       UnsupportedHistoryFeatureError
     );
 
-    const attempt = convertLegacyHistorySafely(history, { registry });
+    const attempt = convertLegacyHistorySafely(history, { documentId: 'unmaterialized', registry });
     expect(attempt.status).toBe('unavailable');
     expect(attempt.document).toBeNull();
     expect(attempt.diagnostics).toStrictEqual([

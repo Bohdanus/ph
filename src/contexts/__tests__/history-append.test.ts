@@ -549,6 +549,17 @@ describe('planHistoryAppend: append-point validation', () => {
     expect(result.entry.actionName).toBe(SET_DOCUMENT_FRAME_ACTION);
   });
 
+  it('accepts cursor zero as the append point for an empty timeline', () => {
+    const result = planHistoryAppend({
+      item: cropItem(),
+      timeline: timeline([], 0),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toMatchObject({ kind: 'set-document-frame', next: croppedFrame });
+  });
+
   it('accumulates a translation diagnostic and a timeline diagnostic', () => {
     const item: NewHistoryItem = { layerId: 'layer-1', actionName: TOOL_ACTION, args: { toolName: 'blur', radius: 4 } };
     const result = planHistoryAppend({
@@ -991,7 +1002,7 @@ describe('decideDurableAppend', () => {
 
       const converted = legacyHistoryToDurable(duplicateNext.entries, { documentId: 'doc-1', registry });
       expect(converted.diagnostics).toContainEqual(
-        expect.objectContaining({ historyId: 'duplicate-id', severity: 'warning' })
+        expect.objectContaining({ historyId: 'duplicate-id', severity: 'error' })
       );
       expect(converted.document.history.map((entry) => entry.id)).toEqual(['duplicate-id']);
       const toggled = toggleDurableEntry(converted.document, 'duplicate-id');

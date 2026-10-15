@@ -330,13 +330,13 @@ describe('deriveReplaceLayerSourceEntry', () => {
     expect(deriveReplaceLayerSourceEntry(sourceEdit(toolSource(secondText, secondBox)))).not.toBeNull();
   });
 
-  it('carries the legacy enabled gate', () => {
+  it('ignores nested args.enabled because the legacy gate is item.disabled', () => {
     const derived = deriveReplaceLayerSourceEntry({
       ...sourceEdit(toolSource(secondText, secondBox)),
       args: { enabled: false, source: toolSource(secondText, secondBox) },
     });
 
-    expect(derived?.enabled).toBe(false);
+    expect(derived?.enabled).toBe(true);
   });
 
   it('declines an entry that carries no installable replacement source', () => {

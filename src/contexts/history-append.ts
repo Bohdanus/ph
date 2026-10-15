@@ -558,7 +558,11 @@ function validateTimeline(entry: HistoryItem, timeline: HistoryTimeline): Migrat
       message: 'A history entry id must be unique within a document timeline.',
     };
   }
-  if (!Number.isInteger(timeline.cursor) || timeline.cursor < 0 || timeline.cursor >= timeline.entries.length) {
+  const validAppendPoint =
+    Number.isInteger(timeline.cursor) &&
+    timeline.cursor >= 0 &&
+    (timeline.entries.length === 0 ? timeline.cursor === 0 : timeline.cursor < timeline.entries.length);
+  if (!validAppendPoint) {
     return {
       historyId: entry.id,
       actionName: entry.actionName,
