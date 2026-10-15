@@ -22,7 +22,14 @@ export function resizeCanvas(canvas: HTMLCanvasElement, width: number, height: n
     if (ctx && typeof ctx.getTransform === 'function') {
       // Check if the current transform matches the expected scale
       const transform = ctx.getTransform();
-      if (transform.a !== ratio || transform.d !== ratio) {
+      if (
+        transform.a !== ratio ||
+        transform.b !== 0 ||
+        transform.c !== 0 ||
+        transform.d !== ratio ||
+        transform.e !== 0 ||
+        transform.f !== 0
+      ) {
         ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       }
     }
