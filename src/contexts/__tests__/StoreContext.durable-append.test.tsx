@@ -360,6 +360,45 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable removal', () => {
 });
 
 describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
+  it('publishes a supported append when the base has only disabled-row error diagnostics', () => {
+    const { store, dispatch } = renderWithProbe();
+    const baseline = baselineItem({ [layerId]: layer() });
+    const disabledUnsupported: HistoryItem = {
+      id: 'disabled-pen',
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { toolName: 'pen' },
+      disabled: true,
+    };
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-disabled-append',
+          history: [baseline, disabledUnsupported],
+          historyIndex: 1,
+          updates: { layers: { [layerId]: layer() }, totalSize: initialSize, documentFrame: defaultFrame },
+        },
+      });
+    });
+
+    expect(store().durableStatus).toBe('current');
+    expect(store().durableDiagnostics).toEqual([
+      expect.objectContaining({ historyId: disabledUnsupported.id, severity: 'error' }),
+    ]);
+
+    const entry = cropItem('crop-after-disabled');
+    commitCrop(dispatch(), entry, plannedFor(entry));
+
+    const after = store();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDocument?.history.map((published) => published.id)).toEqual([entry.id]);
+    expect(after.durableDiagnostics).toEqual([
+      expect.objectContaining({ historyId: disabledUnsupported.id, severity: 'error' }),
+    ]);
+  });
+
   it('appends the planned entry and advances the durable cursor by exactly one', () => {
     const { store, dispatch } = openDocument();
     const before = store().durableDocument!;
