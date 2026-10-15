@@ -5,6 +5,7 @@ import { CloneStampToolArea } from '../CloneStampToolArea.tsx';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
+import { resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
@@ -366,6 +367,7 @@ afterEach(() => {
 
 describe('CloneStampToolArea', () => {
   beforeEach(() => {
+    resetDocumentGestures();
     tempUpdateLayerMock.mockClear();
     updateLayerByToolMock.mockClear();
     createLayerFromToolMock.mockClear();

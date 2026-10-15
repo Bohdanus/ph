@@ -2,11 +2,14 @@ import { type PointerEvent, type RefObject, useEffect, useRef, useState } from '
 import { useStore } from '../contexts/StoreContext.tsx';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../contexts/document-frame.ts';
 import type { Point, Size } from '../contexts/general-types.ts';
+import { claimDocumentGesture, isDocumentGestureOpen, releaseDocumentGesture } from './document-gesture.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 
 /**
- * The one pointer-gesture hook every paint-like tool is built on: Eraser,
- * Smudge, Dodge, Burn and Clone Stamp. It owns the gesture and nothing else —
+ * The one pointer-gesture hook every paint-like tool is built on: Smudge, Dodge,
+ * Burn, Clone Stamp, Gradient, Spot Healing and Healing Brush. Eraser has a
+ * specialized implementation because of its Shift-click line gesture. The hook
+ * owns the gesture and nothing else —
  * the pixels stay with the tool, this only turns a press/move/release
  * sequence into `onStart` / `onMove` / `onCommit`.
  *
@@ -159,14 +162,21 @@ export const usePaintStroke = (
   // its own `pointercancel` listener before this hook's copy of the same
   // listener runs, so gating on it would skip the abort.
   const isGestureActiveRef = useRef(false);
+  const claimedPointerIdRef = useRef<number | null>(null);
 
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [points, setPoints] = useState<Point[]>(IDLE_POINTS);
+
+  const releaseDocumentClaim = () => {
+    releaseDocumentGesture('paint-stroke', claimedPointerIdRef.current);
+    claimedPointerIdRef.current = null;
+  };
 
   const toDocumentPoint = (event: PointerEvent<HTMLElement>): Point =>
     canvasToDocumentPoint(getLocalCoords(event), documentFrame);
 
   const clearGesture = () => {
+    releaseDocumentClaim();
     isGestureActiveRef.current = false;
     gesturePointsRef.current = [];
     setIsMouseDown(false);
@@ -175,7 +185,15 @@ export const usePaintStroke = (
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!enabled) return;
+    if (isDocumentGestureOpen()) return;
     if (!isPointerDownValid(event)) return;
+
+    // The shared claim is taken only after pointer validation, so a rejected
+    // secondary button or pointer does not block the document. JavaScript runs
+    // this handler synchronously, so a successful validation cannot race another
+    // claimant between the check above and this claim.
+    if (!claimDocumentGesture('paint-stroke', event.pointerId)) return;
+    claimedPointerIdRef.current = event.pointerId;
 
     gesturePointsRef.current = [toDocumentPoint(event)];
     isGestureActiveRef.current = true;
@@ -283,6 +301,18 @@ export const usePaintStroke = (
     // refs, module constants and setters, all of which are stable, so the copy
     // this listener holds is equivalent to the one from the latest render.
   }, [containerRef]);
+
+  useEffect(() => {
+    return () => {
+      // A tool switch can unmount the surface before a pointer-up arrives. The
+      // gesture is abandoned, but its document claim must not survive the
+      // component that owned it. Keep this cleanup separate from the listener
+      // effect so an unstable ref object cannot abort a live stroke on rerender.
+      releaseDocumentClaim();
+      isGestureActiveRef.current = false;
+      gesturePointsRef.current = [];
+    };
+  }, []);
 
   return {
     onPointerDown: handlePointerDown,

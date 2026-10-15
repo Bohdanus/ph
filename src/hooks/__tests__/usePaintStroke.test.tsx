@@ -11,6 +11,7 @@ import {
   createPointerMoveEvent,
   createPointerUpEvent,
 } from '@/__tests__/fixtures/pointer.ts';
+import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../document-gesture.ts';
 
 const CANVAS_SIZE: Size = { width: 400, height: 300 };
 /** A crop whose origin is not zero, which is the whole point of the conversion. */
@@ -107,6 +108,7 @@ describe('usePaintStroke', () => {
   });
 
   afterEach(() => {
+    resetDocumentGestures();
     container.remove();
   });
 
@@ -189,6 +191,7 @@ describe('usePaintStroke', () => {
 
     act(() => result.current.onPointerUp(up(7, 7)));
     expect(callbacks.onCommit).toHaveBeenCalledTimes(1);
+    expect(isDocumentGestureOpen()).toBe(false);
 
     // A second up is not a second commit: `usePointerPosition` owns the
     // pointer, and the hook refuses to commit a gesture it does not own.
@@ -266,6 +269,19 @@ describe('usePaintStroke', () => {
     expect(callbacks.onStart).not.toHaveBeenCalled();
     expect(callbacks.onMove).not.toHaveBeenCalled();
     expect(callbacks.onCommit).not.toHaveBeenCalled();
+    expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
+  });
+
+  it('refuses a paint stroke while another document gesture owns the gate', () => {
+    claimDocumentGesture('layer-transform', 99);
+    const callbacks = makeCallbacks();
+    const { result } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+
+    expect(pointerPositionMock.isPointerDownValid).not.toHaveBeenCalled();
+    expect(callbacks.onStart).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
   });
 
@@ -372,6 +388,7 @@ describe('usePaintStroke', () => {
     expect(callbacks.onCancel).toHaveBeenCalledTimes(1);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
     expect(result.current.isMouseDown).toBe(false);
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('does not fire onCancel when cancel is called with nothing in flight', () => {
@@ -381,6 +398,18 @@ describe('usePaintStroke', () => {
     act(() => result.current.cancel());
 
     expect(callbacks.onCancel).not.toHaveBeenCalled();
+  });
+
+  it('releases the document claim when the stroke surface unmounts mid-gesture', () => {
+    const callbacks = makeCallbacks();
+    const { result, unmount } = renderStroke(callbacks);
+
+    act(() => result.current.onPointerDown(down(0, 0)));
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    unmount();
+
+    expect(isDocumentGestureOpen()).toBe(false);
   });
 
   it('does not re-render per move when no preview is supplied', () => {
