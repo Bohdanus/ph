@@ -30,10 +30,8 @@ Never route GPT through `kilo` provider.
 
 ## Common Failures
 
-| Failure                   | Cause                                           | Fix                                                |
-| ------------------------- | ----------------------------------------------- | -------------------------------------------------- |
-| Model name ambiguous      | "Nemotron 3 Ultra" matches free + paid variants | Use full name: `NVIDIA: Nemotron 3 Ultra (free)`   |
-| Model not on provider     | "Space Bunny Alpha" not on kilo/openrouter      | Search via `agent_manager_models` first            |
-| Rate limited              | Laguna/LiquidAI hits daily quota                | Retry after ~1m; don't parallelize past 1-2 Laguna |
-| Credit-gated rejection    | Free tier exhausted                             | Swap to another free model with same task          |
-| Free session launches GPT | Policy violation (free → paid)                  | Use openrouter provider for GPT                    |
+| Failure              | Cause                                      | Fix                                 |
+| -------------------- | ------------------------------------------ | ----------------------------------- |
+| Model name ambiguous | "Nemotron 3 Ultra" matches free + paid     | Use full name with `(free)` suffix  |
+| Rate limited         | Laguna hits per-minute quota               | Retry after ~1m; max 1-2 concurrent |
+| Credit-gated         | Wrong provider — kilo is not free for GPTs | Use openrouter provider             |
