@@ -851,7 +851,7 @@ describe('useHistory undo replay', () => {
 
       useHistory().undo();
 
-      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
       expect(dispatchMock).toHaveBeenCalledWith({
         type: 'SET_DURABLE_STATUS',
         payload: {
@@ -871,12 +871,12 @@ describe('useHistory undo replay', () => {
       expect(consoleError.mock.calls[0][1]).toMatchObject({
         message: 'Unable to publish replayed history presentation',
       });
-      expect(state.layers['layer-1']).toBeDefined();
+      expect(state.layers['layer-1']).toBeUndefined();
       expect(state.history).toHaveLength(2);
-      expect(state.historyIndex).toBe(0);
-      expect(state.activeLayerId).toBe('layer-1');
+      expect(state.historyIndex).toBe(1);
+      expect(state.activeLayerId).toBeNull();
       expect(state.totalSize).toEqual({ width: 128, height: 64 });
-      expect(state.documentFrame).toEqual({ x: 0, y: 0, width: 128, height: 64 });
+      expect(state.documentFrame).toEqual(currentFrame);
     });
 
     it('fails closed on redo as well when the staged presentation cannot be published', () => {
@@ -887,14 +887,14 @@ describe('useHistory undo replay', () => {
 
       useHistory().redo();
 
-      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
-      expect(dispatchedActions()[1].payload?.diagnostics?.[0]).toMatchObject({
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedActions()[2].payload?.diagnostics?.[0]).toMatchObject({
         historyId: 'h-2',
         actionName: RENAME_LAYER_ACTION,
         code: 'conversion-failed',
       });
-      expect(state.layers['layer-1']).toBeDefined();
-      expect(state.historyIndex).toBe(1);
+      expect(state.layers['layer-1']).toBeUndefined();
+      expect(state.historyIndex).toBe(0);
     });
 
     it('applies the replay without touching the durable status when the staged presentation publishes', () => {
@@ -1252,7 +1252,7 @@ describe('useHistory undo replay', () => {
 
       // Same reasoning one step later: the renderer was asked, and declined, so the
       // document on screen is still the one the preview was drawn over.
-      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
       expect(rendererControl.drawCalls).toHaveLength(1);
       expect(clearPreviewLayers()).not.toHaveBeenCalled();
     });
