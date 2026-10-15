@@ -131,8 +131,11 @@ export const useHistory = () => {
       canvasRef,
       history,
       historyIndex,
+      layers,
       deletedLayers,
       activeLayerId,
+      selections,
+      activeSelectionId,
       totalSize: currentSize,
       documentFrame: currentDocumentFrame,
       branchRevision = 0,
@@ -170,9 +173,9 @@ export const useHistory = () => {
   //   return history.filter((item) => item.layerId === layerId);
   // }
 
-  function drawReplay(layers: LayersRecord, frame: DocumentFrame) {
+  function drawReplay(replayLayers: LayersRecord, frame: DocumentFrame) {
     const canvas = canvasRef.current;
-    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame, undefined, dpr);
+    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(replayLayers), frame, undefined, dpr);
   }
 
   async function resetHistoryTo(
@@ -181,6 +184,18 @@ export const useHistory = () => {
     _branchRevision = branchRevision
   ) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return Promise.resolve();
+    const previousReplay = {
+      updates: {
+        layers,
+        deletedLayers,
+        activeLayerId,
+        totalSize: currentSize,
+        documentFrame: currentDocumentFrame,
+        selections,
+        activeSelectionId,
+      },
+      timeline: { entries: history, cursor: historyIndex, branchRevision },
+    };
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
     // and materialization gate succeeds.
@@ -193,7 +208,8 @@ export const useHistory = () => {
         {
           // Replay layers keep their tmpCanvas: a cache is promoted only when the
           // user commits an edit, and the renderer draws from the canvas.
-          createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
+          createLayer: ({ layerId, layers: runtimeLayers, source }) =>
+            createLayerSource({ layerId, layers: runtimeLayers, source }),
           applyRasterTool: (layer, args) => {
             const bitmap = layer.tmpCanvas ?? layer.bitmap;
             if (!bitmap) return layer;
@@ -249,7 +265,10 @@ export const useHistory = () => {
       const outcome = publishDurableNavigationPresentation
         ? await publishDurableNavigationPresentation()
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
-      if (outcome.status === 'stale') return;
+      if (outcome.status === 'stale') {
+        dispatch({ type: 'SET_DURABLE_STATUS', payload: { status: 'stale', diagnostics: [] } });
+        return;
+      }
       const painted =
         outcome.status === 'durable'
           ? (() => {
@@ -260,7 +279,15 @@ export const useHistory = () => {
               );
             })()
           : drawReplay(replay.layers, replay.documentFrame);
-      if (!painted) throw new Error('Unable to publish replayed history presentation');
+      if (!painted) {
+        // APPLY_HISTORY_REPLAY advances logical history before the asynchronous
+        // durable presentation gate can finish. Restore the prior timeline when
+        // the final legacy/durable draw cannot be accepted, so an unavailable
+        // presentation never leaves the cursor pointing at pixels the user did
+        // not see.
+        dispatch({ type: 'APPLY_HISTORY_REPLAY', payload: previousReplay });
+        throw new Error('Unable to publish replayed history presentation');
+      }
       // Dropped HERE, after the replay has been published and applied, and not
       // ahead of it. A navigation that throws — a converter refusal, a tool
       // processor, a refused publication — leaves the visible canvas and the

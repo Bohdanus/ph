@@ -43,17 +43,16 @@ chronological changelog.
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
    accept `partial`; keep the exhaustive status record test when adding states.
-5. **Navigation atomicity.** `resetHistoryTo()` still advances logical history before staged
-   presentation acceptance. A failed late draw can leave a cursor/frame that the user did not see;
-   add an acceptance boundary before making durable replay logical authority.
 
 ## Recommended Sequence
 
 1. Keep `safePrefix` diagnostic-only and release its independent owner at every consumer boundary;
    never let `partial` satisfy an exact projection gate.
-2. Promote one additional presentation surface at a time behind identity, coverage, freshness,
+2. `resetHistoryTo()` compensates the replay transition when the final legacy or durable draw is
+   refused, so an unavailable presentation cannot leave the logical cursor at an unseen target.
+3. Promote one additional presentation surface at a time behind identity, coverage, freshness,
    lease, and legacy-fallback gates.
-3. Only after those gates pass, decide whether durable replay can become logical undo/redo
+4. Only after those gates pass, decide whether durable replay can become logical undo/redo
    authority. Retire boundary tests for deleted coordination modules only in the same architectural
    change that replaces their contract.
 
