@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-3, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -79,66 +79,6 @@ prove append/preview and unsupported-source behavior before retiring the compati
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
-
----
-
-## 4. P0 — one error diagnostic voids the entire durable shadow
-
-**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts`) checks
-`converted.diagnostics.some((d) => d.severity === 'error')` and, if any one entry
-produced an error, rolls back the asset transaction and returns `status: 'unavailable'` with
-`document: null`.
-
-Fail-closed is the right instinct, but this is fail-closed far too coarsely to be usable: a single
-unsupported pen or curve history entry discards the candidate document and cursor map for the whole
-timeline. The cursor-map prefix through the failed entry is useful, but its suffix is not proven
-correct: when deriving an entry throws, the conversion loop leaves its simulated state unchanged,
-and later supported entries can be derived from that stale state. Do not assume that retaining every
-entry that individually converts cleanly yields a faithful suffix.
-
-**Fix.** First define the safe extent of a partial projection.
-Either retain only the exact prefix before the first failed entry and map later legacy cursors
-conservatively, or prove a re-seed/replay rule that makes the suffix derivation exact. Then partition
-entry-local diagnostics from structural failures and represent partial availability explicitly; do
-not return a partial document as `current`. `b027de3` establishes the vocabulary for skipping an
-offending entry, but skipping alone does not prove later derivations or the cursor-map suffix safe.
-
-**Status contract to resolve before implementation.** `src/contexts/history-adapter.ts` defines only
-`current` and `unavailable`, while `src/contexts/StoreContext.tsx` documents `current` as an exact,
-transactionally converted shadow. `buildDurableDocument()` forwards the converter's status, and
-`normalizeDurableProjection()` plus the `SET_DURABLE_STATUS` branch clear the document for any status
-other than `current`; navigation and reorder consumers likewise read only a current document.
-Therefore, simply returning a partial document as `current` would violate the store contract, while
-introducing a partial status without tracing these paths could either discard the retained document or
-let an incomplete shadow appear exact. Represent partial availability explicitly and keep it out of
-paths that require an exact projection; do not remove the severity gate alone.
-
-**Decision implemented in the current worktree.** `DurableConversionStatus` now includes `partial`.
-An error-severity entry diagnostic returns `partial` with no durable document and no cursor map;
-`normalizeDurableProjection()` and all exact-projection consumers continue to admit only `current`.
-This resolves the status vocabulary without pretending that a prefix document is publishable. The
-remaining work is the asset-owner design and a proven prefix/suffix boundary before retaining any
-partial document or cursor mapping.
-
-**Asset-lifetime blocker confirmed.** `convertLegacyHistorySafely` currently rolls back the
-transaction on any error; on success it commits and calls `reconcileDocumentAssets` with
-`collectDurableAssetIds(converted.document)`. The contract documented by
-`AssetRegistry.reconcileDocumentAssets` requires the complete replayable document's asset closure,
-including assets needed for redo, not only the active cursor. Rolling back while retaining a partial
-document would invalidate assets it references; committing and reconciling against its asset set
-removes other ids held by that document owner. Since legacy history remains authoritative, establish
-whether assets omitted from the partial projection are still needed by legacy replay/runtime or
-in-flight materialization. If they are, preserve them under an independent owner/lease; if not,
-prove that no consumer needs them. Verify the partial document's assets remain resolvable without
-leaking assets that neither representation uses.
-
-**Focused verification needed.** Cover an unsupported entry followed by source-dependent entries
-and verify the chosen cursor-map boundary; also verify asset resolution/redo retention when a
-partial projection is stored. Keep partial status excluded from navigation and append/reorder paths
-that require an exact projection.
-
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/StoreContext.tsx`,
-`src/contexts/asset-registry.ts`, `src/contexts/history-model.ts`
 
 ---
 

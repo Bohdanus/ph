@@ -23,6 +23,10 @@ chronological changelog.
 - `convertLegacyHistorySafely()` requires `documentId` for legacy arrays so successful asset
   conversions cannot create an unreachable random registry owner; durable-document pass-through
   still derives its identity from the document.
+- A blocking enabled-entry diagnostic returns `partial` with no publishable document or cursor map.
+  The converter may expose an exact prefix through `safePrefix`, whose assets use an independent
+  owner and whose `release()` must be called by the diagnostic consumer. StoreContext releases it
+  immediately and keeps partial state out of every exact projection path.
 - Empty legacy timelines accept append cursor `0`; the append validator rejects only negative,
   non-integer, or out-of-range positions. The first crop/edit can therefore produce a `current`
   durable document without an opening baseline row.
@@ -31,33 +35,25 @@ chronological changelog.
 
 ## Loose Ends
 
-1. **Partial asset ownership.** Before retaining any prefix document or cursor mapping, determine
-   whether omitted assets are still needed by legacy replay or in-flight materialization. If they
-   are, add an independent owner/lease; if not, prove that and test disposal. Do not commit a
-   partial document under the normal document owner without this proof.
-2. **Safe prefix boundary.** Choose between exact prefix-only retention and a re-seed/replay rule
-   for the suffix. A cleanly translated suffix is not safe merely because one entry was skipped.
-3. **Authority cutover.** Prove append, preview, unsupported-source fallback, export, and
+1. **Authority cutover.** Prove append, preview, unsupported-source fallback, export, and
    history-panel behavior independently before removing legacy logical replay.
-4. **Presentation parity.** Keep the byte-level durable/legacy parity gates and add a forced
+2. **Presentation parity.** Keep the byte-level durable/legacy parity gates and add a forced
    durable-publication browser seam before expanding durable authority.
-5. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
+3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
-6. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
+4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now
    accept `partial`; keep the exhaustive status record test when adding states.
-7. **Navigation atomicity.** `resetHistoryTo()` still advances logical history before staged
+5. **Navigation atomicity.** `resetHistoryTo()` still advances logical history before staged
    presentation acceptance. A failed late draw can leave a cursor/frame that the user did not see;
    add an acceptance boundary before making durable replay logical authority.
 
 ## Recommended Sequence
 
-1. Add a pure prefix-boundary result to the adapter without changing publication authority.
-2. Design and test independent asset ownership for a retained prefix; include redo and disposal.
-3. Store partial metadata separately from `durableDocument`, or keep it diagnostic-only until the
-   ownership proof is complete. Never let `partial` satisfy an exact projection gate.
-4. Promote one additional presentation surface at a time behind identity, coverage, freshness,
+1. Keep `safePrefix` diagnostic-only and release its independent owner at every consumer boundary;
+   never let `partial` satisfy an exact projection gate.
+2. Promote one additional presentation surface at a time behind identity, coverage, freshness,
    lease, and legacy-fallback gates.
-5. Only after those gates pass, decide whether durable replay can become logical undo/redo
+3. Only after those gates pass, decide whether durable replay can become logical undo/redo
    authority. Retire boundary tests for deleted coordination modules only in the same architectural
    change that replaces their contract.
 

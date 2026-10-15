@@ -1160,6 +1160,10 @@ function buildDurableDocument(
       initialSize: state.totalSize,
       initialFrame: state.documentFrame,
     });
+    // A partial conversion may expose an exact prefix for diagnostics, but the
+    // store has no partial authority. Release that independent asset owner
+    // before returning the diagnostic-only projection.
+    converted.safePrefix?.release();
     const cursor =
       Number.isInteger(historyCursor) && historyCursor >= 0
         ? (converted.legacyCursorToDurableCursor[historyCursor] ?? -1)

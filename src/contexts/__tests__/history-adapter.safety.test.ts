@@ -483,8 +483,11 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(result.status).toBe('partial');
     expect(reconcile).not.toHaveBeenCalled();
     const registeredIds = register.mock.results.map((call) => call.value as AssetId);
-    expect(registeredIds).toHaveLength(1);
+    expect(registeredIds).toHaveLength(2);
     expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
+    expect(registry.getRecord(registeredIds[1]!)).toBeDefined();
+    result.safePrefix?.release();
+    expect(registry.getRecord(registeredIds[1]!)).toBeUndefined();
     expect(close).not.toHaveBeenCalled();
   });
 });
