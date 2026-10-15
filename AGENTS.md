@@ -24,8 +24,7 @@ phone-specific interaction models.
 - Pass `model` and `provider` together. A free session must never launch a GPT subagent. Free
   models never perform Git operations; the coordinator performs branch, merge, commit, reset, and
   disposal work.
-- Laguna is preferred and rate-limited. If unavailable, use Step 3.7 Flash for narrow execution;
-  use Nemotron or Dots3 only for summaries/light exploration. Resolve pairs with `agent_manager_models`.
+- See [MODELS.md](MODELS.md) for the full model/provider catalog, rankings, and failure patterns.
 - Photoshop behavior, UX, and non-trivial algorithms require external Adobe/primary-source research
   before implementation. Non-trivial changes require a fresh read-only review before landing;
   cross-module or high-risk changes require two. See [`docs/ORCHESTRATION.md#the-task-lifecycle`](docs/ORCHESTRATION.md#the-task-lifecycle)
