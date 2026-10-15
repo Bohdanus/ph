@@ -185,6 +185,35 @@ describe('StoreContext durable conversion boundary', () => {
     ]);
   });
 
+  it('keeps disabled unsupported rows non-blocking at the StoreContext boundary', () => {
+    const { getProbe, dispatch } = renderWithProbe();
+    const baseline = baselineItem();
+    const disabledPen = { ...toolItem('disabled-pen', 'pen'), disabled: true };
+    const blur = toolItem('after-disabled', 'blur', { radius: 4 });
+
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-disabled-row',
+          history: [baseline, disabledPen, blur],
+          updates: {},
+        },
+      });
+    });
+
+    const store = getProbe().store;
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument?.history.map((entry) => entry.id)).toEqual(['after-disabled']);
+    expect(store.durableDiagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'disabled-pen',
+        severity: 'error',
+        code: 'unsupported-history-feature',
+      }),
+    ]);
+  });
+
   it('recovers durable conversion via a subsequent valid document replacement', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
