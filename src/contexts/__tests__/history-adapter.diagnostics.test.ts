@@ -227,6 +227,39 @@ describe('MigrationDiagnostic code mapping', () => {
     expect(result.legacyCursorToDurableCursor[2]).toBe(0);
   });
 
+  it('keeps a disabled document replacement as a warning without blocking the shadow', () => {
+    const registry = new AssetRegistry();
+    const replacement = { ...baselineHistory('disabled-replacement')[0]!, disabled: true };
+    const result = convertSafely([blurItem(), replacement], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.document?.history.map((entry) => entry.id)).toEqual(['blur-edit']);
+    expect(result.legacyCursorToDurableCursor[2]).toBe(0);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'disabled-replacement',
+        actionName: OPEN_DOCUMENT_ACTION,
+        severity: 'warning',
+        code: 'document-replacement',
+      }),
+    ]);
+    registry.shutdown();
+  });
+
+  it('records the first enabled conversion failure at legacy index zero', () => {
+    const registry = new AssetRegistry();
+    const result = legacyHistoryToDurable(
+      [{ id: 'unsupported-at-zero', actionName: TOOL_ACTION, layerId, args: { toolName: 'unknown-tool' as never } }],
+      { documentId, registry }
+    );
+
+    expect(result.firstErrorIndex).toBe(0);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'unsupported-at-zero', severity: 'error' }),
+    ]);
+    registry.shutdown();
+  });
+
   it('maps a whole-conversion failure to code conversion-failed without history or action keys', () => {
     const registry = new AssetRegistry();
     const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
