@@ -734,6 +734,65 @@ describe('useHistory undo replay', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses navigation to a disabled opening row instead of publishing an empty state', () => {
+    const disabledOpening: HistoryItem = {
+      id: 'disabled-opening',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: {},
+        size: { width: 128, height: 64 },
+        frame: { x: 0, y: 0, width: 128, height: 64 },
+      },
+      disabled: true,
+    };
+    setup([disabledOpening]);
+
+    useHistory().resetHistoryTo(0);
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(replayControl.replayCount).toBe(0);
+  });
+
+  it('does not disable an enabled opening row through the history eye control', () => {
+    const opening: HistoryItem = {
+      id: 'opening',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: {},
+        size: { width: 128, height: 64 },
+        frame: { x: 0, y: 0, width: 128, height: 64 },
+      },
+    };
+    setup([opening]);
+
+    useHistory().toggleDisabled('opening');
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(storeStateMock.history[0]?.disabled).toBeUndefined();
+  });
+
+  it('allows a persisted disabled opening row to be re-enabled', () => {
+    const disabledOpening: HistoryItem = {
+      id: 'opening',
+      actionName: OPEN_DOCUMENT_ACTION,
+      layerId: 'layer-1',
+      documentSource: {
+        layers: {},
+        size: { width: 128, height: 64 },
+        frame: { x: 0, y: 0, width: 128, height: 64 },
+      },
+      disabled: true,
+    };
+    setup([disabledOpening]);
+
+    useHistory().toggleDisabled('opening');
+
+    expect(dispatchMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'APPLY_HISTORY_REPLAY' }));
+    expect(storeStateMock.history[0]?.disabled).toBe(false);
+  });
+
   it('publishes navigation without mutating the old deleted-layer record', () => {
     const { state } = setup();
     const deletedLayers = state.deletedLayers;

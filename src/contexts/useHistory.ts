@@ -6,7 +6,12 @@ import { findToolProcessor } from '../tools/toolProcessors.ts';
 import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
-import { SET_DOCUMENT_FRAME_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../util/constants.ts';
+import {
+  OPEN_DOCUMENT_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  TOOL_ACTION,
+} from '../util/constants.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
@@ -184,6 +189,10 @@ export const useHistory = () => {
     _branchRevision = branchRevision
   ) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return Promise.resolve();
+    const target = _history[targetIndex];
+    // A disabled opening row has no prior document state. Legacy replay skips
+    // it, which would otherwise publish an empty canvas from a clickable row.
+    if (targetIndex === 0 && target?.disabled && target.actionName === OPEN_DOCUMENT_ACTION) return Promise.resolve();
     const previousReplay = {
       updates: {
         layers,
@@ -329,6 +338,9 @@ export const useHistory = () => {
 
   function toggleDisabled(historyId: string) {
     // todo commit dirty tool
+    const entry = history.find((item) => item.id === historyId);
+    if (entry && history[0] === entry && entry.actionName === OPEN_DOCUMENT_ACTION && !entry.disabled)
+      return Promise.resolve();
     const timeline = updateHistoryTimeline(
       { entries: history, cursor: historyIndex, branchRevision },
       { type: 'toggle-disabled', entryId: historyId }
