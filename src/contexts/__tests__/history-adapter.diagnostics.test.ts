@@ -725,6 +725,23 @@ describe('durable entry id uniqueness', () => {
     registry.shutdown();
   });
 
+  it('keeps safe-prefix cursor mappings aligned to original indices across disabled rows', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        { id: 'disabled-before-failure', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' }, disabled: true },
+        { id: 'enabled-failure', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('partial');
+    expect(result.safePrefix?.safeThroughLegacyCursor).toBe(1);
+    expect(result.safePrefix?.legacyCursorToDurableCursor).toEqual([-1, -1]);
+    result.safePrefix?.release();
+    registry.shutdown();
+  });
+
   it('fails closed for repeated raster operations until canonical no-op parity is proven', () => {
     const registry = new AssetRegistry();
     const first = blurItem('shared-id');
