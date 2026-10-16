@@ -211,7 +211,8 @@ export function drawLayersToCanvas(
   layers: readonly Layer[],
   documentFrame: DocumentFrame,
   silentMissingLayerIds?: ReadonlySet<string>,
-  backingScale = 1
+  backingScale = 1,
+  requireVisibleLayerBitmaps = false
 ): boolean {
   if (typeof document === 'undefined') return true;
   const size = documentFrameSize(documentFrame);
@@ -229,6 +230,7 @@ export function drawLayersToCanvas(
       // canvas keeps the presentation it already had.
       try {
         if (!drawLayer(stagingContext, layer, documentFrame)) {
+          if (requireVisibleLayerBitmaps) return false;
           if (!silentMissingLayerIds?.has(layer.id)) {
             console.error('skipped layer without bitmap', layer.id);
           }

@@ -1406,6 +1406,12 @@ export function decideDurableAppend({
   registry: suppliedRegistry,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
+  if (prior.entries.some((candidate) => candidate.id === entry.id)) {
+    return {
+      outcome: 'preconditions',
+      reason: 'the appended history entry id already exists in the legacy timeline',
+    };
+  }
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
   if (base.documentId !== documentId) return { outcome: 'preconditions', reason: 'the durable document is stale' };
   if (base.documentRevision !== documentRevision) {
@@ -1449,7 +1455,6 @@ export function decideDurableAppend({
   if (next.entries[next.entries.length - 1] !== entry) {
     return { outcome: 'preconditions', reason: 'the appended entry is not the one that was planned' };
   }
-
   // A reorder is the only publication whose correctness depends on the whole
   // layer order, so it is the only one that has to prove it. The refusal is a
   // precondition rather than a mismatch: it describes a store that cannot answer

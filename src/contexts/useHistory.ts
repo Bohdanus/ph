@@ -141,6 +141,7 @@ export const useHistory = () => {
       activeLayerId,
       selections,
       activeSelectionId,
+      hasUnsavedChanges,
       totalSize: currentSize,
       documentFrame: currentDocumentFrame,
       branchRevision = 0,
@@ -180,7 +181,7 @@ export const useHistory = () => {
 
   function drawReplay(replayLayers: LayersRecord, frame: DocumentFrame) {
     const canvas = canvasRef.current;
-    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(replayLayers), frame, undefined, dpr);
+    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(replayLayers), frame, undefined, dpr, true);
   }
 
   async function resetHistoryTo(
@@ -202,8 +203,10 @@ export const useHistory = () => {
         documentFrame: currentDocumentFrame,
         selections,
         activeSelectionId,
+        hasUnsavedChanges,
       },
       timeline: { entries: history, cursor: historyIndex, branchRevision },
+      preserveHasUnsavedChanges: true,
     };
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
@@ -275,7 +278,6 @@ export const useHistory = () => {
         ? await publishDurableNavigationPresentation()
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
       if (outcome.status === 'stale') {
-        dispatch({ type: 'SET_DURABLE_STATUS', payload: { status: 'stale', diagnostics: [] } });
         return;
       }
       const painted =
@@ -284,7 +286,7 @@ export const useHistory = () => {
               const canvas = canvasRef.current;
               return (
                 !canvas ||
-                drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame, undefined, dpr)
+                drawLayersToCanvas(canvas, getSortedLayersArray(outcome.layers), outcome.frame, undefined, dpr, true)
               );
             })()
           : drawReplay(replay.layers, replay.documentFrame);

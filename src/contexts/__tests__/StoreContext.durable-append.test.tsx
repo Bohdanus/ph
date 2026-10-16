@@ -888,6 +888,60 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
     }
   });
 
+  it('withholds a source-backed append whose history id already exists in the legacy timeline', async () => {
+    const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
+    const { store, dispatch } = openDocument();
+    const registry = getAssetRegistry();
+    const bitmap = createMockImageBitmap(40, 30);
+    const source: ImageLayerSource = {
+      kind: 'image',
+      bitmap,
+      name: 'Duplicate photo',
+      isBedrock: false,
+      pos: { x: 10, y: 20, width: 40, height: 30 },
+    };
+    const duplicateLayerId = 'duplicate-layer';
+    const entry: HistoryItem = {
+      id: 'baseline',
+      actionName: NEW_LAYER_ACTION,
+      layerId: duplicateLayerId,
+      layerSource: source,
+    };
+
+    try {
+      await act(async () => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: {
+              layers: {
+                [layerId]: layer(),
+                [duplicateLayerId]: {
+                  ...createMockLayer({ id: duplicateLayerId, pos: source.pos }),
+                  source,
+                  bitmap,
+                },
+              },
+            },
+            historyItem: entry,
+            durableEntry: null,
+          },
+        });
+        await Promise.resolve();
+      });
+
+      expect(store().history.map(({ id }) => id)).toEqual(['baseline', 'baseline']);
+      expect(store().durableStatus).toBe('partial');
+      expect(store().durableDocument).toBeNull();
+      expect(store().durableDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'invalid-history-entry', historyId: 'baseline', severity: 'error' })
+      );
+      expect(conversion).toHaveBeenCalled();
+    } finally {
+      registry.reconcileDocumentAssets('doc-1', new Set());
+    }
+  });
+
   it('plans a paint-tool layer through the durable source admission rule', () => {
     const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
     const { store, dispatch } = openDocument();
