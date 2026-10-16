@@ -140,7 +140,7 @@ const Draw: React.FC<{}> = () => {
 
     // 1:1, because `scaledWidth`/`scaledHeight` were already multiplied by `dpr` above.
     ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH * dpr, PREVIEW_HEIGHT * dpr);
-  }, [args, brushScale, color, dpr]);
+  }, [args, brushScale, color, dpr, penType]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">

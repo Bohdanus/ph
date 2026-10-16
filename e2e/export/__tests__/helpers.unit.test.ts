@@ -2567,14 +2567,15 @@ describe('Export Helpers', () => {
    * describes a file that PASSED under that rule.
    */
   describe('exportByteVerifiers', () => {
-    const TIFF_FORMAT: ExportFormat = { label: 'TIFF', extension: '.tiff', verification: 'container' };
+    const CONTAINER_TIFF_FORMAT: ExportFormat = { label: 'TIFF', extension: '.tiff', verification: 'container' };
     const PSD_FORMAT: ExportFormat = {
       label: 'Photoshop PSD (layers)',
       extension: '.psd',
       verification: 'container',
     };
 
-    const verifyTiff = (file: Buffer, sourceDataUrl: string) => verifyExportContainer(TIFF_FORMAT, file, sourceDataUrl);
+    const verifyTiff = (file: Buffer, sourceDataUrl: string) =>
+      verifyExportContainer(CONTAINER_TIFF_FORMAT, file, sourceDataUrl);
     const verifyPsd = (file: Buffer, sourceDataUrl: string) => verifyExportContainer(PSD_FORMAT, file, sourceDataUrl);
 
     it('rejects a container format with no registered verifier rather than skipping it', async () => {

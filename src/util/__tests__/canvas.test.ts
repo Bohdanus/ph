@@ -114,6 +114,17 @@ describe('resizeCanvas', () => {
     expect(heightWrites).toEqual([2]);
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it('replaces a skewed or translated transform with the requested scale', () => {
+    const { canvas, mockContext, getTransform } = createSpyCanvas(200, 100);
+    getTransform().b = 1;
+    getTransform().e = 4;
+
+    resizeCanvas(canvas, 100, 50, 2);
+
+    expect(mockContext.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+    expect(getTransform()).toEqual({ a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 });
+  });
 });
 
 function createAlphaCtx(globalAlpha: number) {
