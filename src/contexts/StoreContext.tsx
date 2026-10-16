@@ -338,6 +338,8 @@ type ApplyHistoryReplayIntentPayload = {
   updates: StoreUpdates;
   timeline: HistoryTimeline;
   durableDiagnostics?: readonly MigrationDiagnostic[];
+  /** Compensation-only: restore the dirty state captured before a refused replay. */
+  preserveHasUnsavedChanges?: boolean;
   durableDocument?: never;
   durableStatus?: never;
 };
@@ -643,6 +645,7 @@ function projectPublishedTimeline(
     durableDocument: DurableDocument | null;
     durableStatus: DurableDocumentStatus;
     durableDiagnostics: readonly MigrationDiagnostic[];
+    preserveHasUnsavedChanges?: boolean;
     renderSelector?: RenderSelector;
   }
 ): StoreData {
@@ -675,7 +678,9 @@ function projectPublishedTimeline(
         payload.timeline.cursor,
         documentFrame
       ),
-    hasUnsavedChanges: true,
+    hasUnsavedChanges: payload.preserveHasUnsavedChanges
+      ? (updates.hasUnsavedChanges ?? state.hasUnsavedChanges)
+      : true,
   };
 }
 
@@ -1953,6 +1958,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableDocument: converted.document,
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
+        preserveHasUnsavedChanges: action.payload.preserveHasUnsavedChanges,
       });
       const renderSelector =
         converted.status === 'current' && converted.document
@@ -1968,6 +1974,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDocument: converted.document,
           durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
+          preserveHasUnsavedChanges: action.payload.preserveHasUnsavedChanges,
           renderSelector,
         },
       });

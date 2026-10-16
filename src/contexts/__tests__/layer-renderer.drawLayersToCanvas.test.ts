@@ -296,6 +296,18 @@ describe('drawLayersToCanvas', () => {
     expect(target.context.drawImage).toHaveBeenCalledWith(stagingCanvas, 0, 0);
   });
 
+  it('refuses strict navigation when a visible layer has no bitmap', () => {
+    const target = createTargetCanvas();
+    const healthy = createImageLayer('healthy', { x: 0, y: 0, width: 20, height: 10 });
+    const missing = createImageLayer('missing', { x: 1, y: 1, width: 20, height: 10 }, { bitmap: null });
+
+    expect(drawLayersToCanvas(target.canvas, [healthy, missing], frame(0, 0, 100, 100), undefined, 1, true)).toBe(
+      false
+    );
+    expect(target.context.clearRect).not.toHaveBeenCalled();
+    expect(target.context.drawImage).not.toHaveBeenCalled();
+  });
+
   it('treats a zero-sized bitmap as a skippable layer rather than a failure', () => {
     const target = createTargetCanvas();
     const collapsed = createImageLayer('collapsed', { x: 0, y: 0, width: 0, height: 0 });

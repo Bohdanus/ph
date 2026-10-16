@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 
 import {
   HIDE_LAYER_ACTION,
@@ -70,6 +70,8 @@ const storeStateMock = vi.hoisted(() => ({
   branchRevision: 0,
   hasUnsavedChanges: false,
   clearPreviewLayers: vi.fn(),
+  publishDurableNavigationPresentation: undefined as
+    (() => Promise<{ status: 'stale'; reason: 'stale'; cursor: number }>) | undefined,
 }));
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -97,11 +99,20 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
       layers: readonly Layer[],
       frame: DocumentFrame,
       silentMissingLayerIds?: ReadonlySet<string>,
-      backingScale = 1
+      backingScale = 1,
+      requireVisibleLayerBitmaps = false
     ) => {
       rendererControl.drawCalls.push({ canvas, layers, frame });
       return (
-        rendererControl.result ?? actual.drawLayersToCanvas(canvas, layers, frame, silentMissingLayerIds, backingScale)
+        rendererControl.result ??
+        actual.drawLayersToCanvas(
+          canvas,
+          layers,
+          frame,
+          silentMissingLayerIds,
+          backingScale,
+          requireVisibleLayerBitmaps
+        )
       );
     },
   };
@@ -238,6 +249,7 @@ function resetStoreState(history: HistoryItem[]) {
     activeSelectionId: null,
     branchRevision: 0,
     hasUnsavedChanges: false,
+    publishDurableNavigationPresentation: undefined,
   });
 }
 
@@ -247,12 +259,15 @@ function createDispatch() {
       const payload = action.payload as {
         updates: Record<string, unknown>;
         timeline: { entries: HistoryItem[]; cursor: number; branchRevision: number };
+        preserveHasUnsavedChanges?: boolean;
       };
       Object.assign(storeStateMock, payload.updates, {
         history: [...payload.timeline.entries],
         historyIndex: payload.timeline.cursor,
         branchRevision: payload.timeline.branchRevision,
-        hasUnsavedChanges: true,
+        hasUnsavedChanges: payload.preserveHasUnsavedChanges
+          ? (payload.updates.hasUnsavedChanges ?? storeStateMock.hasUnsavedChanges)
+          : true,
       });
     } else if (action.type === 'COMMIT_DOCUMENT_EDIT') {
       const payload = action.payload as { updates: Record<string, unknown>; historyItem: HistoryItem };
@@ -933,6 +948,7 @@ describe('useHistory undo replay', () => {
       expect(state.layers['layer-1']).toBeUndefined();
       expect(state.history).toHaveLength(2);
       expect(state.historyIndex).toBe(1);
+      expect(state.hasUnsavedChanges).toBe(false);
       expect(state.activeLayerId).toBeNull();
       expect(state.totalSize).toEqual({ width: 128, height: 64 });
       expect(state.documentFrame).toEqual(currentFrame);
@@ -964,6 +980,23 @@ describe('useHistory undo replay', () => {
       expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
       expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_DURABLE_STATUS' }));
       expect(state.layers['layer-1']).toMatchObject({ id: 'layer-1', visible: true });
+      expect(state.historyIndex).toBe(0);
+    });
+
+    it('does not overwrite a newer status when navigation publication is stale', async () => {
+      const { state } = setup();
+      storeStateMock.publishDurableNavigationPresentation = vi.fn(async () => ({
+        status: 'stale' as const,
+        reason: 'stale' as const,
+        cursor: 0,
+      }));
+      const { result } = renderHook(() => useHistory());
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY']);
       expect(state.historyIndex).toBe(0);
     });
 
