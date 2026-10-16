@@ -208,6 +208,7 @@ export const useHistory = () => {
       timeline: { entries: history, cursor: historyIndex, branchRevision },
       preserveHasUnsavedChanges: true,
     };
+    let replayDispatched = false;
     // Legacy replay remains the structural substrate and complete fallback. The
     // durable publication paints the normal path when every identity, coverage,
     // and materialization gate succeeds.
@@ -274,6 +275,7 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
+      replayDispatched = true;
       const outcome = publishDurableNavigationPresentation
         ? await publishDurableNavigationPresentation()
         : { status: 'legacy-fallback' as const, reason: 'stale' as const, cursor: targetIndex };
@@ -297,6 +299,7 @@ export const useHistory = () => {
         // presentation never leaves the cursor pointing at pixels the user did
         // not see.
         dispatch({ type: 'APPLY_HISTORY_REPLAY', payload: previousReplay });
+        replayDispatched = false;
         throw new Error('Unable to publish replayed history presentation');
       }
       // Dropped HERE, after the replay has been published and applied, and not
@@ -322,6 +325,12 @@ export const useHistory = () => {
         console.error(`History replay skipped an entry (${diagnostic.code})`, diagnostic.error);
       }
     } catch (error) {
+      if (replayDispatched) {
+        // The replay has already moved logical state, but the final presentation
+        // can throw before it paints. Restore the prior cursor/layers before
+        // reporting the failed target as unavailable.
+        dispatch({ type: 'APPLY_HISTORY_REPLAY', payload: previousReplay });
+      }
       const item = _history[targetIndex];
       const reason = error instanceof Error ? error.message : String(error);
       const diagnostic: MigrationDiagnostic = {
