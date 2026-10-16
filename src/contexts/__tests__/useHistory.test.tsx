@@ -37,7 +37,8 @@ vi.mock('../../hooks/useDevicePixelRatio.ts', () => ({
  * 1. anything about what the STORE does with the payload — only what the hook
  *    dispatches is in scope;
  * 2. durable state, in any form — the mock has no durable projection at all;
- * 3. `hasUnsavedChanges` — the mock hardcodes it to `true` on every replay;
+ * 3. `hasUnsavedChanges` transitions in the real reducer — the mock mirrors the
+ *    compensation flag only; the provider-level proof lives in StoreContext tests;
  * 4. selection projection through the reducer — the assertion that reads
  *    `selections` back out of `storeStateMock` reads state the mock just wrote
  *    from the same payload, so it is a tautology. The dispatch payload is the
@@ -86,7 +87,12 @@ const { useHistory } = await import('../useHistory.ts');
 // document.createElement, so a failing publication must be simulated through the
 // module boundary rather than through the visible canvas context.
 const rendererControl = vi.hoisted(() => ({
-  drawCalls: [] as Array<{ canvas: HTMLCanvasElement; layers: readonly Layer[]; frame: DocumentFrame }>,
+  drawCalls: [] as Array<{
+    canvas: HTMLCanvasElement;
+    layers: readonly Layer[];
+    frame: DocumentFrame;
+    requireVisibleLayerBitmaps: boolean;
+  }>,
   result: null as boolean | null,
   failure: null as unknown,
 }));
@@ -103,7 +109,7 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
       backingScale = 1,
       requireVisibleLayerBitmaps = false
     ) => {
-      rendererControl.drawCalls.push({ canvas, layers, frame });
+      rendererControl.drawCalls.push({ canvas, layers, frame, requireVisibleLayerBitmaps });
       if (rendererControl.failure !== null) throw rendererControl.failure;
       return (
         rendererControl.result ??
@@ -1057,6 +1063,7 @@ describe('useHistory undo replay', () => {
       expect(call.canvas).toBe(state.canvasRef.current);
       expect(call.frame).toEqual({ x: 0, y: 0, width: 300, height: 200 });
       expect(call.layers).toEqual(getSortedLayersArray(state.layers));
+      expect(call.requireVisibleLayerBitmaps).toBe(true);
       expect(call.layers.map((layer) => layer.id)).toEqual(['bottom', 'top']);
       expect(Object.keys(state.layers)).toEqual(['top', 'bottom']);
     });
