@@ -109,7 +109,6 @@ const navigatesFromABeforeHook = (source: string): boolean =>
 const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'adjustments.spec.ts',
   'flyout-longpress-race.spec.ts',
-  'levels.spec.ts',
   'mobile-shell.spec.ts',
   'paint-options.spec.ts',
   'paint-tool-pixels.spec.ts',
