@@ -152,6 +152,13 @@ const EXPECTED_WRITERS: readonly WriterSite[] = [
     writerClass: 'reconverts entirely',
     reason: 'failed presentation compensates navigation by restoring the prior timeline',
   },
+  {
+    file: 'src/contexts/useHistory.ts',
+    symbol: 'resetHistoryTo',
+    action: 'APPLY_HISTORY_REPLAY',
+    writerClass: 'reconverts entirely',
+    reason: 'renderer exceptions compensate navigation after replay dispatch',
+  },
 ];
 
 const actionNames = new Set<string>(HISTORY_WRITING_ACTIONS);
@@ -349,7 +356,7 @@ describe('history writer census', () => {
       'conversion-only': writers.filter((writer) => writer.writerClass === 'conversion-only').length,
       'reconverts entirely': writers.filter((writer) => writer.writerClass === 'reconverts entirely').length,
     };
-    expect(counts).toEqual({ 'durable-routed': 6, 'conversion-only': 8, 'reconverts entirely': 4 });
+    expect(counts).toEqual({ 'durable-routed': 6, 'conversion-only': 8, 'reconverts entirely': 5 });
     console.info(`S9 history-writer census: ${writers.length} writers`, counts);
   });
 

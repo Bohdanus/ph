@@ -88,6 +88,7 @@ const { useHistory } = await import('../useHistory.ts');
 const rendererControl = vi.hoisted(() => ({
   drawCalls: [] as Array<{ canvas: HTMLCanvasElement; layers: readonly Layer[]; frame: DocumentFrame }>,
   result: null as boolean | null,
+  failure: null as unknown,
 }));
 
 vi.mock('../layer-renderer.ts', async (importOriginal) => {
@@ -103,6 +104,7 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
       requireVisibleLayerBitmaps = false
     ) => {
       rendererControl.drawCalls.push({ canvas, layers, frame });
+      if (rendererControl.failure !== null) throw rendererControl.failure;
       return (
         rendererControl.result ??
         actual.drawLayersToCanvas(
@@ -331,6 +333,7 @@ describe('useHistory undo replay', () => {
     dispatchMock.mockReset();
     rendererControl.drawCalls.length = 0;
     rendererControl.result = null;
+    rendererControl.failure = null;
     replayControl.failure = null;
     replayControl.replayCount = 0;
     replayControl.calls = [];
@@ -970,6 +973,24 @@ describe('useHistory undo replay', () => {
       });
       expect(state.layers['layer-1']).toBeUndefined();
       expect(state.historyIndex).toBe(0);
+    });
+
+    it('compensates when the final renderer throws after replay dispatch', async () => {
+      const { state } = setup();
+      const previousHistory = [...state.history];
+      const failure = new Error('staging allocation failed');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      rendererControl.failure = failure;
+      const { result } = renderHook(() => useHistory());
+
+      await act(async () => {
+        await result.current.undo();
+      });
+
+      expect(dispatchedTypes()).toEqual(['APPLY_HISTORY_REPLAY', 'APPLY_HISTORY_REPLAY', 'SET_DURABLE_STATUS']);
+      expect(state.history).toEqual(previousHistory);
+      expect(state.historyIndex).toBe(previousHistory.length - 1);
+      expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
     });
 
     it('applies the replay without touching the durable status when the staged presentation publishes', () => {
