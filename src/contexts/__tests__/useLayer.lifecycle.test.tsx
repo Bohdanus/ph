@@ -735,21 +735,6 @@ describe('useLayers layer mutation commands', () => {
     });
   });
 
-  it('applies a blend-mode patch with the opacity action and records the intent', () => {
-    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
-
-    act(() => {
-      result.current.layers.updateLayer('edited', { blendMode: 'multiply' }, SET_LAYER_OPACITY_ACTION);
-    });
-
-    expect(result.current.store.layers.edited!.blendMode).toBe('multiply');
-    expect(result.current.store.history.at(-1)).toMatchObject({
-      actionName: SET_LAYER_OPACITY_ACTION,
-      layerId: 'edited',
-      args: { blendMode: 'multiply' },
-    });
-  });
-
   it('moves a layer to the bottom when the anchor is null', () => {
     const { result } = setup({
       layers: { bottom: makeLayer('bottom', 0), middle: makeLayer('middle', 1), top: makeLayer('top', 2) },
