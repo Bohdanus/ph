@@ -94,7 +94,7 @@ function renderWithProbe() {
 }
 
 function openDocument(documentId = 'doc-1') {
-  const { store, dispatch } = renderWithProbe();
+  const { store, dispatch, unmount } = renderWithProbe();
   act(() => {
     dispatch()({
       type: 'REPLACE_DOCUMENT',
@@ -106,7 +106,7 @@ function openDocument(documentId = 'doc-1') {
       },
     });
   });
-  return { store, dispatch };
+  return { store, dispatch, unmount };
 }
 
 function commitCrop(
@@ -159,6 +159,36 @@ function commitProperty(
     });
   });
 }
+
+describe('APPLY_HISTORY_REPLAY compensation state', () => {
+  it('preserves hasUnsavedChanges through the real StoreContext reducer', () => {
+    const probe = openDocument();
+
+    try {
+      const before = probe.store();
+      expect(before.hasUnsavedChanges).toBe(false);
+
+      act(() => {
+        probe.dispatch()({
+          type: 'APPLY_HISTORY_REPLAY',
+          payload: {
+            updates: { layers: before.layers, hasUnsavedChanges: false },
+            timeline: {
+              entries: before.history,
+              cursor: before.historyIndex,
+              branchRevision: before.branchRevision,
+            },
+            preserveHasUnsavedChanges: true,
+          },
+        });
+      });
+
+      expect(probe.store().hasUnsavedChanges).toBe(false);
+    } finally {
+      probe.unmount();
+    }
+  });
+});
 
 /**
  * A layer removal, in the shape `useLayer.removeLayer` produces it: the layer
