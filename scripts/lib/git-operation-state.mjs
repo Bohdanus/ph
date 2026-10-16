@@ -46,9 +46,14 @@
  * WHAT IS DELIBERATELY NOT HERE
  * ------------------------------
  * `AUTO_MERGE` — written by merge, cherry-pick AND revert, so it would report the
- * same operation three times under one marker. `MERGE_MSG` — written before the
- * conflict and, on the git measured here, removed with `MERGE_HEAD`; either way a
- * report keyed on it would be reporting a message file rather than an operation.
+ * same operation three times under one marker. It is NOT a row in the table; instead
+ * `readOperations` has a fallback that checks for it ONLY when no primary marker is
+ * found, reporting an unnamed `in-progress` operation. That covers the interrupted-
+ * merge shape — `AUTO_MERGE` present with no `MERGE_HEAD`, `CHERRY_PICK_HEAD`, etc. —
+ * where silence would read as clean and the unmerged index would be the only warning.
+ * `MERGE_MSG` — written before the conflict and, on the git measured here, removed
+ * with `MERGE_HEAD`; either way a report keyed on it would be reporting a message
+ * file rather than an operation.
  * `ORIG_HEAD`, `COMMIT_EDITMSG`, `MERGE_MODE`, `REBASE_HEAD`, `sequencer/` and the
  * rest of the `BISECT_*` family — each is either always accompanied by a row in this
  * table or does not survive the operation it belongs to.
@@ -152,6 +157,21 @@ export function readOperations(gitDir) {
       value: readMarkerValue(gitDir, marker),
     });
   }
+
+  // FALLBACK: detect the interrupted-merge shape. `AUTO_MERGE` is written by merge,
+  // cherry-pick AND revert, so it cannot distinguish them and is not in the table.
+  // But when ALL primary markers are absent and AUTO_MERGE remains, the operation
+  // state is incomplete — `MERGE_HEAD` was removed by hand or never written by a
+  // `git merge --squash`, while the resolution state in the index and the file git
+  // uses to mark the in-progress operation are still there. That is the hazard:
+  // a report that says "nothing" reads as clean and licenses removing the worktree
+  // directory that holds the only copy. Report it as unnamed so the gap is visible;
+  // `abortCommand` returns null for the unnamed case. Only fires when found.length
+  // is 0, so a real merge/cherry-pick/revert is always named correctly first.
+  if (found.length === 0 && existsSync(join(gitDir, 'AUTO_MERGE'))) {
+    found.push({ operation: 'in-progress', marker: 'AUTO_MERGE', value: null });
+  }
+
   return found.sort((a, b) => a.operation.localeCompare(b.operation));
 }
 
@@ -179,6 +199,12 @@ export function readOperations(gitDir) {
  *   command, which is the truth and is actionable — commit it or reset by hand.
  */
 export function abortCommand(operation) {
+  // `in-progress` is the unnamed fallback from an `AUTO_MERGE` with no primary
+  // marker: the operation could be a merge, cherry-pick, or revert, and git
+  // cannot tell us which. Returning a guessed command would hand the operator
+  // one that fatals — `git in-progress --abort` — so this returns null and the
+  // caller advises by hand.
+  if (operation.operation === 'in-progress') return null;
   if (operation.operation === 'bisect') return 'git bisect reset';
   // `rebase-apply` is `git am`, whose abandon is `git am --abort`.
   if (operation.operation === 'rebase')
