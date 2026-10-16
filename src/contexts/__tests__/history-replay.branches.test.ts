@@ -9,10 +9,12 @@ import {
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
@@ -566,6 +568,130 @@ describe('replayHistory layer bookkeeping actions', () => {
       expect(Object.keys(replayHistory(history, 1, initialSize, dependencies).layers)).toEqual(['layer-1']);
     }
   );
+
+  it.each([
+    { label: 'a value below zero', opacity: -0.1 },
+    { label: 'a value above one', opacity: 1.5 },
+    { label: 'NaN', opacity: NaN },
+    { label: 'a non-number', opacity: 'half' as unknown as number },
+  ])('reports a diagnostic and leaves opacity unchanged for $label', ({ opacity }) => {
+    const dependencies = createDependencies();
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+      { id: 'bad-opacity', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity } },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0].code).toBe('invalid-layer-opacity');
+    expect(result.diagnostics[0].historyId).toBe('bad-opacity');
+    expect(result.diagnostics[0].actionName).toBe(SET_LAYER_OPACITY_ACTION);
+    expect(result.layers['layer-1'].opacity).toBe(1);
+  });
+
+  it('applies a valid opacity to a present layer and ignores it for a missing one', () => {
+    const dependencies = createDependencies();
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+      { id: 'fade', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'layer-1', args: { opacity: 0.5 } },
+      { id: 'fade-missing', actionName: SET_LAYER_OPACITY_ACTION, layerId: 'ghost', args: { opacity: 0.3 } },
+    ];
+
+    const result = replayHistory(history, 2, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].opacity).toBe(0.5);
+    expect(result.layers.ghost).toBeUndefined();
+  });
+
+  it('replaces a layer source for a present layer, carrying operations and lastHistoryId', () => {
+    const dependencies = createDependencies();
+    const existingLayer = createTestLayer('layer-1', {
+      name: 'original-name',
+      pos: { x: 50, y: 60, width: 200, height: 100 },
+      bitmap: {} as Layer['bitmap'],
+      tmpCanvas: {} as Layer['tmpCanvas'],
+      operations: [{ id: 'old', args: { toolName: 'blur', radius: 1 }, enabled: true }] as LayerOperation[],
+    });
+    const replacementSource: LayerSource = {
+      kind: 'tool',
+      args: { toolName: 'shape' },
+      isBedrock: false,
+      pos: { x: 10, y: 20, width: 100, height: 100 },
+    } as LayerSource;
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'layer-1',
+        documentSource: {
+          layers: { 'layer-1': existingLayer },
+          size: initialSize,
+          frame: { x: 0, y: 0, ...initialSize },
+        },
+      },
+      {
+        id: 'replace',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId: 'layer-1',
+        args: { source: replacementSource },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    const layer = result.layers['layer-1'];
+    expect(layer.name).toBe('layer-1');
+    expect(layer.source).toBe(replacementSource);
+    expect(layer.pos).toEqual({ x: 0, y: 0, width: 40, height: 30 });
+    expect(layer.operations).toEqual(existingLayer.operations);
+    expect(layer.lastHistoryId).toBe('replace');
+    expect(layer.presentationBounds).toBeNull();
+    expect(layer.bitmap).toBeNull();
+    expect(layer.tmpCanvas).toBeNull();
+  });
+
+  it('refuses a replacement whose source is not a tool kind', () => {
+    const dependencies = createDependencies();
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+      {
+        id: 'replace-blank',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId: 'layer-1',
+        args: { source: { ...blankSource } },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers['layer-1'].source).toBe(blankSource);
+    expect(result.layers['layer-1'].name).toBe('layer-1');
+  });
+
+  it('ignores a replace action for a missing layer', () => {
+    const dependencies = createDependencies();
+    const replacementSource: LayerSource = {
+      kind: 'tool',
+      args: { toolName: 'shape' },
+      isBedrock: false,
+      pos: { x: 0, y: 0, width: 40, height: 30 },
+    } as LayerSource;
+    const history: HistoryItem[] = [
+      { id: 'new', actionName: NEW_LAYER_ACTION, layerId: 'layer-1', layerSource: blankSource },
+      {
+        id: 'replace-ghost',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId: 'ghost',
+        args: { source: replacementSource },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.layers.ghost).toBeUndefined();
+    expect(Object.keys(result.layers)).toEqual(['layer-1']);
+  });
 });
 
 describe('replayHistory tool action branches', () => {
