@@ -850,7 +850,9 @@ export const useLayers = () => {
     if (ownedLayerId) delete previewLayersRef.current[ownedLayerId];
     else previewLayersRef.current = {};
 
-    // Find any remaining dirty layer and save a detached copy.
+    // Find every remaining dirty layer and save detached copies. A document-scoped
+    // commit can carry more than one staged cache; stopping at the first one leaves
+    // later layers dirty and makes their promotion depend on an unrelated layer order.
     for (const layer of Object.values(committedLayers)) {
       if (ownedLayerId && layer.id !== ownedLayerId) continue;
       if (layer.tmpCanvas) {
@@ -858,7 +860,6 @@ export const useLayers = () => {
         pendingPresentations.set(detachedLayer.id, detachedLayer);
         committedLayers[layer.id] = detachedLayer;
         hasPreviewLayers = true;
-        break;
       }
     }
 
@@ -1224,6 +1225,8 @@ export const useLayers = () => {
 
     const previewLayerIds = Object.keys(previewLayersRef.current);
     const hasPreview = previewLayerIds.length > 0;
+    // Live gestures stay on the legacy base: incremental tools depend on the
+    // preview layer's temporary canvas and are published only after commit.
     const durableProjection =
       !hasPreview &&
       renderSelector.source === 'durable' &&

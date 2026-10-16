@@ -590,12 +590,11 @@ describe('useLayers deferred commit ownership', () => {
   });
 
   it('leaves a dirty cache it does not own staged, which is the only way the promotion loop stays inside the scope', async () => {
-    // The second loop detaches ONE dirty cache so its promotion can be requested, and it breaks on
-    // the first hit. Ordered with the unowned cache FIRST, because `Object.values` walks the
-    // record's insertion order: a scoped commit reaches the owned layer's own cache only by
-    // declining this one, and an unscoped commit detaches it instead and never looks at the owned
-    // layer. That is the whole difference the `ownedLayerId` check makes here, so the assertion is
-    // on the CACHE and not on the record — a promotion is the only thing this loop can cause.
+    // The fallback scan must skip the unowned cache rather than promoting it. Ordered with the
+    // unowned cache FIRST because `Object.values` walks the record's insertion order: a scoped
+    // commit reaches the owned layer's own cache only by declining this one. That is the whole
+    // difference the `ownedLayerId` check makes here, so the assertion is on the CACHE and not on
+    // the record — a promotion is the only thing this loop can cause.
     const foreignCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
     const { result } = setup({
       layers: { foreign: makeLayer('foreign', 0, { tmpCanvas: foreignCache }), owned: makeLayer('owned', 1) },
@@ -623,6 +622,35 @@ describe('useLayers deferred commit ownership', () => {
     expect(result.current.store.layers.owned!.tmpCanvas).toBeNull();
     expect(result.current.store.layers.foreign!.tmpCanvas).toBe(foreignCache);
     processor.mockRestore();
+  });
+
+  it('promotes every dirty committed cache during an unscoped commit', async () => {
+    const firstCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const secondCache = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
+    const firstBitmap = { width: 1, height: 1 } as ImageBitmap;
+    const secondBitmap = { width: 1, height: 1 } as ImageBitmap;
+    const { result } = setup({
+      layers: {
+        first: makeLayer('first', 0, { bitmap: firstBitmap, tmpCanvas: firstCache }),
+        second: makeLayer('second', 1, { bitmap: secondBitmap, tmpCanvas: secondCache }),
+      },
+      activeLayerId: 'first',
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const store = result.current.store;
+    expect(store.layers.first!.tmpCanvas).toBeNull();
+    expect(store.layers.second!.tmpCanvas).toBeNull();
+    expect(store.layers.first!.bitmap).not.toBe(firstBitmap);
+    expect(store.layers.second!.bitmap).not.toBe(secondBitmap);
+    expect(store.history).toEqual([]);
   });
 
   it('a real undo replays the timeline, and the layer the commit did not own comes back as the record it published', async () => {

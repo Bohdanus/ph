@@ -20,7 +20,7 @@ tombstone the lifecycle rule forbids, because it invites a reader to trust a cla
 re-deriving the code. So this is a list and nothing else; each number was deleted on verification,
 and the verification is `git log`, not this file.
 
-## 1. P0 — the durable replay path is only mounted as a navigation presentation cache
+## 1. P0 — durable replay remains staged presentation authority, with append/reorder publication
 
 **Problem.** Two modules the migration was built around — `replay-coordinator.ts` and
 `replay-checkpoints.ts` — were imported by nothing outside `src/contexts/__tests__/`, and have
@@ -35,8 +35,11 @@ mount by accident. The two durable modules that remain:
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
 `useHistory.ts`) for logical navigation and compatibility state. `StoreContext.tsx` now composes
 the mapped durable cursor after that transition and publishes a separate
-`durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; the legacy
-layers remain the logical replay record. `durableDocument`,
+`durableRenderProjection` selected by the pending/durable/legacy `renderSelector`; successful
+eligible committed append/reorder transitions run the same composition in the background while
+keeping the legacy selector immediately visible; source-backed imports/replacements and
+frame-changing commits remain legacy until their ownership or frame-parity gates are explicit. The
+legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
 inside that function. Two production components read the fields from `useStore()` —
@@ -51,11 +54,11 @@ case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — i
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
-**Why it matters.** The navigation projection is the first user-visible durable projection, and
-its complete layer record now reaches the canvas through `renderSelector`; export has its own
-guarded projection. Durable logical state remains legacy-authoritative. Every additional surface
-must keep the same staged publication and lease ownership contract; the migration is not a full
-authority cutover yet.
+**Why it matters.** Navigation and eligible committed append/reorder are user-visible durable
+projections, and export has its own guarded projection. Durable logical state remains
+legacy-authoritative. Every additional surface must keep the same staged publication and lease
+ownership contract; frame changes, previews and unsupported sources remain on the complete legacy path, and the
+migration is not a full authority cutover yet.
 
 **Trap for whoever wires it.** Neither the affine composition nor the vector-argument rescale is
 duplicated, so the drift warning this entry used to carry is withdrawn — `materialization.ts` owns no
@@ -63,19 +66,21 @@ affine arithmetic of its own. `renderRetainedSegment()` hands the retained opera
 `evaluatePresentation()`, and `presentation-evaluator.ts` — `getPresentationAffine()` composes them
 through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
-`layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation is
-now the first real caller; the remaining surfaces still need independent parity gates before they
-are mounted.
+`layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation
+and eligible committed append/reorder are now staged callers; source-backed imports/replacements,
+frame changes, previews, unsupported sources, and the
+remaining surfaces still need independent parity gates before they are mounted.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
 the durable selector renders its complete projected layer record after materialization. Wiring
 the durable path without reconciling these paths changes pixel-tool results.
 
-**Fix.** Keep the runtime, export and history-panel projections independently gated, then make the
-remaining presentation authority explicit across editor surfaces. Keep legacy logical state as the
-authority until each projection is staged, lease-safe and failure-contained; the next cutover must
-prove append/preview and unsupported-source behavior before retiring the compatibility replay.
+**Fix.** Keep the runtime, export, history-panel and preview projections independently gated, then
+make the remaining presentation authority explicit across editor surfaces. Keep legacy logical state
+as the authority until each projection is staged, lease-safe and failure-contained; append/reorder
+background publication is guarded but previews and unsupported-source behavior still need explicit
+proof before retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`

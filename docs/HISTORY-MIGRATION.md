@@ -7,14 +7,17 @@ remain in [`../HANDOFF.md`](../HANDOFF.md).
 
 ## Authority
 
-The legacy `HistoryItem[]` timeline remains the logical authority. Navigation
-now stages a complete durable render projection beside the legacy logical layers;
-`renderSelector` holds the pending/durable/legacy canvas authority, while export
-consumes its own guarded durable projection. Logical undo/redo remains
-legacy-authoritative. `durableDocument` is a mounted navigation projection as
-well as the durable state model. The migration is not complete until one
-replay/materialization authority feeds undo, redo, navigation, render, export and
-history-panel state without a second logical state writer.
+The legacy `HistoryItem[]` timeline remains the logical authority. Navigation and
+eligible committed append/reorder transitions stage a complete durable render
+projection beside the legacy logical layers; `renderSelector` holds the
+pending/durable/legacy canvas authority, while export consumes its own guarded
+durable projection. Logical undo/redo remains legacy-authoritative. Append and
+reorder keep the already-visible legacy selector active while composition runs,
+so transient previews do not wait behind durable publication. `durableDocument`
+is a mounted presentation projection as well as the durable state model. The
+migration is not complete until one replay/materialization authority feeds undo,
+redo, navigation, render, export and history-panel state without a second logical
+state writer.
 
 The durable model is not disposable scaffolding. Its action log, typed layer
 sources, asset registry, immutable operation cloning, and append boundary are
@@ -170,11 +173,14 @@ variant or an equivalent atomic history action.
    only after the empty-history and transactional-baseline invariants are safe.
 6. Keep the staged durable projection as the authority for supported runtime
    presentation and both raster/PSD export paths. Ownership checks, production
-   adapter parity, and atomic failure fallback are closed; unsupported documents
-   still use the complete legacy compatibility path. The next authority work is
-   to prove append/preview and unsupported-source behavior, then retire legacy
-   logical replay only after durable replay can provide the same complete state for
-   append, branch, preview, and compatibility fallback.
+   adapter parity, and atomic failure fallback are closed; supported committed
+   eligible append/reorder presentation now composes in the background with legacy
+   as the immediate selector; source-backed imports/replacements and frame-changing
+   commits remain legacy until their ownership or frame-parity gates are explicit. Previews and
+   unsupported documents still use the complete legacy compatibility path. The
+   next authority work is to prove preview and unsupported-source behavior, then retire legacy logical replay only after
+   durable replay can provide the same complete state for append, branch, preview,
+   and compatibility fallback.
 
 ## Operator rulings
 
