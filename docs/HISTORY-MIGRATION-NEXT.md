@@ -31,12 +31,18 @@ chronological changelog.
   non-integer, or out-of-range positions. The first crop/edit can therefore produce a `current`
   durable document without an opening baseline row.
 - Legacy `HistoryItem[]` remains logical authority. Durable navigation is a staged presentation
-  projection with legacy fallback, not a completed undo/redo authority cutover.
+  projection with legacy fallback, not a completed undo/redo authority cutover. Supported committed
+  eligible append/reorder transitions also compose a durable presentation in the background, but keep
+  the already-visible legacy selector active while composition runs so transient previews are not
+  blocked. Source-backed imports/replacements and frame-changing commits remain legacy until their
+  ownership or frame-parity gates are explicit.
 
 ## Loose Ends
 
-1. **Authority cutover.** Prove append, preview, unsupported-source fallback, export, and
-   history-panel behavior independently before removing legacy logical replay.
+1. **Authority cutover.** Prove preview and unsupported-source fallback independently; committed
+   eligible append/reorder presentation now has a guarded background publication, while source-backed
+   imports/replacements, frame changes, and preview remain legacy. Remove legacy logical replay only
+   after every surface is proven.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates and add a forced
    durable-publication browser seam before expanding durable authority.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
@@ -51,7 +57,9 @@ chronological changelog.
 2. `resetHistoryTo()` compensates the replay transition when the final legacy or durable draw is
    refused, so an unavailable presentation cannot leave the logical cursor at an unseen target.
 3. Promote one additional presentation surface at a time behind identity, coverage, freshness,
-   lease, and legacy-fallback gates.
+   lease, and legacy-fallback gates. Append/reorder background publication is the current second
+   presentation surface; the next promotion must not make preview rendering pending or bypass
+   unsupported-source refusal.
 4. Only after those gates pass, decide whether durable replay can become logical undo/redo
    authority. Retire boundary tests for deleted coordination modules only in the same architectural
    change that replaces their contract.

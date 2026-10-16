@@ -13,11 +13,15 @@ document whose authority is surface-specific during the staged cutover.**
 
 It has twelve operation kinds, a versioned schema, deep-frozen clones, an asset
 registry with generation counters and a memoizing materialization cache. It is
-rebuilt on every commit and every navigation. Successful supported navigation and
-export consume its materialized projection; logical append/preview editing and
-unsupported documents retain the legacy compatibility path. Canvas navigation
-selects a complete durable render projection only after its identity and frame
-match; pending navigation preserves the previously painted canvas.
+rebuilt on every commit and every navigation. Successful supported navigation,
+eligible committed append/reorder presentation, and export consume its materialized
+projection; source-backed imports/replacements, frame-changing commits, logical timeline updates, previews,
+and unsupported documents retain the legacy compatibility path until their ownership or frame-parity
+gates are explicit. Canvas navigation selects a complete durable
+render projection only after its identity and frame match; pending navigation
+preserves the previously painted canvas. Append/reorder composition runs in the
+background while the already-visible legacy selector remains active, so a preview
+never waits behind a durable pending state.
 
 `durableStatus` is a second thing and has its own readers: `DevStatusStrip` and
 the crash screen display it, so "read at one place" is a claim about
@@ -44,9 +48,9 @@ Evidence, all three current:
 
 `src/contexts/materialization.ts` has one production importer,
 `src/contexts/durable-compositor.ts`, and **that compositor is no longer isolated**:
-`StoreContext.tsx`'s `publishDurableNavigationPresentation()` calls
-`composeDurableDocument()` on the navigation path, so the durable document feeds
-the normal supported-navigation presentation. It does not replace logical state:
+`StoreContext.tsx`'s staged navigation and background append/reorder publication
+paths call `composeDurableDocument()`, so the durable document feeds supported
+presentation surfaces. It does not replace logical state:
 the composition is staged off-tree, every layer is checked by
 `durablePresentationIsRendererIdentical()` against the legacy structural replay,
 and the complete result is published into `durableRenderProjection` with a

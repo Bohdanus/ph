@@ -18,7 +18,16 @@ import type { HistoryItem } from '../history-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
 import type { BitmapSource } from '../general-types.ts';
-import { OPEN_DOCUMENT_ACTION, REMOVE_ACTION, SET_LAYER_OPACITY_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  REMOVE_ACTION,
+  REPLACE_LAYER_SOURCE_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -111,7 +120,10 @@ afterEach(() => {
 describe('durable render presentation guard', () => {
   it('accepts a cache only when the renderer would not reapply logical presentation', () => {
     const existing = createMockLayer({ id: layerId, pos: { x: 10, y: 20, width: 100, height: 50 } });
-    const replayLayer = { operations: [] as readonly [], snapshot: { source: { kind: 'raster' as const } } };
+    const replayLayer = {
+      operations: [] as readonly [],
+      snapshot: { source: { kind: 'raster' as const } },
+    };
 
     expect(durablePresentationIsRendererIdentical(replayLayer as never, existing, existing.pos)).toBe(true);
     expect(
@@ -1015,7 +1027,7 @@ describe('renderSelector contract', () => {
     expect(store().durableRenderProjection).toBeNull();
   });
 
-  it('clears durable navigation authority when a logical append is committed', async () => {
+  it('keeps legacy visible while a logical append is composed, then promotes durable presentation', async () => {
     const layer = rasterLayer();
     vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(makeComposite());
 
@@ -1050,6 +1062,288 @@ describe('renderSelector contract', () => {
     expect(store().renderSelector.source).toBe('legacy');
     expect(store().durableRenderProjection).toBeNull();
     expect(store().durablePresentation).toEqual({ status: 'unpublished', cursor: null, reason: null });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().durablePresentation.status).toBe('durable');
+    expect(store().durablePresentation.cursor).toBe(store().durableDocument?.cursor);
+    expect(store().durableRenderProjection).not.toBeNull();
+  });
+
+  it('background-publishes a durable reorder without entering pending', async () => {
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(makeComposite());
+
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+
+    act(() => {
+      dispatch()({
+        type: 'REORDER_LAYERS',
+        payload: { layerToMoveId: layerId, afterWhichLayerId: null },
+      });
+    });
+
+    expect(store().renderSelector.source).toBe('legacy');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().durablePresentation.status).toBe('durable');
+  });
+
+  it('keeps an unsupported legacy-tool append on the complete legacy presentation path', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const { store, dispatch } = renderWithProbe();
+    const layer = legacyToolLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: { ...layer, opacity: 0.5 } } },
+          historyItem: {
+            id: 'legacy-tool-opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(compose).not.toHaveBeenCalled();
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation).toEqual({
+      status: 'legacy-fallback',
+      cursor: store().durableDocument?.cursor,
+      reason: 'unsupported-source',
+    });
+    expect(store().durableRenderProjection).toBeNull();
+  });
+
+  for (const actionName of [
+    NEW_LAYER_ACTION,
+    MERGE_ACTION,
+    REPLACE_LAYER_SOURCE_ACTION,
+    SET_DOCUMENT_FRAME_ACTION,
+  ] as const) {
+    it(`does not background-compose a ${actionName} append`, async () => {
+      const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+      const { store, dispatch, unmount } = renderWithProbe();
+      const layer = rasterLayer();
+      replaceDocument(dispatch(), { [layerId]: layer });
+
+      act(() => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { layers: { [layerId]: layer } },
+            historyItem: { id: `${actionName}-append`, actionName, layerId },
+          },
+        });
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(compose).not.toHaveBeenCalled();
+      expect(store().renderSelector.source).toBe('legacy');
+      expect(store().durablePresentation.status).toBe('unpublished');
+      unmount();
+    });
+  }
+
+  it('does not enter pending while append composition is in flight, preserving preview interleaving', async () => {
+    let resolveComposition!: (composite: DurableComposite) => void;
+    const composition = new Promise<DurableComposite>((resolve) => {
+      resolveComposition = resolve;
+    });
+    vi.spyOn(durableCompositor, 'composeDurableDocument')
+      .mockResolvedValueOnce(makeComposite())
+      .mockReturnValue(composition);
+
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+    await act(async () => {
+      await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    const updatedLayer = { ...layer, opacity: 0.5 };
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: updatedLayer } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation.status).toBe('unpublished');
+
+    const preview = { ...updatedLayer, tmpCanvas: canvas() };
+    store().previewLayers.current = { [layerId]: { layer: preview } };
+    expect(store().previewLayers.current[layerId]?.layer.tmpCanvas).toBe(preview.tmpCanvas);
+
+    await act(async () => {
+      resolveComposition(makeComposite());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().previewLayers.current[layerId]?.layer.tmpCanvas).toBe(preview.tmpCanvas);
+  });
+
+  it('does not publish a stale background append composition after a newer state change', async () => {
+    let resolveComposition!: (composite: DurableComposite) => void;
+    const composition = new Promise<DurableComposite>((resolve) => {
+      resolveComposition = resolve;
+    });
+    vi.spyOn(durableCompositor, 'composeDurableDocument')
+      .mockResolvedValueOnce(makeComposite())
+      .mockReturnValue(composition);
+
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+    await act(async () => {
+      await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: { ...layer, opacity: 0.5 } } },
+          historyItem: {
+            id: 'opacity-edit',
+            actionName: SET_LAYER_OPACITY_ACTION,
+            layerId,
+            args: { opacity: 0.5 },
+          },
+        },
+      });
+    });
+    expect(store().renderSelector.source).toBe('legacy');
+
+    act(() => {
+      dispatch()({ type: 'SET_SIZE', payload: { width: 500, height: 400 } });
+    });
+    const selectorAfterSize = store().renderSelector;
+
+    await act(async () => {
+      resolveComposition(makeComposite());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store().renderSelector).toBe(selectorAfterSize);
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durableRenderProjection).toBeNull();
+    expect(store().durableStatus).toBe('stale');
+  });
+
+  it('rejects an older background append when a newer append commits', async () => {
+    let resolveFirst!: (composite: DurableComposite) => void;
+    const firstComposition = new Promise<DurableComposite>((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.spyOn(durableCompositor, 'composeDurableDocument')
+      .mockResolvedValueOnce(makeComposite())
+      .mockReturnValueOnce(firstComposition)
+      .mockResolvedValueOnce(makeComposite());
+
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    replayTo(dispatch(), { [layerId]: layer }, {});
+    await act(async () => {
+      await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    for (const [id, opacity] of [
+      ['first-opacity-edit', 0.5],
+      ['second-opacity-edit', 0.75],
+    ] as const) {
+      act(() => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: { layers: { [layerId]: { ...layer, opacity } } },
+            historyItem: {
+              id,
+              actionName: SET_LAYER_OPACITY_ACTION,
+              layerId,
+              args: { opacity },
+            },
+          },
+        });
+      });
+    }
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveFirst(makeComposite());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(store().historyIndex).toBe(2);
+    expect(store().renderSelector.source).toBe('durable');
+    expect(store().durablePresentation.status).toBe('durable');
+    expect(store().durablePresentation.cursor).toBe(store().durableDocument?.cursor);
+  });
+
+  it('rejects a navigation publication when the selector is legacy rather than pending', async () => {
+    vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(makeComposite());
+
+    const { store, dispatch } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(store().renderSelector.source).toBe('legacy');
+
+    let outcome: DurableNavigationPresentationOutcome | undefined;
+    await act(async () => {
+      outcome = await store().publishDurableNavigationPresentation();
+      await Promise.resolve();
+    });
+
+    expect(outcome?.status).toBe('stale');
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation.status).toBe('unpublished');
+    expect(store().durableRenderProjection).toBeNull();
   });
 
   it('cannot change the selector when a publication is stale', async () => {
