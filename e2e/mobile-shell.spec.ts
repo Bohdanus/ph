@@ -1,6 +1,7 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
+import { SEARCH_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
 /**
  * Below 768 CSS pixels the mobile chrome is shown and the desktop chrome is hidden —
@@ -179,5 +180,53 @@ test.describe('Mobile shell', () => {
     await expect(redo).toBeEnabled();
     await redo.click();
     await expect(redo).toBeDisabled();
+  });
+
+  /**
+   * P2 — the mobile bottom bar scrolls 615px with no affordance. `nav[data-testid="mobile-
+   * bottom-bar"]` overflows its width by 615px at 390×844 and carries `scrollbar-none`, so
+   * the only cue that most tiles are off-screen is gone. This is the reachability test the
+   * OPEN_PROBLEMS.md entry calls for: scroll the bar to its last tile and assert that tile
+   * is inside the bar's CLIENT box, the same shape as the rail's swatch test in
+   * `no-document-overflow.spec.ts`. No `scrollTo` exists for a horizontal flex row in
+   * Tailwind's `overflow-x-auto`, so the scroll is driven through the DOM `scrollLeft`
+   * property the way the rail test drives the vertical scroll container.
+   */
+  test('the bottom bar is reachable end-to-end: its last tile is inside the client box', async ({ page }) => {
+    test.setTimeout(SEARCH_TEST_TIMEOUT_MS);
+    await page.goto('/');
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+    await expect(bottomBar(page)).toBeVisible();
+
+    // Non-vacuity: the bar must actually overflow, or this test cannot mean anything.
+    const overflow = await bottomBar(page).evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, 'the bottom bar must overflow its own width, or the reachability is untested').toBeGreaterThan(0);
+
+    // The bar carries 18 tiles (16 groups + Options + Layers). The last is Layers, and it
+    // is the one a user reaching the end of the list must find.
+    const lastTile = bottomBar(page).getByRole('button').last();
+
+    // Scroll to the end in a bounded poll: `scrollLeft = scrollWidth` is the target, but the
+    // bar may not reach it in one step on a slow render, so retry until the last tile's right
+    // edge is at or past the client box's right edge.
+    await expect
+      .poll(async () => {
+        await page.evaluate(() => {
+          const bar = document.querySelector('[data-testid="mobile-bottom-bar"]') as HTMLElement | null;
+          if (!bar) return;
+          bar.scrollLeft = bar.scrollWidth;
+        });
+
+        const tile = await lastTile.boundingBox();
+        const barBox = await bottomBar(page).boundingBox();
+        if (!tile || !barBox) return false;
+
+        // The tile's right edge must be at or inside the bar's client right edge, so a
+        // user at the end of the scroll sees it rather than a blank gap.
+        const tileRight = tile.x + tile.width;
+        const barRight = barBox.x + barBox.width;
+        return tileRight <= barRight + 1;
+      })
+      .toBe(true);
   });
 });

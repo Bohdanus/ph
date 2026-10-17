@@ -89,7 +89,7 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  * WHAT THIS LIST IS, precisely. It is every such spec in the tree today, DERIVED by scanning
  * `e2e/` rather than by guessing — `npm run test:e2e:unit` recomputes it from the files on
  * every run. It is NOT a claim that these specs provably do not need a budget; it is a claim
- * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the fourteen are
+ * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the twelve are
  * separate for exactly that reason:
  *
  * - `sidebar-flyout.spec.ts` has the recorded 30s failure above. It is listed here rather
@@ -103,13 +103,12 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  *   section it names. That inconsistency is in `TEST-FLAKES.md`, not here, and correcting
  *   it is a change to a document this file does not own.
  *
- * The twelve others carry the same one-line reason: no recorded instance, so no named budget
+ * The ten others carry the same one-line reason: no recorded instance, so no named budget
  * yet. Adding a ninth reason without evidence would be inventing one.
  */
 const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'adjustments.spec.ts',
   'flyout-longpress-race.spec.ts',
-  'mobile-shell.spec.ts',
   'paint-options.spec.ts',
   'paint-tool-pixels.spec.ts',
   'panel-workspace.spec.ts',

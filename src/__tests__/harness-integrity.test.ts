@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { ReadableStream, TransformStream, WritableStream } from 'node:stream/web';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -1136,6 +1136,123 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
       await readPlaywrightForbidOnly('1'),
       '`playwright.config.ts` stops forbidding `test.only` under CI. That half used to hold; the guard is `true` in BOTH readings or it is not a guard.'
     ).toBe(true);
+  });
+
+  it('turns flaky tests into failures on every run, not only under CI', () => {
+    expect(
+      playwrightConfig.failOnFlakyTests,
+      '`playwright.config.ts` does not set `failOnFlakyTests` unconditionally. `retries` is 0 locally, so failOnFlakyTests cannot fire locally either — a single value that is conditional on `process.env.CI` is not a guard, it is the same silent scope reduction the `forbidOnly` check above catches for `test.only`.'
+    ).toBe(true);
+  });
+
+  it('pins colorScheme to light, which the pixel helpers require', () => {
+    // P2 — the letterbox is still read as ink by two predicates. The canvas helpers
+    // classify pixels with thresholds calibrated to the LIGHT theme (`#f3f3f3` cells,
+    // `#fff` gaps), and `hasDarkPixels` / `getDarkPixelBounds` are not letterbox-aware
+    // at all. Under the DARK theme both `#121212` cells and `#000` gaps satisfy
+    // `DARK_PIXEL_THRESHOLD`, so a dark-theme spec could wrong-pass a dark-pixel wait
+    // by capturing only backdrop. `colorScheme: 'light'` is the only thing preventing
+    // that today, and this pin makes it a structural default rather than an inherited
+    // one — removing or changing the line fails this test.
+    expect(
+      playwrightConfig.use?.colorScheme,
+      'playwright.config.ts must declare colorScheme: "light", because the pixel helpers require it and nothing else enforces that precondition'
+    ).toBe('light');
+  });
+
+  /**
+   * P3 — no HiDPI project is declared, despite the product boundary requiring tablet/
+   * high-DPI support. `playwright.config.ts` has only the single `Google Chrome`
+   * project at the default `deviceScaleFactor: 1`.
+   *
+   * The gap is NOT a one-line fix. Running the suite with `deviceScaleFactor` forced
+   * to 2 yields 256 pass, 6 fail, 2 skipped. The failures span four files and are
+   * assertions that compare CSS-pixel literals against pixels captured on a 2x surface:
+   *
+   *   - `e2e/helpers/cdp-helpers.spec.ts` — the `deviceScaleFactor: 2` block that
+   *     already exists as a known-different mode (the `expectFaithfulCaptureOf` block
+   *     doc-comment explains why DPR cannot be asserted as a constant).
+   *   - `e2e/helpers/color-helpers.spec.ts` — swatch colour compared against a literal
+   *     CSS colour on a 2x surface.
+   *   - `e2e/erase-fill-eyedropper.spec.ts` — an eyedropper block-average over a
+   *     fixed-size sample in image pixels.
+   *   - `e2e/keyboard-shortcuts.spec.ts` and `e2e/responsive-shell.spec.ts` — one
+   *     test each.
+   *
+   * This test pins the CHARACTERISATION: NO project sets `deviceScaleFactor > 1`. When
+   * the gap is closed by fixing the six failures and adding a 2x project, this test
+   * must be updated in the same change — a project that silently appeared without a
+   * matching guard would multiply every run's cost without the six fixes that make it
+   * green. The `OPEN_PROBLEMS.md` entry tracks the decision; this test keeps the
+   * current state from being silently changed.
+   */
+  it('declares exactly one project with no HiDPI override (P3 characterisation)', () => {
+    const projects = playwrightConfig.projects ?? [];
+
+    expect(projects.length, 'a second project was added without updating this guard').toBe(1);
+    expect(projects[0]?.name).toBe('Google Chrome');
+
+    // No project sets a `deviceScaleFactor` above 1. The default `devices['Desktop
+    // Chrome']` that the sole project spreads DOES include `deviceScaleFactor: 1`
+    // explicitly, so the check is `> 1` — not presence — to avoid a false positive.
+    const withHiDpi = projects.filter((project) => {
+      const dpr = (project.use as { deviceScaleFactor?: number } | undefined)?.deviceScaleFactor;
+      return dpr !== undefined && dpr > 1;
+    });
+    expect(
+      withHiDpi,
+      'a project with deviceScaleFactor > 1 was added; see the P3 characterisation comment for the six known failures that must be fixed first'
+    ).toEqual([]);
+  });
+
+  /**
+   * P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>`. Playwright's
+   * `elementState('disabled')` retargets a non-form-control up through `label.control`,
+   * so an `<option>` inside a label-wrapped `<select>` is checked against the SELECT, which
+   * carries no `disabled` attribute. The result is `Received: enabled` for an option that
+   * demonstrably has `disabled=""`. This meta-test scans every e2e spec and fails if it
+   * finds a `toBeDisabled()` assertion on a locator whose selector contains `option`,
+   * so the anti-pattern cannot be reintroduced without a deliberate review.
+   */
+  it('never asserts toBeDisabled() on an <option> locator in any e2e spec', () => {
+    // The pattern matches `.locator('option...')` — where `option` is a complete tag
+    // selector (not the prefix of `option-group` or similar) — followed by a chain of
+    // ONLY retargeting methods (`.not`, `.first()`, `.last()`, `.nth()`) and then
+    // `.toBeDisabled(`. Comments are stripped first, so a cautionary note like
+    // "// Don't use .locator('option').toBeDisabled()" is not flagged.
+    //
+    // The chain restricts to retargeting methods so that `.locator('option').allTextContents()`
+    // or `.locator('option').evaluateAll(...)` cannot match: those methods are not in
+    // the allowed set, so the chain stops and `.toBeDisabled(` cannot attach. The
+    // quote backreference `\1` handles attribute selectors with inner quotes like
+    // `'option[value="brush"]'` (outer single, inner double). `(?![\w-])` after
+    // `option` rejects `option-group` and `option-panel` — non-`<option>` elements
+    // unaffected by the label.control retarget.
+    //
+    // `[^\n]` confines the match to a single line: `[\s\S]*?\1` would backtrack
+    // across unrelated lines, matching from a `.locator('option')` on line N to a
+    // `.toBeDisabled()` on line N+200 where the intervening text happens to contain
+    // another `'` — a false positive that defeated this guard against
+    // `crop-history.spec.ts` and `erase-fill-eyedropper.spec.ts`, both of which
+    // use `.locator('option')` for a DIFFERENT purpose than `.toBeDisabled()`.
+    // Locator strings in this suite are always single-line, so the confinement
+    // loses no coverage.
+    const OPTION_DISABLED_PATTERN =
+      /\.locator\(\s*(['"])option(?![\w-])[^\n]*?\1\s*\)(?:\s*\.\s*(?:not|first|last|nth)\s*(?:\([^)]*\))?\s*)*\s*\.toBeDisabled\s*\(/;
+
+    const offenders: string[] = [];
+    for (const specFile of e2eSpecFiles) {
+      const source = readFileSync(resolve(REPO_ROOT, specFile), 'utf8');
+      const sourceWithoutComments = source.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      if (OPTION_DISABLED_PATTERN.test(sourceWithoutComments)) {
+        offenders.push(specFile);
+      }
+    }
+
+    expect(
+      offenders,
+      "these e2e specs call toBeDisabled() on an <option> locator, which Playwright retargets to the parent <select> and always reports as enabled. Use toHaveAttribute('disabled', '') and the enabled-set workaround instead — see e2e/OPEN_PROBLEMS.md."
+    ).toEqual([]);
   });
 
   it('keeps app coverage a measure of src/ by excluding e2e/**', () => {

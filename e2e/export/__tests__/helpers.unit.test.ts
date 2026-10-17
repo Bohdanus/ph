@@ -4,7 +4,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import path from 'node:path';
 import { initializeCanvas, writePsd } from 'ag-psd';
 import sharp from 'sharp';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import {
   CHANGED_CHANNEL_THRESHOLD_GENERAL,
@@ -2969,5 +2969,67 @@ describe('Export Helpers', () => {
       expect(mkdir).toHaveBeenCalledWith(DOWNLOAD_DIRECTORY, { recursive: true });
       expect(result).toBe(DOWNLOAD_DIRECTORY);
     });
+  });
+});
+
+/**
+ * P3 — 10 orphaned committed baselines. `visual-regression.spec.ts` reads exactly one
+ * baseline per browser-verified format through `baselineFile()` — `drawing<ext>.png` in a
+ * platform subdirectory — and nothing else under `export-baselines/` is referenced by any
+ * code. The 10 orphaned files (8 raw exports, `drawing-icon.ico.png`, and
+ * `source-baseline.png`) were deleted, and this guard reads the directory live so a
+ * `git checkout` or a future stray write cannot bring them back silently.
+ *
+ * The 2.1 MB was `drawing.bmp` alone, whose 1.9 MB was most of the waste — but any orphan
+ * is a maintenance hazard because a reader cannot tell committed-baseline from stray file
+ * without the same directory scan this test does.
+ */
+describe('committed export baselines have no orphans', () => {
+  const BASELINE_ROOT = path.resolve(
+    import.meta.dirname,
+    '..',
+    'visual-regression.spec.ts-snapshots',
+    'export-baselines'
+  );
+
+  /** The files `visual-regression.spec.ts` actually reads: `drawing<ext>.png` per OS subdir. */
+  const EXPECTED_BASELINE_NAMES = browserVerifiedFormats.map((format) => `drawing${format.extension}.png`);
+
+  it('the baseline directory contains only platform subdirectories, no stray files', () => {
+    if (!existsSync(BASELINE_ROOT)) {
+      throw new Error(
+        `the export-baselines directory is missing at ${BASELINE_ROOT} — the committed baselines were deleted or moved`
+      );
+    }
+    const entries = readdirSync(BASELINE_ROOT, { withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile());
+
+    expect(files, 'stray files at the baseline root would be orphans again').toEqual([]);
+  });
+
+  it('every platform subdir contains exactly the browser-verified baselines', () => {
+    if (!existsSync(BASELINE_ROOT)) {
+      throw new Error(
+        `the export-baselines directory is missing at ${BASELINE_ROOT} — the committed baselines were deleted or moved`
+      );
+    }
+    const platforms = readdirSync(BASELINE_ROOT, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    for (const platform of platforms) {
+      const dir = path.join(BASELINE_ROOT, platform.name);
+      if (!existsSync(dir)) {
+        throw new Error(
+          `${platform.name}/ disappeared between readdirSync and readdirSync — a TOCTOU race that should not pass silently`
+        );
+      }
+
+      const files = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name);
+
+      expect(files, `${platform.name}/ contains files not read by the spec`).toEqual(
+        expect.arrayContaining(EXPECTED_BASELINE_NAMES)
+      );
+      expect(files.length).toBe(EXPECTED_BASELINE_NAMES.length);
+    }
   });
 });

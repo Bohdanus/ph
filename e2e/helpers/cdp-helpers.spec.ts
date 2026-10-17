@@ -232,6 +232,124 @@ test.describe('CDP Helpers', () => {
     });
 
     /**
+     * The capture's spatial bounds must AGREE WITH THE PAGE'S OWN layout, not just
+     * with the constants the test fed in. This mirrors the "agrees with the app's own
+     * contain fit" pattern in `visual-regression.spec.ts` (which reads the app's
+     * `data-fit-*` attributes and asserts them equal to an independent `containFit()`
+     * result): the test cross-checks the capture against an INDEPENDENT reading from
+     * the browser's layout engine, rather than checking the capture for internal
+     * consistency alone.
+     *
+     * On a static `setContent` page the 87px CDP height drift does NOT reproduce
+     * (TEST-FLAKES.md §12, OPEN_PROBLEMS.md P2) — the page cannot re-layout while the
+     * capture is in flight — so this is NOT a regression guard for that specific
+     * defect. What it IS is a spatial-correctness tripwire: if the helper ever
+     * mis-projects the clip into page coordinates, or if `viewportRectToPageRect`
+     * drifts, the captured region will not land where `getBoundingClientRect` says
+     * the canvas is, and the pixel colour at the captured origin will be wrong. The
+     * `expect.poll` read is the independent oracle the comparison is checked against.
+     *
+     * The poll reads `getBoundingClientRect` from inside the page, not from
+     * `Locator.boundingBox()` — both are viewport-relative, but the page-side read is
+     * the same source `cdp-helpers.ts` itself consults via `getPageScroll`, so it is
+     * the same convention the conversion is defined against. `expect.poll` is the
+     * polling primitive this suite uses throughout (`e2e/erase-fill-eyedropper.spec.ts`,
+     * `e2e/document-dialogs.spec.ts`) — there is no `page.poll` method on Playwright's
+     * `Page` type in 1.63.
+     */
+    test('captured region agrees with the page layout geometry, cross-checked via expect.poll', async ({
+      page,
+    }, testInfo) => {
+      await page.setContent(RED_CANVAS_PAGE);
+      const box = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 100, height: 80 };
+
+      const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-spatial', box);
+      const imageData = await decodeScreenshot(screenshot);
+
+      // The PAGE's OWN layout: `getBoundingClientRect` read back through `expect.poll`
+      // so the assertion checks the capture against the layout it was taken from,
+      // not against the test constants. If the canvas had rendered at a different
+      // offset than CANVAS_LEFT/CANVAS_TOP, the poll would surface it.
+      const canvasRect = await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas');
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        };
+      });
+
+      expect(canvasRect, 'the canvas element was not present in the page').not.toBeNull();
+
+      // `expect.poll` re-reads the canvas geometry and confirms it has not drifted
+      // from the reading taken before the capture. A missing element would yield
+      // `undefined` — which `.not.toBeNull()` would accept — so the poll also
+      // rejects `undefined` and requires a stable `left` matching the earlier read.
+      // This is the CDP analogue of `viewport-drawing.spec.ts`'s `boxBeforeCapture` /
+      // `boxAfterCapture` drift guard (§190-204), adapted to this spec's static page.
+      await expect
+        .poll(
+          async () => {
+            const rect = await page.evaluate(() => {
+              const canvas = document.getElementById('test-canvas');
+              if (!canvas) return undefined;
+              const r = canvas.getBoundingClientRect();
+              return { left: r.left, top: r.top, width: r.width, height: r.height };
+            });
+            if (rect === undefined) return false;
+            return Math.abs(rect.left - canvasRect!.left) < 0.5;
+          },
+          { message: 'the canvas moved between the capture and the layout check' }
+        )
+        .toBe(true);
+
+      expect(canvasRect!.left).toBeCloseTo(CANVAS_LEFT, 1);
+      expect(canvasRect!.top).toBeCloseTo(CANVAS_TOP, 1);
+      expect(canvasRect!.width).toBeCloseTo(CANVAS_WIDTH, 1);
+      expect(canvasRect!.height).toBeCloseTo(CANVAS_HEIGHT, 1);
+
+      // The capture region (100x80) is a sub-rect of the 240x160 canvas. If the clip
+      // were mis-projected into page space, the capture would land on the blue page
+      // background instead of the red canvas — the colour check catches that, and the
+      // spatial check above confirms the canvas is where the capture expects it.
+      expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
+      expectFaithfulCaptureOf(imageData, box);
+
+      // Cross-check: map the capture's full decoded extent back to CSS using the box
+      // the capture was asked for. `screenshotBoundsToCss` is the same conversion
+      // `viewport-drawing.spec.ts` feeds its captured bounds through — the result must
+      // close the loop and land back on the box origin, independently of the pixel
+      // colour check. A clip that drifted to a different region would reconstruct to
+      // a different CSS rect.
+      const reconstructed = screenshotBoundsToCss(
+        {
+          left: 0,
+          top: 0,
+          right: imageData.width - 1,
+          bottom: imageData.height - 1,
+          imageWidth: imageData.width,
+          imageHeight: imageData.height,
+        },
+        box
+      );
+      expect(reconstructed.left, 'the capture CSS origin must match the requested box').toBeCloseTo(box.x, 5);
+      expect(reconstructed.top, 'the capture CSS origin must match the requested box').toBeCloseTo(box.y, 5);
+      expect(reconstructed.right, 'the capture CSS extent must match the requested box').toBeCloseTo(
+        box.x + box.width,
+        -1
+      );
+      expect(reconstructed.bottom, 'the capture CSS extent must match the requested box').toBeCloseTo(
+        box.y + box.height,
+        -1
+      );
+    });
+
+    /**
      * The last of the three properties, and the one `expectFaithfulCaptureOf` cannot
      * see: that the helper adds no rescaling of its own.
      *
