@@ -16,6 +16,7 @@ const patchToolArgs = vi.hoisted(() => vi.fn());
 const copyActiveSelection = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboard = vi.hoisted(() => vi.fn());
 const layerViaCopy = vi.hoisted(() => vi.fn());
+const arrangeLayer = vi.hoisted(() => vi.fn());
 const undo = vi.hoisted(() => vi.fn());
 const redo = vi.hoisted(() => vi.fn());
 const canUndo = vi.hoisted(() => vi.fn(() => false));
@@ -70,7 +71,7 @@ vi.mock('../../../contexts/useFile.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useLayer.ts', () => ({
-  useLayers: () => ({ commitDirtyTool }),
+  useLayers: () => ({ arrangeLayer, commitDirtyTool }),
 }));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
@@ -134,12 +135,39 @@ beforeEach(() => {
   openSaveImageDialog.mockResolvedValue({ fileName: 'saved.png', format: 'image/png' });
   handleImageSave.mockReset();
   commitDirtyTool.mockReturnValue({ committed: 'layer' });
+  arrangeLayer.mockReset();
   storeState.fileName = 'untitled.png';
   storeState.totalSize = { width: 800, height: 600 };
   storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
   storeState.hasImage = true;
   storeState.toolName = 'brush';
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
+});
+
+describe('layer Arrange shortcuts', () => {
+  it.each([
+    [']', {}, 'bring-forward'],
+    ['}', { shiftKey: true }, 'bring-to-front'],
+    ['[', {}, 'send-backward'],
+    ['{', { shiftKey: true }, 'send-to-back'],
+  ] as const)('maps Meta/Ctrl+%s to %s', (key, modifiers, command) => {
+    renderShortcuts();
+
+    expect(press(key, { metaKey: true, ...modifiers })).toBe(true);
+    expect(arrangeLayer).toHaveBeenCalledExactlyOnceWith(command);
+  });
+
+  it('does not arrange layers when no document is loaded', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    press(']', { metaKey: true });
+    press('}', { metaKey: true, shiftKey: true });
+    press('[', { ctrlKey: true });
+    press('{', { ctrlKey: true, shiftKey: true });
+
+    expect(arrangeLayer).not.toHaveBeenCalled();
+  });
 });
 
 afterEach(() => {
