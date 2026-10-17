@@ -1021,6 +1021,20 @@ describe('doctor reclaims what dead agents left', () => {
     b.close();
   });
 
+  it('does not record a doctor event for a dry run', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'dry-run only' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+    advance(60_001);
+
+    const b = boardFor('b');
+    expect(b.doctor({ dryRun: true })).toHaveLength(1);
+    expect(b.events({ kind: 'doctor.run' })).toHaveLength(0);
+    expect(b.health().sweeps).toBe(0);
+    b.close();
+  });
+
   it('leaves a live claim from a live worktree alone', () => {
     const a = boardFor('a');
     mkdirSync(join(dir, 'wt-a'), { recursive: true });

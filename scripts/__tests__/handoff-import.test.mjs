@@ -612,7 +612,15 @@ describe('the document shapes the parser has to survive', () => {
   it('caps a body at its limit, on a word boundary', () => {
     const parsed = parse(`## 1. Long\n\n${'word '.repeat(2000)}\n`);
     expect(parsed.items[0].body.length).toBeLessThanOrEqual(4000);
-    expect(parsed.items[0].body.endsWith('word')).toBe(true);
+    expect(parsed.items[0].body).toMatch(
+      /\n\n\[… clipped — \d+ of \d+ characters dropped\. The rest is in HANDOFF\.md; read it there\.\]$/
+    );
+    expect(parsed.items[0].body).toMatch(/^word(?: word)*$/m);
+  });
+
+  it('leaves a complete body unmarked', () => {
+    const parsed = parse('## 1. Short\n\nThis body fits.\n');
+    expect(parsed.items[0].body).toBe('This body fits.');
   });
 
   it('caps the file list rather than letting it grow', () => {

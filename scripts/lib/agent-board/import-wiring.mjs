@@ -116,6 +116,12 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     known
   );
 
+  const retired = read
+    .flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`))
+    .flatMap((origin) => {
+      const id = board.findIssue(origin)?.id;
+      return id ? [{ origin, id }] : [];
+    });
   const created = [];
   const skipped = [...plan.skip];
   const drifted = [...(plan.drift ?? [])];
@@ -186,6 +192,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     skipped,
     drifted,
     dead,
+    retired,
     duplicates,
     notItems,
   };
