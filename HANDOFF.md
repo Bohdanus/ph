@@ -355,26 +355,6 @@ is a **clone of this same repository** (identical `origin`, and this HEAD is a d
 **Files.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` (not
 tracked; gitignored under `.kilo/`), and the `Files` line of every entry named in the table above.
 
-## 63. The presentation scope's liveness set assumes an invariant it does not enforce
-
-`collectLivePresentationBitmaps` (`StoreContext.tsx`) walks layer records and history entries to
-decide which rasters are still reachable, and `retireUnreferenced` closes everything else the scope
-published. `AssetRegistry` holds a **borrowed** reference to those same rasters
-(`history-adapter.ts`) and hands them to `materializeLayer` through `resolve()`, and nothing in the
-retirement path checks that a registry-held raster is derived from a layer record or history entry
-the liveness set scans. If a raster ever enters the registry from a source the store cannot reach,
-`retireUnreferenced` will close it while a materialization still holds it.
-
-This is an unstated invariant, not a demonstrated defect — no such entry is known to exist, and
-`history-replay` reads its sources from `nextState.layers` and `nextState.history`, which are both
-scanned. It is recorded on its own now: the registry half that used to sit beside it — the append
-boundary's missing asset-registry transaction — is fixed, and the store opens a document asset
-transaction around every planned source-backed publication, commits it only after the state is
-published, and reconciles the exact set the published document names. That fix made asset ownership
-on the append path a settled question and left this as the one place where the **presentation**
-scope's liveness set and the registry still have to agree without saying so. The invariant is
-cheapest to pin as a test now, while it is still unstated rather than load-bearing.
-
 ## 66. A refused pointer gesture is a silent no-op on the document
 
 `src/hooks/usePointerPosition.ts` — `isPointerDownValid()` and `isPointerUpValid()` — and every
