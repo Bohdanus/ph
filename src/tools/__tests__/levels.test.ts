@@ -8,6 +8,12 @@ import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/
 
 type MockCtx = ReturnType<typeof createMockCanvasContext> & { filter: string };
 
+/**
+ * `src/test/setup.ts` installs a global `OffscreenCanvas` stub that hands back a brand new
+ * context object on every `getContext()` call, so a processor's `ctx.filter` write is
+ * unobservable. This recording subclass keeps one stable context per canvas, which is what
+ * lets the assertions below see the filter the processor actually assigned.
+ */
 class RecordingOffscreenCanvas {
   static instances: RecordingOffscreenCanvas[] = [];
 
@@ -52,89 +58,152 @@ describe('levels processor', () => {
     overrideCanvasFilterSupport(null);
   });
 
-  it('allocates a canvas sized to the source and returns it', () => {
-    const result = levels(params)({ brightness: 0, contrast: 0, toolName: 'levels' });
+  describe('canvas allocation', () => {
+    /**
+     * The processor must materialise the adjustment into a fresh canvas sized to the source
+     * so the durable layer carries the filtered pixels rather than aliasing the input bitmap.
+     */
+    it('allocates an OffscreenCanvas sized to params.size and returns exactly one canvas', () => {
+      const result = levels(params)({ brightness: 0, contrast: 0, toolName: 'levels' });
 
-    const canvas = lastCanvas();
-    expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
-    expect(canvas.width).toBe(size.width);
-    expect(canvas.height).toBe(size.height);
-    expect(result).toEqual([canvas]);
+      const canvas = lastCanvas();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
+      expect(canvas.width).toBe(size.width);
+      expect(canvas.height).toBe(size.height);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
+    });
   });
 
-  it.each([
-    [20, 40, 'brightness(113.33%) contrast(140%)'],
-    [-50, 0, 'brightness(66.67%) contrast(100%)'],
-    [0, 50, 'brightness(100%) contrast(150%)'],
-    [BRIGHTNESS_SLIDER_RANGE.min, CONTRAST_SLIDER_RANGE.min, 'brightness(0%) contrast(50%)'],
-    [0, 0, 'brightness(100%) contrast(100%)'],
-    [BRIGHTNESS_SLIDER_RANGE.max, CONTRAST_SLIDER_RANGE.max, 'brightness(200%) contrast(200%)'],
-  ])('composes brightness=%s and contrast=%s into the expected CSS filter', (brightness, contrast, expected) => {
-    levels(params)({ brightness, contrast, toolName: 'levels' });
+  describe('filter string from args', () => {
+    it('composes brightness and contrast proportionately for {20, 40}', () => {
+      levels(params)({ brightness: 20, contrast: 40, toolName: 'levels' });
 
-    expect(lastCanvas().ctx.filter).toBe(expected);
+      expect(lastCanvas().ctx.filter).toBe('brightness(113.33%) contrast(140%)');
+    });
+
+    it('composes brightness and contrast proportionately for {-50, 0}', () => {
+      levels(params)({ brightness: -50, contrast: 0, toolName: 'levels' });
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(66.67%) contrast(100%)');
+    });
+
+    it('composes brightness and contrast proportionately for {0, 50}', () => {
+      levels(params)({ brightness: 0, contrast: 50, toolName: 'levels' });
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(100%) contrast(150%)');
+    });
+
+    it('composes brightness and contrast proportionately for {-150, -50} (slider minima)', () => {
+      levels(params)({
+        brightness: BRIGHTNESS_SLIDER_RANGE.min,
+        contrast: CONTRAST_SLIDER_RANGE.min,
+        toolName: 'levels',
+      });
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(0%) contrast(50%)');
+    });
+
+    it('is a visual no-op at the default settings {0, 0}', () => {
+      levels(params)({ brightness: 0, contrast: 0, toolName: 'levels' });
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(100%) contrast(100%)');
+    });
+
+    it('reaches the maximum travel {+150, +100}', () => {
+      levels(params)({
+        brightness: BRIGHTNESS_SLIDER_RANGE.max,
+        contrast: CONTRAST_SLIDER_RANGE.max,
+        toolName: 'levels',
+      });
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(200%) contrast(200%)');
+    });
+
+    it('records the filter through a real writable data property, so the assertions above are not vacuous', () => {
+      levels(params)({ brightness: 3, contrast: 4, toolName: 'levels' });
+
+      const descriptor = Object.getOwnPropertyDescriptor(
+        lastCanvas().ctx as unknown as Record<string, unknown>,
+        'filter'
+      );
+      expect(descriptor?.get).toBeUndefined();
+      expect(descriptor?.set).toBeUndefined();
+      expect(descriptor).toMatchObject({ value: 'brightness(102%) contrast(104%)', writable: true });
+    });
   });
 
-  it('draws the source bitmap once at the origin', () => {
-    levels(params)({ brightness: 20, contrast: 40, toolName: 'levels' });
+  describe('source bitmap draw', () => {
+    it('draws the source bitmap at (0, 0) exactly once per call', () => {
+      levels(params)({ brightness: 20, contrast: 40, toolName: 'levels' });
 
-    expect(lastCanvas().ctx.drawImage).toHaveBeenCalledExactlyOnceWith(bitmap, 0, 0);
+      expect(lastCanvas().ctx.drawImage).toHaveBeenCalledTimes(1);
+      expect(lastCanvas().ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+    });
   });
 
-  it('returns the exact canvas instance it allocated', () => {
-    const [result] = levels(params)({ brightness: 5, contrast: 10, toolName: 'levels' });
+  describe('return value identity', () => {
+    it('returns the same canvas instance that was allocated', () => {
+      const [result] = levels(params)({ brightness: 5, contrast: 10, toolName: 'levels' });
 
-    expect(result).toBe(lastCanvas());
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
+    });
   });
 
-  it('records the filter through a writable data property', () => {
-    levels(params)({ brightness: 3, contrast: 4, toolName: 'levels' });
+  describe('edge values', () => {
+    it('passes NaN straight through into the filter string (known behaviour)', () => {
+      const [result] = levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
 
-    const descriptor = Object.getOwnPropertyDescriptor(
-      lastCanvas().ctx as unknown as Record<string, unknown>,
-      'filter'
-    );
-    expect(descriptor).toMatchObject({ value: 'brightness(102%) contrast(104%)', writable: true });
-    expect(descriptor?.get).toBeUndefined();
-    expect(descriptor?.set).toBeUndefined();
+      expect(lastCanvas().ctx.filter).toBe('brightness(NaN%) contrast(NaN%)');
+      expect(result).toBe(lastCanvas() as unknown as OffscreenCanvas);
+    });
+
+    it.fails('sanitizes a non-finite brightness/contrast before it reaches the CSS filter (levels.ts)', () => {
+      levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
+
+      expect(lastCanvas().ctx.filter).not.toContain('NaN');
+    });
+
+    it('passes +Infinity straight through into the filter string without throwing', () => {
+      expect(() =>
+        levels(params)({ brightness: Number.POSITIVE_INFINITY, contrast: Number.POSITIVE_INFINITY, toolName: 'levels' })
+      ).not.toThrow();
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(Infinity%) contrast(Infinity%)');
+    });
+
+    it('passes -Infinity straight through into the filter string without throwing', () => {
+      expect(() =>
+        levels(params)({ brightness: Number.NEGATIVE_INFINITY, contrast: Number.NEGATIVE_INFINITY, toolName: 'levels' })
+      ).not.toThrow();
+
+      expect(lastCanvas().ctx.filter).toBe('brightness(-Infinity%) contrast(-Infinity%)');
+    });
   });
 
-  it.each([
-    [Number.NaN, Number.NaN, 'brightness(NaN%) contrast(NaN%)'],
-    [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 'brightness(Infinity%) contrast(Infinity%)'],
-    [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, 'brightness(-Infinity%) contrast(-Infinity%)'],
-  ])('preserves non-finite values for the current known behavior', (brightness, contrast, expected) => {
-    expect(() => levels(params)({ brightness, contrast, toolName: 'levels' })).not.toThrow();
+  describe('requireCanvasFilter gate', () => {
+    it('throws CanvasFilterUnsupportedError with label "levels" before allocating any canvas', () => {
+      overrideCanvasFilterSupport(false);
 
-    expect(lastCanvas().ctx.filter).toBe(expected);
-  });
+      expect(() => levels(params)({ brightness: 10, contrast: 0, toolName: 'levels' })).toThrow(
+        CanvasFilterUnsupportedError
+      );
+      expect(() => levels(params)({ brightness: 10, contrast: 0, toolName: 'levels' })).toThrow(
+        /^levels requires CanvasRenderingContext2D\.filter/
+      );
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
 
-  it.fails('sanitizes non-finite brightness and contrast before CSS filter emission', () => {
-    levels(params)({ brightness: Number.NaN, contrast: Number.NaN, toolName: 'levels' });
+    it('still assigns its filter when support is present', () => {
+      overrideCanvasFilterSupport(true);
 
-    expect(lastCanvas().ctx.filter).not.toContain('NaN');
-  });
+      const [result] = levels(params)({ brightness: 10, contrast: 0, toolName: 'levels' }) as [OffscreenCanvas];
 
-  it('refuses to allocate when canvas filter support is unavailable', () => {
-    overrideCanvasFilterSupport(false);
-
-    expect(() => levels(params)({ brightness: 10, contrast: 0, toolName: 'levels' })).toThrow(
-      CanvasFilterUnsupportedError
-    );
-    expect(() => levels(params)({ brightness: 10, contrast: 0, toolName: 'levels' })).toThrow(
-      /^levels requires CanvasRenderingContext2D\.filter/
-    );
-    expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
-  });
-
-  it('assigns the filter when support is present', () => {
-    overrideCanvasFilterSupport(true);
-
-    const [result] = levels(params)({ brightness: 10, contrast: 0, toolName: 'levels' });
-    const canvas = lastCanvas();
-
-    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
-    expect(canvas.ctx.filter).not.toBe('');
-    expect(result).toBe(canvas);
+      const canvas = RecordingOffscreenCanvas.instances.at(-1);
+      expect(canvas).toBeDefined();
+      expect(canvas!.ctx.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+      expect(canvas!.ctx.filter).not.toBe('');
+      expect(result).toBe(canvas as unknown as OffscreenCanvas);
+    });
   });
 });
