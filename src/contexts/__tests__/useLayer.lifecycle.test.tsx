@@ -725,6 +725,24 @@ describe('useLayers layer mutation commands', () => {
     });
   });
 
+  it('does not reorder the bedrock layer through the shared move path', () => {
+    const { result } = setup({
+      layers: {
+        bottom: makeLayer('bottom', 0, { isBedrock: true }),
+        top: makeLayer('top', 1),
+      },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.moveLayerAfter('bottom', 'top');
+    });
+
+    expect(result.current.store.layers.bottom!.order).toBe(0);
+    expect(result.current.store.layers.top!.order).toBe(1);
+    expect(result.current.store.history).toEqual([]);
+  });
+
   it.each([
     ['bring-forward', { bottom: 0, middle: 3, top: 2 }],
     ['bring-to-front', { bottom: 0, middle: 3, top: 2 }],

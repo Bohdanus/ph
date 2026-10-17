@@ -988,7 +988,8 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
-    if (isLayerLocked(layers[layerToMoveId])) return;
+    const layerToMove = layers[layerToMoveId];
+    if (!layerToMove || layerToMove.isBedrock || isLayerLocked(layerToMove)) return;
     dispatch({
       type: 'REORDER_LAYERS',
       payload: { layerToMoveId, afterWhichLayerId },
