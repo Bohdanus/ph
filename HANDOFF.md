@@ -1665,7 +1665,7 @@ require a migration. Put it outside `args`.
 **Files.** `src/contexts/useLayer.ts` — `tempUpdateLayer()` and the processor-specific incremental
 guards; the remaining processor modules still need the same contract.
 
-## 124. An ordinary tool commit can move the document's size, and a mid-document bedrock blank layer is the production trigger
+## 124. An ordinary tool commit can move the document's size
 
 **Problem.** A tool commit is supposed to change pixels, not the document. A reproduction harness
 exists that measures `totalSize`, `documentFrame` and the canvas backing store across commits, and it
@@ -1677,45 +1677,14 @@ has never been run to a verdict. Four production entry points, all of them live 
    the pre-crop size and every later cursor at the cropped one
 3. a 64×64 document opened from a fixture, then five commits and five undo/redo rounds (the import is
    async, so it must be polled, and the opened size must be passed in rather than the seeded default)
-4. the **mobile shell** — `MobileLayersDrawer.tsx`'s add-layer button calls
-   `createBlankLayer({ …, size: totalSize, isBedrock: true })` with NO `replaceDocument`
 
-**Entry point 4 is STILL OPEN, and a previous version of this entry said otherwise. That claim was
-false in three verifiable ways, and it is corrected here because it sent two sessions away from the
-one production path that still has the defect.**
+**The former mobile-shell trigger is closed.** `MobileLayersDrawer.tsx` now calls
+`createBlankLayer` without `isBedrock`, passes the document-frame position, and the
+`MobileLayersDrawer.test.tsx` test titled `creates an ordinary blank layer covering the document
+frame` pins that contract. Adobe documents that the Layers-panel New Layer control creates a regular
+pixel layer above the selected layer; Background is a separate, explicitly converted layer type.
 
-The deleted paragraph claimed that `MobileLayersDrawer.tsx` "no longer calls `createBlankLayer` at
-all", that the shell's blank layer "now goes through `applyRasterReplacement`
-(`MobileLayersDrawer.tsx` — its layers-list row `<li>`)", and that `src/hooks/useApp.ts`'s PSD
-import branch routes it through `setBlankImage`. Against the tree as it stands:
-
-1. `MobileLayersDrawer.tsx`'s add-layer button **still** calls
-   `createBlankLayer({ color: '#ffffff', opacity: 1, size: totalSize, isBedrock: true })` — with **no**
-   `replaceDocument`, exactly the history shape this entry was written about. It is the only
-   production writer of a mid-timeline bedrock entry, and the sole reason `replayHistory` needs a
-   bedrock branch at all.
-2. **`applyRasterReplacement` does not exist.** `grep -rn applyRasterReplacement src e2e` returns
-   **zero** hits; the identifier appears only in this file and in the copies of this file inside
-   worktrees. `MobileLayersDrawer.tsx`'s layers-list row `<li>` is what carries a comment about
-   `role="button"`.
-3. `src/hooks/useApp.ts` — `setImageFromUpload()`'s PSD-import branch — is the `REPLACE_DOCUMENT`
-   payload of the **PSD** import plus an `ADOPT_LAYER_BITMAPS` dispatch. `setBlankImage` is
-   `src/hooks/useApp.ts` — `setBlankImage()` — and is
-   reached from `src/App.tsx` — `BlankImageStarter()` (the boot seed) and the New-document path —
-   neither from the mobile drawer.
-
-The premise was not merely stale; it was a wrong answer delivered with a `file:line`, and it is
-recorded here as the standing example of why a stale line number is worse than none.
-
-**What is left, stated as the tree actually is.** The mobile drawer commits a bedrock blank layer
-mid-history. `createLayerSource` forces `pos = { x: 0, y: 0, ...source.size }` for any bedrock
-source (`src/contexts/layer-utils.ts` — `createLayerSource()`), so after a crop to a frame whose
-origin is not `{0,0}` the new layer lands **off-canvas**: measured at `(-100, -80)` relative to the
-visible document for a crop to `{x:100,y:80,w:400,h:320}`. The `index === 0` gate in
-`history-replay.ts` stops the FRAME from moving on undo; it does nothing about the layer's position,
-which is why that gate was described as masking this defect rather than fixing it. **The fix is to
-commit a non-bedrock layer from the drawer** — it is a normal empty layer above the current one, not
-a document.
+The remaining work in this entry is the store-level size and display measurement for entry points 1–3.
 
 **Reproduce.** The harness is committed on `salvage/probe-canvas-growth` (it was untracked in a
 detached-HEAD worktree, so it was on no ref at all and nothing in git could have recovered it).
@@ -1766,14 +1735,11 @@ path: `CropToolArea`'s `onChangeEnd` hands `applyDocumentCrop()` the `sortRoundR
 `operationForTool()` (`src/contexts/history-adapter.ts`) returns `null` for a `document-operation`
 tool, so the durable converter derives nothing from it either.
 
-**What the green run does NOT cover, which is most of this entry.** Scenarios D and E are
-deliberately assertion-light: they assert only `expect(rows.length).toBeGreaterThan(0)`, a tautology,
-and `console.log` the rest. So they are diagnostic, not verdicts, and the run above must not be read
-as "the mobile path is fixed". Specifically, **the blank-layer flow holds the pre-crop size at every
-cursor only when no crop has been committed.** After a crop, scenario D logs
-`800×600` at cursor 0 and the **cropped** size at every cursor after it — which is correct for a crop,
-and is exactly why D asserts nothing. The off-canvas layer position above is measured directly and
-does not depend on that scenario.
+**What the green run does NOT cover.** Scenarios D and E are deliberately assertion-light: they
+assert only `expect(rows.length).toBeGreaterThan(0)`, a tautology, and `console.log` the rest. They
+remain diagnostic rather than verdicts for the store-size and display measurements. The mobile blank
+layer's regular-layer contract is covered separately by `MobileLayersDrawer.test.tsx`; the remaining
+measurement work is the document-size and on-screen display invariant for entry points 1–3.
 
 **So the remaining question is not the store — it is the DISPLAY, and it is unmeasured.** The
 workspace canvas is `h-full w-full object-contain` (`src/components/Main/Main.tsx` —
