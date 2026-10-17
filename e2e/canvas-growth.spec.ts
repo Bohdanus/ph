@@ -299,10 +299,8 @@ test.describe('an opened image, then committed tools, then undo/redo', () => {
 });
 
 /**
- * The mobile shell is where the ONE production mid-document bedrock layer is written:
- * `MobileLayersDrawer.tsx:173` calls `createBlankLayer({ ..., size: totalSize, isBedrock: true })`
- * with NO `replaceDocument`, which is exactly the history shape the replay bedrock branch
- * reacts to.
+ * The mobile shell appends a regular blank layer mid-document. The size assertions here cover
+ * that layer commit's undo/redo path without treating it as a document-level bedrock entry.
  */
 test.describe('a mobile blank-layer commit, then undo/redo', () => {
   test.use({ viewport: { width: 390, height: 844 } });
