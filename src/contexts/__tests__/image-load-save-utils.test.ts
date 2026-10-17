@@ -93,6 +93,8 @@ describe('document file routing', () => {
     );
     vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
       this.onload = () => {};
+      this.width = 1;
+      this.height = 1;
       this.src = '';
       image = this;
       return this;
@@ -132,6 +134,8 @@ describe('document file routing', () => {
     );
     vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
       this.onload = () => {};
+      this.width = 1;
+      this.height = 1;
       this.src = '';
       image = this;
       return this;
