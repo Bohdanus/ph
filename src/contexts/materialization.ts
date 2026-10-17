@@ -214,9 +214,6 @@ export function createMaterializationKey(layer: DurableReplayLayer, request: Mat
     operationSetRevision: request.operationSetRevision,
     operations,
     pos: layer.snapshot.pos,
-    opacity: layer.snapshot.opacity,
-    blendMode: layer.snapshot.blendMode,
-    visible: layer.snapshot.visible,
     affineRevision: operations.filter(
       (operation) => (operation as { kind?: string }).kind === 'apply-affine-transform'
     ),
