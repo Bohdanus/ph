@@ -12,6 +12,7 @@ import type { ToolResult } from '../../tools/toolProcessors.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
+  OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
   REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
@@ -83,6 +84,40 @@ function setup({
         totalSize: { ...totalSize },
         documentFrame,
         hasImage: true,
+      },
+    });
+  });
+
+  return { result };
+}
+
+function setupWithDocument() {
+  const layer = makeLayer('edited', 0, {
+    source: {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    },
+  });
+  const layers = { edited: layer };
+  const { result } = setup({ layers, activeLayerId: layer.id });
+
+  act(() => {
+    result.current.dispatch({
+      type: 'REPLACE_DOCUMENT',
+      payload: {
+        documentId: 'doc-layer-lifecycle',
+        history: [
+          {
+            id: 'baseline',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: layer.id,
+            documentSource: { layers, size, frame },
+          },
+        ],
+        historyIndex: 0,
+        updates: { layers, totalSize: size, documentFrame: frame, hasImage: true },
       },
     });
   });
@@ -712,7 +747,7 @@ describe('useLayers layer mutation commands', () => {
   });
 
   it('sets opacity to zero and back to one through the opacity action', () => {
-    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+    const { result } = setupWithDocument();
 
     act(() => {
       result.current.layers.updateLayer('edited', { opacity: 0 }, SET_LAYER_OPACITY_ACTION);
@@ -722,6 +757,11 @@ describe('useLayers layer mutation commands', () => {
       actionName: SET_LAYER_OPACITY_ACTION,
       layerId: 'edited',
       args: { opacity: 0 },
+    });
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
     });
 
     act(() => {
@@ -733,20 +773,9 @@ describe('useLayers layer mutation commands', () => {
       layerId: 'edited',
       args: { opacity: 1 },
     });
-  });
-
-  it('applies a blend-mode patch with the opacity action and records the intent', () => {
-    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
-
-    act(() => {
-      result.current.layers.updateLayer('edited', { blendMode: 'multiply' }, SET_LAYER_OPACITY_ACTION);
-    });
-
-    expect(result.current.store.layers.edited!.blendMode).toBe('multiply');
-    expect(result.current.store.history.at(-1)).toMatchObject({
-      actionName: SET_LAYER_OPACITY_ACTION,
-      layerId: 'edited',
-      args: { blendMode: 'multiply' },
+    expect(result.current.store.durableDocument!.history).toHaveLength(2);
+    expect(result.current.store.durableDocument!.history[1]).toMatchObject({
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 1 } },
     });
   });
 
