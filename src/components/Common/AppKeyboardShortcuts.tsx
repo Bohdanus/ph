@@ -123,7 +123,8 @@ export const AppKeyboardShortcuts = () => {
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, pasteSystemClipboardImage, layerViaCopy } =
+    useSelectionClipboard();
   const { openSaveImageDialog } = useFile();
   const { arrangeLayer, commitDirtyTool } = useLayers();
 
@@ -466,7 +467,9 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => {
-      pasteSelectionClipboard();
+      void pasteSelectionClipboard().then((pasted) => {
+        if (!pasted) void pasteSystemClipboardImage();
+      });
     },
   });
 
