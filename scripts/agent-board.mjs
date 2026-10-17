@@ -1335,7 +1335,14 @@ export async function run(
             result.duplicates.length
               ? `${result.duplicates.length} duplicate heading number(s) blocked from import: ${result.duplicates.join(', ')}`
               : null,
-            result.dead.length ? `${result.dead.length} skipped as already closed in their document` : null,
+            result.dead.length > result.retired.length
+              ? `${result.dead.length - result.retired.length} not filed, retired in the document`
+              : null,
+            result.retired.length
+              ? `${result.retired.length} retired in the document and still on the board: ${result.retired
+                  .map((entry) => `${entry.id} (${entry.origin})`)
+                  .join(' · ')} — the document deleted the entry; the board did not close the issue`
+              : null,
           ]
             .filter(Boolean)
             .join(' · ')

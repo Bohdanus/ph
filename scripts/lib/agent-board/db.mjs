@@ -2311,7 +2311,7 @@ export class Board {
     // invocation turned a six-event board into one that was two-thirds sweep
     // noise, which is the same flood the tailing fix was written for, and it
     // made `health` inflate the very number it was reporting.
-    if (record && findings.length > 0) {
+    if (record && !dryRun && findings.length > 0) {
       this.addEvent('doctor.run', {
         message: findings.length
           ? `${findings.length} stale holding(s) ${dryRun ? 'would be released' : 'released'}`

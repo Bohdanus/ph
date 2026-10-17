@@ -83,6 +83,21 @@ describe('the import of the handoff documents', () => {
     ).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
     expect(first.dead).toContain('HANDOFF.md#3');
     expect(first.dead).toContain('HANDOFF.md#4');
+    expect(first.retired).toEqual([]);
+  });
+
+  it('reports existing board issues whose document entries were retired', async () => {
+    writeFileSync(join(dir, 'HANDOFF.md'), ['## 1. A live item', '', 'Body.', ''].join('\n'));
+    const board = boardFor();
+    await importDocuments({ board, files: ['HANDOFF.md'], cwd: dir });
+    const issue = board.listIssues()[0];
+
+    writeFileSync(join(dir, 'HANDOFF.md'), ['### Items 1 — deleted', '', 'Fixed.', ''].join('\n'));
+    const result = await importDocuments({ board, files: ['HANDOFF.md'], cwd: dir });
+
+    expect(result.dead).toEqual(['HANDOFF.md#1']);
+    expect(result.retired).toEqual([{ origin: 'HANDOFF.md#1', id: issue.id }]);
+    expect(board.getIssue(issue.id).status).toBe('open');
   });
 
   it('reports duplicate headings and leaves their ambiguous origin unfiled', async () => {
