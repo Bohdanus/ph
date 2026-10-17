@@ -119,6 +119,20 @@ describe('the import of the handoff documents', () => {
     expect(board.listIssues()).toHaveLength(0);
   });
 
+  it('refuses the entire import when a numbered heading has an unsupported letter suffix', async () => {
+    writeFileSync(
+      join(dir, 'HANDOFF.md'),
+      ['## 15a. An old item — deleted', '', 'It must not become item 15.', ''].join('\n')
+    );
+    const board = boardFor();
+
+    await expect(importDocuments({ board, files: ['HANDOFF.md'], cwd: dir })).rejects.toThrow(
+      /letter suffixes have no supported origin[\s\S]*HANDOFF\.md:1/
+    );
+    expect(board.listIssues()).toHaveLength(0);
+    expect(board.events()).toHaveLength(0);
+  });
+
   it('takes no file locks for imported items', async () => {
     writeFileSync(join(dir, 'HANDOFF.md'), ['## 1. Something in a file', '', 'Fix `src/c.ts` now.', ''].join('\n'));
     const board = boardFor();

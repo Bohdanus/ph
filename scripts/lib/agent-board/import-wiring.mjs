@@ -75,6 +75,20 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   const ambiguousRetirements = read.flatMap((entry) =>
     (entry.parsed.ambiguousRetirements ?? []).map((retirement) => ({ file: entry.file, ...retirement }))
   );
+  const letterSuffixedHeadings = read.flatMap((entry) =>
+    (entry.parsed.letterSuffixedHeadings ?? []).map((heading) => ({ file: entry.file, ...heading }))
+  );
+  if (letterSuffixedHeadings.length > 0) {
+    const details = letterSuffixedHeadings
+      .map(({ file, line, level, text }) => `  ${file}:${line} (level ${level}): ${JSON.stringify(text)}`)
+      .join('\n');
+    throw new BoardError(
+      'cannot import handoff documents: numbered headings with letter suffixes have no supported origin; ' +
+        'choose a numeric heading or resolve the origin grammar before importing:\n' +
+        details,
+      { code: 1 }
+    );
+  }
   if (ambiguousRetirements.length > 0) {
     const details = ambiguousRetirements
       .map(({ file, line, origin, heading }) => `  ${file}:${line} (${origin}): ${JSON.stringify(heading)}`)
