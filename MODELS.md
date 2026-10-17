@@ -7,7 +7,7 @@
 | 0    | Laguna S (Poolside)             | kilo     | thinking | TOP model for use; rate limiting is sometimes enabled for it — when not rate limited, only use Laguna S free |
 | 1    | Reflection: Beam 1.0 (free)     | kilo     | max      | Second choice after Laguna; fast but not as reliable — can hallucinate, so verify important results          |
 | 2    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                                                                            |
-| 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Reliable free review model                                                                                   |
+| 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Less reliable than Beam; verify results                                                                      |
 | 4    | StepFun: Step 3.7 Flash         | kilo     | high     | Fast free model                                                                                              |
 
 ## Provider Rules
