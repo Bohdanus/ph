@@ -14,6 +14,7 @@ import {
   scaleVectorArgs,
   type PresentationOperation,
 } from './presentation-evaluator.ts';
+import { toOwnedBitmap } from './materialization-bitmap.ts';
 
 export type MaterializationRequest = Readonly<{
   documentId: string;
@@ -174,11 +175,6 @@ async function sourceBitmap(
       borrowed: false,
     };
   }
-}
-
-async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
-  if (globalThis.createImageBitmap) return globalThis.createImageBitmap(canvas);
-  return canvas;
 }
 
 /**
