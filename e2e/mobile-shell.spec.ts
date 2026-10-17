@@ -83,7 +83,10 @@ test.describe('Mobile shell', () => {
     await expect(picker.getByRole('button', { name: 'Pencil Tool' })).toHaveAttribute('aria-pressed', 'true');
     // The bar's own tile lights for the whole group, so it is the pressed member of the
     // picker, not the tile, that says which tool within the group is now active.
-    await expect(bottomBar(page).getByRole('button', { name: 'Brush Tool' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(bottomBar(page).getByRole('button', { name: 'Brush Tool', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
     await expect(sheet).toContainText('pencil Options');
 
     await toggle.click();
