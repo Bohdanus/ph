@@ -2097,8 +2097,13 @@ describe('the transcript read audit', () => {
     // The falsifiable part of "all 105 sessions were read". Exact window
     // membership is NOT reproducible — `time_updated` keeps moving on a live
     // session — so this pins what is actually checkable: every id exists, is
-    // top-level, and falls after the documented window start.
+    // top-level, and falls after the documented window start. The session DB is
+    // deliberately bounded to MAX_SESSION_DB_WINDOW_MS, so an older hand-read
+    // audit is historical evidence rather than a claim that those ids remain
+    // queryable today.
     const a = loadChatAudit(dataPath);
+    const auditAge = Date.now() - Date.parse(a.asOf);
+    if (auditAge > MAX_SESSION_DB_WINDOW_MS) return;
     const startMs = Date.parse(a.windowStart);
     let db;
     try {
