@@ -4530,12 +4530,14 @@ merge --ff-only main`.
     `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`; the union typecheck and the test
     are two different lists, so they can disagree silently. (I did not verify the old the old line-span reference
     range — cite the file, not the line span.)
-34. **`isToolDirty` reads as always-false, and the reason is not the one usually given.**
-    Verified: the reducer arm **exists** — `case 'SET_TOOL_DIRTY':` at
-    `src/contexts/StoreContext.tsx` — the reducer's `case 'SET_TOOL_DIRTY'` arm, cleared by `SET_TOOL_NAME` at the reducer's `case 'SET_TOOL_NAME'` arm. What is true
-    is that **no production dispatch ever sets it `true`**; three options-bar components say so
-    in their own comments (`src/components/ToolbarsRight/Colors/Color.tsx` — its "nothing dispatches `SET_TOOL_DIRTY` with `true`" comment, `src/components/ToolbarsRight/Blur/Blur.tsx` — its "nothing dispatches `SET_TOOL_DIRTY` with `true`" comment,
-    `src/components/ToolbarsRight/Levels/Levels.tsx` — its "nothing dispatches `SET_TOOL_DIRTY` with `true`" comment). Never build a reset/undo affordance on it.
+34. **`isToolDirty` reads as always-false because the production flag was removed.**
+    Verified: production `src/` contains no `SET_TOOL_DIRTY` action or reducer arm, and
+    `isToolDirty` survives only in test mocks plus the explanatory comment in
+    `src/components/Mobile/MobileHeader.tsx`. The options bars now own per-tool reset
+    behavior instead (`src/components/ToolbarsRight/Colors/Color.tsx`,
+    `src/components/ToolbarsRight/Blur/Blur.tsx`, and
+    `src/components/ToolbarsRight/Levels/Levels.tsx`). Never build a reset/undo affordance
+    on the removed shared flag.
 35. **Every tool area shares one 2D overlay context.** Symptom: a new painter's `globalAlpha`,
     `setLineDash`, or `lineCap` leaks into the next stroke or the next tool. Verified:
     `src/components/Main/Main.tsx` — the single `toolOverlayRef.current.getContext('2d')` write takes the single `toolOverlayRef` context, and
