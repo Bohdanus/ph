@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { canvasToPngBlob, getCanvasImageData, imageDataToImage, loadImageSource } from '../raster-utils.ts';
+import {
+  assertWithinDocumentPixelBudget,
+  canvasToPngBlob,
+  getCanvasImageData,
+  imageDataToImage,
+  loadImageSource,
+  MAX_CREATABLE_DOCUMENT_PIXELS,
+} from '../raster-utils.ts';
 
 let putImageDataCalls: { width: number; height: number; data: Uint8ClampedArray }[];
 let createImageDataCalls: [number, number][];
@@ -79,6 +86,24 @@ describe('getCanvasImageData', () => {
     vi.spyOn(canvas, 'getContext').mockReturnValue(null);
 
     expect(() => getCanvasImageData(canvas)).toThrow('Unable to read canvas pixels');
+  });
+});
+
+describe('assertWithinDocumentPixelBudget', () => {
+  it('accepts dimensions at the document pixel ceiling', () => {
+    expect(() => assertWithinDocumentPixelBudget({ width: 10_000, height: 10_000 })).not.toThrow();
+  });
+
+  it('rejects invalid dimensions before an allocation can occur', () => {
+    expect(() => assertWithinDocumentPixelBudget({ width: 0, height: 10 }, 'Document')).toThrow(
+      'Document has invalid dimensions'
+    );
+  });
+
+  it('rejects dimensions above the document pixel ceiling', () => {
+    expect(() => assertWithinDocumentPixelBudget({ width: MAX_CREATABLE_DOCUMENT_PIXELS + 1, height: 1 })).toThrow(
+      `Image is too large (${MAX_CREATABLE_DOCUMENT_PIXELS + 1}×1)`
+    );
   });
 });
 

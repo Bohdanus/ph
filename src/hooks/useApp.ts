@@ -7,6 +7,7 @@ import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
+import { assertWithinDocumentPixelBudget } from '../contexts/raster-utils.ts';
 import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../contexts/document-frame.ts';
@@ -76,6 +77,7 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: NewDocumentBlankParams) {
+    assertWithinDocumentPixelBudget(params.size, 'Document');
     handleImageCreate(params.size);
     createBlankLayer({ ...params }, true);
   }
