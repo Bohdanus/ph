@@ -760,9 +760,12 @@ describe('useLayers layer mutation commands', () => {
     });
     expect(result.current.store.durableStatus).toBe('current');
     expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history).toHaveLength(1);
     expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      id: result.current.store.history.at(-1)!.id,
       operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
     });
+    expect(result.current.store.durableDocument!.cursor).toBe(0);
 
     act(() => {
       result.current.layers.updateLayer('edited', { opacity: 1 }, SET_LAYER_OPACITY_ACTION);
@@ -774,9 +777,17 @@ describe('useLayers layer mutation commands', () => {
       args: { opacity: 1 },
     });
     expect(result.current.store.durableDocument!.history).toHaveLength(2);
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      id: result.current.store.history[1]!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
+    });
     expect(result.current.store.durableDocument!.history[1]).toMatchObject({
+      id: result.current.store.history[2]!.id,
       operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 1 } },
     });
+    expect(result.current.store.durableDocument!.cursor).toBe(1);
   });
 
   it('moves a layer to the bottom when the anchor is null', () => {
