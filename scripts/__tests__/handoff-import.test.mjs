@@ -629,6 +629,7 @@ describe('the document shapes the parser has to survive', () => {
       dead: [],
       duplicateNumbers: [],
       ambiguousRetirements: [],
+      letterSuffixedHeadings: [],
     });
     expect(parse('# Handoff\n\nJust prose, and a `src/a.ts` citation.\n')).toEqual({
       scope: 'history',
@@ -636,6 +637,7 @@ describe('the document shapes the parser has to survive', () => {
       dead: [],
       duplicateNumbers: [],
       ambiguousRetirements: [],
+      letterSuffixedHeadings: [],
     });
   });
 
@@ -650,6 +652,7 @@ describe('the document shapes the parser has to survive', () => {
       dead: [],
       duplicateNumbers: [],
       ambiguousRetirements: [],
+      letterSuffixedHeadings: [],
     });
   });
 
@@ -751,12 +754,8 @@ describe('the document shapes the parser has to survive', () => {
      * higher level.
      *
      * This is NOT the shape at `HANDOFF.md:424`. That heading, `## 15a.`, is a
-     * level-2 SIBLING of `## 15.`, not a subheading of it, and it is a different
-     * shape with a different failure: it matches neither `NUMBERED` (no word
-     * boundary between `5` and `a`) nor `SEVERITY`, so `assemble` falls through
-     * to `if (open && record.level <= open.level) close(...)` and TRUNCATES item
-     * 15 there. The sibling case is pinned separately below, because only the
-     * subheading case is about the dead word.
+     * level-2 SIBLING of `## 15.`, not a subheading of it. It is a malformed
+     * origin shape, so the parser reports it separately and never invents a row.
      */
     const sub = parse(
       '## 15. `reorder-layers` is published\n\nIntro.\n\n' +
@@ -785,16 +784,9 @@ describe('the document shapes the parser has to survive', () => {
   });
 
   /**
-   * The level-2 sibling of a numbered heading, verbatim from `HANDOFF.md:424` —
-   * §77's shape, and the one that is LIVE today, so it is pinned as a mechanism
-   * rather than as a gap.
-   *
-   * `## 15a.` opens nothing, so its prose is unreachable from any item body and
-   * nothing in the parse result reports that. This test holds the CURRENT
-   * behaviour, which is the point: it is a filed §77 finding, not a decision,
-   * and a future fix to `NUMBERED` is supposed to fail here and say why. The
-   * title is the real one, so an agent reading the failure sees the document
-   * text rather than a fixture number.
+   * The level-2 sibling of a numbered heading, verbatim from `HANDOFF.md:424`.
+   * The parser keeps the sibling boundary, while its malformed origin is
+   * reported separately rather than silently losing the prose.
    */
   it('truncates the parent entry at a letter-suffixed level-2 sibling, as §77 records', () => {
     const parsed = parse(
@@ -812,49 +804,34 @@ describe('the document shapes the parser has to survive', () => {
   });
 
   /**
-   * The WORSE half of §77, and the one that used to have no pin at all: the same
-   * missing word boundary in the same place makes a **suffixed retirement retire
-   * the parent section's number**.
-   *
-   * `deadNumbers` reaches the number through `NUMBER_OR_RANGE`, which has no
-   * `\b` at all, so `## 15a. An old thing — deleted` harvests `15` and files the
-   * live, open `HANDOFF.md#15` as **finished** by a heading that says `15a` is
-   * done. This is silent corruption rather than silent loss: nothing is lost, a
-   * still-open entry is suppressed, and the board says it is retired. The
-   * truncation test above is the half that loses a section; this is the half that
-   * closes one, and a fix that only widens `NUMBERED` to fix the loss does not
-   * address this at all — which is the sentence §77 makes.
-   *
-   * `it.fails` marks the still-open §77 defect: the body below
-   * asserts what a fixed parser returns, so it is red today and the `fails` is
-   * what a fixer deletes. §77's own projection is the reason this cannot be an
-   * ordinary test: no fix that gives `15a` its own origin can keep returning
-   * `[15]` from `deadNumbers`, because the dead set is `number[]` end to end.
+   * A malformed suffix must never retire the parent section's number. The parser
+   * rejects the entire origin shape and reports it separately, preventing both
+   * silent loss and silent retirement of a live item.
    */
-  it.fails('does not retire the PARENT section number from a letter-suffixed retirement', () => {
+  it('does not retire the PARENT section number from a letter-suffixed retirement', () => {
     expect(deadNumbers('## 15a. An old thing — deleted\n')).toEqual([]);
     expect(deadNumbers('## 15a, 16. Old things — deleted\n')).toEqual([]);
   });
 
   /**
-   * The same root cause read from the other side, and this one IS the current
-   * behaviour and stays true whichever way §77 is fixed: a suffixed heading is
-   * **never** a retirement, and the pinned table above proves the ungated form
-   * cannot express one. So the corpus can never retire `15a`, and it can only
-   * ever retire `15` — which is the corruption, isolated from the mechanism.
+   * The parser rejects the unsupported origin shape loudly while leaving the
+   * origin grammar unchanged for a future operator decision.
    */
-  it('reads a suffixed retirement as retiring 15, never 15a, today', () => {
-    // `NUMBER_OR_RANGE` has no word boundary, so the `15` comes out of `15a`.
-    expect(deadNumbers('## 15a. An old thing — deleted\n')).toEqual([15]);
-    expect(deadNumbers('## 15a, 16. Old things — deleted\n')).toEqual([15, 16]);
-    // And the consequence is a SUPPRESSION, not a loss: a live item the board
-    // already knows is then never created again.
-    const parsed = parse('## 15. Still open\n\nBody.\n\n## 15a. An old thing — deleted\n\nGone.\n');
-    expect(parsed.dead).toEqual([15]);
-    expect(
-      planImport([parsed], [{ origin: 'HANDOFF.md#15' }]).create.map((item) => item.origin),
-      'the live 15 is suppressed by the document its own 15a says is deleted'
-    ).toEqual([]);
+  it('reports a letter-suffixed heading without inventing an origin', () => {
+    const parsed = parse('## 15a. An old thing — deleted\n');
+
+    expect(parsed.dead).toEqual([]);
+    expect(parsed.items).toEqual([]);
+    expect(parsed.letterSuffixedHeadings).toEqual([{ line: 1, level: 2, text: '15a. An old thing — deleted' }]);
+    expect(planImport([parsed], []).create).toEqual([]);
+
+    const list = parse('## Items 15a, 16 — deleted\n');
+    expect(list.dead).toEqual([]);
+    expect(list.letterSuffixedHeadings).toEqual([{ line: 1, level: 2, text: 'Items 15a, 16 — deleted' }]);
+
+    const mixed = parse('## Items 15, 16a — deleted\n');
+    expect(mixed.dead).toEqual([]);
+    expect(mixed.letterSuffixedHeadings).toEqual([{ line: 1, level: 2, text: 'Items 15, 16a — deleted' }]);
   });
 
   /**

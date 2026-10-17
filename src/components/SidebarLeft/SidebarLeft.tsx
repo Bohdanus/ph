@@ -772,6 +772,7 @@ const SidebarLeft = () => {
           <AnchoredOverlay
             align="start"
             anchor={flyoutAnchor.element}
+            label="Tool options"
             measureKey={groupIndex}
             side={overlaySide}
             xAnchor={railElement}

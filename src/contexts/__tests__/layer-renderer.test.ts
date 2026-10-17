@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { drawLayerSource, drawLayersToCanvas } from '../layer-renderer.ts';
+import { drawLayer, drawLayerSource, drawLayersToCanvas } from '../layer-renderer.ts';
 import type { Pos } from '../general-types.ts';
 import type { Layer } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { createMockCanvas } from '../../__tests__/fixtures/canvas.ts';
+import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 
 describe('drawLayerSource', () => {
   it('rematerializes vector shape sources at the current logical bounds', () => {
@@ -161,6 +162,108 @@ describe('drawLayerSource', () => {
 
     expect(drawLayerSource(ctx, layer)).toBe(true);
     expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 10, 20, 30, 40);
+  });
+});
+
+describe('drawLayer', () => {
+  const bitmap = { width: 64, height: 64, close: vi.fn() } as unknown as ImageBitmap;
+  const documentFrame = { x: 0, y: 0, width: 100, height: 100 };
+
+  function makeImageLayer(overrides: Partial<Layer> = {}): Layer {
+    return {
+      id: 'layer-1',
+      name: 'Image',
+      isBedrock: false,
+      tmpCanvas: null,
+      bitmap,
+      visible: true,
+      opacity: 0.8,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos: { x: 10, y: 12, width: 64, height: 64 },
+      presentationBounds: null,
+      operations: [],
+      source: { kind: 'image' as const, bitmap, pos: { x: 10, y: 12, width: 64, height: 64 } },
+      ...overrides,
+    };
+  }
+
+  function makeStatefulCtx(
+    initial: { alpha: number; composite: GlobalCompositeOperation } = { alpha: 0.62, composite: 'screen' }
+  ) {
+    let alpha = initial.alpha;
+    let composite = initial.composite;
+    const drawnStates: Array<{ alpha: number; composite: GlobalCompositeOperation }> = [];
+    const snapshots: Array<{ alpha: number; composite: GlobalCompositeOperation }> = [];
+    const ctx = makeMockCtx();
+
+    Object.defineProperties(ctx, {
+      globalAlpha: { get: () => alpha, set: (value: number) => (alpha = value) },
+      globalCompositeOperation: {
+        get: () => composite,
+        set: (value: GlobalCompositeOperation) => (composite = value),
+      },
+    });
+    ctx.save = vi.fn(() => snapshots.push({ alpha, composite }));
+    ctx.restore = vi.fn(() => {
+      const snapshot = snapshots.pop();
+      if (snapshot) {
+        alpha = snapshot.alpha;
+        composite = snapshot.composite;
+      }
+    });
+    ctx.drawImage = vi.fn(() => drawnStates.push({ alpha, composite }));
+
+    return { ctx, drawnStates };
+  }
+
+  it('sets globalAlpha to the layer opacity before drawing', () => {
+    const { ctx, drawnStates } = makeStatefulCtx();
+    drawLayer(ctx, makeImageLayer({ opacity: 0.37 }));
+    expect(drawnStates[0]?.alpha).toBe(0.37);
+  });
+
+  it('sets globalCompositeOperation to the layer blendMode before drawing', () => {
+    const { ctx, drawnStates } = makeStatefulCtx();
+    drawLayer(ctx, makeImageLayer({ blendMode: 'multiply' }));
+    expect(drawnStates[0]?.composite).toBe('multiply');
+  });
+
+  it('sets opacity and blend mode before drawImage and restores both afterward', () => {
+    const { ctx, drawnStates } = makeStatefulCtx();
+
+    drawLayer(ctx, makeImageLayer({ opacity: 0.37, blendMode: 'multiply' }));
+
+    expect(drawnStates).toEqual([{ alpha: 0.37, composite: 'multiply' }]);
+    expect(ctx.globalAlpha).toBe(0.62);
+    expect(ctx.globalCompositeOperation).toBe('screen');
+  });
+
+  it('saves and restores the context around the draw', () => {
+    const { ctx } = makeStatefulCtx();
+    drawLayer(ctx, makeImageLayer());
+    expect(ctx.save).toHaveBeenCalledTimes(2);
+    expect(ctx.restore).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns true for a layer with a bitmap', () => {
+    const ctx = makeMockCtx();
+    expect(drawLayer(ctx, makeImageLayer())).toBe(true);
+  });
+
+  it('delegates drawing with the layer position', () => {
+    const ctx = makeMockCtx();
+    drawLayer(ctx, makeImageLayer({ opacity: 1 }), documentFrame);
+    expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 10, 12, 64, 64);
+  });
+
+  it('draws invisible layers with 0 alpha rather than skipping them', () => {
+    const { ctx, drawnStates } = makeStatefulCtx();
+    const result = drawLayer(ctx, makeImageLayer({ opacity: 0 }));
+    expect(drawnStates[0]?.alpha).toBe(0);
+    expect(result).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 10, 12, 64, 64);
   });
 });
 

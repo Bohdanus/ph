@@ -48,6 +48,8 @@
  * @property {number[]} duplicateNumbers numbered headings that share an origin
  * @property {{origin: string, number: number, line: number, heading: string}[]} ambiguousRetirements
  *   numbered headings whose status suffix could be prose or a retirement marker
+ * @property {{line: number, level: number, text: string}[]} letterSuffixedHeadings
+ *   numbered-looking headings whose letter suffix has no supported origin grammar
  */
 
 /**
@@ -188,6 +190,10 @@ const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed
  */
 const NUMBERED = /^(?:item\s+)?#?(\d+)\b/i;
 
+/** A numbered heading whose leading list contains an unsupported letter suffix. */
+const LETTER_SUFFIXED_NUMBERED =
+  /^(?:items?\s+)?(?:#?\d+[a-z]+(?:\s*,\s*#?\d+)*|#?\d+(?:\s*,\s*#?\d+)*\s*,\s*#?\d+[a-z]+)/i;
+
 /**
  * A numbered heading ending in a status word is a retirement only when the
  * heading itself is an explicit list, not when it also has an item title.
@@ -248,6 +254,9 @@ const SEVERITY_TOKEN = /\bP\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/gi;
  * endpoints would leave the entries between them live.
  */
 const NUMBER_OR_RANGE = /(\d{1,6})\s*(?:[-–—]\s*(\d{1,6}))?/g;
+
+/** A letter-suffixed number is not a valid retirement-list number. */
+const LETTER_SUFFIXED_NUMBER = /(?:^|[^\d])\d{1,6}[A-Za-z]+\b/;
 
 /**
  * A range wider than this is treated as its endpoints rather than expanded. It
@@ -347,6 +356,7 @@ function retiredNumbersIn(record) {
   if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return [];
   if (ambiguousRetirementNumber(record) !== null) return [];
   const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
+  if (LETTER_SUFFIXED_NUMBER.test(withoutSeverities)) return [];
   const numbers = new Set();
   for (const match of withoutSeverities.matchAll(NUMBER_OR_RANGE)) {
     const from = Number(match[1]);
@@ -499,6 +509,7 @@ function assemble(base, { lines, records }) {
   const items = [];
   const duplicateNumbers = new Set();
   const ambiguousRetirements = [];
+  const letterSuffixedHeadings = [];
   const seen = new Set();
   const runs = new Map();
   let ambient = 1;
@@ -516,6 +527,13 @@ function assemble(base, { lines, records }) {
   for (const record of records) {
     if (record.kind === 'heading') {
       ambient = record.level;
+
+      if (LETTER_SUFFIXED_NUMBERED.test(record.text)) {
+        close(record.line, 0);
+        inDeadSection = false;
+        letterSuffixedHeadings.push({ line: record.line + 1, level: record.level, text: record.text });
+        continue;
+      }
 
       const ambiguousNumber = ambiguousRetirementNumber(record);
       if (ambiguousNumber !== null) {
@@ -596,6 +614,7 @@ function assemble(base, { lines, records }) {
     items,
     duplicateNumbers: [...duplicateNumbers].sort((a, b) => a - b),
     ambiguousRetirements,
+    letterSuffixedHeadings,
   };
 }
 
@@ -638,7 +657,7 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
   const path = String(file);
   const parsed = scan(text);
   const base = path.split('/').filter(Boolean).pop() || 'unknown.md';
-  const { items, duplicateNumbers, ambiguousRetirements } = assemble(base, parsed);
+  const { items, duplicateNumbers, ambiguousRetirements, letterSuffixedHeadings } = assemble(base, parsed);
 
   return {
     scope: scopeOf(path),
@@ -646,6 +665,7 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
     dead: deadNumbersIn(parsed.records),
     duplicateNumbers,
     ambiguousRetirements,
+    letterSuffixedHeadings,
   };
 }
 
