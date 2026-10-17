@@ -136,6 +136,15 @@ describe('useSelectionClipboard', () => {
   });
 
   it('rejects an oversized clipboard image before cloning or creating a layer', async () => {
+    const OriginalOffscreenCanvas = globalThis.OffscreenCanvas;
+    const allocations = vi.fn();
+    class RecordingOffscreenCanvas extends OriginalOffscreenCanvas {
+      constructor(width: number, height: number) {
+        allocations(width, height);
+        super(width, height);
+      }
+    }
+    vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas);
     storeState.selectionClipboard = createClipboard({
       bitmap: createMockImageBitmap(10_001, 10_000),
       pos: { x: 0, y: 0, width: 10_001, height: 10_000 },
@@ -143,6 +152,7 @@ describe('useSelectionClipboard', () => {
     render(<ClipboardProbe />);
 
     await expect(paste()).resolves.toBe(false);
+    expect(allocations).not.toHaveBeenCalled();
     expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
   });
 

@@ -100,6 +100,15 @@ describe('assertWithinDocumentPixelBudget', () => {
     );
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects non-finite width %s before an allocation can occur',
+    (width) => {
+      expect(() => assertWithinDocumentPixelBudget({ width, height: 10 }, 'Document')).toThrow(
+        'Document has invalid dimensions'
+      );
+    }
+  );
+
   it('rejects dimensions above the document pixel ceiling', () => {
     expect(() => assertWithinDocumentPixelBudget({ width: MAX_CREATABLE_DOCUMENT_PIXELS + 1, height: 1 })).toThrow(
       `Image is too large (${MAX_CREATABLE_DOCUMENT_PIXELS + 1}×1)`
