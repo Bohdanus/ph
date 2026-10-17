@@ -2,13 +2,14 @@
 
 ## Recommended Models
 
-| Rank | Model                           | Provider | Variant  | Use                                                                                                          |
-| ---- | ------------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| 0    | Laguna S (Poolside)             | kilo     | thinking | TOP model for use; rate limiting is sometimes enabled for it — when not rate limited, only use Laguna S free |
-| 1    | Reflection: Beam 1.0 (free)     | kilo     | max      | Second choice after Laguna; fast but not as reliable — can hallucinate, so verify important results          |
-| 2    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                                                                            |
-| 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Less reliable than Beam; verify results                                                                      |
-| 4    | StepFun: Step 3.7 Flash         | kilo     | high     | Fast free model                                                                                              |
+| Rank | Model                           | Provider | Variant  | Use                                                                                                       |
+| ---- | ------------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| 0    | Luna 6                          | openai   | thinking | PREFERRED: best model for use; keep context size under 272k tokens                                        |
+| 1    | Reflection: Beam 1.0 (free)     | kilo     | max      | Fast free model; not fully tested — verify important results                                              |
+| 2    | Laguna S (Poolside)             | kilo     | thinking | TOP free model; rate limiting is sometimes enabled for it — when not rate limited, only use Laguna S free |
+| 3    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                                                                         |
+| 4    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Less reliable; verify results                                                                             |
+| 5    | StepFun: Step 3.7 Flash         | kilo     | high     | Fast free model                                                                                           |
 
 ## Provider Rules
 
