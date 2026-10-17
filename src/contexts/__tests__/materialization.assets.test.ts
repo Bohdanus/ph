@@ -174,6 +174,24 @@ describe('materialization cache key stability', () => {
     );
   });
 
+  it('reuses the rendered bitmap when only compositing metadata changes', () => {
+    const registry = new AssetRegistry();
+    const base = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 });
+    const presentationOnly = Object.freeze({
+      snapshot: Object.freeze({
+        ...base.snapshot,
+        visible: false,
+        opacity: 0.375,
+        blendMode: 'multiply' as GlobalCompositeOperation,
+      }),
+      operations: base.operations,
+    });
+
+    expect(createMaterializationKey(base, makeRequest(registry))).toBe(
+      createMaterializationKey(presentationOnly, makeRequest(registry))
+    );
+  });
+
   it.each([
     { label: 'the document id', request: { documentId: 'other-doc' } },
     { label: 'the baseline asset generation', request: { baselineAssetGeneration: 3 } },
