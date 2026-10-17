@@ -192,6 +192,21 @@ describe('the import of the handoff documents', () => {
     expect(board.readyIssues().map((issue) => issue.title)).toEqual(['P0 — the worst thing', 'P2 — the smaller thing']);
   });
 
+  it('matches retired issues from subdirectory documents by their stored basename origin', async () => {
+    mkdirSync(join(dir, 'e2e'), { recursive: true });
+    writeFileSync(join(dir, 'e2e/OPEN_PROBLEMS.md'), ['## 1. A live problem', '', 'Body.', ''].join('\n'));
+    const board = boardFor();
+    await importDocuments({ board, files: ['e2e/OPEN_PROBLEMS.md'], cwd: dir });
+    const issue = board.listIssues()[0];
+    expect(issue.origin).toBe('OPEN_PROBLEMS.md#1');
+
+    writeFileSync(join(dir, 'e2e/OPEN_PROBLEMS.md'), ['### Items 1 — deleted', '', 'Fixed.', ''].join('\n'));
+    const result = await importDocuments({ board, files: ['e2e/OPEN_PROBLEMS.md'], cwd: dir });
+
+    expect(result.dead).toEqual(['OPEN_PROBLEMS.md#1']);
+    expect(result.retired).toEqual([{ origin: 'OPEN_PROBLEMS.md#1', id: issue.id }]);
+  });
+
   /**
    * HANDOFF.md's section 0 is a PREAMBLE an agent reads before the problem
    * list, and no parser can tell a numbered section from a numbered defect.
