@@ -420,4 +420,180 @@ test.describe('Levels adjustment', () => {
       MEASURED_BRIGHTNESS_MINUS_150_CORE
     );
   });
+
+  // Default settings must not touch the stroke: opening the panel without moving a slider
+  // leaves the dominant red exactly where it was.
+  test('default is a no-op', async ({ page }, testInfo) => {
+    test.setTimeout(CANVAS_REDRAW_TIMEOUT_MS + 5000);
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    expect(box, 'Canvas should have visible coordinates').not.toBeNull();
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, STROKE_COLOR, true);
+    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    await waitForRedStroke(page, box!);
+
+    const before = await dominantRed(await takeLineScreenshot(page, box!, 'levels-default-before', testInfo));
+    expect(before, 'the stroke should be present before opening Levels').not.toBeNull();
+
+    await openLevelsTool(page);
+    const adjustedBox = await remeasureCanvasBox(page);
+
+    const after = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-default-after',
+      testInfo,
+      () => true,
+      'Red line not found after opening Levels without moving a slider'
+    );
+
+    expect(after.red, 'opening Levels must not change the dominant red').toBe(before!.red);
+  });
+
+  // Brightness at its maximum travel drives the stroke brighter than the original.
+  test('brightness +150 brightens the stroke', async ({ page }, testInfo) => {
+    test.setTimeout(CANVAS_REDRAW_TIMEOUT_MS + 5000);
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    expect(box, 'Canvas should have visible coordinates').not.toBeNull();
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, STROKE_COLOR, true);
+    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    await waitForRedStroke(page, box!);
+
+    await openLevelsTool(page);
+    const adjustedBox = await remeasureCanvasBox(page);
+
+    const brightness = page.getByRole('slider', { name: /Brightness/ });
+    await expect(brightness).toBeVisible();
+
+    const original = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-original-brightness-150',
+      testInfo,
+      () => true,
+      'Red line not found on the original stroke through the post-open geometry'
+    );
+    expect(
+      Math.abs(original.red - UNADJUSTED_STROKE_RED),
+      'the unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+
+    await brightness.fill('150');
+    await expect(brightness).toHaveValue('150');
+
+    const after = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-brightness-150',
+      testInfo,
+      (observed) => observed.red > original.red && observed.red === 255,
+      'Brightness +150 must drive the red channel to clipped white'
+    );
+    expect(after.red, 'brightness +150 makes the line brighter, not darker').toBeGreaterThan(original.red);
+    expect(after.red, 'brightness +150 clips the red channel to 255').toBe(255);
+  });
+
+  // Contrast at its minimum compresses the stroke toward mid-grey.
+  test('contrast -50 compresses toward mid-grey', async ({ page }, testInfo) => {
+    test.setTimeout(CANVAS_REDRAW_TIMEOUT_MS + 5000);
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    expect(box, 'Canvas should have visible coordinates').not.toBeNull();
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, STROKE_COLOR, true);
+    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    await waitForRedStroke(page, box!);
+
+    await openLevelsTool(page);
+    const adjustedBox = await remeasureCanvasBox(page);
+
+    const contrast = page.getByRole('slider', { name: /Contrast/ });
+    await expect(contrast).toBeVisible();
+
+    const original = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-original-contrast-minus-50',
+      testInfo,
+      () => true,
+      'Red line not found on the original stroke through the post-open geometry'
+    );
+    expect(
+      Math.abs(original.red - UNADJUSTED_STROKE_RED),
+      'the unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+
+    await contrast.fill('-50');
+    await expect(contrast).toHaveValue('-50');
+
+    const after = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-contrast-minus-50',
+      testInfo,
+      (observed) => observed.red < original.red && observed.red > 0,
+      'Contrast -50 must drop the red toward mid-grey without reaching black'
+    );
+    expect(after.red, 'contrast -50 makes the line darker').toBeLessThan(original.red);
+    expect(after.red, 'contrast -50 keeps the red above 0').toBeGreaterThan(0);
+  });
+
+  // Combined brightness + contrast clips the channel to white.
+  test('brightness +75 and contrast +50 combined clip to white', async ({ page }, testInfo) => {
+    test.setTimeout(CANVAS_REDRAW_TIMEOUT_MS + 5000);
+    const canvas = getWorkspaceCanvas(page);
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    expect(box, 'Canvas should have visible coordinates').not.toBeNull();
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, STROKE_COLOR, true);
+    await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+    await waitForRedStroke(page, box!);
+
+    await openLevelsTool(page);
+    const adjustedBox = await remeasureCanvasBox(page);
+
+    const brightness = page.getByRole('slider', { name: /Brightness/ });
+    const contrast = page.getByRole('slider', { name: /Contrast/ });
+    await expect(brightness).toBeVisible();
+    await expect(contrast).toBeVisible();
+
+    const original = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-original-combined',
+      testInfo,
+      () => true,
+      'Red line not found on the original stroke through the post-open geometry'
+    );
+    expect(
+      Math.abs(original.red - UNADJUSTED_STROKE_RED),
+      'the unadjusted stroke is not the red the direction assertions are measured against'
+    ).toBeLessThanOrEqual(UNADJUSTED_STROKE_RED_TOLERANCE);
+
+    await brightness.fill('75');
+    await expect(brightness).toHaveValue('75');
+    await contrast.fill('50');
+    await expect(contrast).toHaveValue('50');
+
+    const after = await readRedLine(
+      page,
+      adjustedBox,
+      'levels-combined',
+      testInfo,
+      (observed) => observed.red > original.red && observed.red === 255,
+      'Brightness +75 and Contrast +50 must clip the red channel to 255'
+    );
+    expect(after.red, 'combined adjustment drives the red to clipped white').toBe(255);
+  });
 });
