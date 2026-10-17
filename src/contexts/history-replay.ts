@@ -46,7 +46,7 @@ import {
 export type ReplayDiagnostic = Readonly<{
   historyId?: string;
   actionName?: ActionType;
-  code: 'canvas-filter-unsupported' | 'invalid-affine-transform' | 'invalid-layer-opacity';
+  code: 'canvas-filter-unsupported' | 'invalid-affine-transform' | 'invalid-layer-opacity' | 'invalid-layer-source';
   error: unknown;
 }>;
 
@@ -199,10 +199,25 @@ export function replayHistory(
     if (actionName === REPLACE_LAYER_SOURCE_ACTION) {
       const layer = layers[layerId];
       const replacementSource = (args as { source?: unknown } | undefined)?.source;
-      if (!layer || !replacementSource || typeof replacementSource !== 'object' || Array.isArray(replacementSource)) {
+      if (!layer) continue;
+      if (!replacementSource || typeof replacementSource !== 'object' || Array.isArray(replacementSource)) {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-source',
+          error: new TypeError('Layer source history value must be an object'),
+        });
         continue;
       }
-      if ((replacementSource as { kind?: unknown }).kind !== 'tool') continue;
+      if ((replacementSource as { kind?: unknown }).kind !== 'tool') {
+        diagnostics.push({
+          historyId: item.id,
+          actionName,
+          code: 'invalid-layer-source',
+          error: new TypeError('Layer source history value must be a tool source'),
+        });
+        continue;
+      }
       const replacement = dependencies.createLayer({
         layerId,
         layers,
