@@ -164,7 +164,8 @@ variant or an equivalent atomic history action.
    differential now exist alongside it. The production `durableExportRecords()`
    adapter is exercised by the cursor matrix, and FileProvider coverage proves
    raster/PSD routing, refusal fallback, stale fallback, and exactly-once release.
-   The browser seam still needs a forced durable-publication case. The two
+   Unsupported-source fallback is now pinned at the StoreContext publication seam.
+   The browser seam still needs a forced durable-publication case; the two
    scenarios jsdom cannot render in either direction and the pinned `args.enabled`
    divergence remain proof gaps, not permission to weaken the authority gate.
 4. Preserve the explicit bedrock conversion UX and its history operation while
@@ -177,8 +178,9 @@ variant or an equivalent atomic history action.
    eligible append/reorder presentation now composes in the background with legacy
    as the immediate selector; source-backed imports/replacements and frame-changing
    commits remain legacy until their ownership or frame-parity gates are explicit. Previews and
-   unsupported documents still use the complete legacy compatibility path. The
-   next authority work is to prove preview and unsupported-source behavior, then retire legacy logical replay only after
+   unsupported documents still use the complete legacy compatibility path. Unsupported-source
+   fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
+   then retire legacy logical replay only after
    durable replay can provide the same complete state for append, branch, preview,
    and compatibility fallback.
 

@@ -57,7 +57,7 @@ store. The suite is green and is enforcing the absence of the feature.
 **Why it matters.** Navigation and eligible committed append/reorder are user-visible durable
 projections, and export has its own guarded projection. Durable logical state remains
 legacy-authoritative. Every additional surface must keep the same staged publication and lease
-ownership contract; frame changes, previews and unsupported sources remain on the complete legacy path, and the
+ownership contract; frame changes and previews remain on the complete legacy path, and the
 migration is not a full authority cutover yet.
 
 **Trap for whoever wires it.** Neither the affine composition nor the vector-argument rescale is
@@ -68,7 +68,7 @@ through `multiplyAffineTransforms()`. The rescale has a single owner as well:
 `presentation-evaluator.ts` — `scaleVectorArgs()`, which `materialization.ts` imports directly and
 `layer-renderer.ts` imports for the legacy path, so the two paths cannot diverge on it. Navigation
 and eligible committed append/reorder are now staged callers; source-backed imports/replacements,
-frame changes, previews, unsupported sources, and the
+frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
@@ -79,8 +79,8 @@ the durable path without reconciling these paths changes pixel-tool results.
 **Fix.** Keep the runtime, export, history-panel and preview projections independently gated, then
 make the remaining presentation authority explicit across editor surfaces. Keep legacy logical state
 as the authority until each projection is staged, lease-safe and failure-contained; append/reorder
-background publication is guarded but previews and unsupported-source behavior still need explicit
-proof before retiring the compatibility replay.
+background publication is guarded, and unsupported-source fallback is pinned by the durable-boundary
+publication test; previews still need explicit proof before retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`

@@ -39,8 +39,9 @@ chronological changelog.
 
 ## Loose Ends
 
-1. **Authority cutover.** Prove preview and unsupported-source fallback independently; committed
-   eligible append/reorder presentation now has a guarded background publication, while source-backed
+1. **Authority cutover.** Prove preview independently; unsupported-source fallback is pinned at the
+   StoreContext publication seam. Committed eligible append/reorder presentation now has a guarded
+   background publication, while source-backed
    imports/replacements, frame changes, and preview remain legacy. Remove legacy logical replay only
    after every surface is proven.
 2. **Presentation parity.** Keep the byte-level durable/legacy parity gates and add a forced

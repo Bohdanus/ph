@@ -19,6 +19,7 @@ import type { ImageLayerSource, Layer, LayersRecord, ToolLayerSource } from '../
 import type { DocumentFrame } from '../document-frame.ts';
 import {
   HIDE_LAYER_ACTION,
+  MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
@@ -920,7 +921,8 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
 
   it('withholds a source-backed append whose history id already exists in the legacy timeline', async () => {
     const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
-    const { store, dispatch } = openDocument();
+    const { store, dispatch, unmount } = openDocument();
+    conversion.mockClear();
     const registry = getAssetRegistry();
     const bitmap = createMockImageBitmap(40, 30);
     const source: ImageLayerSource = {
@@ -966,9 +968,70 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
       expect(store().durableDiagnostics).toContainEqual(
         expect.objectContaining({ code: 'invalid-history-entry', historyId: 'baseline', severity: 'error' })
       );
-      expect(conversion).toHaveBeenCalled();
+      expect(conversion).toHaveBeenCalledOnce();
     } finally {
+      conversion.mockRestore();
+      unmount();
       registry.reconcileDocumentAssets('doc-1', new Set());
+      registry.disposeDocument('doc-1');
+    }
+  });
+
+  it('withholds a source-backed merge append whose history id already exists in the legacy timeline', async () => {
+    const conversion = vi.spyOn(historyAdapter, 'convertLegacyHistorySafely');
+    const { store, dispatch, unmount } = openDocument();
+    conversion.mockClear();
+    const registry = getAssetRegistry();
+    const bitmap = createMockImageBitmap(40, 30);
+    const source: ImageLayerSource = {
+      kind: 'image',
+      bitmap,
+      name: 'Merged photo',
+      isBedrock: false,
+      pos: { x: 10, y: 20, width: 40, height: 30 },
+    };
+    const mergedLayerId = 'merged-layer';
+    const entry: HistoryItem = {
+      id: 'baseline',
+      actionName: MERGE_ACTION,
+      layerId: mergedLayerId,
+      layerSource: source,
+    };
+
+    try {
+      await act(async () => {
+        dispatch()({
+          type: 'COMMIT_DOCUMENT_EDIT',
+          payload: {
+            updates: {
+              layers: {
+                [layerId]: layer(),
+                [mergedLayerId]: {
+                  ...createMockLayer({ id: mergedLayerId, pos: source.pos }),
+                  source,
+                  bitmap,
+                },
+              },
+            },
+            historyItem: entry,
+            durableEntry: null,
+          },
+        });
+        await Promise.resolve();
+      });
+
+      expect(store().history.map(({ id }) => id)).toEqual(['baseline', 'baseline']);
+      expect(store().durableStatus).toBe('partial');
+      expect(store().durableDocument).toBeNull();
+      expect(store().durableDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'invalid-history-entry', historyId: 'baseline', severity: 'error' })
+      );
+      expect(conversion).toHaveBeenCalledOnce();
+    } finally {
+      conversion.mockRestore();
+      unmount();
+      registry.reconcileDocumentAssets('doc-1', new Set());
+      registry.disposeDocument('doc-1');
     }
   });
 

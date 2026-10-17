@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { planHistoryAppend, decideDurableAppend } from '../history-append.ts';
+import { appendDurableEntry } from '../history-adapter.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import {
   DURABLE_SCHEMA_VERSION,
@@ -348,5 +349,32 @@ describe('preview -> commit -> durable replay round-trip', () => {
     expect(snapshot.pos).toStrictEqual(plannedEntry.operation.pos);
     expect(snapshot.source.sourcePos).toStrictEqual(plannedEntry.operation.source.sourcePos);
     expect(snapshot.source.size).toStrictEqual(plannedEntry.operation.source.size);
+  });
+});
+
+describe('appendDurableEntry replace-layer-source round trip', () => {
+  it('appends, replays, and reverts a replace-layer-source edit', () => {
+    const base = document([]);
+    const appended = appendDurableEntry(base, retype());
+
+    expect(appended.history).toHaveLength(1);
+    expect(appended.history[0]?.id).toBe('retype');
+    expect(appended.cursor).toBe(0);
+
+    const atTip = replayDurableDocument(appended);
+    const snapshot = atTip.layers[layerId]?.snapshot;
+    if (!snapshot || snapshot.source.kind !== 'text') throw new Error('the replayed layer is missing');
+    expect(snapshot.source.args).toMatchObject({ text: 'Second draft' });
+    expect(snapshot.pos).toStrictEqual(secondBox);
+    expect(snapshot.source.sourcePos).toStrictEqual(secondBox);
+    expect(snapshot.source.size).toStrictEqual({ width: secondBox.width, height: secondBox.height });
+
+    const beforeEdit = replayDurableDocument(appended, -1);
+    const baselineSnapshot = beforeEdit.layers[layerId]?.snapshot;
+    if (!baselineSnapshot || baselineSnapshot.source.kind !== 'text') {
+      throw new Error('the baseline source is not text');
+    }
+    expect(baselineSnapshot.source.args).toMatchObject({ text: 'First draft' });
+    expect(baselineSnapshot.pos).toStrictEqual(firstBox);
   });
 });
