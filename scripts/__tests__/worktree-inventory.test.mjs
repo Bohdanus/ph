@@ -2103,7 +2103,12 @@ describe('the transcript read audit', () => {
     // queryable today.
     const a = loadChatAudit(dataPath);
     const auditAge = Date.now() - Date.parse(a.asOf);
-    if (auditAge > MAX_SESSION_DB_WINDOW_MS) return;
+    if (auditAge > MAX_SESSION_DB_WINDOW_MS) {
+      expect(auditAge, 'the hand-read audit is outside the session DB retention window').toBeGreaterThan(
+        MAX_SESSION_DB_WINDOW_MS
+      );
+      return;
+    }
     const startMs = Date.parse(a.windowStart);
     let db;
     try {
