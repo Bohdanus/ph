@@ -725,6 +725,67 @@ describe('useLayers layer mutation commands', () => {
     });
   });
 
+  it.each([
+    ['bring-forward', { bottom: 0, middle: 3, top: 2 }],
+    ['bring-to-front', { bottom: 0, middle: 3, top: 2 }],
+    ['send-backward', { bottom: 0, middle: -1, top: 2 }],
+    ['send-to-back', { bottom: 0, middle: -1, top: 2 }],
+  ] as const)('arranges the active layer with %s through reorder history', (command, expected) => {
+    const { result } = setup({
+      layers: { bottom: makeLayer('bottom', 0), middle: makeLayer('middle', 1), top: makeLayer('top', 2) },
+      activeLayerId: 'middle',
+    });
+
+    act(() => {
+      result.current.layers.arrangeLayer(command);
+    });
+
+    expect(result.current.store.layers.bottom!.order).toBe(expected.bottom);
+    expect(result.current.store.layers.middle!.order).toBe(expected.middle);
+    expect(result.current.store.layers.top!.order).toBe(expected.top);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      layerId: 'middle',
+    });
+  });
+
+  it('keeps the locked background below the stack when sending a layer to the back', () => {
+    const { result } = setup({
+      layers: {
+        background: makeLayer('background', 0, { isBedrock: true }),
+        middle: makeLayer('middle', 1),
+        top: makeLayer('top', 2),
+      },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.arrangeLayer('send-to-back');
+    });
+
+    expect(result.current.store.layers.background!.order).toBe(0);
+    expect(result.current.store.layers.top!.order).toBe(1);
+    expect(result.current.store.layers.middle!.order).toBe(3);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      args: { layerToMoveId: 'top', afterWhichLayerId: 'background' },
+    });
+  });
+
+  it.each([
+    ['bedrock', { only: makeLayer('only', 0, { isBedrock: true }) }, 'only'],
+    ['locked', { only: makeLayer('only', 0, { locked: true }) }, 'only'],
+  ] as const)('does not arrange a %s active layer', (_kind, layers, activeLayerId) => {
+    const { result } = setup({ layers, activeLayerId });
+
+    act(() => {
+      result.current.layers.arrangeLayer('bring-to-front');
+    });
+
+    expect(result.current.store.layers.only!.order).toBe(0);
+    expect(result.current.store.history).toEqual([]);
+  });
+
   it('sends a missing active layer to null', () => {
     const { result } = setup({ layers: { only: makeLayer('only', 0) }, activeLayerId: 'only' });
 
