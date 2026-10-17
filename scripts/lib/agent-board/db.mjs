@@ -2313,9 +2313,7 @@ export class Board {
     // made `health` inflate the very number it was reporting.
     if (record && !dryRun && findings.length > 0) {
       this.addEvent('doctor.run', {
-        message: findings.length
-          ? `${findings.length} stale holding(s) ${dryRun ? 'would be released' : 'released'}`
-          : 'nothing stale',
+        message: findings.length ? `${findings.length} stale holding(s) released` : 'nothing stale',
       });
     }
     if (!dryRun) {

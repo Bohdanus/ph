@@ -116,8 +116,12 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     known
   );
 
+  const originForNumber = (file, number) => {
+    const base = file.split('/').filter(Boolean).pop() || 'unknown.md';
+    return `${base}#${number}`;
+  };
   const retired = read
-    .flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`))
+    .flatMap((entry) => (entry.parsed.dead ?? []).map((number) => originForNumber(entry.file, number)))
     .flatMap((origin) => {
       const id = board.findIssue(origin)?.id;
       return id ? [{ origin, id }] : [];
@@ -125,9 +129,9 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   const created = [];
   const skipped = [...plan.skip];
   const drifted = [...(plan.drift ?? [])];
-  const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`));
+  const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => originForNumber(entry.file, number)));
   const duplicates = read.flatMap((entry) =>
-    (entry.parsed.duplicateNumbers ?? []).map((number) => `${entry.file}#${number}`)
+    (entry.parsed.duplicateNumbers ?? []).map((number) => originForNumber(entry.file, number))
   );
   const notItems = [];
   const isNotItem = (item) =>
