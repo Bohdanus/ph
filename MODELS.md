@@ -2,14 +2,13 @@
 
 ## Recommended Models
 
-| Rank | Model                           | Provider | Variant  | Use                                                                                                         |
-| ---- | ------------------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| 0    | Reflection: Beam 1.0 (free)     | kilo     | max      | PREFERRED: best and very fast free model; not fully tested — do not trust blindly, verify important results |
-| 1    | Laguna S (Poolside)             | kilo     | high     | Best provider-rated model; limit to 1-2 concurrent sessions                                                 |
-| 2    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                                                                           |
-| 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Reliable free review model                                                                                  |
-| 4    | StepFun: Step 3.7 Flash         | kilo     | high     | Fast free model                                                                                             |
-| 5    | NVIDIA: Nemotron 3 Ultra (free) | kilo     | high     | Thorough free fallback (bottom of ranking; slow/deep tasks only)                                            |
+| Rank | Model                           | Provider | Variant  | Use                                                                                                          |
+| ---- | ------------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| 0    | Laguna S (Poolside)             | kilo     | thinking | TOP model for use; rate limiting is sometimes enabled for it — when not rate limited, only use Laguna S free |
+| 1    | Reflection: Beam 1.0 (free)     | kilo     | max      | Second choice after Laguna; fast but not as reliable — can hallucinate, so verify important results          |
+| 2    | Stealth: Glyph Cluster (free)   | kilo     | xhigh    | Strong general-purpose free model                                                                            |
+| 3    | Dots Studio: Dots3-Note Preview | kilo     | thinking | Reliable free review model                                                                                   |
+| 4    | StepFun: Step 3.7 Flash         | kilo     | high     | Fast free model                                                                                              |
 
 ## Provider Rules
 
