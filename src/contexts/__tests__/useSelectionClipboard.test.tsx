@@ -135,6 +135,17 @@ describe('useSelectionClipboard', () => {
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'MARK_SELECTION_COPIED', payload: { id: 'selection-1' } });
   });
 
+  it('rejects an oversized clipboard image before cloning or creating a layer', async () => {
+    storeState.selectionClipboard = createClipboard({
+      bitmap: createMockImageBitmap(10_001, 10_000),
+      pos: { x: 0, y: 0, width: 10_001, height: 10_000 },
+    });
+    render(<ClipboardProbe />);
+
+    await expect(paste()).resolves.toBe(false);
+    expect(createLayerFromBitmapMock).not.toHaveBeenCalled();
+  });
+
   it('pastes the in-app clipboard bitmap as an independent new layer at the copied selection position', () => {
     const clipboardBitmap = createMockImageBitmap(30, 40);
     storeState.selectionClipboard = {

@@ -3,6 +3,7 @@ import { useStore } from './StoreContext.tsx';
 import { useLayers } from './useLayer.ts';
 import { cloneBitmapToCanvas, copySelectionToCanvas, getActiveSelection } from '../util/selection.ts';
 import { canvasToDocumentPos, documentFrameFromSize, documentToCanvasPos } from './document-frame.ts';
+import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
 
 const SELECTION_LAYER_NAME = 'Selection copy';
 
@@ -70,6 +71,7 @@ export const useSelectionClipboard = () => {
     try {
       const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
       const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
+      assertWithinDocumentPixelBudget({ width, height }, 'Clipboard image');
       // `createLayerFromBitmap` reaches `createLayerSource` with a non-bedrock source, which
       // copies `pos` onto the layer verbatim — so `pos` is DOCUMENT space and the centre must
       // be computed there. Adding the frame origin here would offset the layer twice, since

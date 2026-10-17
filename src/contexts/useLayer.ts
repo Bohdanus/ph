@@ -20,6 +20,7 @@ import {
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
+import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
 
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
@@ -457,6 +458,9 @@ export const useLayers = () => {
   };
 
   const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
+    if ('size' in params && params.size.width > 0 && params.size.height > 0) {
+      assertWithinDocumentPixelBudget(params.size, 'Document');
+    }
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
 
     const source: BlankLayerSource = { kind: 'blank', ...params };
