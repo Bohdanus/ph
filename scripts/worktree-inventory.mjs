@@ -124,6 +124,9 @@ export function parseArgs(argv) {
       `--window-hours cannot exceed ${MAX_SESSION_DB_WINDOW_HOURS} (the session database safety limit is 3 days)`
     );
   }
+  if (opts.out !== null && (typeof opts.out !== 'string' || opts.out.trim() === '')) {
+    throw new Error('--out requires a non-empty path');
+  }
   if (opts.now !== null) validatePinnedNow(opts.now);
   return opts;
 }
@@ -438,7 +441,7 @@ async function runAsyncMain(opts) {
 
   // Resolved BEFORE the inventory is built, because the reader watermark is an
   // INPUT to it, not a post-hoc edit of the output.
-  const target = resolve(process.cwd(), opts.out ?? 'WORKTREES.json');
+  const target = inventoryTarget(root, opts.out);
   let readsReleasedBeforeMs;
   try {
     readsReleasedBeforeMs = resolveReadsReleasedBefore(target, opts.releaseReads, nowMs);
@@ -510,6 +513,11 @@ async function runAsyncMain(opts) {
   }
   process.stdout.write(`worktree-inventory: wrote ${target}\n`);
   printSummary(inventory, opts.quiet);
+}
+
+/** Resolve the repository-wide inventory, even when invoked from a task worktree. */
+export function inventoryTarget(root, out) {
+  return resolve(root, out ?? 'WORKTREES.json');
 }
 
 /**

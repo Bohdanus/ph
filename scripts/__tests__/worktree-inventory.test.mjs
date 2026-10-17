@@ -30,7 +30,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
-import { parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
+import { inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
@@ -1054,6 +1054,26 @@ describe('the pinned clock', () => {
     });
     expect(inv.worktrees[0].chats.count).toBe(1);
     expect(inv.worktrees[0].recommendation).toBe(RECOMMENDATION.IN_USE);
+  });
+});
+
+describe('the inventory output target', () => {
+  it('resolves the default output in the repository root, not the invoking worktree', () => {
+    expect(inventoryTarget('/repo', undefined)).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget('/repo', null)).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget('/repo', 'reports/WORKTREES.json')).toBe('/repo/reports/WORKTREES.json');
+    expect(inventoryTarget('/repo', '/tmp/WORKTREES.json')).toBe('/tmp/WORKTREES.json');
+  });
+
+  it('rejects an empty output path before attempting to write', () => {
+    expect(() => parseArgs(['--out'])).toThrow('--out requires a non-empty path');
+    expect(() => parseArgs(['--out', '   '])).toThrow('--out requires a non-empty path');
+  });
+
+  it('uses the root-relative target at the CLI write boundary', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
+
+    expect(source).toContain('const target = inventoryTarget(root, opts.out);');
   });
 });
 
