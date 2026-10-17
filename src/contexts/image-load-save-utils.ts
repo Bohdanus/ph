@@ -28,6 +28,19 @@ async function rejectOversizedGif(file: File): Promise<void> {
   }
 }
 
+function validateDecodedImageDimensions(image: HTMLImageElement): void {
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error('Image has invalid dimensions to open');
+  }
+  if (width * height > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `Image is too large to open (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
+}
+
 function hasTiffSignature(signature: Uint8Array): boolean {
   return (
     signature.length >= 4 &&
@@ -144,7 +157,12 @@ export const loadImageFile = async (file: File, detectedMimeType?: string): Prom
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        resolve(img);
+        try {
+          validateDecodedImageDimensions(img);
+          resolve(img);
+        } catch (error) {
+          reject(error);
+        }
       };
       img.onerror = () => {
         reject(new Error('Failed to load image'));

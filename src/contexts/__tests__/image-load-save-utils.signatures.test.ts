@@ -54,7 +54,7 @@ type StubReader = {
  * Installs a `FileReader`/`Image` pair the test drives by hand, and reports the blob the
  * reader was handed plus the image element production code is waiting on.
  */
-function installBrowserDecoders() {
+function installBrowserDecoders(dimensions: { width?: number; height?: number } = {}) {
   const state = {
     reader: undefined as StubReader | undefined,
     readerInput: undefined as Blob | undefined,
@@ -79,6 +79,8 @@ function installBrowserDecoders() {
   vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
     this.onload = null;
     this.onerror = null;
+    this.width = dimensions.width ?? 1;
+    this.height = dimensions.height ?? 1;
     this.src = '';
     state.image = this;
     const settle = () =>
@@ -294,6 +296,27 @@ describe('loadImageFile rejection paths', () => {
     await expect(loadImageFile(new File(['not a png'], 'photo.png', { type: 'image/png' }))).rejects.toThrow(
       'Failed to load image'
     );
+  });
+
+  it('rejects a native-decoded image above the shared document pixel budget', async () => {
+    const decoders = installBrowserDecoders({ width: 10_001, height: 10_000 });
+    const file = new File(['data'], 'photo.svg', { type: 'image/svg+xml' });
+    const pending = loadImageFile(file, 'image/svg+xml');
+
+    await vi.waitFor(() => expect(decoders.image).not.toBeUndefined());
+    decoders.image!.onload!.call(decoders.image!, new Event('load'));
+
+    await expect(pending).rejects.toThrow('Image is too large to open (10001×10000). Maximum is 100000000 pixels.');
+  });
+
+  it('rejects a native-decoded image whose dimensions are unavailable', async () => {
+    const decoders = installBrowserDecoders({ width: 0, height: 0 });
+    const pending = loadImageFile(new File(['data'], 'photo.png', { type: 'image/png' }));
+
+    await vi.waitFor(() => expect(decoders.image).not.toBeUndefined());
+    decoders.image!.onload!.call(decoders.image!, new Event('load'));
+
+    await expect(pending).rejects.toThrow('Image has invalid dimensions to open');
   });
 
   it('rejects a corrupt document that reached the native decoder through loadDocumentFile', async () => {
