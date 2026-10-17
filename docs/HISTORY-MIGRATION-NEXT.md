@@ -44,8 +44,8 @@ chronological changelog.
    background publication, while source-backed
    imports/replacements, frame changes, and preview remain legacy. Remove legacy logical replay only
    after every surface is proven.
-2. **Presentation parity.** Keep the byte-level durable/legacy parity gates and add a forced
-   durable-publication browser seam before expanding durable authority.
+2. **Presentation parity.** Keep the byte-level durable/legacy parity gates; the raster/blank
+   forced durable-publication browser seam is now pinned before expanding durable authority.
 3. **Selection baseline.** `deriveSelectionBaseline()` must remain unbounded over the whole
    timeline. The selection undo tests are load-bearing tripwires.
 4. **Status UI coverage.** Dev status, ErrorBoundary fallback, and structured diagnostics now

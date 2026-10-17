@@ -79,8 +79,9 @@ the durable path without reconciling these paths changes pixel-tool results.
 **Fix.** Keep the runtime, export, history-panel and preview projections independently gated, then
 make the remaining presentation authority explicit across editor surfaces. Keep legacy logical state
 as the authority until each projection is staged, lease-safe and failure-contained; append/reorder
-background publication is guarded, and unsupported-source fallback is pinned by the durable-boundary
-publication test; previews still need explicit proof before retiring the compatibility replay.
+background publication is guarded, unsupported-source fallback and the raster/blank browser seam are
+pinned by tests, and nested `args.enabled` parity is explicit; previews still need proof before
+retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
 `src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
