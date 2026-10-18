@@ -97,21 +97,21 @@ function makeLayer(id: string, order: number): Layer {
 const documentSize = { width: 800, height: 600 };
 
 /** A layer the durable model can convert, so an append is decided against a real shadow. */
-function documentLayer(id: string, order: number): Layer {
+function documentLayer(id: string, order: number, isBedrock = true): Layer {
   return {
     ...createMockLayer({
       id,
       name: id,
       order,
-      isBedrock: true,
+      isBedrock,
       pos: { x: 0, y: 0, width: 800, height: 600 },
     }),
     source: {
       kind: 'blank',
       color: '#ffffff',
       opacity: 1,
-      isBedrock: true,
-      size: { width: 800, height: 600 },
+      isBedrock,
+      ...(isBedrock ? { size: { width: 800, height: 600 } } : { pos: { x: 0, y: 0, width: 800, height: 600 } }),
     },
   } as Layer;
 }
@@ -607,8 +607,8 @@ describe('useLayers layer-property writers', () => {
   });
 
   it('publishes a reorder through the store and carries the diagnostics a publication carries', () => {
-    const bottom = documentLayer('bottom', 0);
-    const top = documentLayer('top', 1);
+    const bottom = documentLayer('bottom', 0, true);
+    const top = documentLayer('top', 1, false);
     const result = setupWithDocument({ bottom, top });
     expect(planHistoryAppend).not.toHaveBeenCalled();
 
@@ -640,7 +640,7 @@ describe('useLayers layer-property writers', () => {
     ]);
 
     act(() => {
-      result.current.layers.moveLayerAfter('bottom', 'top');
+      result.current.layers.moveLayerAfter('top', 'bottom');
     });
 
     // The writer still asks the hook boundary for nothing, because a reorder's
@@ -650,8 +650,8 @@ describe('useLayers layer-property writers', () => {
     const store = result.current.store;
     expect(store.history.at(-1)).toMatchObject({
       actionName: REORDER_ACTION,
-      layerId: 'bottom',
-      args: { layerToMoveId: 'bottom', afterWhichLayerId: 'top' },
+      layerId: 'top',
+      args: { layerToMoveId: 'top', afterWhichLayerId: 'bottom' },
     });
     // The carried diagnostic is the proof the append published rather than
     // reconverting: a reconversion would have replaced the list with its own.
