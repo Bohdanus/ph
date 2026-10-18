@@ -5,6 +5,7 @@ import {
   HANDLE_SIZE,
   HIDE_LAYER_ACTION,
   LAYER_TRANSPARENCY_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -14,12 +15,14 @@ import {
   REPLACE_LAYER_SOURCE_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TEXT_PADDING,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
+  type ActionType,
 } from '../constants.ts';
-import type { ActionType } from '../constants.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { toolsMap } from '../../tools/toolsMap.ts';
 import { THROTTLE_DRAW, THROTTLE_TIME } from '../../constants/index.ts';
@@ -37,6 +40,9 @@ const LEGAL_ACTION_VALUES: readonly ActionType[] = [
   HIDE_LAYER_ACTION,
   RENAME_LAYER_ACTION,
   SET_LAYER_OPACITY_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  LOCK_LAYER_ACTION,
+  UNLOCK_LAYER_ACTION,
   REORDER_ACTION,
   MERGE_ACTION,
   REPLACE_LAYER_SOURCE_ACTION,
@@ -46,11 +52,8 @@ const LEGAL_ACTION_VALUES: readonly ActionType[] = [
 
 describe('action type constants', () => {
   it('exhaustively mirrors every member of the ActionType union', () => {
-    // 13 members in the `ActionType` union (src/util/constants.ts:38-52); the array above
-    // must grow in lock-step, so a literal count guards against silent drift in either
-    // direction (a dropped member or an accidental extra) and the arrayContaining check turns
-    // the count into an exact-set equality assertion.
-    expect(LEGAL_ACTION_VALUES).toHaveLength(13);
+    // Keep the runtime mirror complete as the union grows.
+    expect(LEGAL_ACTION_VALUES).toHaveLength(16);
     expect(LEGAL_ACTION_VALUES).toEqual(
       expect.arrayContaining([
         OPEN_DOCUMENT_ACTION,
@@ -61,6 +64,9 @@ describe('action type constants', () => {
         HIDE_LAYER_ACTION,
         RENAME_LAYER_ACTION,
         SET_LAYER_OPACITY_ACTION,
+        SET_LAYER_BLEND_MODE_ACTION,
+        LOCK_LAYER_ACTION,
+        UNLOCK_LAYER_ACTION,
         REORDER_ACTION,
         MERGE_ACTION,
         REPLACE_LAYER_SOURCE_ACTION,
@@ -69,9 +75,27 @@ describe('action type constants', () => {
       ])
     );
   });
+  const actions: Record<string, ActionType> = {
+    OPEN_DOCUMENT_ACTION,
+    NEW_LAYER_ACTION,
+    SELECTION_ACTION,
+    TOOL_ACTION,
+    SHOW_LAYER_ACTION,
+    HIDE_LAYER_ACTION,
+    LOCK_LAYER_ACTION,
+    RENAME_LAYER_ACTION,
+    SET_LAYER_BLEND_MODE_ACTION,
+    SET_LAYER_OPACITY_ACTION,
+    UNLOCK_LAYER_ACTION,
+    REORDER_ACTION,
+    MERGE_ACTION,
+    REPLACE_LAYER_SOURCE_ACTION,
+    REMOVE_ACTION,
+    SET_DOCUMENT_FRAME_ACTION,
+  };
 
   it('declares a distinct, non-empty, lowercase value for every action', () => {
-    const values = LEGAL_ACTION_VALUES as readonly string[];
+    const values = Object.values(actions);
     expect(new Set(values).size).toBe(values.length);
     for (const value of values) {
       expect(value.length).toBeGreaterThan(0);
@@ -111,6 +135,7 @@ describe('action type constants', () => {
     for (const value of LEGAL_ACTION_VALUES as readonly string[]) {
       expect(LAYER_TRANSPARENCY_ACTION).not.toBe(value);
     }
+    expect(LOCK_LAYER_ACTION).not.toBe(UNLOCK_LAYER_ACTION);
   });
 });
 

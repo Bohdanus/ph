@@ -469,7 +469,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
 
-    const mode = page.getByRole('combobox', { name: 'Mode' });
+    const mode = page.getByRole('combobox', { name: 'Mode', exact: true });
     await expect(mode).toBeVisible();
     // The seeded default is Brush, because a soft tip is what Photoshop's eraser opens on and a
     // hard first stroke is the defect this replaced.

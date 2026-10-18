@@ -573,7 +573,7 @@ answer — which of the six things it is:
 | ----------- | ----------------------------------------------------------------------------------------------- | ----------------- |
 | `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it          |
 | `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it           |
-| `dispose`   | on `main`, clean, nothing protects it                                                           | delete it         |
+| `dispose`   | clean, unprotected, and on `main` or proven to merge to the exact `main` tree                   | delete it         |
 | `in-use`    | an agent or a session is active there                                                           | leave it          |
 | `keep`      | the main checkout                                                                               | never a candidate |
 | `undecided` | cannot be told from what is known                                                               | do not remove     |
@@ -585,6 +585,17 @@ Re-read `dirty` and `mergeConflict` before acting on a `land` you did not genera
 yourself — and note that a worktree with **no liveness signal at all**
 (`chats.count` 0 and `board.agents` empty) is the one most likely to have changed
 since, because nothing here can see that somebody walked away from it.
+
+A clean non-ancestor branch can also have **no net tree change to land**. The inventory records
+`mergeResultMatchesBase: true` only when `git merge-tree --write-tree <mainHead> <branch>` succeeds
+without conflicts and returns the exact tree object recorded for `mainHead`. This is a separate
+proof from patch-ID absorption: the branch may contain unique historical commits, but merging its
+tip produces the current base tree byte-for-byte. When the tree is clean and no curated or live
+protection applies, classify it `dispose`, not `land`. The disposer requires the inventory's
+`mainHead` to still match, anchors the branch tip under `refs/keep/disposed/` before removal, and
+uses guarded `git branch -D` only for that verified non-ancestor case. It rechecks `main` before
+removal and before deleting the branch; if `main` moves, it keeps the worktree or recovery branch.
+Do not infer this verdict from an empty path diff, `git cherry`, or a conflict-free merge alone.
 
 **`at-risk` also covers merged, clean worktrees protected by a curated finding.**
 If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's

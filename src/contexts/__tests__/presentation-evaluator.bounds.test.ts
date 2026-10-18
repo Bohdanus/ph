@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_AFFINE_COORDINATE, MAX_AFFINE_PIXELS, type AffineTransform } from '../affine-transform.ts';
+import {
+  MAX_AFFINE_COORDINATE,
+  MAX_AFFINE_PIXELS,
+  transformToolArgsToAffine,
+  type AffineTransform,
+} from '../affine-transform.ts';
 import {
   drawEvaluatedPresentation,
   getPresentationFilter,
@@ -221,6 +226,44 @@ describe('the processor input boundary', () => {
     expect(staged.bitmap).not.toBe(bitmap);
     expect(staged.operations).toHaveLength(1);
   });
+
+  it.each([
+    [2, 1, 1, 2],
+    [1, 2, 2, 1],
+    [8, 1, 1, 8],
+    [1, 8, 8, 1],
+  ])(
+    'does not allocate a phantom edge pixel for a %sx%s Transform-tool quarter turn',
+    (width, height, stagedWidth, stagedHeight) => {
+      const size = { width, height };
+      const transform = transformToolArgsToAffine(
+        {
+          toolName: 'transform',
+          rotate: 90,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          trapezoid: 0,
+          resizeX: 100,
+          resizeY: 100,
+        },
+        size
+      );
+      if (!transform) throw new Error('Affine Transform-tool rotation must produce a matrix');
+      const rasterLayer = layerWith({ x: 0, y: 0, width, height }, [affine(transform)]);
+      const staged = stageProcessorInput(rasterLayer, { width, height } as ImageBitmap);
+
+      expect(staged.bounds).toEqual({
+        x: (width - height) / 2,
+        y: (height - width) / 2,
+        width: height,
+        height: width,
+      });
+      expect((staged.bitmap as OffscreenCanvas).width).toBe(stagedWidth);
+      expect((staged.bitmap as OffscreenCanvas).height).toBe(stagedHeight);
+    }
+  );
 
   it('still refuses to stage a surface past the affine raster caps', () => {
     // The origin helper deliberately does NOT cap, because it allocates nothing; this one does

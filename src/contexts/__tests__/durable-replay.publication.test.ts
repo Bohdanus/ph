@@ -73,7 +73,11 @@ function publicationMismatch(result: DurableReplayResult, document: DurableDocum
   const expectedFrame = document.history
     .slice(0, result.cursor + 1)
     .reduce<DocumentFrame>(
-      (frame, entry) => (entry.enabled && entry.operation.kind === 'set-document-frame' ? entry.operation.next : frame),
+      (frame, entry) =>
+        entry.enabled &&
+        (entry.operation.kind === 'set-document-frame' || entry.operation.kind === 'transform-document')
+          ? entry.operation.next
+          : frame,
       document.baseline.frame
     );
   if (

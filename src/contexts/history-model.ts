@@ -151,6 +151,12 @@ export type DurableOperation =
       next: DocumentFrame;
     }>
   | Readonly<{
+      kind: 'transform-document';
+      previous: DocumentFrame;
+      next: DocumentFrame;
+      transform: AffineTransform;
+    }>
+  | Readonly<{
       /**
        * Replaces an existing layer's editable source arguments in place.
        *
@@ -266,6 +272,7 @@ export function collectDurableAssetIds(document: DurableDocument): ReadonlySet<A
       case 'apply-affine-transform':
       case 'apply-raster-processor':
       case 'set-document-frame':
+      case 'transform-document':
       case 'set-selection':
         break;
       /**
@@ -412,6 +419,13 @@ function cloneOperation(operation: DurableOperation): DurableOperation {
         ...operation,
         previous: Object.freeze({ ...operation.previous }),
         next: Object.freeze({ ...operation.next }),
+      });
+    case 'transform-document':
+      return Object.freeze({
+        ...operation,
+        previous: Object.freeze({ ...operation.previous }),
+        next: Object.freeze({ ...operation.next }),
+        transform: Object.freeze({ ...operation.transform }),
       });
     case 'merge-document':
       return Object.freeze({

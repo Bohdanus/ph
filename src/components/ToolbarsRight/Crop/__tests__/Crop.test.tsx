@@ -314,6 +314,22 @@ describe('Crop toolbar', () => {
       toolName: 'crop',
     });
   });
+
+  it('passes a pending crop rotation to the document operation', () => {
+    Object.assign(toolArgs, { angle: 37 });
+    render(<Crop />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(mockApplyDocumentCrop).toHaveBeenCalledWith(RECT, 37);
+    expect(lastToolArgs()).toEqual({
+      aspectRatio: null,
+      rect: null,
+      preRatioRect: null,
+      toolName: 'crop',
+      angle: 0,
+    });
+  });
 });
 
 describe('Crop option label accessibility', () => {

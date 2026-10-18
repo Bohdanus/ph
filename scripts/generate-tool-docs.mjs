@@ -66,6 +66,10 @@ const FIGURE_TOOL_NAMES = {
 
 const descriptionKeyFor = (name, figure) => (figure === undefined ? name : FIGURE_TOOL_NAMES[figure]);
 
+// The generic shape group is a documentation record, not a tile. Its Star tile
+// needs the separate `star` record so the group description is emitted once too.
+const descriptionKeyForDocs = (name, figure) => (figure === 'star' ? 'star' : descriptionKeyFor(name, figure));
+
 const escapeCell = (text) => String(text).replaceAll('|', '\\|').replaceAll('\n', ' ');
 
 /** `present` / `partial` / `inert` / `missing`, plus the citation when there is one. */
@@ -143,7 +147,7 @@ export const renderToolDocs = async () => {
     for (const section of toolbarMap) {
       for (const group of section) {
         for (const entry of group) {
-          const key = descriptionKeyFor(entry.name, entry.figure);
+          const key = descriptionKeyForDocs(entry.name, entry.figure);
           if (owned.includes(key) && !entries.some(([existing]) => existing === key)) {
             entries.push([key, entry.label, entry.shortcut]);
           }
@@ -224,10 +228,14 @@ export const renderTooltips = async () => {
   const entries = Object.entries(toolDescriptions)
     // Star is a FigureType carried by the shared shape ToolName, not a separate registry name.
     .filter(([key]) => key !== 'star')
-    .map(
-      ([key, tool]) =>
-        `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)} },`
-    )
+    .map(([key, tool]) => {
+      // Only show the key assigned to this toolbar entry. Description shortcuts also include
+      // family-cycling keys, modifiers and menu commands, which may select a different tool.
+      const toolbarEntry = toolbarMap.flat(2).find((entry) => descriptionKeyFor(entry.name, entry.figure) === key);
+      const shortcut = toolbarEntry?.shortcut;
+      const shortcutField = shortcut !== undefined ? `, shortcut: ${JSON.stringify(shortcut)}` : '';
+      return `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)}${shortcutField} },`;
+    })
     .join('\n');
 
   return `// GENERATED FILE - DO NOT EDIT. Source: src/tools/descriptions/*.ts
@@ -238,7 +246,7 @@ import type { FigureType } from '../shape.ts';
 import type { ToolImplementationStatus } from './types.ts';
 
 /**
- * The two fields the toolbar tooltip reads, and the only part of the description record that
+ * The fields the toolbar tooltip reads, and the only part of the description record that
  * reaches the browser. Everything else — the purpose prose, the options tables, the
  * modifiers, the citations — exists for \`docs/TOOLS.md\` and for the tests, and importing it
  * here cost 215 kB raw / 58 kB gzipped for one line of text per tool.
@@ -248,6 +256,8 @@ export type ToolTooltipProjection = {
   summary: string;
   /** How much of the tool this editor implements. Drives the tooltip's status line. */
   implementation: ToolImplementationStatus;
+  /** Photoshop's toolbar-level shortcut (e.g. 'B' for Brush), shown in the tooltip badge. Undefined when the tool has no shortcut. */
+  shortcut?: string;
 };
 
 export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {

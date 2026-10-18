@@ -71,6 +71,22 @@ and eligible committed append/reorder are now staged callers; source-backed impo
 frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
+**Rotated crop is now an explicit logical operation, but its presentation gate remains closed.**
+The Crop panel and keyboard commit pass the pending angle; one history entry carries the frame and
+global affine, and both `replayHistory()` and `replayDurableDocument()` apply it to every extant
+layer. `e2e/crop-history.spec.ts` verifies the imported red/blue fixture rotates correctly and one
+undo/redo restores the exact pixels. Its direct browser differentials now prove byte-identical
+legacy/durable composition for a 90-degree single-raster crop (materialized bounds `0,0,64,64`), a
+non-quarter 37-degree crop with two differently positioned raster layers, and a 37-degree text-source
+crop. Both 37-degree frames have non-zero origins. Exact quarter-turn matrices avoid a phantom edge
+from `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the
+90-degree case pins exact materialized bounds. The text and two-layer 37-degree cases assert source
+pixels and materialized-layer presence but not exact fractional bounds. They do not close the general
+frame gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: other angles, vector,
+blank and paint sources, other text geometries, and frame-transition cases remain unproven, and
+retained affine operations remain unapproved. The UI test intentionally continues to observe legacy
+presentation on commit and renderer-incompatible fallback on redo.
+
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
 the durable selector renders its complete projected layer record after materialization. Wiring

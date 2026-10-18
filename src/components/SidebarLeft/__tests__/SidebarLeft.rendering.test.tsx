@@ -88,7 +88,7 @@ describe('SidebarLeft rendering', () => {
     render(<SidebarLeft />);
 
     const hasFlyoutIndicator = (name: string) =>
-      toolbarButtonByName(name).querySelector('span[aria-hidden="true"]') !== null;
+      toolbarButtonByName(name).querySelector('[data-testid="tool-flyout-indicator"]') !== null;
 
     expect(hasFlyoutIndicator('freehand-lasso')).toBe(true);
     expect(hasFlyoutIndicator('brush')).toBe(true);

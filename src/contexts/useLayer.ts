@@ -3,14 +3,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type { BitmapSource } from './general-types.ts';
 import { useSetToolArgs } from './set-tool-args.ts';
-import type {
-  BlankLayerSource,
-  ImageLayerSource,
-  Layer,
-  LayerId,
-  LayerOperationArgs,
-  LayersRecord,
-  ToolLayerSource,
+import {
+  isLayerBlendMode,
+  type BlankLayerSource,
+  type ImageLayerSource,
+  type Layer,
+  type LayerId,
+  type LayerOperationArgs,
+  type LayersRecord,
+  type ToolLayerSource,
 } from './layer-types.ts';
 import {
   createLayerOperation,
@@ -35,13 +36,17 @@ import type { Optional } from '../util/type-utils.ts';
 import {
   type ActionType,
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
   REPLACE_LAYER_SOURCE_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
@@ -55,7 +60,12 @@ import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
 import { derivedLayerPropertyPatch, isSetLayerPropertiesAction } from './history-adapter.ts';
 import type { LayerPresentationRequest } from './layer-presentation.ts';
-import { operationsRetainedAfterBake, stageProcessorInput } from './presentation-evaluator.ts';
+import {
+  drawEvaluatedPresentation,
+  evaluatePresentation,
+  operationsRetainedAfterBake,
+  stageProcessorInput,
+} from './presentation-evaluator.ts';
 import {
   canvasRectToDocumentFrame,
   canvasToDocumentPos,
@@ -65,16 +75,63 @@ import {
   isValidDocumentFrame,
 } from './document-frame.ts';
 import {
+  documentAffineToLayerLocal,
   isIdentityAffineTransform,
   isTrapezoidOnlyTransform,
   normalizeTransformHistoryArgs,
+  rotationAffineAroundPoint,
+  rasterizeBounds,
   transformToolArgsToAffine,
+  validateAffineTransform,
 } from './affine-transform.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
   toolArgs: ToolArgs;
 };
+
+function createPresentationCanvas(width: number, height: number): OffscreenCanvas | HTMLCanvasElement {
+  const safeWidth = Math.max(1, Math.ceil(width));
+  const safeHeight = Math.max(1, Math.ceil(height));
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(safeWidth, safeHeight);
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = safeWidth;
+    canvas.height = safeHeight;
+    return canvas;
+  }
+  throw new Error('No canvas implementation is available for a document transform');
+}
+
+function transformLayerForDocument(
+  layer: Layer,
+  transform: ReturnType<typeof rotationAffineAroundPoint>,
+  operationId: string
+): Layer {
+  const layerTransform = validateAffineTransform(documentAffineToLayerLocal(transform, layer.pos), {
+    width: layer.pos.width,
+    height: layer.pos.height,
+  });
+  const operations = [...layer.operations, createAffineLayerOperation(layerTransform, operationId)];
+  if (!layer.tmpCanvas) {
+    return { ...layer, operations, tmpCanvas: null, presentationBounds: null };
+  }
+
+  const position = layer.presentationBounds ?? layer.pos;
+  const sourceSize = { width: layer.tmpCanvas.width, height: layer.tmpCanvas.height };
+  const cacheTransform = validateAffineTransform(documentAffineToLayerLocal(transform, position), sourceSize);
+  const evaluation = evaluatePresentation({
+    position,
+    sourceSize,
+    operations: [createAffineLayerOperation(cacheTransform, operationId)],
+  });
+  const rasterSize = rasterizeBounds(evaluation.localBounds);
+  const canvas = createPresentationCanvas(rasterSize.width, rasterSize.height);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Unable to create a canvas context for a document transform');
+  drawEvaluatedPresentation(context, layer.tmpCanvas, evaluation, { kind: 'bounds' });
+  return { ...layer, operations, tmpCanvas: canvas, presentationBounds: evaluation.bounds };
+}
 
 type EditableToolLayerSource = {
   kind: 'tool';
@@ -229,12 +286,9 @@ function canvasFilterRefusal(candidateToolName: ToolName): Error | null {
 /**
  * Whether a layer's own protection forbids a tool writing to it.
  *
- * `src/util/psd-utils.ts:160` reads the flag off an imported PSD and `:267-268` writes it back
- * out as composite + position protection, so `locked` is exactly "this layer's PIXELS and POSITION
- * may not change" — every `commit` kind the processors declare, which is why the check belongs
- * above them all rather than in the raster branch alone. Nothing consulted it: `psd-utils.ts` is
- * the only place that ever sets it true, every other construction path writes `false`, and no
- * panel renders a lock control, so a layer a PSD protected was freely overwritten by every tool.
+ * PSD import maps protection flags to `locked` and export maps it back to composite + position
+ * protection. Tool and layer-property mutation entry points consult this predicate so they share
+ * one lock policy.
  *
  * `=== true` rather than a truthiness test, so a future flag-shaped value is a compile error
  * rather than a layer that silently locks itself.
@@ -584,12 +638,8 @@ export const useLayers = () => {
     ) {
       return layer;
     }
-    // The replacement is RENDERED, not merely recorded. `getLayerBitmap` re-runs a creator only for
-    // the vector tools — a `text` source is excluded — so a tool layer with neither `tmpCanvas` nor
-    // `bitmap` draws nothing at all: `drawLayerSource` declines it, `drawLayersToCanvas` reports
-    // "skipped layer without bitmap", and export flattens without the type. MEASURED: an in-place
-    // text commit over an existing layer emptied the layer from the canvas, from the export and from
-    // merge, and redo emptied it again. So the raster comes from the same creator a new layer uses.
+    // Render the replacement before recording it so the live layer's source and raster advance
+    // together; otherwise the canvas, export, or merge could retain the previous text pixels.
     let rebuilt: Layer;
     try {
       rebuilt = createLayerSource({ layerId: id, layers, source: nextSource });
@@ -959,6 +1009,20 @@ export const useLayers = () => {
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
     const layer = layers[id];
     if (!layer) return;
+    if (
+      (actionName === SET_LAYER_OPACITY_ACTION || actionName === SET_LAYER_BLEND_MODE_ACTION) &&
+      (layer.isBedrock || isLayerLocked(layer))
+    ) {
+      return;
+    }
+    if (actionName === SET_LAYER_BLEND_MODE_ACTION && !isLayerBlendMode(patch.blendMode)) return;
+    if (
+      (actionName === LOCK_LAYER_ACTION && patch.locked !== true) ||
+      (actionName === UNLOCK_LAYER_ACTION && patch.locked !== false) ||
+      ((actionName === LOCK_LAYER_ACTION || actionName === UNLOCK_LAYER_ACTION) && layer.isBedrock)
+    ) {
+      return;
+    }
     const item = { layerId: id, actionName, args: patch };
     const planned = isSetLayerPropertiesAction(actionName)
       ? planHistoryAppend({
@@ -1317,8 +1381,8 @@ export const useLayers = () => {
     renderSelector,
   ]);
 
-  const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
-    if (![rect.x1, rect.y1, rect.x2, rect.y2].every((value) => Number.isFinite(value))) {
+  const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }, angle = 0): boolean => {
+    if (![rect.x1, rect.y1, rect.x2, rect.y2, angle].every((value) => Number.isFinite(value))) {
       console.warn('applyDocumentCrop refused a non-finite crop rectangle');
       return false;
     }
@@ -1346,7 +1410,16 @@ export const useLayers = () => {
     }
 
     const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
-    if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;
+    if (!isValidDocumentFrame(nextFrame)) return false;
+    const transform =
+      angle === 0
+        ? undefined
+        : rotationAffineAroundPoint((-angle * Math.PI) / 180, {
+            x: nextFrame.x + nextFrame.width / 2,
+            y: nextFrame.y + nextFrame.height / 2,
+          });
+    const documentTransform = transform && !isIdentityAffineTransform(transform) ? transform : undefined;
+    if (!documentTransform && documentFrameEquals(documentFrame, nextFrame)) return false;
 
     // The append boundary derives the same durable entry as the adapter. The
     // store publishes it only when its preconditions prove the durable shadow
@@ -1355,15 +1428,37 @@ export const useLayers = () => {
       item: {
         layerId: 'document',
         actionName: SET_DOCUMENT_FRAME_ACTION,
-        args: { previousFrame: documentFrame, nextFrame },
+        args: {
+          previousFrame: documentFrame,
+          nextFrame,
+          ...(documentTransform ? { transform: documentTransform } : {}),
+        },
       },
       timeline: { entries: history, cursor: historyIndex, branchRevision },
       currentFrame: documentFrame,
     });
+    let nextLayers = layers;
+    if (documentTransform) {
+      try {
+        nextLayers = Object.fromEntries(
+          Object.values(layers).map((layer) => [
+            layer.id,
+            transformLayerForDocument(layer, documentTransform, `${entry.id}:${layer.id}`),
+          ])
+        );
+      } catch (error) {
+        console.warn('applyDocumentCrop refused a document rotation that exceeds layer transform limits', error);
+        return false;
+      }
+    }
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
-        updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
+        updates: {
+          documentFrame: nextFrame,
+          totalSize: documentFrameSize(nextFrame),
+          ...(documentTransform ? { layers: nextLayers } : {}),
+        },
         historyItem: entry,
         durableEntry,
         durableDiagnostics: diagnostics,

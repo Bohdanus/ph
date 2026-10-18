@@ -308,6 +308,7 @@ function durableLayerIds(durable: DurableDocument): string[] {
         for (const layerId of Object.keys(operation.orderByLayerId)) ids.add(layerId);
         break;
       case 'set-document-frame':
+      case 'transform-document':
       case 'set-selection':
         break;
       default: {

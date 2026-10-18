@@ -2,18 +2,22 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
 import { deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import { documentAffineToLayerLocal, rotationAffineAroundPoint } from '../affine-transform.ts';
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   NEW_LAYER_ACTION,
   RENAME_LAYER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
@@ -96,6 +100,99 @@ describe('replayHistory', () => {
 
     expect(result.layers[layerId]).toEqual({ ...createTestLayer(layerId), pos: resize });
     expect(dependencies.applyRasterTool).not.toHaveBeenCalled();
+  });
+
+  it('rotates every current layer and updates the crop frame in one history entry', () => {
+    const secondId = 'layer-2';
+    const secondPos = { x: 180, y: 90, width: 75, height: 45 };
+    const nextFrame = { x: 40, y: 30, width: 160, height: 120 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 3, {
+      x: nextFrame.x + nextFrame.width / 2,
+      y: nextFrame.y + nextFrame.height / 2,
+    });
+    const createLayer = vi.fn((input: Parameters<HistoryReplayDependencies['createLayer']>[0]) => ({
+      ...createTestLayer(input.layerId),
+      pos: 'pos' in input.source ? input.source.pos : createTestLayer(input.layerId).pos,
+    }));
+    const dependencies = { ...createDependencies(), createLayer } satisfies HistoryReplayDependencies;
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      {
+        id: 'new-layer-2',
+        actionName: NEW_LAYER_ACTION,
+        layerId: secondId,
+        layerSource: { ...layerSource, pos: secondPos },
+      },
+      {
+        id: 'rotated-crop',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        args: { previousFrame: { x: 0, y: 0, ...initialSize }, nextFrame, transform },
+      },
+    ];
+
+    const result = replayHistory(history, 2, initialSize, dependencies);
+
+    expect(result.documentFrame).toEqual(nextFrame);
+    expect(result.layers[layerId]?.operations).toEqual([
+      {
+        id: 'rotated-crop:layer-1',
+        kind: 'affine-transform',
+        transform: documentAffineToLayerLocal(transform, layerSource.pos),
+        enabled: true,
+      },
+    ]);
+    expect(result.layers[secondId]?.operations).toEqual([
+      {
+        id: 'rotated-crop:layer-2',
+        kind: 'affine-transform',
+        transform: documentAffineToLayerLocal(transform, secondPos),
+        enabled: true,
+      },
+    ]);
+  });
+
+  it('rejects a singular document transform without changing frame or layer pixels', () => {
+    const invalidTransform = { a: 1, b: 0, c: 0, d: 0, e: 0, f: 0 };
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      {
+        id: 'bad-document-transform',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        args: {
+          previousFrame: { x: 0, y: 0, ...initialSize },
+          nextFrame: { x: 10, y: 10, width: 100, height: 80 },
+          transform: invalidTransform,
+        },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, createDependencies());
+
+    expect(result.documentFrame).toEqual({ x: 0, y: 0, ...initialSize });
+    expect(result.layers[layerId]?.operations).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ historyId: 'bad-document-transform', code: 'invalid-document-transform' }),
+    ]);
+  });
+
+  it('replays before the first crop from its recorded previous frame, not the current cropped frame', () => {
+    const previousFrame = { x: 40, y: 30, width: 320, height: 240 };
+    const nextFrame = { x: 70, y: 55, width: 200, height: 160 };
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      {
+        id: 'crop-frame',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        args: { previousFrame, nextFrame },
+      },
+    ];
+
+    const result = replayHistory(history, 0, initialSize, createDependencies(), nextFrame);
+
+    expect(result.documentFrame).toEqual(previousFrame);
   });
 
   it('uses the first selection action baseline before it and its next state at or after it', () => {
@@ -265,6 +362,9 @@ describe('layer-property parity between the durable derivation and legacy replay
     { label: 'rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } },
     { label: 'opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.42 } },
     { label: 'lower opacity', actionName: SET_LAYER_OPACITY_ACTION, args: { opacity: 0.25 } },
+    { label: 'blend mode', actionName: SET_LAYER_BLEND_MODE_ACTION, args: { blendMode: 'multiply' } },
+    { label: 'lock', actionName: LOCK_LAYER_ACTION, args: { locked: true } },
+    { label: 'unlock', actionName: UNLOCK_LAYER_ACTION, args: { locked: false } },
   ] as const;
 
   it.each(propertyCases)(
@@ -278,7 +378,7 @@ describe('layer-property parity between the durable derivation and legacy replay
       const patch = planned!.operation.patch;
       expect(Object.keys(patch)).toHaveLength(1);
       for (const [property, value] of Object.entries(patch)) {
-        expect(replayed[property as 'name' | 'visible' | 'opacity']).toEqual(value);
+        expect(replayed[property as keyof Layer]).toEqual(value);
       }
     }
   );
@@ -312,6 +412,25 @@ describe('layer-property parity between the durable derivation and legacy replay
         historyId: 'bad-opacity',
         actionName: SET_LAYER_OPACITY_ACTION,
         code: 'invalid-layer-opacity',
+        error: expect.any(TypeError),
+      }),
+    ]);
+  });
+
+  it('reports an invalid blend-mode history value without changing the layer', () => {
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      { id: 'bad-blend-mode', actionName: SET_LAYER_BLEND_MODE_ACTION, layerId, args: { blendMode: 'destination-in' } },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, createDependencies());
+
+    expect(result.layers[layerId].blendMode).toBe('source-over');
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        historyId: 'bad-blend-mode',
+        actionName: SET_LAYER_BLEND_MODE_ACTION,
+        code: 'invalid-layer-blend-mode',
         error: expect.any(TypeError),
       }),
     ]);

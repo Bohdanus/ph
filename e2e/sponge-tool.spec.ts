@@ -774,7 +774,7 @@ test.describe('Sponge tool', () => {
     await expect(modeSelect(page)).toBeVisible();
 
     await expect(page.getByRole('slider'), 'three sliders: Flow, Size, Hardness').toHaveCount(3);
-    await expect(page.getByRole('combobox'), 'one dropdown: Mode').toHaveCount(1);
+    await expect(modeSelect(page), 'one tool-bar dropdown: Mode').toHaveCount(1);
     await expect(page.getByRole('checkbox'), 'one checkbox: Vibrance').toHaveCount(1);
     for (const name of ['Flow', 'Size', 'Hardness']) {
       await expect(page.getByRole('slider', { name }), `${name} is this bar's control`).toBeVisible();

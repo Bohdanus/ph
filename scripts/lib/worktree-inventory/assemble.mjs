@@ -19,7 +19,7 @@ import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
 import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
@@ -169,6 +169,7 @@ export function buildInventory({
       prunable: verdict.prunable,
       mergeConflict: verdict.mergeConflict,
       mergeConflictFiles: verdict.mergeConflictFiles,
+      mergeResultMatchesBase: verdict.mergeResultMatchesBase,
       // "We have an answer", not "the check ran". It does NOT disambiguate the
       // two things `mergeConflict: null` can mean: `mergeVerdict` returns
       // 'unknown' for a skipped check (already on main, or detached) and for a

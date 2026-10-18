@@ -62,6 +62,7 @@ const DevStatusStripContents = () => {
       data-presentation-status={durablePresentation.status}
       data-durable-cursor={durablePresentation.cursor ?? ''}
       data-durable-fallback-reason={durablePresentation.reason ?? ''}
+      data-durable-fallback-detail={durablePresentation.detail ?? ''}
       data-durable-publication={durablePublication}
       data-durable-layer-ids={durableLayerIds}
       className="text-xs text-amber-800 dark:text-amber-300"

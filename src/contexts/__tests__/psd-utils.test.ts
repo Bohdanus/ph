@@ -448,6 +448,22 @@ describe('PSD codec binary roundtrip', () => {
     expect(input.pos).toEqual({ x: -0.5, y: 0.25, width: 1.75, height: 1.5 });
   });
 
+  it('rasterizes a cached presentation relative to its PSD layer origin', async () => {
+    const cached = layer({
+      pos: { x: 12, y: 22, width: 1, height: 1 },
+      tmpCanvas: raster(pixel(0, 255, 0)),
+      presentationBounds: { x: 12, y: 22, width: 1, height: 1 },
+    });
+
+    const result = readPsd(await savePsd({ cached }, { width: 4, height: 4 }, { x: 10, y: 20, width: 4, height: 4 }), {
+      useImageData: true,
+    });
+
+    expect(result.children![0]).toMatchObject({ left: 2, top: 2, right: 3, bottom: 3 });
+    expect(Array.from(result.children![0].imageData!.data)).toEqual([0, 255, 0, 255]);
+    expect(Array.from(result.imageData!.data.slice((2 * 4 + 2) * 4, (2 * 4 + 2) * 4 + 4))).toEqual([0, 255, 0, 255]);
+  });
+
   it('uses smart object previews and warns when previews are absent', async () => {
     const placedLayer: NonNullable<PsdLayer['placedLayer']> = {
       id: '12345678-1234-1234-1234-123456789abc',

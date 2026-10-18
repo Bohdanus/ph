@@ -6,7 +6,7 @@ import type { FigureType } from '../shape.ts';
 import type { ToolImplementationStatus } from './types.ts';
 
 /**
- * The two fields the toolbar tooltip reads, and the only part of the description record that
+ * The fields the toolbar tooltip reads, and the only part of the description record that
  * reaches the browser. Everything else — the purpose prose, the options tables, the
  * modifiers, the citations — exists for `docs/TOOLS.md` and for the tests, and importing it
  * here cost 215 kB raw / 58 kB gzipped for one line of text per tool.
@@ -16,12 +16,15 @@ export type ToolTooltipProjection = {
   summary: string;
   /** How much of the tool this editor implements. Drives the tooltip's status line. */
   implementation: ToolImplementationStatus;
+  /** Photoshop's toolbar-level shortcut (e.g. 'B' for Brush), shown in the tooltip badge. Undefined when the tool has no shortcut. */
+  shortcut?: string;
 };
 
 export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   'rectangular-selection': {
     summary: 'Drag a rectangular selection; Shift makes it a square, Alt grows it outward from the press point.',
     implementation: 'partial',
+    shortcut: 'M',
   },
   'elliptical-selection': {
     summary:
@@ -39,6 +42,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   'freehand-lasso': {
     summary: 'Drag a freehand selection border that goes exactly where the cursor goes and closes itself on release.',
     implementation: 'partial',
+    shortcut: 'L',
   },
   'polygonal-lasso': {
     summary:
@@ -54,6 +58,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Click a color to select every pixel within Tolerance of it — only the adjacent ones, or the whole image if Contiguous is off.',
     implementation: 'partial',
+    shortcut: 'W',
   },
   'quick-selection': {
     summary: 'Brush over an object and the selection grows along the image edges you cross; brush again to add.',
@@ -63,6 +68,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Paints the foreground color onto the layer in strokes: Opacity caps a single stroke, Flow builds it up, and the tip is stamped at Spacing intervals.',
     implementation: 'partial',
+    shortcut: 'B',
   },
   pencil: {
     summary:
@@ -78,6 +84,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Removes pixels to transparency along a stroke, in Brush, Pencil or Block mode, with per-stroke Opacity, per-dab Flow and Erase to History.',
     implementation: 'partial',
+    shortcut: 'E',
   },
   'magic-eraser': {
     summary:
@@ -88,11 +95,13 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Fills the contiguous area of similar color you click with the foreground color or a pattern, in one click, at a chosen Mode and Opacity.',
     implementation: 'partial',
+    shortcut: 'G',
   },
   'clone-stamp': {
     summary:
       'Copies pixels from an Alt-clicked source point and paints them under the cursor, in Aligned or Independent mode, with a soft or hard tip.',
     implementation: 'partial',
+    shortcut: 'S',
   },
   'healing-brush': {
     summary: 'Blends sampled texture into a brush stroke while preserving destination lighting and tone.',
@@ -125,6 +134,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Lightens the tonal range you choose as you paint, the way holding back paper under a finger brightens a print.',
     implementation: 'partial',
+    shortcut: 'O',
   },
   burn: {
     summary:
@@ -149,6 +159,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Drag-defined rectangle or square with an optional corner radius, drawn as a shape layer, path, or filled pixels.',
     implementation: 'partial',
+    shortcut: 'U',
   },
   ellipse: {
     summary: 'Drag-defined ellipse or circle drawn as a shape layer, a work path, or a filled pixel region.',
@@ -176,6 +187,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Draws precise vector paths from click-placed anchor points, with draggable direction handles for the curves between them.',
     implementation: 'placeholder',
+    shortcut: 'P',
   },
   'freeform-pen': {
     summary:
@@ -203,16 +215,19 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Sets a typed string into the document as a raster text layer, with font, size, leading, tracking and caps controls.',
     implementation: 'partial',
+    shortcut: 'T',
   },
   crop: {
     summary:
       'Frames a new boundary for the photo; nothing is committed until you confirm, and Esc restores the old framing.',
     implementation: 'partial',
+    shortcut: 'C',
   },
   reposition: {
     summary:
       "Photoshop's Move tool (V) drags layers, selections and artboards around the document, and hosts the transform box Free Transform hangs off.",
     implementation: 'partial',
+    shortcut: 'V',
   },
   transform: {
     summary:
@@ -233,6 +248,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
     summary:
       'Samples a color from anywhere in the image and makes it the foreground color, previewing as you drag and confirming on release.',
     implementation: 'partial',
+    shortcut: 'I',
   },
   'color-sampler': {
     summary:
@@ -252,10 +268,12 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   hand: {
     summary: 'Pans the canvas view without moving or changing the document pixels.',
     implementation: 'implemented',
+    shortcut: 'H',
   },
   zoom: {
     summary: 'Magnifies or reduces the canvas around the pointer without changing document pixels.',
     implementation: 'implemented',
+    shortcut: 'Z',
   },
   'rotate-view': {
     summary: 'Rotates the canvas presentation around the viewport without transforming the image.',

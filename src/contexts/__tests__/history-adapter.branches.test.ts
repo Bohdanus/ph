@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import {
@@ -26,6 +27,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerId, LayerSource } from '../layer-types.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -34,9 +36,11 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 import type { ActionType } from '../../util/constants.ts';
@@ -423,6 +427,32 @@ describe('legacyHistoryToDurable per-action option branches', () => {
 
     const operation = converted.document.history[0]?.operation;
     expect(operation).toEqual({ kind: 'set-document-frame', previous: baselineFrame, next: nextFrame });
+    registry.shutdown();
+  });
+
+  it('derives a rotated crop as one document-transform operation', () => {
+    const registry = new AssetRegistry();
+    const nextFrame = { x: 10, y: 10, width: 200, height: 150 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 4, { x: 110, y: 85 });
+
+    const converted = convert(
+      [
+        {
+          id: 'rotated-frame',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame, transform },
+        },
+      ],
+      registry
+    );
+
+    expect(converted.document.history[0]?.operation).toEqual({
+      kind: 'transform-document',
+      previous: baselineFrame,
+      next: nextFrame,
+      transform,
+    });
     registry.shutdown();
   });
 
@@ -1544,6 +1574,9 @@ describe('deriveSetLayerPropertiesEntry', () => {
     { label: 'hide', actionName: HIDE_LAYER_ACTION },
     { label: 'rename', actionName: RENAME_LAYER_ACTION },
     { label: 'set opacity', actionName: SET_LAYER_OPACITY_ACTION },
+    { label: 'set blend mode', actionName: SET_LAYER_BLEND_MODE_ACTION },
+    { label: 'lock', actionName: LOCK_LAYER_ACTION },
+    { label: 'unlock', actionName: UNLOCK_LAYER_ACTION },
   ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('accepts $label', ({ actionName }) => {
     expect(isSetLayerPropertiesAction(actionName)).toBe(true);
   });
@@ -1582,6 +1615,24 @@ describe('deriveSetLayerPropertiesEntry', () => {
       actionName: SET_LAYER_OPACITY_ACTION,
       args: { opacity: 0.25 },
       patch: { opacity: 0.25 },
+    },
+    {
+      label: 'a supported blend mode update',
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      args: { blendMode: 'multiply' },
+      patch: { blendMode: 'multiply' },
+    },
+    {
+      label: 'a full lock',
+      actionName: LOCK_LAYER_ACTION,
+      args: { locked: true },
+      patch: { locked: true },
+    },
+    {
+      label: 'a full unlock',
+      actionName: UNLOCK_LAYER_ACTION,
+      args: { locked: false },
+      patch: { locked: false },
     },
   ] satisfies ReadonlyArray<{
     label: string;
@@ -1634,6 +1685,20 @@ describe('deriveSetLayerPropertiesEntry', () => {
           actionName: SET_LAYER_OPACITY_ACTION,
           layerId: 'layer-1',
           args: { opacity },
+        })
+      ).toBeNull();
+    }
+  );
+
+  it.each([undefined, null, 'destination-in', 'plus-lighter', Number.NaN])(
+    'derives nothing from unsupported layer blend mode (%s)',
+    (blendMode) => {
+      expect(
+        deriveSetLayerPropertiesEntry({
+          id: 'blend-mode',
+          actionName: SET_LAYER_BLEND_MODE_ACTION,
+          layerId: 'layer-1',
+          args: { blendMode },
         })
       ).toBeNull();
     }

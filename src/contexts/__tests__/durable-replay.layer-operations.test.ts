@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import { documentAffineToLayerLocal, rotationAffineAroundPoint } from '../affine-transform.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import { freezeDurableDocument, type DurableDocument, type DurableOperation } from '../history-model.ts';
@@ -476,6 +477,63 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     expect(replay.layers[layerId]?.snapshot.source).toEqual(document.baseline.layers[0]?.source);
 
     void registry;
+  });
+
+  it('transform-document applies one crop transform to every extant layer and the new frame', () => {
+    const registry = new AssetRegistry();
+    const secondPos = { x: 180, y: 90, width: 75, height: 45 };
+    const nextFrame = { x: 30, y: 40, width: 160, height: 90 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 3, {
+      x: nextFrame.x + nextFrame.width / 2,
+      y: nextFrame.y + nextFrame.height / 2,
+    });
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer(), [layer2Id]: createBaselineLayer(layer2Id, secondPos) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'rotated-crop',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame, transform },
+        },
+      ],
+      { documentId: 'rotated-frame-test', registry }
+    ).document;
+
+    const atBaseline = replayDurableDocument(document, -1);
+    expect(atBaseline.frame).toEqual(baselineFrame);
+    expect(atBaseline.layers[layerId]?.operations).toEqual([]);
+    expect(atBaseline.layers[layer2Id]?.operations).toEqual([]);
+
+    const replay = replayDurableDocument(document);
+    expect(replay.frame).toEqual(nextFrame);
+    expect(replay.layers[layerId]?.snapshot.pos).toEqual(layerPos);
+    expect(replay.layers[layer2Id]?.snapshot.pos).toEqual(secondPos);
+    expect(replay.layers[layerId]?.operations).toEqual([
+      {
+        kind: 'apply-affine-transform',
+        layerId,
+        transform: documentAffineToLayerLocal(transform, layerPos),
+      },
+    ]);
+    expect(replay.layers[layer2Id]?.operations).toEqual([
+      {
+        kind: 'apply-affine-transform',
+        layerId: layer2Id,
+        transform: documentAffineToLayerLocal(transform, secondPos),
+      },
+    ]);
+
+    registry.shutdown();
   });
 
   it('merge-document replaces multiple layers with one at the tip', () => {

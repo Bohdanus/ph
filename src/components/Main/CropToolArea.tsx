@@ -220,7 +220,10 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
   useEffect(() => {
     cropKeysRef.current = {
       commit: () => {
-        if (args.rect && applyDocumentCrop(args.rect)) {
+        if (
+          args.rect &&
+          (args.angle === undefined ? applyDocumentCrop(args.rect) : applyDocumentCrop(args.rect, args.angle))
+        ) {
           setToolArgs(clearDraft());
         }
       },

@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
 import { replayDurableDocument } from '../durable-replay.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import { durableSourceKindForTool, legacyHistoryToDurable } from '../history-adapter.ts';
 import type { DurableOperation } from '../history-model.ts';
 import { replayHistory, type HistoryReplayDependencies, type HistoryReplayResult } from '../history-replay.ts';
@@ -15,6 +16,7 @@ import type { ShapeToolArgs } from '../../tools/shape.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -23,9 +25,11 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 import { overrideCanvasFilterSupport } from '../../util/canvas-filter.ts';
 
@@ -141,6 +145,9 @@ const cases: ReadonlyArray<{
       item('show', SHOW_LAYER_ACTION, layerA),
       item('rename', RENAME_LAYER_ACTION, layerA, { name: 'Renamed' }),
       item('opacity', SET_LAYER_OPACITY_ACTION, layerA, { opacity: 0.5 }),
+      item('blend-mode', SET_LAYER_BLEND_MODE_ACTION, layerA, { blendMode: 'multiply' }),
+      item('lock', LOCK_LAYER_ACTION, layerA, { locked: true }),
+      item('unlock', UNLOCK_LAYER_ACTION, layerA, { locked: false }),
     ],
   },
   {
@@ -189,6 +196,21 @@ const cases: ReadonlyArray<{
         nextFrame: { x: 10, y: 20, width: 200, height: 150 },
       }),
     ],
+  },
+  {
+    name: 'rotated document crop',
+    history: [
+      baseline({
+        [layerA]: runtimeLayer(layerA, 0),
+        [layerB]: runtimeLayer(layerB, 1, { x: 150, y: 100, width: 90, height: 70 }),
+      }),
+      item('rotated-crop', SET_DOCUMENT_FRAME_ACTION, 'document', {
+        previousFrame: frame,
+        nextFrame: { x: 30, y: 25, width: 220, height: 170 },
+        transform: rotationAffineAroundPoint(-Math.PI / 5, { x: 140, y: 110 }),
+      }),
+    ],
+    expectedTipFrame: { x: 30, y: 25, width: 220, height: 170 },
   },
   {
     name: 'document frame grow',
@@ -342,7 +364,11 @@ function normalizeLegacy(result: HistoryReplayResult) {
         blendMode: layer.blendMode,
         pos: layer.pos,
         sourceKind: sourceKind(layer.source),
-        operationKinds: layer.operations.map((operation) => operationKind(operation.kind, operation)),
+        operations: layer.operations.map((operation) =>
+          operation.kind === 'affine-transform'
+            ? { kind: operationKind(operation.kind, operation), transform: operation.transform }
+            : { kind: operationKind(operation.kind, operation) }
+        ),
       })),
     selections: result.selections,
     activeSelectionId: result.activeSelectionId,
@@ -365,7 +391,11 @@ function normalizeDurable(result: DurableReplayResult) {
         blendMode: snapshot.blendMode,
         pos: snapshot.pos,
         sourceKind: durableSourceKind(snapshot.source),
-        operationKinds: operations.map((operation) => operation.kind),
+        operations: operations.map((operation) =>
+          operation.kind === 'apply-affine-transform'
+            ? { kind: operation.kind, transform: operation.transform }
+            : { kind: operation.kind }
+        ),
       })),
     selections: result.selections.selections,
     activeSelectionId: result.selections.activeSelectionId,

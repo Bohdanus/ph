@@ -4,7 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
-import type { Layer, LayerId } from '../../contexts/layer-types.ts';
+import { isLayerBlendMode, LAYER_BLEND_MODES, type Layer, type LayerId } from '../../contexts/layer-types.ts';
 import { documentFrameFromSize } from '../../contexts/document-frame.ts';
 import { textLayerEditTarget } from '../../contexts/text-layer-edit.ts';
 import { useApp } from '../../hooks/useApp.ts';
@@ -19,8 +19,107 @@ import {
   ICON_TOGGLE_BUTTON_HIDDEN,
   DELETE_BUTTON_ICON,
 } from '../ToolbarsRight/buttonStyles.ts';
-import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
+import {
+  LOCK_LAYER_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  UNLOCK_LAYER_ACTION,
+} from '../../util/constants.ts';
 import LayerThumbnail from './LayerThumbnail.tsx';
+
+type UpdateLayer = ReturnType<typeof useLayers>['updateLayer'];
+
+function LayerLockIcon({ locked, className = 'h-4 w-4' }: { locked: boolean; className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden="true">
+      <path
+        d={locked ? 'M7.5 10V7.8a4.5 4.5 0 0 1 9 0V10' : 'M7.5 10V7.8a4.5 4.5 0 0 1 8-2.8'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <rect
+        x="5"
+        y="10"
+        width="14"
+        height="11"
+        rx="1.8"
+        fill={locked ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path d="M12 14v3" stroke={locked ? 'white' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function LayerBlendModeSelect({
+  layer,
+  updateLayer,
+  className = '',
+}: {
+  layer: Layer;
+  updateLayer: UpdateLayer;
+  className?: string;
+}) {
+  const supported = isLayerBlendMode(layer.blendMode);
+
+  return (
+    <select
+      aria-label={`Blend mode for ${layer.name}`}
+      value={supported ? layer.blendMode : ''}
+      disabled={layer.isBedrock || layer.locked}
+      onChange={(event) => {
+        if (!layer.isBedrock && !layer.locked && isLayerBlendMode(event.currentTarget.value)) {
+          updateLayer(layer.id, { blendMode: event.currentTarget.value }, SET_LAYER_BLEND_MODE_ACTION);
+        }
+      }}
+      className={`min-w-0 rounded border border-gray-300 bg-white px-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-white ${className}`}
+    >
+      {!supported && (
+        <option value="" disabled>
+          Unsupported mode
+        </option>
+      )}
+      {LAYER_BLEND_MODES.map(({ value, label }) => (
+        <option key={value} value={value}>
+          {label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function LayerLockToggle({
+  layer,
+  updateLayer,
+  className = '',
+}: {
+  layer: Layer;
+  updateLayer: UpdateLayer;
+  className?: string;
+}) {
+  const action = layer.locked ? UNLOCK_LAYER_ACTION : LOCK_LAYER_ACTION;
+
+  return (
+    <button
+      type="button"
+      aria-label={`${layer.locked ? 'Unlock' : 'Lock'} ${layer.name}`}
+      aria-pressed={layer.locked}
+      disabled={layer.isBedrock}
+      title={layer.locked ? 'Unlock layer' : 'Lock all layer properties'}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!layer.isBedrock) updateLayer(layer.id, { locked: !layer.locked }, action);
+      }}
+      className={`inline-flex min-h-9 min-w-9 items-center justify-center gap-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 ${className}`}
+    >
+      <LayerLockIcon locked={layer.locked} />
+      <span className="sr-only">{layer.locked ? 'Locked' : 'Unlocked'}</span>
+    </button>
+  );
+}
 
 type LayerOpacityControlProps = {
   layer: Layer;
@@ -34,7 +133,7 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
   function finishGesture() {
     const opacity = draftPercent;
     setDraftPercent(null);
-    if (layer.locked || opacity === null) return;
+    if (layer.locked || layer.isBedrock || opacity === null) return;
     const nextOpacity = opacity / 100;
     if (layer.opacity !== nextOpacity) {
       updateLayer(layer.id, { opacity: nextOpacity }, SET_LAYER_OPACITY_ACTION);
@@ -42,35 +141,44 @@ function LayerOpacityControl({ layer, updateLayer }: LayerOpacityControlProps) {
   }
 
   return (
-    <div className="flex items-center justify-end gap-2 px-1">
-      <span className="text-xs text-gray-600 dark:text-white">Opacity:</span>
-      <details className="relative">
-        <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700">
-          {opacityPercent}%
-        </summary>
-        <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
-          <input
-            aria-label="Layer opacity"
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            value={opacityPercent}
-            disabled={layer.locked}
-            onChange={(event) => {
-              if (!layer.locked) setDraftPercent(Number(event.currentTarget.value));
-            }}
-            onPointerUp={finishGesture}
-            onPointerCancel={() => setDraftPercent(null)}
-            onKeyUp={finishGesture}
-            onBlur={finishGesture}
-            className="min-w-0 flex-1"
-          />
-          <output aria-live="polite" className="text-gray-800 dark:text-white">
-            {opacityPercent}%
-          </output>
+    <div className="flex flex-col gap-1 px-1">
+      <div className="flex items-center justify-between gap-2">
+        <LayerBlendModeSelect layer={layer} updateLayer={updateLayer} className="min-h-8 flex-1" />
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-gray-600 dark:text-white">Opacity:</span>
+          <details className="relative">
+            <summary className="list-none cursor-pointer rounded px-2 py-1 text-sm text-gray-800 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700">
+              {opacityPercent}%
+            </summary>
+            <div className="absolute right-0 top-full z-20 mt-1 flex min-w-48 items-center gap-2 rounded border bg-white p-3 shadow dark:border-gray-600 dark:bg-gray-800">
+              <input
+                aria-label="Layer opacity"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={opacityPercent}
+                disabled={layer.locked || layer.isBedrock}
+                onChange={(event) => {
+                  if (!layer.locked && !layer.isBedrock) setDraftPercent(Number(event.currentTarget.value));
+                }}
+                onPointerUp={finishGesture}
+                onPointerCancel={() => setDraftPercent(null)}
+                onKeyUp={finishGesture}
+                onBlur={finishGesture}
+                className="min-w-0 flex-1"
+              />
+              <output aria-live="polite" className="text-gray-800 dark:text-white">
+                {opacityPercent}%
+              </output>
+            </div>
+          </details>
         </div>
-      </details>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-white">
+        <span>Lock:</span>
+        <LayerLockToggle layer={layer} updateLayer={updateLayer} />
+      </div>
     </div>
   );
 }
@@ -503,6 +611,11 @@ export default function LayersTab() {
                       {layer.name}
                     </span>
                   </div>
+                  {layer.locked && (
+                    <span title="Layer locked" className="text-gray-600 dark:text-gray-300">
+                      <LayerLockIcon locked />
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {

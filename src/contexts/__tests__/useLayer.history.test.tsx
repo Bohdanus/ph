@@ -13,14 +13,18 @@ import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts'
 import { toolProcessors } from '../../tools/toolProcessors.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   REORDER_ACTION,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
   SET_LAYER_OPACITY_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../../util/constants.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 
@@ -143,6 +147,11 @@ function setupWithDocument(layers: LayersRecord = { [documentLayer('layer-1', 0)
     });
   });
   return result;
+}
+
+function setupWithEditableLayer() {
+  const editableLayer = documentLayer('editable', 0, false);
+  return setupWithDocument({ [editableLayer.id]: editableLayer });
 }
 
 beforeAll(async () => {
@@ -404,7 +413,7 @@ describe('useLayers removeLayer', () => {
 
 describe('useLayers layer-property writers', () => {
   it('routes opacity through the append boundary and publishes one canonical entry', () => {
-    const result = setupWithDocument();
+    const result = setupWithEditableLayer();
     const id = Object.keys(result.current.store.layers)[0]!;
 
     act(() => {
@@ -433,6 +442,130 @@ describe('useLayers layer-property writers', () => {
       operation: { kind: 'set-layer-properties', layerId: id, patch: { opacity: 0.42 } },
     });
     expect(store.durableDocument!.cursor).toBe(0);
+  });
+
+  it('routes a blend-mode edit through the append boundary and durable property operation', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { blendMode: 'multiply' }, SET_LAYER_BLEND_MODE_ACTION);
+    });
+
+    expect(result.current.store.layers[id].blendMode).toBe('multiply');
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      layerId: id,
+      args: { blendMode: 'multiply' },
+    });
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDocument!.history.at(-1)?.operation).toEqual({
+      kind: 'set-layer-properties',
+      layerId: id,
+      patch: { blendMode: 'multiply' },
+    });
+  });
+
+  it('records full lock and unlock as separate durable property actions', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => result.current.layers.updateLayer(id, { locked: true }, LOCK_LAYER_ACTION));
+    act(() => result.current.layers.updateLayer(id, { locked: false }, UNLOCK_LAYER_ACTION));
+
+    expect(result.current.store.layers[id].locked).toBe(false);
+    expect(result.current.store.history.slice(-2)).toMatchObject([
+      { actionName: LOCK_LAYER_ACTION, layerId: id, args: { locked: true } },
+      { actionName: UNLOCK_LAYER_ACTION, layerId: id, args: { locked: false } },
+    ]);
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDocument!.history.slice(-2).map((entry) => entry.operation)).toEqual([
+      { kind: 'set-layer-properties', layerId: id, patch: { locked: true } },
+      { kind: 'set-layer-properties', layerId: id, patch: { locked: false } },
+    ]);
+  });
+
+  it('refuses invalid blend modes and opacity/blend edits on a full-locked layer', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    const before = result.current.store.history;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { blendMode: 'destination-in' }, SET_LAYER_BLEND_MODE_ACTION);
+    });
+    expect(result.current.store.history).toBe(before);
+
+    act(() => {
+      result.current.layers.updateLayer(id, { locked: true }, LOCK_LAYER_ACTION);
+    });
+    const lockedHistory = result.current.store.history;
+    act(() => {
+      result.current.layers.updateLayer(id, { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+      result.current.layers.updateLayer(id, { blendMode: 'screen' }, SET_LAYER_BLEND_MODE_ACTION);
+    });
+    expect(result.current.store.history).toBe(lockedHistory);
+  });
+
+  it('refuses opacity, blend-mode, and lock edits on a background layer', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    const history = result.current.store.history;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { opacity: 0.25 }, SET_LAYER_OPACITY_ACTION);
+      result.current.layers.updateLayer(id, { blendMode: 'multiply' }, SET_LAYER_BLEND_MODE_ACTION);
+      result.current.layers.updateLayer(id, { locked: true }, LOCK_LAYER_ACTION);
+    });
+
+    expect(result.current.store.history).toBe(history);
+    expect(result.current.store.layers[id]).toMatchObject({ opacity: 1, blendMode: 'source-over', locked: false });
+  });
+
+  it('commits a rotated crop and all layer transforms as one document history entry', () => {
+    const result = setupWithEditableLayer();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    let committed = false;
+
+    act(() => {
+      committed = result.current.layers.applyDocumentCrop({ x1: 30, y1: 40, x2: 300, y2: 250 }, 17);
+    });
+
+    expect(committed).toBe(true);
+    const entry = result.current.store.history.at(-1)!;
+    const durableEntry = result.current.store.durableDocument!.history.at(-1)!;
+    expect(entry).toMatchObject({
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      layerId: 'document',
+      args: {
+        previousFrame: { x: 0, y: 0, width: 800, height: 600 },
+        nextFrame: { x: 30, y: 40, width: 270, height: 210 },
+        transform: expect.objectContaining({ a: expect.any(Number), b: expect.any(Number) }),
+      },
+    });
+    expect(durableEntry.operation).toMatchObject({
+      kind: 'transform-document',
+      previous: { x: 0, y: 0, width: 800, height: 600 },
+      next: { x: 30, y: 40, width: 270, height: 210 },
+    });
+    expect(result.current.store.layers[id].operations).toHaveLength(1);
+    expect(result.current.store.layers[id].operations[0]?.kind).toBe('affine-transform');
+  });
+
+  it('keeps an unrotated crop as the existing frame-only history operation', () => {
+    const result = setupWithEditableLayer();
+    let committed = false;
+
+    act(() => {
+      committed = result.current.layers.applyDocumentCrop({ x1: 30, y1: 40, x2: 300, y2: 250 });
+    });
+
+    expect(committed).toBe(true);
+    expect(result.current.store.durableDocument!.history.at(-1)?.operation).toMatchObject({
+      kind: 'set-document-frame',
+      next: { x: 30, y: 40, width: 270, height: 210 },
+    });
+    const id = Object.keys(result.current.store.layers)[0]!;
+    expect(result.current.store.layers[id].operations).toEqual([]);
   });
 
   it('routes a rename through the append boundary and publishes one entry under the legacy id', () => {

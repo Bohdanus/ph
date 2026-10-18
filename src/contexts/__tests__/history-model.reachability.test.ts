@@ -292,7 +292,7 @@ function functionBody(source: string, declaration: string): string {
  */
 describe('durable operation kind exhaustiveness', () => {
   const REACHES_EVERY_KIND =
-    /case '(create-layer|remove-layer|set-layer-properties|reposition-layer|reorder-layers|apply-filter|apply-affine-transform|apply-raster-processor|set-document-frame|replace-layer-source|merge-document|set-selection)'/g;
+    /case '(create-layer|remove-layer|set-layer-properties|reposition-layer|reorder-layers|apply-filter|apply-affine-transform|apply-raster-processor|set-document-frame|transform-document|replace-layer-source|merge-document|set-selection)'/g;
   const ASSET_FREE_KINDS = [
     'remove-layer',
     'set-layer-properties',
@@ -302,6 +302,7 @@ describe('durable operation kind exhaustiveness', () => {
     'apply-affine-transform',
     'apply-raster-processor',
     'set-document-frame',
+    'transform-document',
     'replace-layer-source',
     'set-selection',
   ];
@@ -331,7 +332,7 @@ describe('durable operation kind exhaustiveness', () => {
     // stripped to nothing.
     const body = functionBody(source, 'export function collectDurableAssetIds');
 
-    // The two kinds that carry a bitmap, and the ten that provably do not. A new
+    // The two kinds that carry a bitmap, and the eleven that provably do not. A new
     // kind has to be placed on one side or the other deliberately.
     expect(body).toContain("case 'create-layer':");
     expect(body).toContain("case 'merge-document':");
@@ -361,6 +362,7 @@ describe('durable operation kind exhaustiveness', () => {
       'apply-affine-transform': true,
       'apply-raster-processor': true,
       'set-document-frame': true,
+      'transform-document': true,
       'replace-layer-source': true,
       'merge-document': true,
       'set-selection': true,
@@ -379,6 +381,7 @@ const KIND_NAMES = [
   'apply-affine-transform',
   'apply-raster-processor',
   'set-document-frame',
+  'transform-document',
   'replace-layer-source',
   'merge-document',
   'set-selection',

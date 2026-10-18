@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MobileLayersDrawer } from '../MobileLayersDrawer.tsx';
 import { reorderLayers } from '../../../contexts/layer-utils.ts';
-import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../../util/constants.ts';
+import {
+  LOCK_LAYER_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
+  SET_LAYER_OPACITY_ACTION,
+  UNLOCK_LAYER_ACTION,
+} from '../../../util/constants.ts';
 import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { getHistoryItemTitle } from '../../../contexts/useHistory.ts';
 import type { HistoryPanelProjection } from '../../../contexts/useHistory.ts';
@@ -181,6 +187,44 @@ describe('MobileLayersDrawer', () => {
     expect(screen.getByRole('dialog', { name: 'Layers & History Drawer' })).toBeInTheDocument();
     expect(screen.getByText('Layers (4)')).toBeInTheDocument();
     expect(renderedLayerNames()).toEqual(['Top', 'Upper', 'Lower', 'Bottom']);
+  });
+
+  it('exposes a 44px full-lock toggle for each non-background layer', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const lockButton = screen.getByRole('button', { name: 'Lock Upper' });
+    expect(lockButton).toHaveClass('min-h-11', 'min-w-11');
+    fireEvent.click(lockButton);
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { locked: true }, LOCK_LAYER_ACTION);
+    expect(screen.getByRole('button', { name: 'Lock Bottom' })).toBeDisabled();
+  });
+
+  it('provides an inverse history action to unlock a full-locked layer', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock Upper' }));
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { locked: false }, UNLOCK_LAYER_ACTION);
+  });
+
+  it('writes a supported blend mode for the active layer', () => {
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Blend mode for Upper' }), {
+      target: { value: 'multiply' },
+    });
+    expect(updateLayerMock).toHaveBeenCalledWith('upper', { blendMode: 'multiply' }, SET_LAYER_BLEND_MODE_ACTION);
+  });
+
+  it('does not expose blend edits for locked or background layers', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    const { rerender } = render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: 'Blend mode for Upper' })).toBeDisabled();
+
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: false };
+    storeStateMock.activeLayerId = 'bottom';
+    rerender(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByRole('combobox', { name: 'Blend mode for Bottom' })).toBeDisabled();
   });
 
   it('moves a layer up exactly one position', async () => {
