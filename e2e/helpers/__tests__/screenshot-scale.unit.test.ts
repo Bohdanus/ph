@@ -215,6 +215,67 @@ describe('imageBoundsToCss', () => {
   });
 
   /**
+   * P3 — zero-sized image yields `NaN` edges. `imageBoundsToCss` delegates to
+   * `imagePointToCss`, which divides by the image dimensions, so a zero-sized image
+   * yields NaN on every edge rather than throwing — exactly like the point rule's
+   * zero-width/zero-height cases. A zero-area BOX does NOT yield NaN here: `imagePointToCss`
+   * multiplies by the box extent (it does not divide by it), so a zero-area box
+   * collapses every edge to the origin. The inverse `cssPointToImage`, which DOES divide
+   * by the box extent, is the one whose zero-area-box NaN case is pinned separately
+   * below. These zero-image cases pin the division-by-zero failure mode so a fix
+   * that guards one axis cannot pass unnoticed.
+   */
+  it('yields NaN edges for a zero-sized image instead of throwing', () => {
+    const result = imageBoundsToCss({ width: 0, height: 0 }, BOX, { left: 0, top: 0, right: 0, bottom: 0 });
+    expect(result.left).toBeNaN();
+    expect(result.top).toBeNaN();
+    expect(result.right).toBeNaN();
+    expect(result.bottom).toBeNaN();
+  });
+
+  it('yields NaN on the x-axis for a zero-width image', () => {
+    const result = imageBoundsToCss({ width: 0, height: 50 }, BOX, { left: 0, top: 0, right: 0, bottom: 50 });
+    expect(result.left).toBeNaN();
+    expect(result.right).toBeNaN();
+    // The y-axis is unaffected: image height 50 maps bottom 50 via 50 + (50*300)/50 = 350.
+    expect(result.top).toBe(50);
+    expect(result.bottom).toBe(350);
+  });
+
+  it('yields NaN on the y-axis for a zero-height image', () => {
+    const result = imageBoundsToCss({ width: 50, height: 0 }, BOX, { left: 0, top: 0, right: 50, bottom: 0 });
+    // The x-axis is unaffected: image width 50 maps right 50 via 100 + (50*400)/50 = 500.
+    expect(result.left).toBe(100);
+    expect(result.right).toBe(500);
+    expect(result.top).toBeNaN();
+    expect(result.bottom).toBeNaN();
+  });
+
+  it('yields NaN for zero bounds and Infinity for non-zero on a zero-area image', () => {
+    const result = imageBoundsToCss({ width: 0, height: 0 }, BOX, { left: 0, top: 0, right: 10, bottom: 10 });
+    // `imagePointToCss` divides by the image extent, so zero bounds give 0/0 = NaN and
+    // non-zero bounds give 10/0 = Infinity. Both are signals that the capture was
+    // malformed, just different ones — NaN for the origin corner, Infinity for the far.
+    expect(result.left).toBeNaN();
+    expect(result.top).toBeNaN();
+    expect(result.right).toBe(Infinity);
+    expect(result.bottom).toBe(Infinity);
+  });
+
+  it('collapses every edge to the box origin for a zero-area box, rather than throwing', () => {
+    // A zero-area BOX is NOT a division-by-zero hazard for `imageBoundsToCss` — the box
+    // extent multiplies, it does not divide, so every edge maps to the origin and the
+    // caller gets a degenerate-but-definite rect rather than NaN. This pins that it stays
+    // that way if the rule is ever refactored to divide by the box extent.
+    const collapsed: CssBox = { x: 37, y: 11, width: 0, height: 0 };
+    const result = imageBoundsToCss({ width: 100, height: 50 }, collapsed, { left: 0, top: 0, right: 10, bottom: 10 });
+    expect(result.left).toBe(37);
+    expect(result.top).toBe(11);
+    expect(result.right).toBe(37);
+    expect(result.bottom).toBe(11);
+  });
+
+  /**
    * The two arithmetic tests above pin the convention; these pin that it is WRITTEN DOWN.
    *
    * `imageBoundsToCss` had no JSDoc at all and the module docstring did not mention it, so
@@ -319,6 +380,31 @@ describe('cssPointToImage', () => {
     expect(image).toEqual({ width: 800, height: 600 });
     expect(box).toEqual(BOX);
     expect(point).toEqual({ x: 300, y: 200 });
+  });
+
+  /**
+   * P3 — zero-sized image yields `NaN` edges. `cssPointToImage` divides by the box extent,
+   * so a zero-area box is the NaN source (pinned above). But the forward direction
+   * `imagePointToCss` divides by the IMAGE size, so a zero-sized image yields NaN there
+   * too — and unlike the box case, the image is the value a caller hands to a pixel
+   * sampler, so the NaN reaches `page.mouse.click` as an opaque failure. These cases pin
+   * both axes independently: zero width, zero height, and both, so a fix that guards one
+   * axis forgets the other cannot pass unnoticed.
+   */
+  it('yields NaN for a zero-width image instead of throwing', () => {
+    const result = imagePointToCss({ width: 0, height: 50 }, BOX, { x: 0, y: 0 });
+    expect(result.x).toBeNaN();
+  });
+
+  it('yields NaN for a zero-height image instead of throwing', () => {
+    const result = imagePointToCss({ width: 100, height: 0 }, BOX, { x: 0, y: 0 });
+    expect(result.y).toBeNaN();
+  });
+
+  it('yields Infinity on both axes for a zero-sized image at a non-zero point', () => {
+    const result = imagePointToCss({ width: 0, height: 0 }, BOX, { x: 50, y: 25 });
+    expect(result.x).toBe(Infinity);
+    expect(result.y).toBe(Infinity);
   });
 
   it('yields NaN for a zero-area box instead of throwing', () => {

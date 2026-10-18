@@ -61,13 +61,15 @@ const INLINE_SET_TIMEOUT = String.raw`test\.setTimeout\(\s*${BARE_NUMBER}\s*[,)]
  * the exact shape Playwright's own documentation uses for serial mode, so it is the shape
  * the next person writing a budget would reach for.
  */
-const INLINE_CONFIGURE_TIMEOUT = String.raw`test\.describe\.configure\(\s*\{[^}]*\btimeout\s*:\s*${BARE_NUMBER}\s*[,}]`;
+const CONFIGURE_BODY = String.raw`(?:[^{}]|\{[^{}]*\})*`;
+const INLINE_CONFIGURE_TIMEOUT = String.raw`test\.describe\.configure\(\s*\{${CONFIGURE_BODY}\btimeout\s*:\s*${BARE_NUMBER}\s*[,}]`;
 
 const INLINE_TIMEOUT = new RegExp(`${INLINE_SET_TIMEOUT}|${INLINE_CONFIGURE_TIMEOUT}`);
 
 /** Whether a file declares ANY per-test budget by name, or only literals. */
-const HAS_NAMED_BUDGET =
-  /test\.setTimeout\s*\(\s*[A-Z_]|test\.describe\.configure\s*\(\s*\{[^}]*\btimeout\s*:\s*[A-Z_]/;
+const HAS_NAMED_BUDGET = new RegExp(
+  String.raw`test\.setTimeout\s*\(\s*[A-Z_]|test\.describe\.configure\s*\(\s*\{${CONFIGURE_BODY}\btimeout\s*:\s*[A-Z_]`
+);
 
 /** Whether a file navigates the page from a before hook rather than from a test body. */
 const NAVIGATES_FROM_BEFORE_HOOK = /test\.before(?:Each|All)\s*\(/;
@@ -89,7 +91,7 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  * WHAT THIS LIST IS, precisely. It is every such spec in the tree today, DERIVED by scanning
  * `e2e/` rather than by guessing — `npm run test:e2e:unit` recomputes it from the files on
  * every run. It is NOT a claim that these specs provably do not need a budget; it is a claim
- * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the fourteen are
+ * that `TEST-FLAKES.md` records no instance of the failure for them. Two of the twelve are
  * separate for exactly that reason:
  *
  * - `sidebar-flyout.spec.ts` has the recorded 30s failure above. It is listed here rather
@@ -103,13 +105,12 @@ const navigatesFromABeforeHook = (source: string): boolean =>
  *   section it names. That inconsistency is in `TEST-FLAKES.md`, not here, and correcting
  *   it is a change to a document this file does not own.
  *
- * The twelve others carry the same one-line reason: no recorded instance, so no named budget
+ * The ten others carry the same one-line reason: no recorded instance, so no named budget
  * yet. Adding a ninth reason without evidence would be inventing one.
  */
 const UNBUDGETED_NAVIGATORS: readonly string[] = [
   'adjustments.spec.ts',
   'flyout-longpress-race.spec.ts',
-  'mobile-shell.spec.ts',
   'paint-options.spec.ts',
   'paint-tool-pixels.spec.ts',
   'panel-workspace.spec.ts',
@@ -184,6 +185,10 @@ describe('the inline-literal pattern', () => {
       source: "test.describe.configure({ mode: 'serial', timeout: 6e4 })",
       forbidden: 'a second key BEFORE `timeout:`',
     },
+    {
+      source: "test.describe.configure({ retries: { condition: 'ci' }, timeout: 6e4 })",
+      forbidden: 'a nested object before the timeout key',
+    },
   ])('matches $source ($forbidden)', ({ source }) => {
     expect(INLINE_TIMEOUT.test(source)).toBe(true);
   });
@@ -192,6 +197,10 @@ describe('the inline-literal pattern', () => {
     { source: 'test.setTimeout(DEFAULT_TEST_TIMEOUT_MS)', why: 'the point: a named budget' },
     { source: 'test.setTimeout(TIMEOUT_MS)', why: 'a named budget of any spelling' },
     { source: 'test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS })', why: 'a named file-level budget' },
+    {
+      source: "test.describe.configure({ retries: { condition: 'ci' }, timeout: DEFAULT_TEST_TIMEOUT_MS })",
+      why: 'a named budget after a nested configure option',
+    },
     { source: "test.describe.configure({ mode: 'serial' })", why: 'a configure call with no timeout in it' },
     { source: 'test.describe.configure({ timeout })', why: 'the shorthand, which has no colon to anchor on' },
     {
