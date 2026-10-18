@@ -168,7 +168,7 @@ variant or an equivalent atomic history action.
    Unsupported-source fallback is now pinned at the StoreContext publication seam.
    The browser seam's raster/blank forced durable-publication case is pinned by
    `e2e/undo-redo.spec.ts`, and nested `args.enabled` parity is pinned by
-   `history-adapter.branches.test.ts`; text/vector pixel gaps remain proof gaps,
+   `history-adapter.branches.test.ts`; vector and broader text pixel gaps remain proof gaps,
    not permission to weaken the authority gate.
 4. Preserve the explicit bedrock conversion UX and its history operation while
    keeping merge/flatten explicit and separate from a tool gesture.
@@ -185,13 +185,14 @@ variant or an equivalent atomic history action.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
    publication intentionally remains legacy. Direct browser differentials now prove byte-identical
    legacy/durable composition for a 90-degree single-raster crop (exact `0,0,64,64` materialized
-   bounds) and a non-quarter 37-degree crop with two differently positioned raster layers at a
-   non-zero frame origin. Exact quarter-turn matrices prevent floating trigonometric residue from
-   expanding the pixel grid. The 90-degree fixture pins exact materialized bounds; the 37-degree
-   fixture pins composed pixels and source-color presence, not exact fractional per-layer bounds.
-   These fixtures close only their own parity cases, not the frame gate: other angles, non-raster
-   source kinds and the full retained-affine operation surface still need parity proof. Previews and
-   unsupported documents still use the complete legacy compatibility path.
+   bounds), a non-quarter 37-degree crop with two differently positioned raster layers, and a
+   37-degree text-source crop. Both 37-degree frames have non-zero origins. Exact quarter-turn
+   matrices prevent floating trigonometric residue from expanding the pixel grid. The 90-degree
+   fixture pins exact materialized bounds; the 37-degree fixtures pin composed pixels and source
+   presence, not exact fractional per-layer bounds. These fixtures close only their own parity cases,
+   not the frame gate: other angles, vector/blank/paint sources, other text geometries and the full
+   retained-affine operation surface still need parity proof. Previews and unsupported documents still
+   use the complete legacy compatibility path.
    Unsupported-source
    fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
    then retire legacy logical replay only after

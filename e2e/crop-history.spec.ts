@@ -459,17 +459,40 @@ async function commitCrop(page: Page): Promise<void> {
   await applyCrop(page);
 }
 
+type CropParityLayerFixture =
+  | Readonly<{
+      kind: 'raster';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
+    }>
+  | Readonly<{
+      kind: 'text';
+      id: string;
+      order: number;
+      pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      textArgs: Readonly<{
+        toolName: 'text';
+        align: 'left' | 'center' | 'right';
+        bold: boolean;
+        color: string;
+        fontFamily: string;
+        fontSize: number;
+        italic: boolean;
+        lineHeight: number;
+        text: string;
+        rect: Readonly<{ x1: number; y1: number; x2: number; y2: number }>;
+        kind: 'point' | 'paragraph';
+      }>;
+    }>;
+
 type CropParityFixture = Readonly<{
   caseName: string;
   documentId: string;
   angleDegrees: number;
   cropFrame: Readonly<{ x: number; y: number; width: number; height: number }>;
-  layers: readonly Readonly<{
-    id: string;
-    order: number;
-    pos: Readonly<{ x: number; y: number; width: number; height: number }>;
-    fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
-  }>[];
+  layers: readonly CropParityLayerFixture[];
 }>;
 
 async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
@@ -497,28 +520,44 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
 
     const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
     const layers = fixture.layers.map((layerFixture) => {
-      const sourceCanvas = document.createElement('canvas');
-      sourceCanvas.width = layerFixture.pos.width;
-      sourceCanvas.height = layerFixture.pos.height;
-      const sourceContext = sourceCanvas.getContext('2d');
-      if (!sourceContext) throw new Error(`A 2D context is required for ${layerFixture.id}`);
-      for (const fill of layerFixture.fills) {
-        sourceContext.fillStyle = fill.color;
-        sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
-      }
-      const source = {
-        kind: 'image',
-        bitmap: sourceCanvas,
-        name: `${layerFixture.id}.png`,
-        isBedrock: false,
-        pos: layerFixture.pos,
-      };
+      const runtimeSource =
+        layerFixture.kind === 'raster'
+          ? (() => {
+              const sourceCanvas = document.createElement('canvas');
+              sourceCanvas.width = layerFixture.pos.width;
+              sourceCanvas.height = layerFixture.pos.height;
+              const sourceContext = sourceCanvas.getContext('2d');
+              if (!sourceContext) throw new Error(`A 2D context is required for ${layerFixture.id}`);
+              for (const fill of layerFixture.fills) {
+                sourceContext.fillStyle = fill.color;
+                sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
+              }
+              return {
+                bitmap: sourceCanvas,
+                source: {
+                  kind: 'image' as const,
+                  bitmap: sourceCanvas,
+                  name: `${layerFixture.id}.png`,
+                  isBedrock: false,
+                  pos: layerFixture.pos,
+                },
+              };
+            })()
+          : {
+              bitmap: null,
+              source: {
+                kind: 'tool' as const,
+                args: layerFixture.textArgs,
+                isBedrock: false,
+                pos: layerFixture.pos,
+              },
+            };
       return {
         id: layerFixture.id,
         name: layerFixture.id,
         isBedrock: false,
         tmpCanvas: null,
-        bitmap: sourceCanvas,
+        bitmap: runtimeSource.bitmap,
         visible: true,
         opacity: 1,
         locked: false,
@@ -526,7 +565,7 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
         order: layerFixture.order,
         pos: layerFixture.pos,
         presentationBounds: null,
-        source,
+        source: runtimeSource.source,
         operations: [],
       };
     });
@@ -614,7 +653,13 @@ async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) 
           }
           return false;
         };
-        const colors = [...new Set(fixture.layers.flatMap((layer) => layer.fills.map((fill) => fill.color)))];
+        const colors = [
+          ...new Set(
+            fixture.layers.flatMap((layer) =>
+              layer.kind === 'raster' ? layer.fills.map((fill) => fill.color) : [layer.textArgs.color]
+            )
+          ),
+        ];
         const colorPresence = Object.fromEntries(
           colors.map((color) => {
             const normalized = color.replace('#', '');
@@ -1179,6 +1224,7 @@ test.describe('Crop history', () => {
         cropFrame: { x: 16, y: 16, width: 32, height: 32 },
         layers: [
           {
+            kind: 'raster',
             id: 'quarter-turn-crop-layer',
             order: 0,
             pos: { x: 0, y: 0, width: 64, height: 64 },
@@ -1209,6 +1255,7 @@ test.describe('Crop history', () => {
         cropFrame: { x: 12, y: 10, width: 40, height: 44 },
         layers: [
           {
+            kind: 'raster',
             id: 'background',
             order: 0,
             pos: { x: 0, y: 0, width: 64, height: 64 },
@@ -1218,6 +1265,7 @@ test.describe('Crop history', () => {
             ],
           },
           {
+            kind: 'raster',
             id: 'center-patch',
             order: 1,
             pos: { x: 24, y: 24, width: 16, height: 16 },
@@ -1236,6 +1284,44 @@ test.describe('Crop history', () => {
       expect(result.differingBytes, '37-degree multi-layer rasters must match byte-for-byte').toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
       expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
+    });
+
+    test('a 37-degree crop preserves a committed text source across renderers', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: '37-degree text-source crop',
+        documentId: 'text-source-crop-pixel-parity',
+        angleDegrees: 37,
+        cropFrame: { x: 8, y: 8, width: 48, height: 48 },
+        layers: [
+          {
+            kind: 'text',
+            id: 'text-layer',
+            order: 0,
+            pos: { x: 24, y: 24, width: 16, height: 16 },
+            textArgs: {
+              toolName: 'text',
+              align: 'left',
+              bold: false,
+              color: '#ff00ff',
+              fontFamily: 'Arial',
+              fontSize: 12,
+              italic: false,
+              lineHeight: 1.2,
+              text: 'I',
+              rect: { x1: 0, y1: 0, x2: 16, y2: 16 },
+              kind: 'point',
+            },
+          },
+        ],
+      });
+
+      expect(result.colorPresence['#ff00ff']?.legacy, 'legacy crop must contain text-source pixels').toBe(true);
+      expect(result.colorPresence['#ff00ff']?.durable, 'durable crop must contain text-source pixels').toBe(true);
+      expect(result.differingBytes, 'text-source crop rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds)).toEqual(['text-layer']);
     });
   });
 });
