@@ -172,8 +172,12 @@ function isWorkingTreeHeld(wt) {
   return wt.workingTree.modified + wt.workingTree.untracked > 0;
 }
 
+function hasNetNoopMerge(wt) {
+  return wt.merge?.conflict === false && wt.mergeResultMatchesBase === true;
+}
+
 function hasUnmergedCommits(wt) {
-  return typeof wt.ahead === 'number' && wt.ahead > 0 && wt.patchEquivalence !== 'absorbed';
+  return typeof wt.ahead === 'number' && wt.ahead > 0 && wt.patchEquivalence !== 'absorbed' && !hasNetNoopMerge(wt);
 }
 
 /**
@@ -320,6 +324,9 @@ export function classify(
     status = STATUS.UNMERGED_WORK;
     if (unmerged) reasons.push(`${wt.ahead} commit(s) ahead of main`);
     if (uncommitted) reasons.push('the working tree holds uncommitted changes');
+  } else if (hasNetNoopMerge(wt)) {
+    status = STATUS.LANDED;
+    reasons.push('a conflict-free merge produces exactly the current base tree, so there is no net change to land');
   } else if (wt.patchEquivalence === 'absorbed') {
     status = STATUS.LANDED;
     reasons.push(wt.patchEquivalenceReason ?? 'every branch commit has an equivalent patch on the base');
@@ -464,7 +471,7 @@ export function classify(
     recommendation === RECOMMENDATION.PRUNE &&
     wt.ahead !== null &&
     wt.mergedIntoBase !== null &&
-    (wt.mergedIntoBase === true || wt.patchEquivalence === 'absorbed') &&
+    (wt.mergedIntoBase === true || wt.patchEquivalence === 'absorbed' || hasNetNoopMerge(wt)) &&
     wt.workingTree.modified === 0 &&
     wt.workingTree.untracked === 0 &&
     !wt.locked &&
@@ -512,6 +519,7 @@ export function classify(
     recommendation,
     action,
     mergeConflict: wt.merge?.conflict ?? null,
+    mergeResultMatchesBase: wt.merge?.conflict === false ? (wt.mergeResultMatchesBase ?? null) : null,
     // Disambiguates the two things `mergeConflict: null` means: the check was
     // skipped (already on main, or detached), or attempted and unanswerable.
     mergeChecked: mergeState !== 'unknown',
