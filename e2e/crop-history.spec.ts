@@ -459,6 +459,200 @@ async function commitCrop(page: Page): Promise<void> {
   await applyCrop(page);
 }
 
+type CropParityFixture = Readonly<{
+  caseName: string;
+  documentId: string;
+  angleDegrees: number;
+  cropFrame: Readonly<{ x: number; y: number; width: number; height: number }>;
+  layers: readonly Readonly<{
+    id: string;
+    order: number;
+    pos: Readonly<{ x: number; y: number; width: number; height: number }>;
+    fills: readonly Readonly<{ x: number; y: number; width: number; height: number; color: string }>[];
+  }>[];
+}>;
+
+async function compareCropRenderers(page: Page, caseFixture: CropParityFixture) {
+  return page.evaluate(async (fixture) => {
+    const load = (specifier: string) => import(/* @vite-ignore */ new URL(specifier, location.origin).href);
+    const [
+      { AssetRegistry },
+      { composeDurableDocument },
+      { documentAffineToLayerLocal, rotationAffineAroundPoint },
+      { legacyHistoryToDurable },
+      { drawLayersToCanvas },
+      { createAffineLayerOperation },
+      { replayDurableAtCursor },
+      { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION },
+    ] = await Promise.all([
+      load('/src/contexts/asset-registry.ts'),
+      load('/src/contexts/durable-compositor.ts'),
+      load('/src/contexts/affine-transform.ts'),
+      load('/src/contexts/history-adapter.ts'),
+      load('/src/contexts/layer-renderer.ts'),
+      load('/src/contexts/layer-utils.ts'),
+      load('/src/contexts/durable-replay.ts'),
+      load('/src/util/constants.ts'),
+    ]);
+
+    const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
+    const layers = fixture.layers.map((layerFixture) => {
+      const sourceCanvas = document.createElement('canvas');
+      sourceCanvas.width = layerFixture.pos.width;
+      sourceCanvas.height = layerFixture.pos.height;
+      const sourceContext = sourceCanvas.getContext('2d');
+      if (!sourceContext) throw new Error(`A 2D context is required for ${layerFixture.id}`);
+      for (const fill of layerFixture.fills) {
+        sourceContext.fillStyle = fill.color;
+        sourceContext.fillRect(fill.x, fill.y, fill.width, fill.height);
+      }
+      const source = {
+        kind: 'image',
+        bitmap: sourceCanvas,
+        name: `${layerFixture.id}.png`,
+        isBedrock: false,
+        pos: layerFixture.pos,
+      };
+      return {
+        id: layerFixture.id,
+        name: layerFixture.id,
+        isBedrock: false,
+        tmpCanvas: null,
+        bitmap: sourceCanvas,
+        visible: true,
+        opacity: 1,
+        locked: false,
+        blendMode: 'source-over',
+        order: layerFixture.order,
+        pos: layerFixture.pos,
+        presentationBounds: null,
+        source,
+        operations: [],
+      };
+    });
+    const frameCenter = {
+      x: fixture.cropFrame.x + fixture.cropFrame.width / 2,
+      y: fixture.cropFrame.y + fixture.cropFrame.height / 2,
+    };
+    const transform = rotationAffineAroundPoint((-fixture.angleDegrees * Math.PI) / 180, frameCenter);
+    const legacyLayers = layers
+      .map((layer) => ({
+        ...layer,
+        operations: [createAffineLayerOperation(documentAffineToLayerLocal(transform, layer.pos), `crop-${layer.id}`)],
+      }))
+      .sort((left, right) => left.order - right.order);
+    const legacySurface = document.createElement('canvas');
+    if (!drawLayersToCanvas(legacySurface, legacyLayers, fixture.cropFrame)) {
+      throw new Error(`Legacy composition was refused for ${fixture.caseName}`);
+    }
+    const legacyContext = legacySurface.getContext('2d');
+    if (!legacyContext) throw new Error('Legacy crop composition produced no 2D context');
+    const legacyPixels = Array.from(
+      legacyContext.getImageData(0, 0, fixture.cropFrame.width, fixture.cropFrame.height).data
+    );
+
+    const registry = new AssetRegistry();
+    try {
+      const converted = legacyHistoryToDurable(
+        [
+          {
+            id: 'baseline',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: layers[0]?.id,
+            documentSource: {
+              layers: Object.fromEntries(layers.map((layer) => [layer.id, layer])),
+              size: { width: 64, height: 64 },
+              frame: baseFrame,
+            },
+          },
+          {
+            id: 'rotated-crop',
+            actionName: SET_DOCUMENT_FRAME_ACTION,
+            layerId: 'document',
+            args: { previousFrame: baseFrame, nextFrame: fixture.cropFrame, transform },
+          },
+        ],
+        {
+          documentId: fixture.documentId,
+          registry,
+          initialSize: { width: 64, height: 64 },
+          initialFrame: baseFrame,
+        }
+      );
+      if (converted.diagnostics.length > 0) {
+        throw new Error(`Durable crop conversion failed: ${JSON.stringify(converted.diagnostics)}`);
+      }
+      const cursor = converted.legacyCursorToDurableCursor[1];
+      if (typeof cursor !== 'number') throw new Error('Rotated crop did not map to a durable cursor');
+      const replay = replayDurableAtCursor(converted.document, cursor);
+      const composite = await composeDurableDocument(replay, {
+        documentId: fixture.documentId,
+        baselineAssetGeneration: registry.getDocumentGeneration(fixture.documentId),
+        operationSetRevision: converted.document.durableRevision,
+        assetRegistry: registry,
+      });
+      try {
+        const durableSurface = document.createElement('canvas');
+        durableSurface.width = fixture.cropFrame.width;
+        durableSurface.height = fixture.cropFrame.height;
+        const durableContext = durableSurface.getContext('2d');
+        if (!durableContext) throw new Error('Durable crop composition produced no 2D context');
+        durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
+        const durablePixels = Array.from(
+          durableContext.getImageData(0, 0, fixture.cropFrame.width, fixture.cropFrame.height).data
+        );
+        const hasOpaqueRgb = (pixels: number[], rgb: readonly [number, number, number]): boolean => {
+          for (let index = 0; index < pixels.length; index += 4) {
+            if (
+              pixels[index] === rgb[0] &&
+              pixels[index + 1] === rgb[1] &&
+              pixels[index + 2] === rgb[2] &&
+              (pixels[index + 3] ?? 0) > 0
+            ) {
+              return true;
+            }
+          }
+          return false;
+        };
+        const colors = [...new Set(fixture.layers.flatMap((layer) => layer.fills.map((fill) => fill.color)))];
+        const colorPresence = Object.fromEntries(
+          colors.map((color) => {
+            const normalized = color.replace('#', '');
+            const rgb: readonly [number, number, number] = [
+              Number.parseInt(normalized.slice(0, 2), 16),
+              Number.parseInt(normalized.slice(2, 4), 16),
+              Number.parseInt(normalized.slice(4, 6), 16),
+            ];
+            return [color, { legacy: hasOpaqueRgb(legacyPixels, rgb), durable: hasOpaqueRgb(durablePixels, rgb) }];
+          })
+        );
+        let differingBytes = 0;
+        for (let index = 0; index < legacyPixels.length; index += 1) {
+          if (legacyPixels[index] !== durablePixels[index]) differingBytes += 1;
+        }
+        return {
+          caseName: fixture.caseName,
+          legacyPixels,
+          durablePixels,
+          differingBytes,
+          colorPresence,
+          materializedBounds: Object.fromEntries(
+            fixture.layers.map(({ id }) => {
+              const layer = composite.layers[id];
+              if (!layer) throw new Error(`Durable crop did not materialize ${id}`);
+              return [id, layer.bounds];
+            })
+          ),
+        };
+      } finally {
+        composite.release();
+      }
+    } finally {
+      registry.shutdown();
+    }
+  }, caseFixture);
+}
+
 test.describe('Crop history', () => {
   // Tall enough to hold the whole canvas box, so no band read is clipped by the fold. The
   // intersection in `readableBox` already makes a truncation unrepresentable; the window removes
@@ -978,170 +1172,70 @@ test.describe('Crop history', () => {
     }) => {
       await openDocument(page);
 
-      const result = await page.evaluate(async () => {
-        const load = (specifier: string) => import(/* @vite-ignore */ new URL(specifier, location.origin).href);
-        const [
-          { AssetRegistry },
-          { composeDurableDocument },
-          { documentAffineToLayerLocal, rotationAffineAroundPoint },
-          { legacyHistoryToDurable },
-          { drawLayersToCanvas },
-          { createAffineLayerOperation },
-          { replayDurableAtCursor },
-          { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION },
-        ] = await Promise.all([
-          load('/src/contexts/asset-registry.ts'),
-          load('/src/contexts/durable-compositor.ts'),
-          load('/src/contexts/affine-transform.ts'),
-          load('/src/contexts/history-adapter.ts'),
-          load('/src/contexts/layer-renderer.ts'),
-          load('/src/contexts/layer-utils.ts'),
-          load('/src/contexts/durable-replay.ts'),
-          load('/src/util/constants.ts'),
-        ]);
-
-        const sourceCanvas = document.createElement('canvas');
-        sourceCanvas.width = 64;
-        sourceCanvas.height = 64;
-        const sourceContext = sourceCanvas.getContext('2d');
-        if (!sourceContext) throw new Error('A 2D canvas context is required for the crop parity fixture');
-        sourceContext.fillStyle = '#ff0000';
-        sourceContext.fillRect(0, 0, 32, 64);
-        sourceContext.fillStyle = '#0000ff';
-        sourceContext.fillRect(32, 0, 32, 64);
-
-        const layerId = 'quarter-turn-crop-layer';
-        const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
-        const cropFrame = { x: 16, y: 16, width: 32, height: 32 };
-        const position = { x: 0, y: 0, width: 64, height: 64 };
-        const source = {
-          kind: 'image',
-          bitmap: sourceCanvas,
-          name: 'quarter-turn-crop.png',
-          isBedrock: false,
-          pos: position,
-        };
-        const layer = {
-          id: layerId,
-          name: layerId,
-          isBedrock: false,
-          tmpCanvas: null,
-          bitmap: sourceCanvas,
-          visible: true,
-          opacity: 1,
-          locked: false,
-          blendMode: 'source-over',
-          order: 0,
-          pos: position,
-          presentationBounds: null,
-          source,
-          operations: [],
-        };
-        const transform = rotationAffineAroundPoint(-Math.PI / 2, { x: 32, y: 32 });
-        const legacyLayer = {
-          ...layer,
-          operations: [
-            createAffineLayerOperation(documentAffineToLayerLocal(transform, position), 'quarter-turn-crop'),
-          ],
-        };
-        const legacySurface = document.createElement('canvas');
-        if (!drawLayersToCanvas(legacySurface, [legacyLayer], cropFrame)) {
-          throw new Error('Legacy rotated-crop composition was refused');
-        }
-        const legacyContext = legacySurface.getContext('2d');
-        if (!legacyContext) throw new Error('Legacy crop composition produced no 2D context');
-        const legacyPixels = Array.from(legacyContext.getImageData(0, 0, 32, 32).data);
-
-        const documentId = 'quarter-turn-crop-pixel-parity';
-        const registry = new AssetRegistry();
-        try {
-          const converted = legacyHistoryToDurable(
-            [
-              {
-                id: 'baseline',
-                actionName: OPEN_DOCUMENT_ACTION,
-                layerId,
-                documentSource: {
-                  layers: { [layerId]: layer },
-                  size: { width: 64, height: 64 },
-                  frame: baseFrame,
-                },
-              },
-              {
-                id: 'rotated-crop',
-                actionName: SET_DOCUMENT_FRAME_ACTION,
-                layerId: 'document',
-                args: { previousFrame: baseFrame, nextFrame: cropFrame, transform },
-              },
+      const result = await compareCropRenderers(page, {
+        caseName: 'quarter-turn crop',
+        documentId: 'quarter-turn-crop-pixel-parity',
+        angleDegrees: 90,
+        cropFrame: { x: 16, y: 16, width: 32, height: 32 },
+        layers: [
+          {
+            id: 'quarter-turn-crop-layer',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
             ],
-            { documentId, registry, initialSize: { width: 64, height: 64 }, initialFrame: baseFrame }
-          );
-          if (converted.diagnostics.length > 0) {
-            throw new Error(`Durable crop conversion failed: ${JSON.stringify(converted.diagnostics)}`);
-          }
-          const cursor = converted.legacyCursorToDurableCursor[1];
-          if (typeof cursor !== 'number') throw new Error('Rotated crop did not map to a durable cursor');
-          const replay = replayDurableAtCursor(converted.document, cursor);
-          const composite = await composeDurableDocument(replay, {
-            documentId,
-            baselineAssetGeneration: registry.getDocumentGeneration(documentId),
-            operationSetRevision: converted.document.durableRevision,
-            assetRegistry: registry,
-          });
-          try {
-            const durableSurface = document.createElement('canvas');
-            durableSurface.width = 32;
-            durableSurface.height = 32;
-            const durableContext = durableSurface.getContext('2d');
-            if (!durableContext) throw new Error('Durable crop composition produced no 2D context');
-            durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
-            const durablePixels = Array.from(durableContext.getImageData(0, 0, 32, 32).data);
-            const hasOpaqueRgb = (pixels: number[], rgb: readonly [number, number, number]): boolean => {
-              for (let index = 0; index < pixels.length; index += 4) {
-                if (
-                  pixels[index] === rgb[0] &&
-                  pixels[index + 1] === rgb[1] &&
-                  pixels[index + 2] === rgb[2] &&
-                  (pixels[index + 3] ?? 0) > 0
-                ) {
-                  return true;
-                }
-              }
-              return false;
-            };
-            const red: readonly [number, number, number] = [255, 0, 0];
-            const blue: readonly [number, number, number] = [0, 0, 255];
-            const materializedBounds = composite.layers[layerId]?.bounds;
-            if (!materializedBounds) throw new Error('Durable crop produced no materialized layer bounds');
-            let differingBytes = 0;
-            for (let index = 0; index < legacyPixels.length; index += 1) {
-              if (legacyPixels[index] !== durablePixels[index]) differingBytes += 1;
-            }
-            return {
-              legacyPixels,
-              durablePixels,
-              legacyHasRed: hasOpaqueRgb(legacyPixels, red),
-              legacyHasBlue: hasOpaqueRgb(legacyPixels, blue),
-              durableHasRed: hasOpaqueRgb(durablePixels, red),
-              durableHasBlue: hasOpaqueRgb(durablePixels, blue),
-              differingBytes,
-              materializedBounds,
-            };
-          } finally {
-            composite.release();
-          }
-        } finally {
-          registry.shutdown();
-        }
+          },
+        ],
       });
 
-      expect(result.legacyHasRed, 'legacy crop must contain fixture red pixels').toBe(true);
-      expect(result.legacyHasBlue, 'legacy crop must contain fixture blue pixels').toBe(true);
-      expect(result.durableHasRed, 'durable crop must contain fixture red pixels').toBe(true);
-      expect(result.durableHasBlue, 'durable crop must contain fixture blue pixels').toBe(true);
+      expect(result.colorPresence['#ff0000']?.legacy, 'legacy crop must contain fixture red pixels').toBe(true);
+      expect(result.colorPresence['#0000ff']?.legacy, 'legacy crop must contain fixture blue pixels').toBe(true);
+      expect(result.colorPresence['#ff0000']?.durable, 'durable crop must contain fixture red pixels').toBe(true);
+      expect(result.colorPresence['#0000ff']?.durable, 'durable crop must contain fixture blue pixels').toBe(true);
       expect(result.differingBytes, 'durable and legacy crop rasters must be byte-identical').toBe(0);
       expect(result.durablePixels).toEqual(result.legacyPixels);
-      expect(result.materializedBounds).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+      expect(result.materializedBounds['quarter-turn-crop-layer']).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+    });
+
+    test('a 37-degree crop matches legacy pixels for multiple positioned layers', async ({ page }) => {
+      await openDocument(page);
+
+      const result = await compareCropRenderers(page, {
+        caseName: '37-degree two-layer crop',
+        documentId: 'arbitrary-multilayer-crop-parity',
+        angleDegrees: 37,
+        cropFrame: { x: 12, y: 10, width: 40, height: 44 },
+        layers: [
+          {
+            id: 'background',
+            order: 0,
+            pos: { x: 0, y: 0, width: 64, height: 64 },
+            fills: [
+              { x: 0, y: 0, width: 32, height: 64, color: '#ff0000' },
+              { x: 32, y: 0, width: 32, height: 64, color: '#0000ff' },
+            ],
+          },
+          {
+            id: 'center-patch',
+            order: 1,
+            pos: { x: 24, y: 24, width: 16, height: 16 },
+            fills: [
+              { x: 0, y: 0, width: 8, height: 16, color: '#ffff00' },
+              { x: 8, y: 0, width: 8, height: 16, color: '#00ff00' },
+            ],
+          },
+        ],
+      });
+
+      for (const [color, presence] of Object.entries(result.colorPresence)) {
+        expect(presence.legacy, `legacy crop should contain ${color}`).toBe(true);
+        expect(presence.durable, `durable crop should contain ${color}`).toBe(true);
+      }
+      expect(result.differingBytes, '37-degree multi-layer rasters must match byte-for-byte').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(Object.keys(result.materializedBounds).sort()).toEqual(['background', 'center-patch']);
     });
   });
 });
