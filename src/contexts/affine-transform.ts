@@ -81,7 +81,7 @@ export function applyAffineTransform(transform: AffineTransform, point: Point): 
   };
 }
 
-export function rotationAffineAroundPoint(angleRadians: number, center: Point): AffineTransform {
+function rotationComponents(angleRadians: number): Readonly<{ cosine: number; sine: number }> {
   let cosine = Math.cos(angleRadians);
   let sine = Math.sin(angleRadians);
   const halfPi = Math.PI / 2;
@@ -107,6 +107,11 @@ export function rotationAffineAroundPoint(angleRadians: number, center: Point): 
         break;
     }
   }
+  return { cosine, sine };
+}
+
+export function rotationAffineAroundPoint(angleRadians: number, center: Point): AffineTransform {
+  const { cosine, sine } = rotationComponents(angleRadians);
   return validateAffineTransform({
     a: cosine,
     b: sine,
@@ -243,11 +248,12 @@ export function transformToolArgsToAffine(args: TransformToolArgs, size: Size): 
     e: 0,
     f: 0,
   };
+  const { cosine, sine } = rotationComponents(angle);
   const rotation: AffineTransform = {
-    a: Math.cos(angle),
-    b: Math.sin(angle),
-    c: -Math.sin(angle),
-    d: Math.cos(angle),
+    a: cosine,
+    b: sine,
+    c: sine === 0 ? 0 : -sine,
+    d: cosine,
     e: 0,
     f: 0,
   };

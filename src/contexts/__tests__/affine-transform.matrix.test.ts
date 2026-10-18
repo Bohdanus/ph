@@ -395,6 +395,33 @@ describe('transformToolArgsToAffine', () => {
     expect(center.y).toBeCloseTo(50, 10);
   });
 
+  it.each([
+    [2, 1],
+    [1, 2],
+    [8, 1],
+    [1, 8],
+  ])('keeps exact 90-degree bounds for a %sx%s layer', (width, height) => {
+    const layerSize = { width, height };
+    const matrix = transformToolArgsToAffine(toolArgs({ rotate: 90 }), layerSize);
+
+    expect(matrix).not.toBeNull();
+    expect(getAffineBounds(matrix!, layerSize)).toEqual({
+      x: (width - height) / 2,
+      y: (height - width) / 2,
+      width: height,
+      height: width,
+    });
+  });
+
+  it('keeps near-quarter Transform-tool rotations continuous', () => {
+    const rotate = 90 + 1e-6;
+    const angle = (rotate * Math.PI) / 180;
+    const matrix = transformToolArgsToAffine(toolArgs({ rotate }), { width: 2, height: 1 });
+
+    expect(matrix).not.toBeNull();
+    expect(matrix!.a).toBe(Math.cos(angle));
+  });
+
   it('leaves the layer unrotated after a full turn', () => {
     const matrix = transformToolArgsToAffine(toolArgs({ rotate: 360 }), size);
 

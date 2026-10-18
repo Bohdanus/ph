@@ -84,11 +84,6 @@ raster layer only, and retained affine operations remain unapproved for arbitrar
 layer positions, other source kinds, and frame transitions. The UI test intentionally continues to
 observe legacy presentation on commit and renderer-incompatible fallback on redo.
 
-Separate follow-up: `transformToolArgsToAffine()` still builds retained Transform-tool rotations from
-raw `Math.cos`/`Math.sin`; exact quarter-turns on thin or non-square layers may produce the same
-phantom pixel bound. This crop fix only canonicalizes `rotationAffineAroundPoint()`; resolve the
-Transform-tool path separately before treating all retained affine bounds as pixel-grid parity-approved.
-
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
 the durable selector renders its complete projected layer record after materialization. Wiring
