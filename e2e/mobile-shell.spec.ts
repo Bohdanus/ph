@@ -181,7 +181,7 @@ test.describe('Mobile shell', () => {
     // A neighbour tile must NOT carry the active style, proving the two are
     // distinguishable — the brush tile does not inherit its sibling's hover class
     // and vice-versa.
-    const otherTile = bottomBar(page).getByRole('button').filter({ hasNot: brushTile }).first();
+    const otherTile = bottomBar(page).getByTestId('mobile-tool-options-toggle');
     const otherClass = (await otherTile.getAttribute('class')) ?? '';
     expect(otherClass, 'a non-active tile must not carry the active dark-mode style').not.toContain(
       'dark:bg-blue-500/15'
@@ -248,7 +248,6 @@ test.describe('Mobile shell', () => {
    */
   test('the bottom bar is reachable end-to-end: its last tile is inside the client box', async ({ page }) => {
     test.setTimeout(SEARCH_TEST_TIMEOUT_MS);
-    await page.goto('/');
     await expect(getWorkspaceCanvas(page)).toBeVisible();
     await expect(bottomBar(page)).toBeVisible();
 

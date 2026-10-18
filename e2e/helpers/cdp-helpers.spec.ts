@@ -297,29 +297,24 @@ test.describe('CDP Helpers', () => {
      * mis-projects the clip into page coordinates, or if `viewportRectToPageRect`
      * drifts, the captured region will not land where `getBoundingClientRect` says
      * the canvas is, and the pixel colour at the captured origin will be wrong. The
-     * `expect.poll` read is the independent oracle the comparison is checked against.
+     * page-side read is the independent oracle the comparison is checked against.
      *
-     * The poll reads `getBoundingClientRect` from inside the page, not from
+     * The read uses `getBoundingClientRect` from inside the page, not from
      * `Locator.boundingBox()` — both are viewport-relative, but the page-side read is
      * the same source `cdp-helpers.ts` itself consults via `getPageScroll`, so it is
-     * the same convention the conversion is defined against. `expect.poll` is the
-     * polling primitive this suite uses throughout (`e2e/erase-fill-eyedropper.spec.ts`,
-     * `e2e/document-dialogs.spec.ts`) — there is no `page.poll` method on Playwright's
-     * `Page` type in 1.63.
+     * the same convention the conversion is defined against. The synthetic page is static,
+     * so a direct read is sufficient here.
      */
-    test('captured region agrees with the page layout geometry, cross-checked via expect.poll', async ({
-      page,
-    }, testInfo) => {
+    test('captured region agrees with the page layout geometry', async ({ page }, testInfo) => {
       await page.setContent(RED_CANVAS_PAGE);
       const box = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 100, height: 80 };
 
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-spatial', box);
       const imageData = await decodeScreenshot(screenshot);
 
-      // The PAGE's OWN layout: `getBoundingClientRect` read back through `expect.poll`
-      // so the assertion checks the capture against the layout it was taken from,
-      // not against the test constants. If the canvas had rendered at a different
-      // offset than CANVAS_LEFT/CANVAS_TOP, the poll would surface it.
+      // The PAGE's OWN layout: `getBoundingClientRect` checks the capture against
+      // the layout it was taken from, not against the test constants. If the canvas
+      // rendered at a different offset than CANVAS_LEFT/CANVAS_TOP, this surfaces it.
       const canvasRect = await page.evaluate(() => {
         const canvas = document.getElementById('test-canvas');
         if (!canvas) return null;
@@ -336,28 +331,6 @@ test.describe('CDP Helpers', () => {
 
       expect(canvasRect, 'the canvas element was not present in the page').not.toBeNull();
 
-      // `expect.poll` re-reads the canvas geometry and confirms it has not drifted
-      // from the reading taken before the capture. A missing element would yield
-      // `undefined` — which `.not.toBeNull()` would accept — so the poll also
-      // rejects `undefined` and requires a stable `left` matching the earlier read.
-      // This is the CDP analogue of `viewport-drawing.spec.ts`'s `boxBeforeCapture` /
-      // `boxAfterCapture` drift guard (§190-204), adapted to this spec's static page.
-      await expect
-        .poll(
-          async () => {
-            const rect = await page.evaluate(() => {
-              const canvas = document.getElementById('test-canvas');
-              if (!canvas) return undefined;
-              const r = canvas.getBoundingClientRect();
-              return { left: r.left, top: r.top, width: r.width, height: r.height };
-            });
-            if (rect === undefined) return false;
-            return Math.abs(rect.left - canvasRect!.left) < 0.5;
-          },
-          { message: 'the canvas moved between the capture and the layout check' }
-        )
-        .toBe(true);
-
       expect(canvasRect!.left).toBeCloseTo(CANVAS_LEFT, 1);
       expect(canvasRect!.top).toBeCloseTo(CANVAS_TOP, 1);
       expect(canvasRect!.width).toBeCloseTo(CANVAS_WIDTH, 1);
@@ -370,32 +343,35 @@ test.describe('CDP Helpers', () => {
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
       expectFaithfulCaptureOf(imageData, box);
 
-      // Cross-check: map the capture's full decoded extent back to CSS using the box
-      // the capture was asked for. `screenshotBoundsToCss` is the same conversion
-      // `viewport-drawing.spec.ts` feeds its captured bounds through — the result must
-      // close the loop and land back on the box origin, independently of the pixel
-      // colour check. A clip that drifted to a different region would reconstruct to
-      // a different CSS rect.
+      // Cross-check a known sub-region against hardcoded proportional CSS coordinates.
+      // This is an independent oracle rather than a full-image round trip, so a shared
+      // inverse bug in the conversion helpers cannot make the assertion pass.
       const reconstructed = screenshotBoundsToCss(
         {
-          left: 0,
-          top: 0,
-          right: imageData.width - 1,
-          bottom: imageData.height - 1,
+          left: imageData.width * 0.25,
+          top: imageData.height * 0.25,
+          right: imageData.width * 0.75 - 1,
+          bottom: imageData.height * 0.75 - 1,
           imageWidth: imageData.width,
           imageHeight: imageData.height,
         },
         box
       );
-      expect(reconstructed.left, 'the capture CSS origin must match the requested box').toBeCloseTo(box.x, 5);
-      expect(reconstructed.top, 'the capture CSS origin must match the requested box').toBeCloseTo(box.y, 5);
-      expect(reconstructed.right, 'the capture CSS extent must match the requested box').toBeCloseTo(
-        box.x + box.width,
-        -1
+      expect(reconstructed.left, 'the sub-region CSS origin must be one quarter into the box').toBeCloseTo(
+        box.x + box.width * 0.25,
+        1
       );
-      expect(reconstructed.bottom, 'the capture CSS extent must match the requested box').toBeCloseTo(
-        box.y + box.height,
-        -1
+      expect(reconstructed.top, 'the sub-region CSS origin must be one quarter into the box').toBeCloseTo(
+        box.y + box.height * 0.25,
+        1
+      );
+      expect(reconstructed.right, 'the sub-region CSS edge must be three quarters into the box').toBeCloseTo(
+        box.x + box.width * 0.75 - box.width / imageData.width,
+        1
+      );
+      expect(reconstructed.bottom, 'the sub-region CSS edge must be three quarters into the box').toBeCloseTo(
+        box.y + box.height * 0.75 - box.height / imageData.height,
+        1
       );
     });
 
