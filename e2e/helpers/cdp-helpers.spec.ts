@@ -462,9 +462,9 @@ test.describe('CDP Helpers', () => {
       );
 
       const imageData = await decodeScreenshot(screenshot);
-      // The capture is red where the canvas is and blue elsewhere on the page —
-      // if the clip were taken against the backing store size (240x160) instead of
-      // the transformed rect (480x320), the dimensions would not match.
+      // The capture is a faithful image of the 480x320 (CSS-transformed) rect and all
+      // pixels are red — if the clip were taken against the backing store size (240x160)
+      // instead of the transformed rect, the capture would be half the expected extent.
       expectFaithfulCaptureOf(imageData, { width: CANVAS_WIDTH * 2, height: CANVAS_HEIGHT * 2 });
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
     });
