@@ -1238,7 +1238,11 @@ describe('harness configuration guards (the AGENTS.md test traps)', () => {
     // Locator strings in this suite are always single-line, so the confinement
     // loses no coverage.
     const OPTION_DISABLED_PATTERN =
-      /\.locator\(\s*(['"])option(?![\w-])[^\n]*?\1\s*\)(?:\s*\.\s*(?:not|first|last|nth)\s*(?:\([^)]*\))?\s*)*\s*\.toBeDisabled\s*\(/;
+      /\.locator\(\s*(['"])option(?![\w-])(?:(?!\1\s*\))[^\n])*?\1\s*\)(?:\s*\.\s*(?:not|first|last|nth)\s*(?:\([^)]*\))?\s*)*\s*\.toBeDisabled\s*\(/;
+
+    expect(OPTION_DISABLED_PATTERN.test("page.locator('option').all(); page.locator('button').toBeDisabled();")).toBe(
+      false
+    );
 
     const offenders: string[] = [];
     for (const specFile of e2eSpecFiles) {

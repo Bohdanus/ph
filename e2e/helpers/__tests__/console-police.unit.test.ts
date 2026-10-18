@@ -253,4 +253,78 @@ describe('ConsolePolice.assertClean', () => {
     expect(() => police.assertClean(info)).toThrow();
     expect(info.attach).toHaveBeenCalledOnce();
   });
+
+  /**
+   * P3 — page errors record no location. The `pageerror` event hands Back a real
+   * `Error` whose `.stack` carries URL and line number, but the handler at
+   * `console-police.ts:206` calls `record(target, String(error))` with no location
+   * argument. Console errors get a `{ url, lineNumber }` pair; page errors get
+   * `undefined`. This is a diagnostic gap: a console error names its call site,
+   * a page error names only its text.
+   *
+   * This test pins the current behaviour so that a future change which starts
+   * extracting location from the stack cannot silently do only half the job —
+   * it has to update this assertion too, and the gap gets reviewed rather than
+   * carried forward.
+   *
+   * The fixture error deliberately carries a stack string so the test fails if
+   * the source starts reading it: `String(error)` stays the bare message.
+   */
+  it('records a page error without a location in the report, unlike a console error', () => {
+    const { police, emitPageError } = harness();
+    const error = new Error('page boom');
+    error.stack = 'Error: page boom\n    at http://localhost:5173/src/app.tsx:42:17';
+    emitPageError(error);
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+
+    // The report is attached BEFORE the assertions throw, so it is readable even
+    // on a failure path.
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      pageErrors: Array<{ text: string; location?: { url: string; lineNumber: number } }>;
+    };
+    const pageError = report.pageErrors[0];
+    expect(pageError).toBeDefined();
+    expect(pageError.text).toBe('Error: page boom');
+    expect(pageError).not.toHaveProperty('location');
+
+    // Contrast with a console error: its location IS recorded. A non-allowlisted
+    // text makes `assertClean` throw (so the report is only on the attach mock,
+    // not as a resolved value), but the report itself is still written first.
+    const { police: police2, emitConsole } = harness();
+    emitConsole('error', 'console boom', { url: 'http://localhost:5173/src/app.tsx', lineNumber: 42 });
+    const info2 = testInfo();
+    expect(() => police2.assertClean(info2)).toThrow();
+
+    const attach2 = info2.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report2 = JSON.parse(attach2.mock.calls[0][1].body) as {
+      consoleErrors: Array<{ text: string; location?: { url: string; lineNumber: number } }>;
+    };
+    expect(report2.consoleErrors[0]).toBeDefined();
+    expect(report2.consoleErrors[0].location).toEqual({
+      url: 'http://localhost:5173/src/app.tsx',
+      lineNumber: 42,
+    });
+  });
+
+  it('deduplicates page errors by message alone, since they carry no location', () => {
+    // `entryKey` keys on text + location + lineNumber. Page errors have no
+    // location, so two identical page errors collapse to one entry with count 2
+    // — the same deduplication console errors get when their location is absent.
+    // This pins that page errors cannot be split by location, since there is none.
+    const { police, emitPageError } = harness();
+    emitPageError(new Error('same page error'));
+    emitPageError(new Error('same page error'));
+
+    const info = testInfo();
+    expect(() => police.assertClean(info)).toThrow();
+
+    const attach = info.attach as unknown as { mock: { calls: [string, { body: string }][] } };
+    const report = JSON.parse(attach.mock.calls[0][1].body) as {
+      pageErrors: Array<{ text: string; count: number; location?: unknown }>;
+    };
+    expect(report.pageErrors).toEqual([{ text: 'Error: same page error', count: 2 }]);
+  });
 });

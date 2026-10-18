@@ -852,7 +852,7 @@ describe('magnetic lasso preview path discrimination', () => {
 describe('hasDarkPixels on the workspace backdrop (theme-dependent)', () => {
   const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
 
-  it('returns true for the DARK cell, which is below DARK_THRESHOLD — the latent wrong-pass', async () => {
+  it('returns true for the DARK cell, which is below DARK_PIXEL_THRESHOLD — the latent wrong-pass', async () => {
     // `18 < 60`, so the dark theme's checkerboard cell satisfies `hasDarkPixels` exactly
     // as a `#000` gap does. The light cell (`243`) does not. This is the asymmetry that
     // makes `colorScheme: 'light'` a live precondition rather than a cosmetic default.
@@ -862,7 +862,7 @@ describe('hasDarkPixels on the workspace backdrop (theme-dependent)', () => {
     expect(await hasDarkPixels(darkBackdrop)).toBe(true);
   });
 
-  it('returns false for the LIGHT cell, which is above DARK_THRESHOLD — why light is the live default', async () => {
+  it('returns false for the LIGHT cell, which is above DARK_PIXEL_THRESHOLD — why light is the live default', async () => {
     expect(LETTERBOX_LIGHT_CELL.red).toBeGreaterThanOrEqual(STROKE_ANALYSIS.DARK_PIXEL_THRESHOLD);
 
     const lightBackdrop = await createTestImageData(LETTERBOX_LIGHT_CELL, 50, 50);

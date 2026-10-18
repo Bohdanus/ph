@@ -49,6 +49,56 @@ const RED_CANVAS_PAGE = `<!doctype html>
 
 const FULL_CANVAS_BOX = { x: CANVAS_LEFT, y: CANVAS_TOP, width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
 
+const ZERO_SIZE_CANVAS_PAGE = `<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; padding: 0; background: rgb(0, 0, 255); }
+      #test-canvas {
+        position: absolute;
+        left: ${CANVAS_LEFT}px;
+        top: ${CANVAS_TOP}px;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="test-canvas" width="0" height="0"></canvas>
+  </body>
+</html>`;
+
+/**
+ * A canvas with a CSS scale transform applied: `getBoundingClientRect` reports
+ * the post-transform visual size, while the canvas's backing store (`width` /
+ * `height` attributes) stays at the native resolution. This is the case the
+ * viewport-vs-page conversion must handle correctly — `boundingBox()` returns the
+ * transformed rect, not the intrinsic pixel count.
+ */
+const TRANSFORMED_CANVAS_PAGE = `<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; padding: 0; background: rgb(0, 0, 255); }
+      #test-canvas {
+        position: absolute;
+        left: ${CANVAS_LEFT}px;
+        top: ${CANVAS_TOP}px;
+        transform: scale(2);
+        transform-origin: top left;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="test-canvas" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
+    <script>
+      const ctx = document.getElementById('test-canvas').getContext('2d');
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(0, 0, ${CANVAS_WIDTH}, ${CANVAS_HEIGHT});
+    </script>
+  </body>
+</html>`;
+
 function countPixelsDifferingFrom(
   imageData: ImageDataResult,
   expected: { red: number; green: number; blue: number }
@@ -376,6 +426,71 @@ test.describe('CDP Helpers', () => {
 
       expect(cdpCapture.width).toBe(playwrightCapture.width);
       expect(cdpCapture.height).toBe(playwrightCapture.height);
+    });
+
+    /**
+     * P2 — viewport vs page coordinate mismatch at the zero-size boundary.
+     *
+     * A canvas with zero intrinsic dimensions reports a zero-area
+     * `getBoundingClientRect`. The helper's `viewportRectToPageRect` conversion
+     * still applies, and CDP `Page.captureScreenshot` is asked for a clip of width
+     * 0 / height 0 — which Chrome may reject or return an empty image for. This
+     * pins the boundary so there is a named assertion for the case rather than a
+     * silent crash in the error path.
+     */
+    test('rejects a capture request for a zero-size canvas', async ({ page }, testInfo) => {
+      await page.setContent(ZERO_SIZE_CANVAS_PAGE);
+
+      const rect = await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas');
+        if (!canvas) return null;
+        const r = canvas.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      });
+      expect(rect).not.toBeNull();
+      expect(rect!.width).toBe(0);
+      expect(rect!.height).toBe(0);
+
+      await expect(
+        captureCanvasScreenshot(page, { x: rect!.x, y: rect!.y, width: 0, height: 0 }, testInfo, 'test-capture-zero')
+      ).rejects.toThrow();
+    });
+
+    /**
+     * A canvas with a CSS `transform: scale(2)` visually occupies twice its
+     * attribute width/height. `getBoundingClientRect` returns the post-transform
+     * rect (480x320) while the backing store stays 240x160. This pins that the
+     * capture region matches the TRANSFORMED rect — the page layout, not the
+     * attribute — and that the viewport-to-page coordinate conversion still lands
+     * the clip in the right document location.
+     */
+    test('captures the visually scaled bounds of a CSS-transformed canvas', async ({ page }, testInfo) => {
+      await page.setContent(TRANSFORMED_CANVAS_PAGE);
+
+      const rect = await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas');
+        if (!canvas) return null;
+        const r = canvas.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      });
+      expect(rect).not.toBeNull();
+      // The transform doubles the visual size from the 240x160 backing store.
+      expect(rect!.width).toBe(CANVAS_WIDTH * 2);
+      expect(rect!.height).toBe(CANVAS_HEIGHT * 2);
+
+      const screenshot = await captureCanvasScreenshot(
+        page,
+        { x: rect!.x, y: rect!.y, width: CANVAS_WIDTH * 2, height: CANVAS_HEIGHT * 2 },
+        testInfo,
+        'test-capture-transformed'
+      );
+
+      const imageData = await decodeScreenshot(screenshot);
+      // The capture is red where the canvas is and blue elsewhere on the page —
+      // if the clip were taken against the backing store size (240x160) instead of
+      // the transformed rect (480x320), the dimensions would not match.
+      expectFaithfulCaptureOf(imageData, { width: CANVAS_WIDTH * 2, height: CANVAS_HEIGHT * 2 });
+      expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
     });
   });
 

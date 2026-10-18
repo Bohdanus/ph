@@ -138,6 +138,57 @@ test.describe('Mobile shell', () => {
     await expect(root).toHaveClass(/\bdark\b/);
   });
 
+  /**
+   * P1 — brush collision dark theme: on dark mode the brush tile must keep a
+   * distinguishing style that does NOT merge with the hover state of a neighbour.
+   *
+   * The active class on `MobileBottomBar` tiles is `bg-blue-50 font-bold text-blue-600`
+   * in light mode and `dark:bg-blue-500/15 dark:text-blue-400` in dark — the hover-only
+   * class is `dark:hover:bg-gray-800 dark:hover:text-gray-200`. A regression that drops
+   * the dark active variant (or makes it identical to the hover variant) renders the
+   * brush's focus indistinguishable from a plain tile on a dark background.
+   *
+   * This test pins the active class string on the brush tile itself, so a CSS regression
+   * that merges the two states in dark mode surfaces here rather than as a silent UX
+   * bug that a pixel diff would only catch after a release.
+   */
+  test('the brush tile keeps a dark-mode-active style distinct from hover', async ({ page }) => {
+    // Switch to dark mode via the header drawer (the same path `theme toggle` tests).
+    await page.getByTestId('mobile-menu-button').click();
+    await page.getByTestId('mobile-menu-theme-button').click();
+    await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+    // Close the drawer before touching the bottom bar — the overlay intercepts
+    // pointer events while the drawer is open. Escape is handled by `useModalA11y`.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Mobile Navigation Menu' })).toBeHidden();
+
+    // Select the brush tool. The bottom bar groups tools, so the brush tile lights up
+    // for the whole group — the same `aria-pressed` contract the bottom-bar test asserts.
+    const brushTile = bottomBar(page).getByRole('button', { name: 'Brush Tool', exact: true });
+    await brushTile.click();
+    await expect(brushTile).toHaveAttribute('aria-pressed', 'true');
+
+    // The active class must carry the dark-mode variant. If a future refactor drops
+    // `dark:bg-blue-500/15` from the active branch — leaving only `dark:text-gray-400`,
+    // which is the same text colour the inactive hover branch uses — this assertion
+    // catches it. We read the class list directly rather than asserting a computed
+    // colour, because the spec pins the STYLING CONTRACT (the Tailwind variant that
+    // encodes it) rather than a value the browser resolves through a variable.
+    const brushClass = (await brushTile.getAttribute('class')) ?? '';
+    expect(brushClass, 'active brush tile must carry a dark-mode active style').toContain('dark:text-blue-400');
+    expect(brushClass).toContain('dark:bg-blue-500/15');
+
+    // A neighbour tile must NOT carry the active style, proving the two are
+    // distinguishable — the brush tile does not inherit its sibling's hover class
+    // and vice-versa.
+    const otherTile = bottomBar(page).getByRole('button').filter({ hasNot: brushTile }).first();
+    const otherClass = (await otherTile.getAttribute('class')) ?? '';
+    expect(otherClass, 'a non-active tile must not carry the active dark-mode style').not.toContain(
+      'dark:bg-blue-500/15'
+    );
+    expect(otherClass).not.toContain('dark:text-blue-400');
+  });
+
   test('the layers drawer hides a layer, and the header badge counts the layers', async ({ page }) => {
     const toggle = page.getByTestId('mobile-layers-toggle-button');
     await expect(toggle, 'one layer is too few for a badge to be worth drawing').toContainText('📑');
