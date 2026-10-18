@@ -11,8 +11,10 @@ import {
   hasRedPixels,
   hasMagnetSnapPixels,
   hasManualSnapPixels,
+  screenshotBoundsToCss,
   type CaptureRegion,
   type ImageDataResult,
+  type BoundingBox,
 } from '../canvas-helpers';
 import {
   CYAN,
@@ -980,5 +982,122 @@ describe('transparent pixel weighting divergence', () => {
     expect(result!.red).toBe(255);
     expect(result!.green).toBe(0);
     expect(result!.blue).toBe(0);
+  });
+});
+
+/** A 200x100 box at origin, used for screenshotBoundsToCss conversion tests. */
+const BOX: BoundingBox = { x: 0, y: 0, width: 200, height: 100 };
+
+describe('screenshotBoundsToCss letterbox and NaN edge cases', () => {
+  const { LETTERBOX_LIGHT_CELL, LETTERBOX_DARK_CELL } = STROKE_ANALYSIS;
+
+  /**
+   * OPEN_PROBLEMS.md P3 — zero-sized image yields NaN edges.
+   * `screenshotBoundsToCss` divides pixel coordinates by the image dimensions,
+   * so a zero-sized image produces NaN on every channel rather than throwing.
+   * This pins the failure mode so a future guard is visible as a change.
+   */
+  it('yields NaN edges for a zero-sized image instead of throwing', () => {
+    const bounds = { left: 0, top: 0, right: 0, bottom: 0, imageWidth: 0, imageHeight: 0 };
+    const result = screenshotBoundsToCss(bounds, BOX);
+    expect(result.left).toBeNaN();
+    expect(result.top).toBeNaN();
+    expect(result.right).toBeNaN();
+    expect(result.bottom).toBeNaN();
+  });
+
+  it('yields NaN on the x-axis for a zero-width image', () => {
+    const bounds = { left: 0, top: 0, right: 0, bottom: 50, imageWidth: 0, imageHeight: 50 };
+    const result = screenshotBoundsToCss(bounds, BOX);
+    expect(result.left).toBeNaN();
+    expect(result.right).toBeNaN();
+    // The y-axis is unaffected: image height 50 maps the bottom pixel at 50.
+    expect(result.top).toBe(0);
+    expect(result.bottom).toBe(100);
+  });
+
+  it('yields NaN on the y-axis for a zero-height image', () => {
+    const bounds = { left: 0, top: 0, right: 50, bottom: 0, imageWidth: 50, imageHeight: 0 };
+    const result = screenshotBoundsToCss(bounds, BOX);
+    expect(result.top).toBeNaN();
+    expect(result.bottom).toBeNaN();
+    expect(result.left).toBe(0);
+    expect(result.right).toBe(200);
+  });
+
+  /**
+   * OPEN_PROBLEMS.md P2 — the letterbox is still read as ink by predicates.
+   * `hasDarkPixels` skips only `alpha === 0`; `#121212` (18,18,18) is below
+   * `DARK_PIXEL_THRESHOLD` (60), so it is admitted as "dark" and a canvas
+   * that is nothing but the dark-theme checkerboard cell reports ink where
+   * there is none. This is a characterization test of the known gap, not a fix.
+   */
+  it('hasDarkPixels reads the dark-theme letterbox cell as ink (P2 known gap)', async () => {
+    const image = await createTestImageData({ red: 255, green: 255, blue: 255 }, 10, 10);
+    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
+    expect(await hasDarkPixels(image)).toBe(true);
+  });
+
+  it('getDarkPixelBounds returns false bounds for the dark-theme letterbox cell (P2 known gap)', async () => {
+    const image = await createTestImageData({ red: 255, green: 255, blue: 255 }, 10, 10);
+    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
+    const bounds = await getDarkPixelBounds(image);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.left).toBe(0);
+    expect(bounds!.top).toBe(0);
+    expect(bounds!.right).toBe(9);
+    expect(bounds!.bottom).toBe(9);
+  });
+
+  it('hasDarkPixels correctly ignores the light-theme letterbox cell', async () => {
+    const image = await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10);
+    fillAll(image, LETTERBOX_LIGHT_CELL as Color, 255);
+    // `#f3f3f3` (243) is above DARK_PIXEL_THRESHOLD (60), so it is not dark.
+    expect(await hasDarkPixels(image)).toBe(false);
+  });
+
+  it('getDarkPixelBounds returns null for the light-theme letterbox cell', async () => {
+    const image = await createTestImageData({ red: 0, green: 0, blue: 0 }, 10, 10);
+    fillAll(image, LETTERBOX_LIGHT_CELL as Color, 255);
+    expect(await getDarkPixelBounds(image)).toBeNull();
+  });
+
+  it('getDarkPixelBounds isolates ink from a surrounding letterbox cell border', async () => {
+    // A 10x10 image with a `#121212` border and a single `DARK_GRAY` (10,10,10) pixel at
+    // centre. Both are below DARK_PIXEL_THRESHOLD, but the bounds should still report the
+    // full extent — this pins that the letterbox exclusion (or lack thereof) does not
+    // shrink the ink bounds, only whether ink is detected at all.
+    const image = await createTestImageData(WHITE, 10, 10);
+    fillAll(image, LETTERBOX_DARK_CELL as Color, 255);
+    setPixel(image, 5, 5, DARK_GRAY, 255);
+    const bounds = await getDarkPixelBounds(image);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.left).toBe(0);
+    expect(bounds!.top).toBe(0);
+    expect(bounds!.right).toBe(9);
+    expect(bounds!.bottom).toBe(9);
+  });
+
+  /**
+   * OPEN_PROBLEMS.md P3 — transparent pixels weighted as fully opaque.
+   * `dominantRed` skips only `alpha === 0`; an alpha-1 pixel with RGB (0,0,0)
+   * is averaged as pure black at full weight, never composited against a background.
+   */
+  it('dominantRed ignores fully-transparent pixels and returns null on an all-transparent image', async () => {
+    const image = await createTestImageData(WHITE, 10, 10);
+    fillAll(image, black, 0);
+    expect(await dominantRed(image)).toBeNull();
+  });
+
+  it('dominantRed skips alpha-0 pixels but counts alpha-1 pixels in the same colour group', async () => {
+    // RGB (255,0,0) at alpha 1 should be dominant; alpha-0 pixels of the same RGB are skipped.
+    const image = await createTestImageData(WHITE, 10, 10);
+    setPixel(image, 5, 5, RED, 1);
+    const result = await dominantRed(image);
+    expect(result).not.toBeNull();
+    expect(result!.red).toBe(255);
+    expect(result!.green).toBe(0);
+    expect(result!.blue).toBe(0);
+    expect(result!.count).toBe(1);
   });
 });

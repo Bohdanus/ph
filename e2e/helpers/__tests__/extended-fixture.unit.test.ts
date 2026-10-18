@@ -112,6 +112,10 @@ function recorder(): Recording {
       evaluations.push({ fn, arg });
       return Promise.resolve(undefined);
     },
+    reload: () => {
+      log.push('page.reload');
+      return Promise.resolve();
+    },
   } as unknown as playwright.Page;
 
   const testInfo = {
@@ -235,15 +239,15 @@ describe('the shared test object', () => {
 });
 
 describe('the fixtures it registers', () => {
-  it('contributes exactly consolePolice and pinnedTheme', () => {
+  it('contributes exactly consolePolice, pinnedTheme, and firstUseTourSuppressed', () => {
     // The point of the shared object is that it is universal, so a fixture added here is
     // one every spec in `e2e/` silently acquires. Reading the registry rather than
     // asserting on two names is what makes a third one visible here rather than only in
     // the file that added it.
-    expect(fixtureNames()).toEqual(['consolePolice', 'pinnedTheme']);
+    expect(fixtureNames()).toEqual(['consolePolice', 'firstUseTourSuppressed', 'pinnedTheme']);
   });
 
-  it.each(['consolePolice', 'pinnedTheme'])('registers %s as auto', (name) => {
+  it.each(['consolePolice', 'pinnedTheme', 'firstUseTourSuppressed'])('registers %s as auto', (name) => {
     // `auto` is the whole argument for this file over a helper each spec calls by hand:
     // a helper is opt-in per spec, and `auto` is opt-out, which is the property a check
     // nobody can forget depends on.
@@ -303,6 +307,138 @@ describe('the pinnedTheme fixture', () => {
     const recording = recorder();
     await runFixture(fixture('pinnedTheme'), recording);
     expect(recording.log).toEqual(['page.addInitScript', 'use', 'body returned']);
+  });
+});
+
+/** The argument shape the firstUseTourSuppressed init script is serialised with. */
+interface TourPinArgument {
+  readonly storageKey: string;
+  readonly releaseKey: string;
+}
+
+/** The one init script the firstUseTourSuppressed fixture registers, with its argument. */
+async function capturedFirstUseTourPin(): Promise<{ fn: (arg: never) => void; arg: TourPinArgument }> {
+  const recording = recorder();
+  await runFixture(fixture('firstUseTourSuppressed'), recording);
+  if (recording.initScripts.length !== 1) {
+    throw new Error(`expected one init script, the fixture registered ${recording.initScripts.length}`);
+  }
+  return {
+    fn: recording.initScripts[0].fn,
+    arg: recording.initScripts[0].arg as TourPinArgument,
+  };
+}
+
+describe('the firstUseTourSuppressed fixture', () => {
+  it('seeds the tour-seen flag when nothing is stored, which is the fresh-context case', async () => {
+    const { fn, arg } = await capturedFirstUseTourPin();
+    // The app reads `localStorage.getItem('ph.firstUseTourSeen')` synchronously on mount
+    // to decide whether to show the first-use tour. Seeding 'true' is the suppression.
+    const localStorage = memoryStorage();
+    runInPage(fn, arg, { localStorage, sessionStorage: memoryStorage() });
+    expect(localStorage.getItem(arg.storageKey)).toBe('true');
+  });
+
+  it('leaves an already-set flag alone, so an explicit value survives the pin', async () => {
+    const { fn, arg } = await capturedFirstUseTourPin();
+    // An init script re-runs on EVERY navigation. Writing unconditionally would let a
+    // spec that intentionally clears the flag for a tour test have it silently reseeded
+    // on the next navigation, and the test would assert the tour is suppressed rather than
+    // asserting the clear worked.
+    const localStorage = memoryStorage({ [arg.storageKey]: 'false' });
+    runInPage(fn, arg, { localStorage, sessionStorage: memoryStorage() });
+    expect(localStorage.getItem(arg.storageKey)).toBe('false');
+  });
+
+  it('seeds nothing once the release flag is set for the tab', async () => {
+    const { fn, arg } = await capturedFirstUseTourPin();
+    const localStorage = memoryStorage();
+    runInPage(fn, arg, {
+      localStorage,
+      sessionStorage: memoryStorage({ [arg.releaseKey]: '1' }),
+    });
+    expect(localStorage.getItem(arg.storageKey)).toBeNull();
+  });
+
+  it('survives an opaque origin, where storage throws', async () => {
+    const { fn, arg } = await capturedFirstUseTourPin();
+    // After an explicit `page.goto('about:blank')` every storage call throws SecurityError,
+    // and ConsolePolice fails a test on any page error — so an unguarded script turns a
+    // navigation nothing asserts on into a red test.
+    expect(() => runInPage(fn, arg, { localStorage: opaqueStorage(), sessionStorage: opaqueStorage() })).not.toThrow();
+  });
+
+  it('registers the init script before the test body runs', async () => {
+    const recording = recorder();
+    await runFixture(fixture('firstUseTourSuppressed'), recording);
+    expect(recording.log).toEqual(['page.addInitScript', 'use', 'body returned']);
+  });
+
+  it("uses the app's own storage key for the tour-seen flag", async () => {
+    const { arg } = await capturedFirstUseTourPin();
+    expect(arg.storageKey).toBe('ph.firstUseTourSeen');
+    expect(arg.releaseKey).toEqual(expect.any(String));
+    expect(arg.releaseKey).not.toBe(arg.storageKey);
+  });
+});
+
+describe('showFirstUseTour and the tour pin, together', () => {
+  async function releaseThenReload(): Promise<{ localStorage: Storage; sessionStorage: Storage; releaseKey: string }> {
+    const pin = await capturedFirstUseTourPin();
+    const { page, evaluations, log } = recorder();
+    await extended.showFirstUseTour(page);
+    if (evaluations.length !== 1) {
+      throw new Error(`expected one evaluate, showFirstUseTour made ${evaluations.length}`);
+    }
+    // `showFirstUseTour` calls `page.reload()` AFTER the evaluate; if the reload is ever
+    // deleted, the init script that runs on reload never fires and the release is
+    // invisible to the app — so the reload is the whole second half of the mechanism.
+    expect(log).toContain('page.reload');
+
+    // The app has written the suppression back on every load, so the key starts out set —
+    // which is why showFirstUseTour has to remove it and not only set the release flag.
+    const localStorage = memoryStorage({ [pin.arg.storageKey]: 'true' });
+    const sessionStorage = memoryStorage();
+    const window = { localStorage, sessionStorage };
+
+    runInPage(evaluations[0].fn, evaluations[0].arg, window);
+    runInPage(pin.fn, pin.arg, window);
+
+    return { localStorage, sessionStorage, releaseKey: pin.arg.releaseKey };
+  }
+
+  it('removes the stored flag and sets the release flag, so a reload shows the tour', async () => {
+    const { localStorage, sessionStorage, releaseKey } = await releaseThenReload();
+    expect(localStorage.getItem('ph.firstUseTourSeen')).toBeNull();
+    expect(sessionStorage.getItem(releaseKey)).toBe('1');
+  });
+
+  it('leaves a stored flag that showFirstUseTour already cleared alone, so a reload does not re-seed', async () => {
+    const { localStorage } = await releaseThenReload();
+    // The init script re-runs on reload: it seeds only when the key is absent, so a
+    // release that removed the key must NOT have it reseeded. A test that removed the
+    // key but not set the release flag would see the tour re-seed on reload.
+    expect(localStorage.getItem('ph.firstUseTourSeen')).toBeNull();
+  });
+
+  it('writes through page.evaluate, so it only reaches the tab that runs the test', async () => {
+    const { page, evaluations } = recorder();
+    await extended.showFirstUseTour(page);
+    // sessionStorage is per-tab, so this has to go through the page: a Node-side write
+    // would land in nothing, and a context.newPage() would arrive with a fresh flag.
+    expect(evaluations).toHaveLength(1);
+  });
+
+  it('reloads the page after clearing, so the app re-reads storage from scratch', async () => {
+    const recording = recorder();
+    const { page } = recording;
+    await extended.showFirstUseTour(page);
+    // `showFirstUseTour` at extended-test.ts:229 calls `page.reload()` after the evaluate.
+    // The release flag is set and the key is removed in the evaluate above; the reload is
+    // what makes the app's own init script (which reads storage at mount) see the cleared
+    // state rather than the stale cached one. Verify the call actually happened.
+    expect(recording.log).toEqual(['page.evaluate', 'page.reload']);
+    expect(recording.evaluations).toHaveLength(1);
   });
 });
 

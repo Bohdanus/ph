@@ -748,6 +748,197 @@ describe('Image Comparison Helpers', () => {
       expectTypeOf<ChannelDelta>().toEqualTypeOf<{ mean: number; max: number }>();
     });
   });
+
+  describe('compareScreenshots - additional edge cases', () => {
+    it('reports a size mismatch for non-square dimensions that differ in both axes', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: 100, height: 50 }, OPAQUE_RED),
+        await solidPng({ width: 50, height: 100 }, OPAQUE_GREEN)
+      );
+
+      expect(result.matches).toBe(false);
+      expect(result.sizeMismatch).toEqual({
+        actual: { width: 100, height: 50 },
+        expected: { width: 50, height: 100 },
+      });
+    });
+
+    it('reports a size mismatch when dimensions share the same area but differ in shape', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: 20, height: 5 }, OPAQUE_RED),
+        await solidPng({ width: 10, height: 10 }, OPAQUE_GREEN)
+      );
+
+      expect(result.matches).toBe(false);
+      expect(result.sizeMismatch).toEqual({
+        actual: { width: 20, height: 5 },
+        expected: { width: 10, height: 10 },
+      });
+    });
+
+    it('reports exactly one diff pixel for a single changed pixel in a 100x100 image', async () => {
+      // A 1x1 green patch in the top-left corner of a red 100x100 field.
+      const base = await patchedPng(SQUARE_100, OPAQUE_RED, [{ left: 0, top: 0, width: 1, height: 1 }]);
+      const ref = await redPng100();
+
+      // The count and ratio are exact regardless of tolerance.
+      const withinDefault = await compareScreenshots(base, ref, { threshold: 0 });
+      expect(withinDefault.diffPixels).toBe(1);
+      expect(withinDefault.diffRatio).toBe(1 / SQUARE_100_PIXELS);
+
+      // Within the default allowance, one pixel still matches; the interest
+      // here is the precision of diffPixels and diffRatio.
+      expect(withinDefault.matches).toBe(true);
+
+      // Under a zero pixel budget, that single pixel is the difference.
+      const strict = await compareScreenshots(base, ref, { threshold: 0, maxDiffPixels: 0 });
+      expect(strict.matches).toBe(false);
+    });
+
+    it('forgives a 40-step red shift at threshold 0.1 but not at threshold 0', async () => {
+      // 0.1 sits between the two extremes already pinned; this mid-range shift
+      // survives the looser threshold but fails the exact-match threshold.
+      const atZero = await compareScreenshots(await shiftedBlack(40, ['r']), await shiftedBlack(0), {
+        threshold: 0,
+      });
+
+      expect(atZero.diffPixels).toBe(SQUARE_10_PIXELS);
+
+      const atThreshold = await compareScreenshots(await shiftedBlack(40, ['r']), await shiftedBlack(0), {
+        threshold: 0.1,
+      });
+
+      expect(atThreshold.diffPixels).toBe(0);
+      expect(atThreshold.matches).toBe(true);
+    });
+
+    it('counts a 50-step red shift as different at threshold 0.1', async () => {
+      // Well past the ~46-step boundary for red at 0.1, but well under the
+      // 93-step boundary at the default 0.2 — the same image pair that this
+      // suite treats as a match under the default threshold is a mismatch here.
+      const atDefault = await compareScreenshots(await shiftedBlack(50, ['r']), await shiftedBlack(0));
+      const atThreshold = await compareScreenshots(await shiftedBlack(50, ['r']), await shiftedBlack(0), {
+        threshold: 0.1,
+      });
+
+      expect(atThreshold.diffPixels).toBe(SQUARE_10_PIXELS);
+      expect(atThreshold.matches).toBe(false);
+      expect(atDefault.diffPixels).toBe(0);
+      expect(atDefault.matches).toBe(true);
+    });
+
+    it('reports zero diff for identical pixels encoded with different PNG compression', async () => {
+      // sharp normalises compression level and metadata on decode, so two PNGs
+      // of the same pixels with different byte-level encoding must compare equal.
+      const lowCompression = await sharp({
+        create: { width: 50, height: 50, channels: 4, background: OPAQUE_RED },
+      })
+        .png({ compressionLevel: 0 })
+        .toBuffer();
+      const highCompression = await sharp({
+        create: { width: 50, height: 50, channels: 4, background: OPAQUE_RED },
+      })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+
+      expect(lowCompression.equals(highCompression)).toBe(false);
+
+      const result = await compareScreenshots(lowCompression, highCompression);
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.matches).toBe(true);
+    });
+
+    it('reports all four channels as moving when RGB and alpha both shift', async () => {
+      // Opaque black → fully transparent white: every channel byte changes.
+      // `diffPixels` blurs alpha through the checkerboard, but `channelDelta`
+      // reads raw bytes and must see the move on r, g, b and a alike.
+      const result = await compareScreenshots(
+        await solidPng(SQUARE_10, { r: 0, g: 0, b: 0, alpha: 1 }),
+        await solidPng(SQUARE_10, { r: 255, g: 255, b: 255, alpha: 0 })
+      );
+
+      expect(result.channelDelta.r).toEqual({ mean: 255, max: 255 });
+      expect(result.channelDelta.g).toEqual({ mean: 255, max: 255 });
+      expect(result.channelDelta.b).toEqual({ mean: 255, max: 255 });
+      expect(result.channelDelta.a).toEqual({ mean: 255, max: 255 });
+    });
+
+    it('reports max per-channel delta far larger than mean for a single-pixel change', async () => {
+      // One green pixel in a sea of red: max is the full 255-step swing,
+      // but the mean is averaged over all 10,000 pixels.
+      const result = await compareScreenshots(
+        await patchedPng(SQUARE_100, OPAQUE_RED, [{ left: 0, top: 0, width: 1, height: 1 }]),
+        await redPng100()
+      );
+
+      expect(result.channelDelta.r.max).toBe(OPAQUE_CHANNEL_MAX);
+      expect(result.channelDelta.g.max).toBe(OPAQUE_CHANNEL_MAX);
+      expect(result.channelDelta.r.mean).toBeCloseTo(OPAQUE_CHANNEL_MAX / SQUARE_100_PIXELS);
+      expect(result.channelDelta.g.mean).toBeCloseTo(OPAQUE_CHANNEL_MAX / SQUARE_100_PIXELS);
+      expect(result.channelDelta.b.mean).toBe(0);
+      expect(result.channelDelta.a.mean).toBe(0);
+    });
+
+    it('matches identical images even when both allowances are zero', async () => {
+      const result = await compareScreenshots(await redPng100(), await redPng100(), {
+        maxDiffPixels: 0,
+        maxDiffPixelRatio: 0,
+      });
+
+      expect(result.matches).toBe(true);
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+    });
+
+    it('includes sizeMismatch in the result when dimensions differ by a single pixel', async () => {
+      const result = await compareScreenshots(
+        await solidPng(SQUARE_10, OPAQUE_RED),
+        await solidPng({ width: SQUARE_10.width, height: SQUARE_10.height + 1 }, OPAQUE_GREEN)
+      );
+
+      expect(result.matches).toBe(false);
+      expect(result.sizeMismatch).toEqual({
+        actual: SQUARE_10,
+        expected: { width: SQUARE_10.width, height: SQUARE_10.height + 1 },
+      });
+      expect(Object.keys(result).sort()).toEqual([
+        'channelDelta',
+        'diffPixels',
+        'diffRatio',
+        'matches',
+        'sizeMismatch',
+      ]);
+    });
+
+    it('forgives a 20-step red shift at threshold 0.05 but not at threshold 0', async () => {
+      // 0.05 is between the two extremes already pinned; this shift survives
+      // the looser threshold but fails the exact-match threshold.
+      const atZero = await compareScreenshots(await shiftedBlack(20, ['r']), await shiftedBlack(0), {
+        threshold: 0,
+      });
+
+      expect(atZero.diffPixels).toBe(SQUARE_10_PIXELS);
+
+      const atThreshold = await compareScreenshots(await shiftedBlack(20, ['r']), await shiftedBlack(0), {
+        threshold: 0.05,
+      });
+
+      expect(atThreshold.diffPixels).toBe(0);
+      expect(atThreshold.matches).toBe(true);
+    });
+
+    it('counts every pixel as different for a 2x2 image of solid opposing colours', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: 2, height: 2 }, OPAQUE_RED),
+        await solidPng({ width: 2, height: 2 }, OPAQUE_GREEN)
+      );
+
+      expect(result.diffPixels).toBe(4);
+      expect(result.diffRatio).toBe(1);
+      expect(result.matches).toBe(false);
+    });
+  });
 });
 
 describe('the exported surface is exactly what the suite uses', () => {

@@ -307,3 +307,248 @@ describe('waitForCommittedAnts', () => {
     );
   });
 });
+
+describe('committedAntsOutline under the contain fit', () => {
+  it('maps a pillarboxed store (taller than the box) through the horizontal letterbox offset', async () => {
+    // 100x200 store in a 100x100 box: height binds, scale 1/2, 25px bar on each side.
+    const canvas = new FakeAntsCanvas(100, 200, [{ x: 0, y: 0, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 25,
+      top: 0,
+      right: 25,
+      bottom: 0,
+    });
+  });
+
+  it('maps the bottom-right corner of a pillarboxed store through the horizontal offset', async () => {
+    const canvas = new FakeAntsCanvas(100, 200, [{ x: 99, y: 199, rgba: WHITE }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // offsetX 25 + 99 * 1/2 = 74.5; 199 * 1/2 = 99.5.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 74.5,
+      top: 99.5,
+      right: 74.5,
+      bottom: 99.5,
+    });
+  });
+
+  it('bounds ants on opposite corners of a pillarboxed store', async () => {
+    const canvas = new FakeAntsCanvas(
+      100,
+      200,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 199, rgba: WHITE },
+      ],
+      { left: 0, top: 0, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 25,
+      top: 0,
+      right: 74.5,
+      bottom: 99.5,
+    });
+  });
+
+  it('maps a letterboxed store (wider than the box) through the vertical letterbox offset', async () => {
+    // 400x100 store in a 100x100 box: width binds, scale 1/4, 37.5px bar top and bottom.
+    const canvas = new FakeAntsCanvas(400, 100, [{ x: 0, y: 0, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 37.5,
+      right: 0,
+      bottom: 37.5,
+    });
+  });
+
+  it('maps the bottom-right corner of a 4x-wide letterboxed store', async () => {
+    const canvas = new FakeAntsCanvas(400, 100, [{ x: 399, y: 99, rgba: WHITE }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // offsetY 37.5 + 99 * 1/4 = 62.25; 399 * 1/4 = 99.75.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 99.75,
+      top: 62.25,
+      right: 99.75,
+      bottom: 62.25,
+    });
+  });
+
+  it('shifts every corner of a letterboxed store by a non-origin box', async () => {
+    const canvas = new FakeAntsCanvas(
+      200,
+      100,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 99, rgba: BLACK },
+      ],
+      { left: 30, top: 40, width: 100, height: 100 }
+    );
+    // scale 1/2, offsetY 25: top-left (30, 65), bottom-right (30 + 49.5, 40 + 25 + 49.5).
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 30,
+      top: 65,
+      right: 79.5,
+      bottom: 114.5,
+    });
+  });
+
+  it('shifts every corner of a pillarboxed store by a non-origin box', async () => {
+    const canvas = new FakeAntsCanvas(
+      100,
+      200,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 199, rgba: BLACK },
+      ],
+      { left: 60, top: 70, width: 100, height: 100 }
+    );
+    // scale 1/2, offsetX 25: top-left (85, 70), bottom-right (60 + 25 + 49.5, 70 + 99.5).
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 85,
+      top: 70,
+      right: 134.5,
+      bottom: 169.5,
+    });
+  });
+});
+
+describe('committedAntsOutline ant pixel placement at corners', () => {
+  it('lands ants on all four corners of a 1:1 store exactly on the element box corners', async () => {
+    // scale 1, no letterbox: store pixels equal page pixels, box origin added straight in.
+    const canvas = new FakeAntsCanvas(
+      100,
+      100,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 99, y: 0, rgba: BLACK },
+        { x: 0, y: 99, rgba: WHITE },
+        { x: 99, y: 99, rgba: WHITE },
+      ],
+      { left: 100, top: 50, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 100,
+      top: 50,
+      right: 199,
+      bottom: 149,
+    });
+  });
+
+  it('maps the top-left corner ant of a 1:1 store to the box origin', async () => {
+    const canvas = new FakeAntsCanvas(100, 100, [{ x: 0, y: 0, rgba: BLACK }], {
+      left: 100,
+      top: 50,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 100,
+      top: 50,
+      right: 100,
+      bottom: 50,
+    });
+  });
+
+  it('maps the bottom-right corner ant of a 1:1 store to the box bottom-right', async () => {
+    const canvas = new FakeAntsCanvas(100, 100, [{ x: 99, y: 99, rgba: BLACK }], {
+      left: 100,
+      top: 50,
+      width: 100,
+      height: 100,
+    });
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 199,
+      top: 149,
+      right: 199,
+      bottom: 149,
+    });
+  });
+
+  it('maps the top-right and bottom-left corner ants of a 1:1 store to their box corners', async () => {
+    const canvas = new FakeAntsCanvas(
+      100,
+      100,
+      [
+        { x: 99, y: 0, rgba: BLACK },
+        { x: 0, y: 99, rgba: WHITE },
+      ],
+      { left: 100, top: 50, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 100,
+      top: 50,
+      right: 199,
+      bottom: 149,
+    });
+  });
+
+  it('maps the top-right corner ant of a 2x store to the half-box corner', async () => {
+    const canvas = new FakeAntsCanvas(200, 200, [{ x: 199, y: 0, rgba: BLACK }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // 0 + 199 * 1/2 = 99.5.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 99.5,
+      top: 0,
+      right: 99.5,
+      bottom: 0,
+    });
+  });
+
+  it('maps the bottom-left corner ant of a 2x store to the half-box corner', async () => {
+    const canvas = new FakeAntsCanvas(200, 200, [{ x: 0, y: 199, rgba: WHITE }], {
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+    });
+    // 0 + 199 * 1/2 = 99.5 on the non-zero axis.
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 99.5,
+      right: 0,
+      bottom: 99.5,
+    });
+  });
+
+  it('bounds all four corners of a 2x store to the half-box rect', async () => {
+    const canvas = new FakeAntsCanvas(
+      200,
+      200,
+      [
+        { x: 0, y: 0, rgba: BLACK },
+        { x: 199, y: 0, rgba: BLACK },
+        { x: 0, y: 199, rgba: WHITE },
+        { x: 199, y: 199, rgba: WHITE },
+      ],
+      { left: 0, top: 0, width: 100, height: 100 }
+    );
+    await expect(committedAntsOutline(antsReading(canvas))).resolves.toEqual({
+      left: 0,
+      top: 0,
+      right: 99.5,
+      bottom: 99.5,
+    });
+  });
+});
