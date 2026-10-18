@@ -575,7 +575,12 @@ function mergeConflictAsync(cwd, base) {
         }
 
         if (!err) {
-          resolve({ conflict: false, files: [] });
+          const mergeTree = stdout?.trim().split(/\s+/)[0] ?? '';
+          if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(mergeTree)) {
+            resolve({ conflict: null, files: [], reason: 'git merge-tree returned no valid result tree' });
+            return;
+          }
+          resolve({ conflict: false, files: [], mergeTree });
           return;
         }
 
@@ -676,7 +681,13 @@ export function mergeConflict(cwd, base) {
       return { conflict: true, files: [...new Set(files)] };
     }
 
-    if (result.status === 0) return { conflict: false, files: [] };
+    if (result.status === 0) {
+      const mergeTree = result.stdout?.trim().split(/\s+/)[0] ?? '';
+      if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(mergeTree)) {
+        return { conflict: null, files: [], reason: 'git merge-tree returned no valid result tree' };
+      }
+      return { conflict: false, files: [], mergeTree };
+    }
 
     // Non-zero without a conflict marker: the merge could not be attempted.
     // `result.error` is where a spawn failure puts the cause; `stderr` is
@@ -697,14 +708,17 @@ export function mergeConflict(cwd, base) {
  * is a question about the whole repository and a reader counting the entries
  * against `git worktree list` must not come up one short.
  */
-export async function collectWorktrees(cwd, { base = 'main' } = {}) {
+export async function collectWorktrees(cwd, { base = 'main', baseName = base } = {}) {
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);
-  const nameCollisions = historicalNameCollisions(root, base);
+  const nameCollisions = historicalNameCollisions(root, base, baseName);
   const paths = worktrees.map((w) => w.path);
 
   // Batch ahead/behind, tip commit, and commits ahead in parallel (single git log per worktree)
-  const batchResults = await batchAheadBehindTipCommits(paths, base);
+  const [batchResults, baseTree] = await Promise.all([
+    batchAheadBehindTipCommits(paths, base),
+    gitAsync(root, ['rev-parse', '--verify', `${base}^{tree}`]),
+  ]);
 
   // Parallelize working-tree reads; ancestry is already captured by ahead.
   const workingTreeTasks = paths.map((path) => ({ cwd: path, base }));
@@ -736,6 +750,14 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
       ? patchResults[unmergedIndices.indexOf(i)]
       : { status: PATCH_EQUIVALENCE.NOT_APPLICABLE, reason: null };
     const unmerged = typeof ahead === 'number' && ahead > 0 && patches.status !== PATCH_EQUIVALENCE.ABSORBED;
+    const mergeResult = unmergedIndices.includes(i) ? mergeResults[unmergedIndices.indexOf(i)] : { conflict: null };
+    const merge = unmerged ? mergeResult : { conflict: null };
+    const mergeResultMatchesBase =
+      merge.conflict === false && typeof baseTree === 'string' && merge.mergeTree === baseTree
+        ? true
+        : merge.conflict === false && typeof baseTree === 'string'
+          ? false
+          : null;
 
     return {
       ...w,
@@ -754,7 +776,8 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
       // Only worth asking when there is something to merge. Asking about a
       // branch that is already on main, or a detached HEAD, produces a
       // meaningless answer that would be read as a real one.
-      merge: unmerged ? mergeResults[unmergedIndices.indexOf(i)] : { conflict: null },
+      merge,
+      mergeResultMatchesBase,
       patchEquivalence: patches.status,
       patchEquivalenceReason: patches.reason,
       // Advisory, and deliberately not part of any verdict — see the note on
@@ -799,9 +822,10 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
  * quote credited `main` with every "Merge branch 'main' into <feature>" on a
  * feature branch, 126 collisions on this repository, while a branch whose name
  * only ever appears in the `into` position got an empty list. Both names are
- * recorded. `base` is skipped entirely: every fast-forward into it says
- * "Merge branch 'main'", so listing it would be the base branch claiming a
- * hundred merges of itself.
+ * recorded. `baseName` is skipped entirely: every fast-forward into the base
+ * says "Merge branch 'main'", so listing it would be the base branch claiming
+ * a hundred merges of itself. `base` may be the immutable commit SHA captured
+ * for the inventory snapshot; `baseName` keeps the advisory name filter stable.
  *
  * A base ref that does not resolve — `--base trunk` on a clone whose default is
  * `main` — yields an empty map. `git()` returns its fallback and never throws,
@@ -810,14 +834,14 @@ export async function collectWorktrees(cwd, { base = 'main' } = {}) {
  * then reading the result outside it turned that degradation into a
  * `TypeError` that killed the whole generator.
  */
-export function historicalNameCollisions(cwd, base = 'main') {
+export function historicalNameCollisions(cwd, base = 'main', baseName = base) {
   const out = git(cwd, ['log', base, '--format=%H%x09%cI%x09%s']);
   const found = new Map();
   if (!out) return found;
   for (const line of out.split('\n')) {
     const [sha, date, subject] = line.split('\t');
     if (!sha || !subject) continue;
-    const names = new Set([...branchNamesInSubject(subject)].filter((n) => n && n !== base));
+    const names = new Set([...branchNamesInSubject(subject)].filter((n) => n && n !== baseName));
     if (names.size === 0) continue;
     for (const name of names) {
       const list = found.get(name) ?? [];
@@ -866,18 +890,26 @@ export function findMissingWorktrees(cwd) {
  * Synchronous wrapper for collectWorktrees for backward compatibility.
  * Runs the async version and blocks until complete.
  */
-export function collectWorktreesSync(cwd, { base = 'main' } = {}) {
+export function collectWorktreesSync(cwd, { base = 'main', baseName = base } = {}) {
   // This is only used by tests and legacy callers. The main inventory script
   // should use the async version directly.
   const root = resolve(cwd);
   const worktrees = listWorktrees(root);
-  const nameCollisions = historicalNameCollisions(root, base);
+  const nameCollisions = historicalNameCollisions(root, base, baseName);
+  const baseTree = git(root, ['rev-parse', '--verify', `${base}^{tree}`]);
 
   return worktrees.map((w) => {
     const { ahead, behind } = aheadBehind(w.path, base);
     const tree = workingTreeState(w.path, base);
     const patches = patchEquivalence(w.path, base, ahead);
     const unmerged = typeof ahead === 'number' && ahead > 0 && patches.status !== PATCH_EQUIVALENCE.ABSORBED;
+    const merge = unmerged ? mergeConflict(w.path, base) : { conflict: null };
+    const mergeResultMatchesBase =
+      merge.conflict === false && typeof baseTree === 'string' && merge.mergeTree === baseTree
+        ? true
+        : merge.conflict === false && typeof baseTree === 'string'
+          ? false
+          : null;
 
     return {
       ...w,
@@ -890,7 +922,8 @@ export function collectWorktreesSync(cwd, { base = 'main' } = {}) {
       prunableReason: w.prunableReason ?? null,
       workingTree: tree,
       ...commitsAhead(w.path, base, ahead),
-      merge: unmerged ? mergeConflict(w.path, base) : { conflict: null },
+      merge,
+      mergeResultMatchesBase,
       patchEquivalence: patches.status,
       patchEquivalenceReason: patches.reason,
       nameCollisions: nameCollisions.get(w.branch) ?? [],
