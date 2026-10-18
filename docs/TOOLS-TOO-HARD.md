@@ -571,8 +571,8 @@ reconstruct the same pixels from the recorded args. Dwell accumulation makes the
 wall-clock time as well, so the same args replay to a different image. That is a different half of
 the replay contract from the one the presentation boundary covers — a promoted cache reaches a
 published layer only inside the reducer's `PROMOTE_LAYER_PRESENTATIONS` arm
-(`StoreContext.tsx`), and `AGENTS.md`'s Architecture status section is the one
-home for that — so what dwell accumulation breaks is commit purity, not cache publication. Changing
+(`StoreContext.tsx`), and `docs/ARCHITECTURE.md` §"The presentation cache" is the
+one home for that — so what dwell accumulation breaks is commit purity, not cache publication. Changing
 the commit discipline for dwell tools is a history-architecture change with a migration attached,
 not a processor edit.
 

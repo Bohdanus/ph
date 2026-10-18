@@ -123,9 +123,10 @@ export const AppKeyboardShortcuts = () => {
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool, handleImageSave } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
-  const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
+  const { copyActiveSelection, hasActiveSelection, pasteSelectionClipboard, pasteSystemClipboardImage, layerViaCopy } =
+    useSelectionClipboard();
   const { openSaveImageDialog } = useFile();
-  const { commitDirtyTool } = useLayers();
+  const { arrangeLayer, commitDirtyTool } = useLayers();
 
   const selectBrushTool = (shiftKey = false) => {
     if (shiftKey) {
@@ -407,6 +408,42 @@ export const AppKeyboardShortcuts = () => {
   });
 
   useKeyDownShortcut({
+    key: ']',
+    mod: true,
+    shift: false,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => arrangeLayer('bring-forward'),
+  });
+
+  useKeyDownShortcut({
+    key: '}',
+    mod: true,
+    shift: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => arrangeLayer('bring-to-front'),
+  });
+
+  useKeyDownShortcut({
+    key: '[',
+    mod: true,
+    shift: false,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => arrangeLayer('send-backward'),
+  });
+
+  useKeyDownShortcut({
+    key: '{',
+    mod: true,
+    shift: true,
+    preventDefault: true,
+    enabled: hasImage,
+    onKeyDown: () => arrangeLayer('send-to-back'),
+  });
+
+  useKeyDownShortcut({
     key: 'c',
     mod: true,
     preventDefault: true,
@@ -430,7 +467,9 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => {
-      pasteSelectionClipboard();
+      void pasteSelectionClipboard().then((pasted) => {
+        if (!pasted) void pasteSystemClipboardImage();
+      });
     },
   });
 

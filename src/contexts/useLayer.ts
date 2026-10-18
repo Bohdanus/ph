@@ -20,6 +20,7 @@ import {
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { useDevicePixelRatio } from '../hooks/useDevicePixelRatio.ts';
+import { assertWithinDocumentPixelBudget } from './raster-utils.ts';
 
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
 import {
@@ -342,6 +343,8 @@ function getIncrementalSpongeArgs(prevArgs: ToolArgs | undefined, currArgs: Tool
 const MAX_DOCUMENT_FRAME_SIDE = 4096;
 const MAX_DOCUMENT_FRAME_AREA = 16777216;
 
+export type ArrangeLayerCommand = 'bring-to-front' | 'bring-forward' | 'send-backward' | 'send-to-back';
+
 export const useLayers = () => {
   const [
     {
@@ -457,6 +460,9 @@ export const useLayers = () => {
   };
 
   const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
+    if ('size' in params && params.size.width > 0 && params.size.height > 0) {
+      assertWithinDocumentPixelBudget(params.size, 'Document');
+    }
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
 
     const source: BlankLayerSource = { kind: 'blank', ...params };
@@ -982,12 +988,48 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
-    if (isLayerLocked(layers[layerToMoveId])) return;
+    const layerToMove = layers[layerToMoveId];
+    if (!layerToMove || layerToMove.isBedrock || isLayerLocked(layerToMove)) return;
     dispatch({
       type: 'REORDER_LAYERS',
       payload: { layerToMoveId, afterWhichLayerId },
     });
     drawAllLayers();
+  };
+
+  const arrangeLayer = (command: ArrangeLayerCommand) => {
+    if (!activeLayerId) return;
+    const layerToMove = layers[activeLayerId];
+    if (!layerToMove || layerToMove.isBedrock || isLayerLocked(layerToMove)) return;
+
+    const sortedLayers = getSortedLayersArray(layers);
+    const currentIndex = sortedLayers.findIndex((layer) => layer.id === activeLayerId);
+    if (currentIndex < 0) return;
+
+    const bedrockIndex = sortedLayers.findIndex((layer) => layer.isBedrock);
+    const bedrockId = bedrockIndex >= 0 ? sortedLayers[bedrockIndex]!.id : null;
+    let afterWhichLayerId: LayerId | null | undefined;
+
+    switch (command) {
+      case 'bring-to-front':
+        if (currentIndex === sortedLayers.length - 1) return;
+        afterWhichLayerId = sortedLayers.at(-1)!.id;
+        break;
+      case 'bring-forward':
+        if (currentIndex === sortedLayers.length - 1) return;
+        afterWhichLayerId = sortedLayers[currentIndex + 1]!.id;
+        break;
+      case 'send-backward':
+        if (currentIndex <= bedrockIndex + 1) return;
+        afterWhichLayerId = sortedLayers[currentIndex - 2]?.id ?? bedrockId;
+        break;
+      case 'send-to-back':
+        if (currentIndex <= bedrockIndex + 1) return;
+        afterWhichLayerId = bedrockId;
+        break;
+    }
+
+    moveLayerAfter(activeLayerId, afterWhichLayerId);
   };
 
   const setActiveLayer = (id?: LayerId | null) => dispatch({ type: 'SET_ACTIVE_LAYER', payload: id ?? null });
@@ -1466,6 +1508,7 @@ export const useLayers = () => {
     setActiveLayer,
     toggleVisibility,
     moveLayerAfter,
+    arrangeLayer,
 
     drawAllLayers,
     mergeAllLayers,

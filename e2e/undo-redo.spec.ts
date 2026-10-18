@@ -375,4 +375,64 @@ test.describe('Undo and redo', () => {
     expect(redone, 'redo left the canvas empty').toBeTruthy();
     expect(redone, 'redo did not restore the rectangle pixel for pixel').toEqual(drawn);
   });
+
+  test('background conversion (raster/blank commit) undo and redo publish durable presentation with cursor and layer ids', async ({
+    page,
+  }) => {
+    // A lone bedrock document exposes the Background -> editable layer route, which
+    // commits a raster (`image`) source layer on top of a blank bedrock. Both the
+    // converted layer and the bedrock it replaced are in the durable presentation's
+    // accepted (raster/blank) subset, so undo/redo navigation must publish a
+    // durable composition rather than the legacy fallback.
+    const historyRows = page.getByTitle('Click to go back to this state');
+    await expect(historyRows, 'a fresh document starts with one history row').toHaveCount(1);
+    const convert = page.getByTestId('layers-convert-background-button');
+    await expect(convert, 'a fresh document exposes the Background conversion route').toBeVisible();
+
+    await convert.click();
+    await expect(convert, 'the conversion consumes the button').toHaveCount(0);
+    await expect(historyRows, 'background conversion must append exactly one history row').toHaveCount(2);
+    await expect(getUndoButton(page), 'the conversion should make undo available').toBeEnabled();
+
+    const strip = page.getByTestId('dev-status-strip');
+
+    // Undo the conversion: navigates from the raster layer back to the blank bedrock.
+    await getUndoButton(page).click();
+    await expect(getRedoButton(page), 'undo should make redo available').toBeEnabled();
+    await expectPresentationDecision(page);
+    await expect(strip, 'undo of a raster/blank commit must publish durably').toHaveAttribute(
+      'data-presentation-status',
+      'durable'
+    );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
+    const publicationAfterUndo = await strip.getAttribute('data-durable-publication');
+    expect(publicationAfterUndo, 'undo must expose a durable publication token').toBeTruthy();
+    const cursorAfterUndoAttribute = await strip.getAttribute('data-durable-cursor');
+    expect(cursorAfterUndoAttribute, 'undo must expose a numeric durable cursor').toMatch(/^-?\d+$/);
+    const cursorAfterUndo = Number(cursorAfterUndoAttribute);
+    const layerIdsAfterUndo = await strip.getAttribute('data-durable-layer-ids');
+    expect(layerIdsAfterUndo, 'undo must publish non-empty durable layer ids').toBeTruthy();
+
+    // Redo the conversion: navigates back to the raster layer.
+    await getRedoButton(page).click();
+    await expect(getUndoButton(page), 'redo should make undo available').toBeEnabled();
+    await expectPresentationDecision(page);
+    await expect(strip, 'redo of a raster/blank commit must publish durably').toHaveAttribute(
+      'data-presentation-status',
+      'durable'
+    );
+    await expect(strip).toHaveAttribute('data-durable-fallback-reason', '');
+    const publicationAfterRedo = await strip.getAttribute('data-durable-publication');
+    expect(publicationAfterRedo, 'redo must expose a durable publication token').toBeTruthy();
+    expect(publicationAfterRedo, 'undo and redo must publish distinct durable records').not.toBe(publicationAfterUndo);
+    const cursorAfterRedoAttribute = await strip.getAttribute('data-durable-cursor');
+    expect(cursorAfterRedoAttribute, 'redo must expose a numeric durable cursor').toMatch(/^-?\d+$/);
+    const cursorAfterRedo = Number(cursorAfterRedoAttribute);
+    expect(cursorAfterRedo, 'undo and redo must publish different durable cursors').not.toBe(cursorAfterUndo);
+    const layerIdsAfterRedo = await strip.getAttribute('data-durable-layer-ids');
+    expect(layerIdsAfterRedo, 'redo must publish non-empty durable layer ids').toBeTruthy();
+    // The durable layer-id metadata must agree across the two navigations: the
+    // converted layer reuses the bedrock id, so the published set is stable.
+    expect(layerIdsAfterRedo, 'durable layer ids must match across undo/redo').toBe(layerIdsAfterUndo);
+  });
 });

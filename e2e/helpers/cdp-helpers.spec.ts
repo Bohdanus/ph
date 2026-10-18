@@ -49,6 +49,56 @@ const RED_CANVAS_PAGE = `<!doctype html>
 
 const FULL_CANVAS_BOX = { x: CANVAS_LEFT, y: CANVAS_TOP, width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
 
+const ZERO_SIZE_CANVAS_PAGE = `<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; padding: 0; background: rgb(0, 0, 255); }
+      #test-canvas {
+        position: absolute;
+        left: ${CANVAS_LEFT}px;
+        top: ${CANVAS_TOP}px;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="test-canvas" width="0" height="0"></canvas>
+  </body>
+</html>`;
+
+/**
+ * A canvas with a CSS scale transform applied: `getBoundingClientRect` reports
+ * the post-transform visual size, while the canvas's backing store (`width` /
+ * `height` attributes) stays at the native resolution. This is the case the
+ * viewport-vs-page conversion must handle correctly — `boundingBox()` returns the
+ * transformed rect, not the intrinsic pixel count.
+ */
+const TRANSFORMED_CANVAS_PAGE = `<!doctype html>
+<html>
+  <head>
+    <style>
+      html, body { margin: 0; padding: 0; background: rgb(0, 0, 255); }
+      #test-canvas {
+        position: absolute;
+        left: ${CANVAS_LEFT}px;
+        top: ${CANVAS_TOP}px;
+        transform: scale(2);
+        transform-origin: top left;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="test-canvas" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}"></canvas>
+    <script>
+      const ctx = document.getElementById('test-canvas').getContext('2d');
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(0, 0, ${CANVAS_WIDTH}, ${CANVAS_HEIGHT});
+    </script>
+  </body>
+</html>`;
+
 function countPixelsDifferingFrom(
   imageData: ImageDataResult,
   expected: { red: number; green: number; blue: number }
@@ -232,6 +282,100 @@ test.describe('CDP Helpers', () => {
     });
 
     /**
+     * The capture's spatial bounds must AGREE WITH THE PAGE'S OWN layout, not just
+     * with the constants the test fed in. This mirrors the "agrees with the app's own
+     * contain fit" pattern in `visual-regression.spec.ts` (which reads the app's
+     * `data-fit-*` attributes and asserts them equal to an independent `containFit()`
+     * result): the test cross-checks the capture against an INDEPENDENT reading from
+     * the browser's layout engine, rather than checking the capture for internal
+     * consistency alone.
+     *
+     * On a static `setContent` page the 87px CDP height drift does NOT reproduce
+     * (TEST-FLAKES.md §12, OPEN_PROBLEMS.md P2) — the page cannot re-layout while the
+     * capture is in flight — so this is NOT a regression guard for that specific
+     * defect. What it IS is a spatial-correctness tripwire: if the helper ever
+     * mis-projects the clip into page coordinates, or if `viewportRectToPageRect`
+     * drifts, the captured region will not land where `getBoundingClientRect` says
+     * the canvas is, and the pixel colour at the captured origin will be wrong. The
+     * page-side read is the independent oracle the comparison is checked against.
+     *
+     * The read uses `getBoundingClientRect` from inside the page, not from
+     * `Locator.boundingBox()` — both are viewport-relative, but the page-side read is
+     * the same source `cdp-helpers.ts` itself consults via `getPageScroll`, so it is
+     * the same convention the conversion is defined against. The synthetic page is static,
+     * so a direct read is sufficient here.
+     */
+    test('captured region agrees with the page layout geometry', async ({ page }, testInfo) => {
+      await page.setContent(RED_CANVAS_PAGE);
+      const box = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 100, height: 80 };
+
+      const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-spatial', box);
+      const imageData = await decodeScreenshot(screenshot);
+
+      // The PAGE's OWN layout: `getBoundingClientRect` checks the capture against
+      // the layout it was taken from, not against the test constants. If the canvas
+      // rendered at a different offset than CANVAS_LEFT/CANVAS_TOP, this surfaces it.
+      const canvasRect = await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas');
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        };
+      });
+
+      expect(canvasRect, 'the canvas element was not present in the page').not.toBeNull();
+
+      expect(canvasRect!.left).toBeCloseTo(CANVAS_LEFT, 1);
+      expect(canvasRect!.top).toBeCloseTo(CANVAS_TOP, 1);
+      expect(canvasRect!.width).toBeCloseTo(CANVAS_WIDTH, 1);
+      expect(canvasRect!.height).toBeCloseTo(CANVAS_HEIGHT, 1);
+
+      // The capture region (100x80) is a sub-rect of the 240x160 canvas. If the clip
+      // were mis-projected into page space, the capture would land on the blue page
+      // background instead of the red canvas — the colour check catches that, and the
+      // spatial check above confirms the canvas is where the capture expects it.
+      expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
+      expectFaithfulCaptureOf(imageData, box);
+
+      // Cross-check a known sub-region against hardcoded proportional CSS coordinates.
+      // This is an independent oracle rather than a full-image round trip, so a shared
+      // inverse bug in the conversion helpers cannot make the assertion pass.
+      const reconstructed = screenshotBoundsToCss(
+        {
+          left: imageData.width * 0.25,
+          top: imageData.height * 0.25,
+          right: imageData.width * 0.75 - 1,
+          bottom: imageData.height * 0.75 - 1,
+          imageWidth: imageData.width,
+          imageHeight: imageData.height,
+        },
+        box
+      );
+      expect(reconstructed.left, 'the sub-region CSS origin must be one quarter into the box').toBeCloseTo(
+        box.x + box.width * 0.25,
+        1
+      );
+      expect(reconstructed.top, 'the sub-region CSS origin must be one quarter into the box').toBeCloseTo(
+        box.y + box.height * 0.25,
+        1
+      );
+      expect(reconstructed.right, 'the sub-region CSS edge must be three quarters into the box').toBeCloseTo(
+        box.x + box.width * 0.75 - box.width / imageData.width,
+        1
+      );
+      expect(reconstructed.bottom, 'the sub-region CSS edge must be three quarters into the box').toBeCloseTo(
+        box.y + box.height * 0.75 - box.height / imageData.height,
+        1
+      );
+    });
+
+    /**
      * The last of the three properties, and the one `expectFaithfulCaptureOf` cannot
      * see: that the helper adds no rescaling of its own.
      *
@@ -258,6 +402,71 @@ test.describe('CDP Helpers', () => {
 
       expect(cdpCapture.width).toBe(playwrightCapture.width);
       expect(cdpCapture.height).toBe(playwrightCapture.height);
+    });
+
+    /**
+     * P2 — viewport vs page coordinate mismatch at the zero-size boundary.
+     *
+     * A canvas with zero intrinsic dimensions reports a zero-area
+     * `getBoundingClientRect`. The helper's `viewportRectToPageRect` conversion
+     * still applies, and CDP `Page.captureScreenshot` is asked for a clip of width
+     * 0 / height 0 — which Chrome may reject or return an empty image for. This
+     * pins the boundary so there is a named assertion for the case rather than a
+     * silent crash in the error path.
+     */
+    test('rejects a capture request for a zero-size canvas', async ({ page }, testInfo) => {
+      await page.setContent(ZERO_SIZE_CANVAS_PAGE);
+
+      const rect = await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas');
+        if (!canvas) return null;
+        const r = canvas.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      });
+      expect(rect).not.toBeNull();
+      expect(rect!.width).toBe(0);
+      expect(rect!.height).toBe(0);
+
+      await expect(
+        captureCanvasScreenshot(page, { x: rect!.x, y: rect!.y, width: 0, height: 0 }, testInfo, 'test-capture-zero')
+      ).rejects.toThrow();
+    });
+
+    /**
+     * A canvas with a CSS `transform: scale(2)` visually occupies twice its
+     * attribute width/height. `getBoundingClientRect` returns the post-transform
+     * rect (480x320) while the backing store stays 240x160. This pins that the
+     * capture region matches the TRANSFORMED rect — the page layout, not the
+     * attribute — and that the viewport-to-page coordinate conversion still lands
+     * the clip in the right document location.
+     */
+    test('captures the visually scaled bounds of a CSS-transformed canvas', async ({ page }, testInfo) => {
+      await page.setContent(TRANSFORMED_CANVAS_PAGE);
+
+      const rect = await page.evaluate(() => {
+        const canvas = document.getElementById('test-canvas');
+        if (!canvas) return null;
+        const r = canvas.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      });
+      expect(rect).not.toBeNull();
+      // The transform doubles the visual size from the 240x160 backing store.
+      expect(rect!.width).toBe(CANVAS_WIDTH * 2);
+      expect(rect!.height).toBe(CANVAS_HEIGHT * 2);
+
+      const screenshot = await captureCanvasScreenshot(
+        page,
+        { x: rect!.x, y: rect!.y, width: CANVAS_WIDTH * 2, height: CANVAS_HEIGHT * 2 },
+        testInfo,
+        'test-capture-transformed'
+      );
+
+      const imageData = await decodeScreenshot(screenshot);
+      // The capture is a faithful image of the 480x320 (CSS-transformed) rect and all
+      // pixels are red — if the clip were taken against the backing store size (240x160)
+      // instead of the transformed rect, the capture would be half the expected extent.
+      expectFaithfulCaptureOf(imageData, { width: CANVAS_WIDTH * 2, height: CANVAS_HEIGHT * 2 });
+      expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
     });
   });
 

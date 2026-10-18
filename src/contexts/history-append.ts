@@ -1420,6 +1420,9 @@ export function decideDurableAppend({
   if (base.branchRevision !== prior.branchRevision) {
     return { outcome: 'preconditions', reason: 'the durable document was built for another branch' };
   }
+  if (base.history.some((candidate) => candidate.id === entry.id)) {
+    return { outcome: 'preconditions', reason: 'the appended history entry id already exists in the durable document' };
+  }
   if (prior.cursor !== prior.entries.length - 1) {
     return { outcome: 'preconditions', reason: 'the append is not at the tip of the legacy timeline' };
   }

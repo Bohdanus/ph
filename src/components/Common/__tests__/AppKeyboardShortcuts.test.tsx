@@ -15,7 +15,9 @@ const goToTool = vi.hoisted(() => vi.fn());
 const patchToolArgs = vi.hoisted(() => vi.fn());
 const copyActiveSelection = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboard = vi.hoisted(() => vi.fn());
+const pasteSystemClipboardImage = vi.hoisted(() => vi.fn());
 const layerViaCopy = vi.hoisted(() => vi.fn());
+const arrangeLayer = vi.hoisted(() => vi.fn());
 const undo = vi.hoisted(() => vi.fn());
 const redo = vi.hoisted(() => vi.fn());
 const canUndo = vi.hoisted(() => vi.fn(() => false));
@@ -70,7 +72,7 @@ vi.mock('../../../contexts/useFile.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useLayer.ts', () => ({
-  useLayers: () => ({ commitDirtyTool }),
+  useLayers: () => ({ arrangeLayer, commitDirtyTool }),
 }));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
@@ -85,6 +87,7 @@ vi.mock('../../../contexts/useSelectionClipboard.ts', () => ({
     copyActiveSelection,
     hasActiveSelection: clipboardState.hasActiveSelection,
     pasteSelectionClipboard,
+    pasteSystemClipboardImage,
     layerViaCopy,
   }),
 }));
@@ -134,12 +137,41 @@ beforeEach(() => {
   openSaveImageDialog.mockResolvedValue({ fileName: 'saved.png', format: 'image/png' });
   handleImageSave.mockReset();
   commitDirtyTool.mockReturnValue({ committed: 'layer' });
+  arrangeLayer.mockReset();
+  pasteSelectionClipboard.mockResolvedValue(true);
+  pasteSystemClipboardImage.mockResolvedValue(false);
   storeState.fileName = 'untitled.png';
   storeState.totalSize = { width: 800, height: 600 };
   storeState.documentFrame = { x: 0, y: 0, width: 800, height: 600 };
   storeState.hasImage = true;
   storeState.toolName = 'brush';
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
+});
+
+describe('layer Arrange shortcuts', () => {
+  it.each([
+    [']', {}, 'bring-forward'],
+    ['}', { shiftKey: true }, 'bring-to-front'],
+    ['[', {}, 'send-backward'],
+    ['{', { shiftKey: true }, 'send-to-back'],
+  ] as const)('maps Meta/Ctrl+%s to %s', (key, modifiers, command) => {
+    renderShortcuts();
+
+    expect(press(key, { metaKey: true, ...modifiers })).toBe(true);
+    expect(arrangeLayer).toHaveBeenCalledExactlyOnceWith(command);
+  });
+
+  it('does not arrange layers when no document is loaded', () => {
+    storeState.hasImage = false;
+    renderShortcuts();
+
+    press(']', { metaKey: true });
+    press('}', { metaKey: true, shiftKey: true });
+    press('[', { ctrlKey: true });
+    press('{', { ctrlKey: true, shiftKey: true });
+
+    expect(arrangeLayer).not.toHaveBeenCalled();
+  });
 });
 
 afterEach(() => {
@@ -386,7 +418,7 @@ describe('AppKeyboardShortcuts undo and redo', () => {
 });
 
 describe('AppKeyboardShortcuts clipboard', () => {
-  it('copies the active selection with Meta+C and pastes with Meta+V', () => {
+  it('copies the active selection with Meta+C and pastes with Meta+V', async () => {
     renderShortcuts();
 
     press('c', { metaKey: true });
@@ -394,6 +426,20 @@ describe('AppKeyboardShortcuts clipboard', () => {
 
     expect(copyActiveSelection).toHaveBeenCalledTimes(1);
     expect(pasteSelectionClipboard).toHaveBeenCalledTimes(1);
+    await flushAsync();
+    expect(pasteSystemClipboardImage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the system image clipboard when the in-app clipboard is empty', async () => {
+    pasteSelectionClipboard.mockResolvedValue(false);
+    pasteSystemClipboardImage.mockResolvedValue(true);
+    renderShortcuts();
+
+    press('v', { metaKey: true });
+    await flushAsync();
+
+    expect(pasteSelectionClipboard).toHaveBeenCalledExactlyOnceWith();
+    expect(pasteSystemClipboardImage).toHaveBeenCalledExactlyOnceWith();
   });
 
   it('reports a Meta+C copy that returns false instead of dropping the failure', () => {
@@ -756,6 +802,19 @@ describe('AppKeyboardShortcuts save', () => {
 
       expect(commitDirtyTool).not.toHaveBeenCalled();
       expect(openSaveImageDialog).not.toHaveBeenCalled();
+    } finally {
+      releaseDocumentGesture('rectangular-selection', 1);
+    }
+  });
+
+  it('refuses mod+V while a document gesture is open', () => {
+    renderShortcuts();
+    claimDocumentGesture('rectangular-selection', 1);
+
+    try {
+      expect(press('v', { ctrlKey: true })).toBe(false);
+      expect(pasteSelectionClipboard).not.toHaveBeenCalled();
+      expect(pasteSystemClipboardImage).not.toHaveBeenCalled();
     } finally {
       releaseDocumentGesture('rectangular-selection', 1);
     }

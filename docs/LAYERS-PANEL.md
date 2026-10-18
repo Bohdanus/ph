@@ -124,11 +124,11 @@ version-sensitive if a source disagrees with it.
 
 ### 2.2 The filter row
 
-One control: a filter-kind selector whose default is **`Kind`**, immediately below the tab strip. A
-reconstructed desktop specification lists `Kind`, `Name`, `Effect`, `Mode`, `Attribute`, `Color`,
-`Smart Object`, `Selected`, and `Artboard`, but Adobe's current primary documentation directly
-confirms the Smart Object filter and its five link states, not this complete nine-kind enumeration.
-Treat the nine-kind list and icon ordering as a corroborated reconstruction, not settled Adobe truth.
+One control: a filter-kind selector whose default is **`Kind`**, immediately below the tab strip. Adobe
+principal designer Julieanne Kost enumerates the nine filter kinds as `Kind`, `Name`, `Effect`, `Mode`,
+`Attribute`, `Color`, `Smart Object`, `Selected`, and `Artboard`. The taxonomy is therefore Adobe-sourced;
+the separate icon glyphs and their ordering remain corroborated reconstruction rather than settled Adobe
+truth.
 
 - `GAP` — There is no filter state in the panel at all. `LayersTab.tsx` — `LayersTab()` — holds
   **seven** `useState` values (`draggedLayerId`, `dropTargetId`, `isOverBottom`,
@@ -999,6 +999,8 @@ Every claim marked "Adobe, primary" traces to one of these.
   current layer taxonomy and video-layer indicator.
 - [Filter the Layers panel by Smart Objects](https://helpx.adobe.com/photoshop/desktop/create-manage-layers/smart-objects/filter-the-layers-panel-by-smart-objects.html)
   — "Use Turn layer filtering on or off"; the five Smart-Object filter icons.
+- [Select and Filter Layer Options in Photoshop CC](https://jkost.com/blog/2018/03/select-and-filter-layer-options-in-photoshop-cc.html)
+  — Adobe principal designer Julieanne Kost's enumeration of the nine Layers-panel filter kinds.
 - [How to unlock layers in Photoshop](https://www.adobe.com/products/photoshop/unlock-layers.html) —
   the three partial locks, the keyboard shortcut, the Background layer's partial lock.
 - [Create layers and groups](https://helpx.adobe.com/photoshop/using/create-layers-groups.html) — the

@@ -703,6 +703,24 @@ describe('decideDurableAppend', () => {
     expect(decision.document.baseline.frame).toEqual(baselineFrame);
   });
 
+  it('refuses a planned append whose id already exists in the durable document', () => {
+    // prior legacy entries do not contain the appended id, but the durable base
+    // history does: a collision the legacy duplicate guard cannot see.
+    const collidingBase = {
+      ...base,
+      history: [...base.history, createFrameEntry('crop-1')],
+      cursor: 1,
+      durableRevision: 8,
+    } as unknown as DurableDocument;
+    const decision = decide({ base: collidingBase });
+
+    expect(decision.outcome).toBe('preconditions');
+    if (decision.outcome !== 'preconditions') return;
+    expect(decision.reason).toBe('the appended history entry id already exists in the durable document');
+    // The existing publication case is preserved when there is no collision.
+    expect(decide().outcome).toBe('published');
+  });
+
   it('adopts the frozen baseline on the publication path', () => {
     // The base the store really holds is the converter's own output, deep-frozen
     // end to end, and the append changes one position and adds one entry. So the

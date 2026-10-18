@@ -12,6 +12,7 @@ import type { ToolResult } from '../../tools/toolProcessors.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
+  OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
   REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
@@ -83,6 +84,40 @@ function setup({
         totalSize: { ...totalSize },
         documentFrame,
         hasImage: true,
+      },
+    });
+  });
+
+  return { result };
+}
+
+function setupWithDocument() {
+  const layer = makeLayer('edited', 0, {
+    source: {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      pos: { x: 0, y: 0, width: 40, height: 20 },
+    },
+  });
+  const layers = { edited: layer };
+  const { result } = setup({ layers, activeLayerId: layer.id });
+
+  act(() => {
+    result.current.dispatch({
+      type: 'REPLACE_DOCUMENT',
+      payload: {
+        documentId: 'doc-layer-lifecycle',
+        history: [
+          {
+            id: 'baseline',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: layer.id,
+            documentSource: { layers, size, frame },
+          },
+        ],
+        historyIndex: 0,
+        updates: { layers, totalSize: size, documentFrame: frame, hasImage: true },
       },
     });
   });
@@ -690,6 +725,85 @@ describe('useLayers layer mutation commands', () => {
     });
   });
 
+  it('does not reorder the bedrock layer through the shared move path', () => {
+    const { result } = setup({
+      layers: {
+        bottom: makeLayer('bottom', 0, { isBedrock: true }),
+        top: makeLayer('top', 1),
+      },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.moveLayerAfter('bottom', 'top');
+    });
+
+    expect(result.current.store.layers.bottom!.order).toBe(0);
+    expect(result.current.store.layers.top!.order).toBe(1);
+    expect(result.current.store.history).toEqual([]);
+  });
+
+  it.each([
+    ['bring-forward', { bottom: 0, middle: 3, top: 2 }],
+    ['bring-to-front', { bottom: 0, middle: 3, top: 2 }],
+    ['send-backward', { bottom: 0, middle: -1, top: 2 }],
+    ['send-to-back', { bottom: 0, middle: -1, top: 2 }],
+  ] as const)('arranges the active layer with %s through reorder history', (command, expected) => {
+    const { result } = setup({
+      layers: { bottom: makeLayer('bottom', 0), middle: makeLayer('middle', 1), top: makeLayer('top', 2) },
+      activeLayerId: 'middle',
+    });
+
+    act(() => {
+      result.current.layers.arrangeLayer(command);
+    });
+
+    expect(result.current.store.layers.bottom!.order).toBe(expected.bottom);
+    expect(result.current.store.layers.middle!.order).toBe(expected.middle);
+    expect(result.current.store.layers.top!.order).toBe(expected.top);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      layerId: 'middle',
+    });
+  });
+
+  it('keeps the locked background below the stack when sending a layer to the back', () => {
+    const { result } = setup({
+      layers: {
+        background: makeLayer('background', 0, { isBedrock: true }),
+        middle: makeLayer('middle', 1),
+        top: makeLayer('top', 2),
+      },
+      activeLayerId: 'top',
+    });
+
+    act(() => {
+      result.current.layers.arrangeLayer('send-to-back');
+    });
+
+    expect(result.current.store.layers.background!.order).toBe(0);
+    expect(result.current.store.layers.top!.order).toBe(1);
+    expect(result.current.store.layers.middle!.order).toBe(3);
+    expect(result.current.store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      args: { layerToMoveId: 'top', afterWhichLayerId: 'background' },
+    });
+  });
+
+  it.each([
+    ['bedrock', { only: makeLayer('only', 0, { isBedrock: true }) }, 'only'],
+    ['locked', { only: makeLayer('only', 0, { locked: true }) }, 'only'],
+  ] as const)('does not arrange a %s active layer', (_kind, layers, activeLayerId) => {
+    const { result } = setup({ layers, activeLayerId });
+
+    act(() => {
+      result.current.layers.arrangeLayer('bring-to-front');
+    });
+
+    expect(result.current.store.layers.only!.order).toBe(0);
+    expect(result.current.store.history).toEqual([]);
+  });
+
   it('sends a missing active layer to null', () => {
     const { result } = setup({ layers: { only: makeLayer('only', 0) }, activeLayerId: 'only' });
 
@@ -712,7 +826,7 @@ describe('useLayers layer mutation commands', () => {
   });
 
   it('sets opacity to zero and back to one through the opacity action', () => {
-    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+    const { result } = setupWithDocument();
 
     act(() => {
       result.current.layers.updateLayer('edited', { opacity: 0 }, SET_LAYER_OPACITY_ACTION);
@@ -723,6 +837,14 @@ describe('useLayers layer mutation commands', () => {
       layerId: 'edited',
       args: { opacity: 0 },
     });
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history).toHaveLength(1);
+    expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      id: result.current.store.history.at(-1)!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
+    });
+    expect(result.current.store.durableDocument!.cursor).toBe(0);
 
     act(() => {
       result.current.layers.updateLayer('edited', { opacity: 1 }, SET_LAYER_OPACITY_ACTION);
@@ -733,21 +855,18 @@ describe('useLayers layer mutation commands', () => {
       layerId: 'edited',
       args: { opacity: 1 },
     });
-  });
-
-  it('applies a blend-mode patch with the opacity action and records the intent', () => {
-    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
-
-    act(() => {
-      result.current.layers.updateLayer('edited', { blendMode: 'multiply' }, SET_LAYER_OPACITY_ACTION);
+    expect(result.current.store.durableDocument!.history).toHaveLength(2);
+    expect(result.current.store.durableStatus).toBe('current');
+    expect(result.current.store.durableDiagnostics).toEqual([]);
+    expect(result.current.store.durableDocument!.history[0]).toMatchObject({
+      id: result.current.store.history[1]!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 0 } },
     });
-
-    expect(result.current.store.layers.edited!.blendMode).toBe('multiply');
-    expect(result.current.store.history.at(-1)).toMatchObject({
-      actionName: SET_LAYER_OPACITY_ACTION,
-      layerId: 'edited',
-      args: { blendMode: 'multiply' },
+    expect(result.current.store.durableDocument!.history[1]).toMatchObject({
+      id: result.current.store.history[2]!.id,
+      operation: { kind: 'set-layer-properties', layerId: 'edited', patch: { opacity: 1 } },
     });
+    expect(result.current.store.durableDocument!.cursor).toBe(1);
   });
 
   it('moves a layer to the bottom when the anchor is null', () => {

@@ -416,6 +416,37 @@ describe('replayHistory layer bookkeeping actions', () => {
     expect(dependencies.createLayer).not.toHaveBeenCalled();
   });
 
+  it('skips a replace-layer-source action whose replacement source is not a tool source', () => {
+    const dependencies = createDependencies();
+    const originalLayer = createTestLayer('layer-1', { name: 'Original layer', source: blankSource });
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: OPEN_DOCUMENT_ACTION,
+        layerId: 'layer-1',
+        documentSource: { layers: { 'layer-1': originalLayer }, size: initialSize },
+      },
+      {
+        id: 'replace-invalid',
+        actionName: REPLACE_LAYER_SOURCE_ACTION,
+        layerId: 'layer-1',
+        args: { source: { kind: 'raster' } },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(dependencies.createLayer).not.toHaveBeenCalled();
+    expect(result.layers['layer-1'].source).toBe(blankSource);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'replace-invalid',
+      actionName: REPLACE_LAYER_SOURCE_ACTION,
+      code: 'invalid-layer-source',
+      error: expect.any(TypeError),
+    });
+  });
+
   it('creates a layer from a tool layer source on a tool action', () => {
     const dependencies = createDependencies();
     const toolSource: LayerSource = {

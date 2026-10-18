@@ -27,6 +27,7 @@ import {
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_OPACITY_ACTION,
   TOOL_ACTION,
 } from '../../util/constants.ts';
 
@@ -642,6 +643,20 @@ describe('durable entry id uniqueness', () => {
   function filterToolNames(operations: readonly DurableOperation[]): (string | undefined)[] {
     return operations.map((operation) => (operation.kind === 'apply-filter' ? operation.filter.toolName : undefined));
   }
+
+  it('does not publish a blend-mode patch under the opacity action owner', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [{ id: 'blend-mode', actionName: SET_LAYER_OPACITY_ACTION, layerId, args: { blendMode: 'multiply' } }],
+      registry
+    );
+
+    // Blend mode has no durable action owner yet. Keeping this unsupported
+    // patch out of the shadow prevents it from becoming a durable operation
+    // until a dedicated property action and diagnostic contract are designed.
+    expect(result.document.history).toEqual([]);
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, -1]);
+  });
 
   it('publishes one durable entry for a repeated legacy id and reports the omitted edit as an error', () => {
     const registry = new AssetRegistry();

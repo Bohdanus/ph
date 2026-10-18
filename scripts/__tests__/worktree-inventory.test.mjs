@@ -30,7 +30,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
-import { parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
+import { inventoryTarget, parseArgs, validatePinnedNow } from '../worktree-inventory.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import {
   __testables,
@@ -1057,6 +1057,26 @@ describe('the pinned clock', () => {
   });
 });
 
+describe('the inventory output target', () => {
+  it('resolves the default output in the repository root, not the invoking worktree', () => {
+    expect(inventoryTarget('/repo', undefined)).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget('/repo', null)).toBe('/repo/WORKTREES.json');
+    expect(inventoryTarget('/repo', 'reports/WORKTREES.json')).toBe('/repo/reports/WORKTREES.json');
+    expect(inventoryTarget('/repo', '/tmp/WORKTREES.json')).toBe('/tmp/WORKTREES.json');
+  });
+
+  it('rejects an empty output path before attempting to write', () => {
+    expect(() => parseArgs(['--out'])).toThrow('--out requires a non-empty path');
+    expect(() => parseArgs(['--out', '   '])).toThrow('--out requires a non-empty path');
+  });
+
+  it('uses the root-relative target at the CLI write boundary', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../worktree-inventory.mjs'), 'utf8');
+
+    expect(source).toContain('const target = inventoryTarget(root, opts.out);');
+  });
+});
+
 describe('mergeConflict, against a real repository', () => {
   /** `repo` has main at 3 commits; `side` adds 2 and never sees main\'s 3rd. */
   function repo() {
@@ -2077,8 +2097,18 @@ describe('the transcript read audit', () => {
     // The falsifiable part of "all 105 sessions were read". Exact window
     // membership is NOT reproducible — `time_updated` keeps moving on a live
     // session — so this pins what is actually checkable: every id exists, is
-    // top-level, and falls after the documented window start.
+    // top-level, and falls after the documented window start. The session DB is
+    // deliberately bounded to MAX_SESSION_DB_WINDOW_MS, so an older hand-read
+    // audit is historical evidence rather than a claim that those ids remain
+    // queryable today.
     const a = loadChatAudit(dataPath);
+    const auditAge = Date.now() - Date.parse(a.asOf);
+    if (auditAge > MAX_SESSION_DB_WINDOW_MS) {
+      expect(auditAge, 'the hand-read audit is outside the session DB retention window').toBeGreaterThan(
+        MAX_SESSION_DB_WINDOW_MS
+      );
+      return;
+    }
     const startMs = Date.parse(a.windowStart);
     let db;
     try {

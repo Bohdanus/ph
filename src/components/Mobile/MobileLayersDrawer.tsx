@@ -80,18 +80,22 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
    */
   const handleMoveUp = (index: number) => {
     if (index <= 0 || index >= sortedLayers.length) return;
+    const layerToMove = sortedLayers[index];
+    if (!layerToMove || layerToMove.isBedrock || layerToMove.locked) return;
     const prevTarget = sortedLayers[index - 1];
     if (!prevTarget) return;
-    moveLayerAfter(sortedLayers[index].id, prevTarget.id);
+    moveLayerAfter(layerToMove.id, prevTarget.id);
   };
 
   const handleMoveDown = (index: number) => {
     // The last two rows have no row two places below them, and passing `undefined`
     // would instead bury the layer at the bottom of the stack.
     if (index < 0 || index >= sortedLayers.length - 2) return;
+    const layerToMove = sortedLayers[index];
+    if (!layerToMove || layerToMove.isBedrock || layerToMove.locked) return;
     const targetLayer = sortedLayers[index + 2];
     if (!targetLayer) return;
-    moveLayerAfter(sortedLayers[index].id, targetLayer.id);
+    moveLayerAfter(layerToMove.id, targetLayer.id);
   };
 
   // The history tab's three entry points — a tap on a step, Enter or Space on that
@@ -222,6 +226,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
             <ul className="flex-1 overflow-y-auto p-3 space-y-1.5 max-h-[45vh]" aria-label="Layers">
               {sortedLayers.map((layer, index) => {
                 const isActive = activeLayerId === layer.id;
+                const isMovable = !layer.isBedrock && !layer.locked;
                 const isEditing = editingLayerId === layer.id;
                 const opacityPercent =
                   draftOpacity?.layerId === layer.id ? draftOpacity.percent : Math.round((layer.opacity ?? 1) * 100);
@@ -328,7 +333,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             event.stopPropagation();
                             handleMoveUp(index);
                           }}
-                          disabled={index === 0}
+                          disabled={index === 0 || !isMovable}
                           aria-label={`Move ${layer.name} up`}
                           className="flex min-h-11 min-w-11 items-center justify-center text-xs rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-20 text-gray-600 dark:text-gray-400"
                         >
@@ -340,7 +345,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             event.stopPropagation();
                             handleMoveDown(index);
                           }}
-                          disabled={index >= sortedLayers.length - 2}
+                          disabled={index >= sortedLayers.length - 2 || !isMovable}
                           aria-label={`Move ${layer.name} down`}
                           className="flex min-h-11 min-w-11 items-center justify-center text-xs rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-20 text-gray-600 dark:text-gray-400"
                         >

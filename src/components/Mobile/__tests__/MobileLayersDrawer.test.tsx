@@ -209,13 +209,25 @@ describe('MobileLayersDrawer', () => {
     expect(renderedLayerNames()).toEqual(['Top', 'Lower', 'Upper', 'Bottom']);
   });
 
-  it('disables "move up" on the topmost row only', () => {
+  it('disables "move up" on the topmost row and bedrock row', async () => {
+    const user = userEvent.setup();
     render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: 'Move Top up' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move Upper up' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Move Lower up' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Move Bottom up' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Move Bottom up' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Move Bottom up' }));
+    expect(moveLayerAfterMock).not.toHaveBeenCalled();
+  });
+
+  it('disables both reorder controls for a locked layer', () => {
+    storeStateMock.layers.upper = { ...storeStateMock.layers.upper, locked: true };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Move Upper up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Upper down' })).toBeDisabled();
   });
 
   it('disables "move down" on the last two rows, not just the last', async () => {

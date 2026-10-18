@@ -29,6 +29,7 @@ Support desktop and tablet/touch devices, including Retina/high-DPI. Do not add 
 
 - Before takeover, harvest, or cleanup, verify the worktree, run `npm run repo:state`, inspect status, and read the relevant handoff. Cleanup also requires `node scripts/worktree-inventory.mjs` and `npm run branches:orphan`.
 - Never run `node scripts/worktree-inventory.mjs -- --quiet`; use documented inventory commands and check their exit status. Use `npm run swarm` for repository ownership, not session-only board tools.
+- `board_post` caps the FORMATTED message at **4096 bytes**, not the body at 4096 characters: the budget is **3800 ASCII characters**, or 1200 if any may be non-ASCII. Put longer evidence in a file and reference it from the board. Details live in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
 - Never merge into dirty `main`, stage another agent's paths, or use `git stash`. Dispose only with `npm run dispose -- <name>` after proving ownership, confirming descendant agents are dead, checking the live overlay, and previewing `npm run swarm -- doctor --dry-run`.
 - A task is complete only when reviewed work is landed/released or a durable handoff marks it `blocked`, `unproven`, or `obsolete`.
 

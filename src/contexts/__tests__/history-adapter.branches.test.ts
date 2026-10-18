@@ -1086,6 +1086,43 @@ describe('disabled durable baseline reporting', () => {
     registry.shutdown();
   });
 
+  it('ignores nested args.enabled false on a tool entry because legacy replay gates only on item.disabled', () => {
+    const registry = new AssetRegistry();
+    const item: HistoryItem = {
+      id: 'tool-nested-enabled',
+      actionName: TOOL_ACTION,
+      layerId: 'layer-1',
+      args: { toolName: 'blur', radius: 2, enabled: false },
+    };
+
+    const converted = convert([item], registry);
+
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history).toHaveLength(1);
+    expect(converted.document.history[0]?.id).toBe('tool-nested-enabled');
+    expect(converted.document.history[0]?.enabled).toBe(true);
+    const operation = converted.document.history[0]?.operation;
+    expect(operation?.kind).toBe('apply-filter');
+    if (operation?.kind === 'apply-filter') {
+      expect(operation.filter.args.enabled).toBe(false);
+    }
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, 0]);
+
+    const timeline = [...baselineHistory(), item];
+    const dependencies: HistoryReplayDependencies = {
+      createLayer: () => blankLayer('layer-1'),
+      applyRasterTool: (layer) => layer,
+    };
+    const legacy = replayHistory(timeline, 1, initialSize, dependencies);
+    expect(Object.keys(legacy.layers)).toEqual(['layer-1']);
+    const durable = replayDurableDocument(converted.document);
+    expect(Object.keys(durable.layers)).toEqual(['layer-1']);
+    expect(durable.layers['layer-1']?.operations).toHaveLength(1);
+    expect(durable.layers['layer-1']?.operations[0]?.kind).toBe('apply-filter');
+
+    registry.shutdown();
+  });
+
   it('reports no opening-state divergence for a timeline whose first entry is not an open document', () => {
     const registry = new AssetRegistry();
     const disabledCreate: HistoryItem = {

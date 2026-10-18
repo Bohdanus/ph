@@ -109,9 +109,9 @@ Three homes for an open defect, split by what broke. A defect goes in one of the
 
 Six root-level files are point-in-time reports: an investigation of one tree on
 one date, or a disposition record for documents that were stashed and recovered.
-Two more recovered from that same stash sit in this directory. They are **not
-current**, nothing in the live set depends on them, and they are not part of this
-hierarchy.
+The hardening harvest handoff is another dated report. Two more files recovered
+from a stash sit in this directory. These documents are **not current**, nothing
+in the live set depends on them, and they are not part of this hierarchy.
 
 | File                                     | What it is                                                                                                   |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -122,6 +122,7 @@ hierarchy.
 | `../MIGRATION_NEXT_STEPS_SUNDAY.md`      | The history-migration map, audited at `main` @ `f7757cf`                                                     |
 | `../TEST_ISSUES.md`                      | Superseded by `AUDIT-STASHED-DOCS.md`; its own banner says do not add to it                                  |
 | `../CANVAS-RESOLUTION-PLAN.md`           | A retina-resolution investigation and plan, scoped to `fix/canvas-contain-scale`                             |
+| `HARDENING-HARVEST-HANDOFF-20261017.md`  | Dated handoff for the October 17 hardening sweep; its inventory and worktree dispositions are historical     |
 | `save-settings-inconsistency.md`         | Recovered from the same stash, and wholly obsolete — its own banner says so                                  |
 | `next-target-useLayer.md`                | Recovered from the same stash, and superseded as a plan — its own banner says do not work from it            |
 
