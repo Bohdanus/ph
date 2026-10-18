@@ -193,7 +193,7 @@ describe('the Brush eraser tip', () => {
       return originalGetContext.call(this);
     });
 
-    let alpha = new Uint8ClampedArray(0) as ReturnType<typeof erasedAlpha>;
+    let alpha: ReturnType<typeof erasedAlpha>;
     try {
       alpha = erasedAlpha(
         eraserArgs({

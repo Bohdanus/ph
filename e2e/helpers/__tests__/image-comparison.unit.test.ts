@@ -105,62 +105,6 @@ const shiftedBlack = (steps: number, channels: readonly ('r' | 'g' | 'b')[] = ['
   return solidPng(SQUARE_10, lifted);
 };
 
-/** PNG signature, eight bytes at the start of every well-formed PNG file. */
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-/** Reversed-polynomial CRC-32 table, computed once for PNG chunk checksums. */
-const CRC_TABLE: number[] = (() => {
-  const table = new Array(256).fill(0);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[i] = c;
-  }
-  return table;
-})();
-
-/** CRC-32 over a Buffer, matching the polynomial PNG uses for every chunk. */
-const crc32 = (buf: Buffer): number => {
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-};
-
-/** A single PNG chunk: 4-byte length + 4-byte type + data + 4-byte CRC. */
-const pngChunk = (type: string, data: Buffer): Buffer => {
-  const typeBuf = Buffer.from(type, 'ascii');
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([length, typeBuf, data, crc]);
-};
-
-/**
- * A minimal PNG whose IHDR declares zero dimensions, with a valid-but-empty zlib
- * IDAT so the structure is otherwise well-formed. `sharp` refuses to ENCODE zero-dimension
- * images (pinned under "sharp fixture guards"), and it also refuses to DECODE them — this
- * helper crafts the raw bytes that reach `compareScreenshots`'s decode call so the
- * rejection can be asserted rather than assumed.
- */
-const zeroDimensionPng = (width: number, height: number): Buffer => {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 0);
-  ihdr[4] = 8;
-  ihdr[5] = 6;
-  ihdr[6] = 0;
-  ihdr[7] = 0;
-  ihdr[8] = 0;
-  const zlibEmpty = Buffer.from([0x78, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
-  return Buffer.concat([
-    PNG_SIGNATURE,
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', zlibEmpty),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-};
-
 describe('Image Comparison Helpers', () => {
   describe('DEFAULT_THRESHOLD', () => {
     it('is 0.2', () => {
@@ -805,84 +749,194 @@ describe('Image Comparison Helpers', () => {
     });
   });
 
-  describe('compareScreenshots - zero-size images', () => {
-    /**
-     * `sharp` refuses to encode zero-dimension input — pinned under "sharp fixture guards"
-     * — but it also refuses to DECODE a PNG that declares them. These tests verify that
-     * `compareScreenshots` propagates sharp's rejection rather than reaching pixelmatch
-     * with a zero-pixel buffer, which would divide by zero and leak NaN into `diffRatio`.
-     */
-    it('rejects a 0x0 PNG whose IHDR declares zero dimensions', async () => {
-      await expect(compareScreenshots(zeroDimensionPng(0, 0), zeroDimensionPng(0, 0))).rejects.toThrow(/corrupt/i);
-    });
-
-    it('rejects a 0xN PNG with zero width but nonzero height', async () => {
-      await expect(compareScreenshots(zeroDimensionPng(0, SQUARE_10.height), await red10x10())).rejects.toThrow(
-        /corrupt/i
+  describe('compareScreenshots - additional edge cases', () => {
+    it('reports a size mismatch for non-square dimensions that differ in both axes', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: 100, height: 50 }, OPAQUE_RED),
+        await solidPng({ width: 50, height: 100 }, OPAQUE_GREEN)
       );
-    });
-  });
 
-  describe('compareScreenshots - non-finite thresholds', () => {
-    /**
-     * pixelmatch computes `maxDelta = 35215 * threshold * threshold` and flags a pixel
-     * only when `abs(delta) > maxDelta`. Non-finite inputs collapse that comparison:
-     *   NaN  →  maxDelta is NaN, and `x > NaN` is ALWAYS false
-     *   ±Inf →  maxDelta is Inf, and `x > Inf` is ALWAYS false
-     * So EVERY pixel is silently forgiven and `diffPixels` reads 0 — a false-positive
-     * match on completely different images. `channelDelta` is structurally blind to
-     * the threshold (it never sees it), which is the safety net these tests pin: the
-     * movement is still reported even when `diffPixels` swallows it.
-     */
-    it('silently matches completely different images with threshold: NaN', async () => {
-      const result = await compareScreenshots(await redPng100(), await greenPng100(), {
-        threshold: NaN,
+      expect(result.matches).toBe(false);
+      expect(result.sizeMismatch).toEqual({
+        actual: { width: 100, height: 50 },
+        expected: { width: 50, height: 100 },
+      });
+    });
+
+    it('reports a size mismatch when dimensions share the same area but differ in shape', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: 20, height: 5 }, OPAQUE_RED),
+        await solidPng({ width: 10, height: 10 }, OPAQUE_GREEN)
+      );
+
+      expect(result.matches).toBe(false);
+      expect(result.sizeMismatch).toEqual({
+        actual: { width: 20, height: 5 },
+        expected: { width: 10, height: 10 },
+      });
+    });
+
+    it('reports exactly one diff pixel for a single changed pixel in a 100x100 image', async () => {
+      // A 1x1 green patch in the top-left corner of a red 100x100 field.
+      const base = await patchedPng(SQUARE_100, OPAQUE_RED, [{ left: 0, top: 0, width: 1, height: 1 }]);
+      const ref = await redPng100();
+
+      // The count and ratio are exact regardless of tolerance.
+      const withinDefault = await compareScreenshots(base, ref, { threshold: 0 });
+      expect(withinDefault.diffPixels).toBe(1);
+      expect(withinDefault.diffRatio).toBe(1 / SQUARE_100_PIXELS);
+
+      // Within the default allowance, one pixel still matches; the interest
+      // here is the precision of diffPixels and diffRatio.
+      expect(withinDefault.matches).toBe(true);
+
+      // Under a zero pixel budget, that single pixel is the difference.
+      const strict = await compareScreenshots(base, ref, { threshold: 0, maxDiffPixels: 0 });
+      expect(strict.matches).toBe(false);
+    });
+
+    it('forgives a 40-step red shift at threshold 0.1 but not at threshold 0', async () => {
+      // 0.1 sits between the two extremes already pinned; this mid-range shift
+      // survives the looser threshold but fails the exact-match threshold.
+      const atZero = await compareScreenshots(await shiftedBlack(40, ['r']), await shiftedBlack(0), {
+        threshold: 0,
       });
 
-      expect(result.diffPixels).toBe(0);
-      expect(result.diffRatio).toBe(0);
-      expect(result.matches).toBe(true);
-      expect(result.channelDelta.r).toEqual({ mean: OPAQUE_CHANNEL_MAX, max: OPAQUE_CHANNEL_MAX });
-      expect(result.channelDelta.g).toEqual({ mean: OPAQUE_CHANNEL_MAX, max: OPAQUE_CHANNEL_MAX });
-    });
+      expect(atZero.diffPixels).toBe(SQUARE_10_PIXELS);
 
-    it('silently matches completely different images with threshold: Infinity', async () => {
-      const result = await compareScreenshots(await redPng100(), await greenPng100(), {
-        threshold: Infinity,
+      const atThreshold = await compareScreenshots(await shiftedBlack(40, ['r']), await shiftedBlack(0), {
+        threshold: 0.1,
       });
 
+      expect(atThreshold.diffPixels).toBe(0);
+      expect(atThreshold.matches).toBe(true);
+    });
+
+    it('counts a 50-step red shift as different at threshold 0.1', async () => {
+      // Well past the ~46-step boundary for red at 0.1, but well under the
+      // 93-step boundary at the default 0.2 — the same image pair that this
+      // suite treats as a match under the default threshold is a mismatch here.
+      const atDefault = await compareScreenshots(await shiftedBlack(50, ['r']), await shiftedBlack(0));
+      const atThreshold = await compareScreenshots(await shiftedBlack(50, ['r']), await shiftedBlack(0), {
+        threshold: 0.1,
+      });
+
+      expect(atThreshold.diffPixels).toBe(SQUARE_10_PIXELS);
+      expect(atThreshold.matches).toBe(false);
+      expect(atDefault.diffPixels).toBe(0);
+      expect(atDefault.matches).toBe(true);
+    });
+
+    it('reports zero diff for identical pixels encoded with different PNG compression', async () => {
+      // sharp normalises compression level and metadata on decode, so two PNGs
+      // of the same pixels with different byte-level encoding must compare equal.
+      const lowCompression = await sharp({
+        create: { width: 50, height: 50, channels: 4, background: OPAQUE_RED },
+      })
+        .png({ compressionLevel: 0 })
+        .toBuffer();
+      const highCompression = await sharp({
+        create: { width: 50, height: 50, channels: 4, background: OPAQUE_RED },
+      })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+
+      expect(lowCompression.equals(highCompression)).toBe(false);
+
+      const result = await compareScreenshots(lowCompression, highCompression);
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.matches).toBe(true);
+    });
+
+    it('reports all four channels as moving when RGB and alpha both shift', async () => {
+      // Opaque black → fully transparent white: every channel byte changes.
+      // `diffPixels` blurs alpha through the checkerboard, but `channelDelta`
+      // reads raw bytes and must see the move on r, g, b and a alike.
+      const result = await compareScreenshots(
+        await solidPng(SQUARE_10, { r: 0, g: 0, b: 0, alpha: 1 }),
+        await solidPng(SQUARE_10, { r: 255, g: 255, b: 255, alpha: 0 })
+      );
+
+      expect(result.channelDelta.r).toEqual({ mean: 255, max: 255 });
+      expect(result.channelDelta.g).toEqual({ mean: 255, max: 255 });
+      expect(result.channelDelta.b).toEqual({ mean: 255, max: 255 });
+      expect(result.channelDelta.a).toEqual({ mean: 255, max: 255 });
+    });
+
+    it('reports max per-channel delta far larger than mean for a single-pixel change', async () => {
+      // One green pixel in a sea of red: max is the full 255-step swing,
+      // but the mean is averaged over all 10,000 pixels.
+      const result = await compareScreenshots(
+        await patchedPng(SQUARE_100, OPAQUE_RED, [{ left: 0, top: 0, width: 1, height: 1 }]),
+        await redPng100()
+      );
+
+      expect(result.channelDelta.r.max).toBe(OPAQUE_CHANNEL_MAX);
+      expect(result.channelDelta.g.max).toBe(OPAQUE_CHANNEL_MAX);
+      expect(result.channelDelta.r.mean).toBeCloseTo(OPAQUE_CHANNEL_MAX / SQUARE_100_PIXELS);
+      expect(result.channelDelta.g.mean).toBeCloseTo(OPAQUE_CHANNEL_MAX / SQUARE_100_PIXELS);
+      expect(result.channelDelta.b.mean).toBe(0);
+      expect(result.channelDelta.a.mean).toBe(0);
+    });
+
+    it('matches identical images even when both allowances are zero', async () => {
+      const result = await compareScreenshots(await redPng100(), await redPng100(), {
+        maxDiffPixels: 0,
+        maxDiffPixelRatio: 0,
+      });
+
+      expect(result.matches).toBe(true);
       expect(result.diffPixels).toBe(0);
       expect(result.diffRatio).toBe(0);
-      expect(result.matches).toBe(true);
-      expect(result.channelDelta.r).toEqual({ mean: OPAQUE_CHANNEL_MAX, max: OPAQUE_CHANNEL_MAX });
     });
 
-    it('treats NaN threshold harmlessly for identical images', async () => {
-      const img = await redPng100();
+    it('includes sizeMismatch in the result when dimensions differ by a single pixel', async () => {
+      const result = await compareScreenshots(
+        await solidPng(SQUARE_10, OPAQUE_RED),
+        await solidPng({ width: SQUARE_10.width, height: SQUARE_10.height + 1 }, OPAQUE_GREEN)
+      );
 
-      const result = await compareScreenshots(img, img, { threshold: NaN });
-
-      expect(result.diffPixels).toBe(0);
-      expect(result.diffRatio).toBe(0);
-      expect(result.matches).toBe(true);
-      expect(result.channelDelta).toEqual(NO_MOVEMENT);
-    });
-  });
-
-  describe('compareScreenshots - it.fails tripwires', () => {
-    /**
-     * Guard tripwires: each asserts the DANGEROUS outcome that the current code
-     * prevents. `it.fails` expects the inner test to fail; if the guard is ever
-     * removed the assertion passes, the test succeeds, and the tripwire trips.
-     */
-    it.fails('would compute NaN diffRatio for a 0x0 image if sharp did not reject it', async () => {
-      const result = await compareScreenshots(zeroDimensionPng(0, 0), zeroDimensionPng(0, 0));
-      expect(Number.isNaN(result.diffRatio)).toBe(true);
+      expect(result.matches).toBe(false);
+      expect(result.sizeMismatch).toEqual({
+        actual: SQUARE_10,
+        expected: { width: SQUARE_10.width, height: SQUARE_10.height + 1 },
+      });
+      expect(Object.keys(result).sort()).toEqual([
+        'channelDelta',
+        'diffPixels',
+        'diffRatio',
+        'matches',
+        'sizeMismatch',
+      ]);
     });
 
-    it.fails('would falsely match an empty buffer if the decode guard did not reject it', async () => {
-      const result = await compareScreenshots(Buffer.alloc(0), await redPng100());
-      expect(result.matches).toBe(true);
+    it('forgives a 20-step red shift at threshold 0.05 but not at threshold 0', async () => {
+      // 0.05 is between the two extremes already pinned; this shift survives
+      // the looser threshold but fails the exact-match threshold.
+      const atZero = await compareScreenshots(await shiftedBlack(20, ['r']), await shiftedBlack(0), {
+        threshold: 0,
+      });
+
+      expect(atZero.diffPixels).toBe(SQUARE_10_PIXELS);
+
+      const atThreshold = await compareScreenshots(await shiftedBlack(20, ['r']), await shiftedBlack(0), {
+        threshold: 0.05,
+      });
+
+      expect(atThreshold.diffPixels).toBe(0);
+      expect(atThreshold.matches).toBe(true);
+    });
+
+    it('counts every pixel as different for a 2x2 image of solid opposing colours', async () => {
+      const result = await compareScreenshots(
+        await solidPng({ width: 2, height: 2 }, OPAQUE_RED),
+        await solidPng({ width: 2, height: 2 }, OPAQUE_GREEN)
+      );
+
+      expect(result.diffPixels).toBe(4);
+      expect(result.diffRatio).toBe(1);
+      expect(result.matches).toBe(false);
     });
   });
 });

@@ -127,11 +127,11 @@ describe('deleteLastChar', () => {
   });
 
   it('throws a TypeError when null is passed instead of a string', () => {
-    expect(() => deleteLastChar(null as any)).toThrow(TypeError);
+    expect(() => deleteLastChar(null as unknown as string)).toThrow(TypeError);
   });
 
   it('throws a TypeError when undefined is passed instead of a string', () => {
-    expect(() => deleteLastChar(undefined as any)).toThrow(TypeError);
+    expect(() => deleteLastChar(undefined as unknown as string)).toThrow(TypeError);
   });
 
   it('removes a CJK character as the last cluster', () => {
@@ -184,11 +184,11 @@ describe('deleteCharAt', () => {
   });
 
   it('throws a TypeError when null is passed instead of a string', () => {
-    expect(() => deleteCharAt(null as any, 0)).toThrow(TypeError);
+    expect(() => deleteCharAt(null as unknown as string, 0)).toThrow(TypeError);
   });
 
   it('throws a TypeError when undefined is passed instead of a string', () => {
-    expect(() => deleteCharAt(undefined as any, 0)).toThrow(TypeError);
+    expect(() => deleteCharAt(undefined as unknown as string, 0)).toThrow(TypeError);
   });
 
   it('returns the string unchanged for an empty string', () => {
@@ -323,14 +323,14 @@ describe('ellipsify', () => {
 
 describe('known limitations (it.fails tripwires)', () => {
   it.fails('throws a TypeError for null input on charLength instead of silently coercing to "null"', () => {
-    expect(() => charLength(null as any)).toThrow(TypeError);
+    expect(() => charLength(null as unknown as string)).toThrow(TypeError);
   });
 
   it.fails('throws a TypeError for null input on graphemes instead of silently coercing to "null"', () => {
-    expect(() => graphemes(null as any)).toThrow(TypeError);
+    expect(() => graphemes(null as unknown as string)).toThrow(TypeError);
   });
 
   it.fails('returns an empty string for null input on ellipsify instead of throwing', () => {
-    expect(ellipsify(null as any, 10)).toBe('');
+    expect(ellipsify(null as unknown as string, 10)).toBe('');
   });
 });
