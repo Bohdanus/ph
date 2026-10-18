@@ -215,4 +215,14 @@ describe('the generated files', () => {
     const missing = availableTools.filter((name) => !doc.includes(`\`${name}\``));
     expect(missing, `tools absent from docs/TOOLS.md: ${missing.join(', ')}`).toEqual([]);
   });
+
+  it('documents the Star Tool and the generic Shape Tool group under distinct headings', () => {
+    const doc = readRepoFile('docs/TOOLS.md');
+    const headings = [...doc.matchAll(/^### (.+)$/gm)].map(([, heading]) => heading);
+
+    expect(headings.filter((heading) => heading === 'Star Tool')).toHaveLength(1);
+    expect(
+      headings.filter((heading) => heading === 'Shape Tool (the Tools panel group; no entry by that name)')
+    ).toHaveLength(1);
+  });
 });

@@ -101,7 +101,7 @@ function AppContainer() {
     // reorder, so the focus order the shell has always had is intact.
     <>
       <div
-        inert={isFirstUseTourVisible}
+        aria-hidden={isFirstUseTourVisible || undefined}
         className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900"
       >
         <AppKeyboardShortcuts />

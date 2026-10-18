@@ -103,6 +103,16 @@ describe('useDialogFocusContainment', () => {
       expect(onEscape).toHaveBeenCalledTimes(1);
     });
 
+    it('cancels default actions for suppressed keys that start outside the panel', () => {
+      const { panel } = renderPanel({ controls: <input type="text" aria-label="name" /> });
+      const event = new KeyboardEvent('keydown', { key: 'b', bubbles: true, cancelable: true });
+
+      document.body.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(panel.contains(document.activeElement)).toBe(true);
+    });
+
     it('reaches onEscape from an escape raised inside the panel', () => {
       const { onEscape, panel } = renderPanel({ controls: <input type="text" aria-label="name" /> });
 

@@ -12,11 +12,12 @@ test('first-use tour is modal and can be hidden across the mobile viewport bound
   await expect(tour).toHaveAttribute('aria-modal', 'true');
   await expect(page.getByRole('status')).toHaveText('Step 1 of 8: Move layers and pan');
   await expect(page.locator('.tool-highlight-pulse')).toHaveCount(1);
-  await expect(page.locator('#root > div[inert]')).toHaveCount(1);
+  const appShell = page.locator('#root > div.grid');
+  await expect(appShell).toHaveAttribute('aria-hidden', 'true');
 
   await page.setViewportSize({ width: 500, height: 800 });
   await expect(tour).toHaveCount(0);
-  await expect(page.locator('#root > div[inert]')).toHaveCount(0);
+  await expect(appShell).not.toHaveAttribute('aria-hidden');
   expect(await page.evaluate((key) => localStorage.getItem(key), TOUR_SEEN_KEY)).toBeNull();
 
   await page.setViewportSize({ width: 1280, height: 800 });

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -372,7 +372,25 @@ describe('App first-use tour lifecycle', () => {
     view.rerender(<App />);
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(view.container.firstElementChild).toHaveAttribute('inert');
+    expect(view.container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('restores focus to the app shell control that was focused before the modal opened', () => {
+    const view = render(<App />);
+    const appShell = view.container.firstElementChild as HTMLElement;
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    appShell.appendChild(trigger);
+    trigger.focus();
+
+    storeState.hasImage = true;
+    view.rerender(<App />);
+    expect(document.activeElement).toBe(screen.getByLabelText('Close tour'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
   });
 
   it('does not show the tour to a returning user', () => {

@@ -66,6 +66,10 @@ const FIGURE_TOOL_NAMES = {
 
 const descriptionKeyFor = (name, figure) => (figure === undefined ? name : FIGURE_TOOL_NAMES[figure]);
 
+// The generic shape group is a documentation record, not a tile. Its Star tile
+// needs the separate `star` record so the group description is emitted once too.
+const descriptionKeyForDocs = (name, figure) => (figure === 'star' ? 'star' : descriptionKeyFor(name, figure));
+
 const escapeCell = (text) => String(text).replaceAll('|', '\\|').replaceAll('\n', ' ');
 
 /** `present` / `partial` / `inert` / `missing`, plus the citation when there is one. */
@@ -143,7 +147,7 @@ export const renderToolDocs = async () => {
     for (const section of toolbarMap) {
       for (const group of section) {
         for (const entry of group) {
-          const key = descriptionKeyFor(entry.name, entry.figure);
+          const key = descriptionKeyForDocs(entry.name, entry.figure);
           if (owned.includes(key) && !entries.some(([existing]) => existing === key)) {
             entries.push([key, entry.label, entry.shortcut]);
           }
