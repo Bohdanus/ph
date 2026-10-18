@@ -397,7 +397,9 @@ describe('ToolTooltip', () => {
   });
 
   it('handles missing shortcut gracefully', () => {
-    renderWithTooltip('Test Tool');
+    // `add-anchor-point` has no Photoshop shortcut in its description record, so it is the
+    // case for "no shortcut at all" — neither a prop nor a record value.
+    renderWithTooltip('Test Tool', undefined, 'add-anchor-point');
     const trigger = screen.getByTestId('trigger');
 
     act(() => {
@@ -410,6 +412,24 @@ describe('ToolTooltip', () => {
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveTextContent('Test Tool');
     expect(tooltip.querySelector('kbd')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the description shortcut when the prop is undefined', () => {
+    // Renders the brush tool with no explicit shortcut prop; the description record carries
+    // 'B', which should surface in the tooltip badge.
+    const { unmount } = renderWithTooltip('Test Tool', undefined, 'brush');
+    const trigger = screen.getByTestId('trigger');
+
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip.querySelector('kbd')).toHaveTextContent('B');
+    unmount();
   });
 
   describe('the researched description', () => {

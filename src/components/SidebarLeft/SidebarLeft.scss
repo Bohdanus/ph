@@ -31,3 +31,57 @@
 .tool-unimplemented {
   filter: opacity(0.4) grayscale(1);
 }
+
+/**
+ * A dot badge that marks an unimplemented tool as new for the user seeing it for the first time.
+ *
+ * Shown only on tools that carry `commit: 'unimplemented'` and have not yet been hovered or
+ * clicked by this user. The marker disappears once `useFirstUse` records the interaction.
+ */
+.tool-new-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ef4444; /* red-500 */
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+.dark .tool-new-badge {
+  box-shadow: 0 0 0 2px #1e293b; /* gray-800 */
+}
+
+/**
+ * A pulsing ring that highlights the tile the first-use tour is currently
+ * pointing at, so the user's eye is drawn to the right place.
+ *
+ * Applied to a tile whose tool matches the current tour step. The animation
+ * is a slow, subtle scale + opacity pulse that does not compete with the
+ * tile's hover or selection states.
+ */
+.tool-highlight-pulse {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6);
+  animation: tool-highlight-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tool-highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.3);
+    transform: scale(1.03);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6);
+    transform: scale(1);
+  }
+}

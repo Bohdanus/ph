@@ -14,6 +14,8 @@ import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
 import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.tsx';
 import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
+import { FirstUseProvider } from './contexts/FirstUseContext.tsx';
+import { FirstUseTour, hasSeenFirstUseTour } from './components/Common/FirstUseTour.tsx';
 import { useApp } from './hooks/useApp.ts';
 import { useIsMobileViewport } from './hooks/useMediaQuery.ts';
 import { RightPanelVisibilityProvider, useRightPanelVisibility } from './contexts/RightPanelVisibility.tsx';
@@ -47,6 +49,14 @@ function AppContainer() {
   const [isToolSheetOpen, setIsToolSheetOpen] = useState(false);
   const [{ hasImage, toolName }] = useStore();
   const layout = usePanelLayout();
+  const isMobile = useIsMobileViewport();
+
+  // The first-use tour appears on initial load, before any image exists. Once
+  // the user dismisses it (or finishes it) the flag is persisted to localStorage.
+  const [showFirstUseTour, setShowFirstUseTour] = useState(() => {
+    if (hasImage || isMobile) return false;
+    return !hasSeenFirstUseTour();
+  });
   const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
   const rightPanelPlacement = edgePlacement(
     layout.dockSide,
@@ -67,7 +77,6 @@ function AppContainer() {
   // Adjusted during render rather than in an effect — React's documented pattern for
   // resetting state on an external change, and it avoids the extra render pass a setState
   // in an effect body costs.
-  const isMobile = useIsMobileViewport();
   const [wasMobile, setWasMobile] = useState(isMobile);
   if (wasMobile !== isMobile) {
     setWasMobile(isMobile);
@@ -140,6 +149,7 @@ function AppContainer() {
         isLayersOpen={isLayersDrawerOpen}
         onToggleLayers={() => setIsLayersDrawerOpen((open) => !open)}
       />
+      {showFirstUseTour && <FirstUseTour onComplete={() => setShowFirstUseTour(false)} />}
     </div>
   );
 }
@@ -160,7 +170,9 @@ function App() {
                     neither reads the store. Order between them does not matter. */}
                 <PanelLayoutProvider>
                   <RightPanelVisibilityProvider>
-                    <AppContainer />
+                    <FirstUseProvider>
+                      <AppContainer />
+                    </FirstUseProvider>
                   </RightPanelVisibilityProvider>
                 </PanelLayoutProvider>
               </CurrentToolProvider>

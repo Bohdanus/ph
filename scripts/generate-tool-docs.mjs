@@ -224,10 +224,15 @@ export const renderTooltips = async () => {
   const entries = Object.entries(toolDescriptions)
     // Star is a FigureType carried by the shared shape ToolName, not a separate registry name.
     .filter(([key]) => key !== 'star')
-    .map(
-      ([key, tool]) =>
-        `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)} },`
-    )
+    .map(([key, tool]) => {
+      // Project the first toolbar-level shortcut into the tooltip. Photoshop's options bar
+      // shortcut (e.g. 'B' for Brush) is what users look for on hover; the projection keeps
+      // only that first entry because the full set lives in docs/TOOLS.md. A tool whose
+      // shortcuts array is empty gets `undefined`, which renders nothing.
+      const shortcut = tool.shortcuts.length > 0 ? tool.shortcuts[0].keys : undefined;
+      const shortcutField = shortcut !== undefined ? `, shortcut: ${JSON.stringify(shortcut)}` : '';
+      return `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)}${shortcutField} },`;
+    })
     .join('\n');
 
   return `// GENERATED FILE - DO NOT EDIT. Source: src/tools/descriptions/*.ts
@@ -238,7 +243,7 @@ import type { FigureType } from '../shape.ts';
 import type { ToolImplementationStatus } from './types.ts';
 
 /**
- * The two fields the toolbar tooltip reads, and the only part of the description record that
+ * The fields the toolbar tooltip reads, and the only part of the description record that
  * reaches the browser. Everything else — the purpose prose, the options tables, the
  * modifiers, the citations — exists for \`docs/TOOLS.md\` and for the tests, and importing it
  * here cost 215 kB raw / 58 kB gzipped for one line of text per tool.
@@ -248,6 +253,8 @@ export type ToolTooltipProjection = {
   summary: string;
   /** How much of the tool this editor implements. Drives the tooltip's status line. */
   implementation: ToolImplementationStatus;
+  /** Photoshop's toolbar-level shortcut (e.g. 'B' for Brush), shown in the tooltip badge. Undefined when the tool has no shortcut. */
+  shortcut?: string;
 };
 
 export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {

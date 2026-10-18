@@ -64,6 +64,11 @@ const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right', xAnc
 
   const description = toolName === null ? null : toolTooltips[toolName];
   const implementationNote = description === null ? undefined : IMPLEMENTATION_NOTE[description.implementation];
+  // The toolbar passes its own shortcut for the primary tile of a flyout group. For a
+  // sub-tool inside the flyout (e.g. Pencil under the Brush tile) the prop is undefined
+  // because Photoshop has no toolbar key for it — but the description record still carries
+  // a shortcut the user can press, so fall back to it for the tooltip.
+  const displayShortcut = shortcut ?? description?.shortcut;
 
   useEffect(() => {
     return () => {
@@ -116,9 +121,9 @@ const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right', xAnc
           >
             <span className="flex items-center gap-2 whitespace-nowrap">
               {label}
-              {shortcut && (
+              {displayShortcut && (
                 <kbd className="rounded border border-white/25 px-1.5 py-0.5 text-[10px] font-semibold leading-none dark:border-black/20">
-                  {shortcut}
+                  {displayShortcut}
                 </kbd>
               )}
             </span>
