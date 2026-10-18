@@ -478,4 +478,109 @@ describe('PanelGroup', () => {
       expect(group.className.trim().split(/\s+/)).toEqual(['flex', 'flex-col', 'overflow-hidden']);
     });
   });
+
+  describe('edge cases', () => {
+    it('renders an empty body when children is null, keeping aria-controls and aria-expanded valid', () => {
+      const { group, control, body } = setup({ children: null });
+
+      // No children passed: the body still renders as the scroll container so aria-controls
+      // never dangles, but it holds nothing.
+      expect(control).toHaveAttribute('aria-expanded', 'true');
+      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
+      const rendered = body();
+      expect(rendered).not.toBeNull();
+      expect(rendered!.id).toBe('panel-body-layers');
+      expect(rendered!.textContent).toBe('');
+      expect(rendered!.parentElement).toBe(group);
+      expect(screen.queryByText(BODY_MARKER)).toBeNull();
+    });
+
+    it('renders an empty body when children is an empty fragment, keeping the scroll container', () => {
+      const { group, control, body } = setup({ children: <></> });
+
+      // An empty fragment is still a React child; React renders nothing inside it, but the
+      // body div and its overflow class are unchanged.
+      expect(control).toHaveAttribute('aria-expanded', 'true');
+      expect(control.getAttribute('aria-controls')).toBe('panel-body-layers');
+      const rendered = body();
+      expect(rendered).not.toBeNull();
+      expect(rendered!.parentElement).toBe(group);
+      expect(rendered!.textContent).toBe('');
+      expect(rendered!.className).toContain('overflow-y-auto');
+    });
+
+    it('keeps the control active when the body is null (rolled up) — double-click still toggles', () => {
+      const { control, onToggleRolledUp, body, rerenderGroup } = setup();
+      expect(body()).not.toBeNull();
+
+      rerenderGroup({ isRolledUp: true });
+
+      // The body element is absent from the DOM, so anything resolving it as a ref gets null —
+      // not an empty shell, but nothing at all to name or to scroll. The header control is
+      // still wired: a double-click with no prior drag rolls the panel back down.
+      expect(body()).toBeNull();
+      expect(document.getElementById('panel-body-layers')).toBeNull();
+      expect(control).not.toHaveAttribute('aria-controls');
+      expect(control).toHaveAttribute('aria-expanded', 'false');
+      fireEvent.doubleClick(control);
+      expect(onToggleRolledUp.mock.calls).toEqual([[]]);
+    });
+
+    it('does not crash on non-finite numeric style values and keeps layout classes intact', () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const { group, control, rerenderGroup } = setup({
+        style: { flex: '0 1 0%', minHeight: NaN, width: Infinity },
+      });
+
+      // React logs a warning for non-finite numerics and drops them from the DOM, so the group
+      // survives with its own classes and the dock's string shorthand, and still tracks the drag
+      // flag via the row.
+      expect(group).toHaveClass('flex', 'flex-col', 'overflow-hidden');
+      expect(group.style.flex).toBe('0 1 0%');
+      expect(group.style.minHeight).toBe('');
+      expect(group.style.width).toBe('');
+
+      rerenderGroup({ isDragging: true });
+      expect(control.parentElement).toHaveAttribute('data-dragging', 'true');
+      consoleError.mockRestore();
+    });
+
+    it('does not crash on a non-finite flex basis in the dock style and keeps the group box intact', () => {
+      const { group, control } = setup({ style: { flex: '0 1 NaN%' } });
+
+      // The dock computes the flex shorthand; a bad ratio could leak a NaN into it. React passes
+      // the string to the CSS parser, which rejects the declaration and drops it. The group
+      // still renders with its own layout classes and a reachable control.
+      expect(group).toHaveClass('flex', 'flex-col', 'overflow-hidden');
+      expect(control).toHaveAttribute('tabindex', '0');
+      expect(control).toHaveAttribute('aria-expanded', 'true');
+    });
+  });
+
+  describe('tripwires (it.fails: known gaps that should fail until fixed)', () => {
+    // `it.fails` marks each test as expected to fail: the assertion below is the DESIRED behavior
+    // the component does not yet deliver, so a green assertion would turn the suite red. That is
+    // the point — when someone closes the gap, these stop failing and demand a review.
+    it.fails('advertises the double-click roll-up in the non-draggable tooltip', () => {
+      const { control } = setup({ isDraggable: false, title: 'History' });
+
+      // The double-click handler is still wired even when isDraggable is false, so the tooltip
+      // must still teach the gesture — right now it only says "History panel".
+      const tooltip = control.getAttribute('title') ?? '';
+      expect(tooltip).toMatch(/double-?click/i);
+    });
+
+    it.fails('does not double-toggle when Enter fires while Space is held', () => {
+      const { control, onToggleRolledUp } = setup();
+
+      // Space arms the keyup toggle on keydown. Enter then fires its own on keydown. The ref is
+      // not cleared by Enter, so releasing Space fires a second toggle for a gesture already
+      // completed — two calls instead of one.
+      press(control, 'keydown', { key: ' ' });
+      press(control, 'keydown', { key: 'Enter' });
+      press(control, 'keyup', { key: ' ' });
+
+      expect(onToggleRolledUp).toHaveBeenCalledTimes(1);
+    });
+  });
 });

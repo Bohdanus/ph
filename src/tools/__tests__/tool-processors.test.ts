@@ -7,6 +7,7 @@ import {
   PIXEL_FREE_TOOLS,
   toolProcessors,
   type PixelToolName,
+  type ProcessorToolParams,
   type ToolCommitKind,
   type ToolProcessorDefinition,
   type ToolReplayKind,
@@ -16,9 +17,11 @@ import { defaultSettings } from '../settings.ts';
 import { blur } from '../blur.ts';
 import { cloneStamp } from '../cloneStamp.ts';
 import { colors } from '../colors.ts';
+import { colorReplacement } from '../colorReplacement.ts';
 import { crop } from '../crop.ts';
 import { burn, dodge } from '../dodgeBurn.ts';
 import { draw } from '../draw.ts';
+import { eraser } from '../eraser.ts';
 import { ellipticalSelection } from '../ellipticalSelection.ts';
 import { featherMagneticLasso } from '../featherMagneticLasso.ts';
 import { gradient } from '../gradient.ts';
@@ -39,7 +42,7 @@ import { placeholderToolGroups } from '../../components/ToolbarsRight/toolbarPla
 import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
-import type { Point } from '../../contexts/general-types.ts';
+import type { BitmapSource, Point } from '../../contexts/general-types.ts';
 
 const toolNames = Object.keys(defaultSettings) as ToolName[];
 
@@ -1550,5 +1553,205 @@ describe('toolsMap exhaustiveness', () => {
     expect(() => (toolsMap as unknown as Record<string, ToolProcessorDefinition>)['nope']!.imageProcessor).toThrow(
       TypeError
     );
+  });
+});
+
+describe('processor input sanitisation and error paths', () => {
+  beforeEach(() => {
+    RecordingOffscreenCanvas.instances = [];
+    vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const size = { width: 40, height: 24 };
+  const bitmap = createMockImageBitmap(40, 24);
+
+  const lastCanvas = (): RecordingOffscreenCanvas => {
+    const canvas = RecordingOffscreenCanvas.instances.at(-1);
+    if (!canvas) throw new Error('processor did not allocate an OffscreenCanvas');
+    return canvas;
+  };
+
+  describe('null bitmap tripwires — processors that pass a null bitmap to ctx.drawImage', () => {
+    type ProcessorFn = (params: ProcessorToolParams) => (args: never) => unknown;
+
+    const unsanitisedBitmapProcessors: readonly [string, ProcessorFn, keyof typeof defaultSettings][] = [
+      ['blur', blur as unknown as ProcessorFn, 'blur'],
+      ['levels', levels as unknown as ProcessorFn, 'levels'],
+      ['colors', colors as unknown as ProcessorFn, 'color'],
+      ['smudge', smudge as unknown as ProcessorFn, 'smudge'],
+      ['gradient', gradient as unknown as ProcessorFn, 'gradient'],
+      ['cloneStamp', cloneStamp as unknown as ProcessorFn, 'clone-stamp'],
+    ];
+
+    for (const [name, processor, argsKey] of unsanitisedBitmapProcessors) {
+      it.fails(`${name} should throw when handed a null bitmap instead of passing it to ctx.drawImage`, () => {
+        processor({ size, bitmap: null as unknown as BitmapSource })(defaultSettings[argsKey] as never);
+        expect(lastCanvas().ctx.drawImage).not.toHaveBeenCalledWith(null, 0, 0);
+      });
+
+      it.fails(`${name} should throw when handed an undefined bitmap instead of passing it to ctx.drawImage`, () => {
+        processor({ size, bitmap: undefined as unknown as BitmapSource })(defaultSettings[argsKey] as never);
+        expect(lastCanvas().ctx.drawImage).not.toHaveBeenCalled();
+      });
+    }
+  });
+
+  describe('transform validates ProcessorToolParams before allocating a canvas', () => {
+    it('throws on a zero-width size and allocates nothing', () => {
+      expect(() => transform({ size: { width: 0, height: 24 }, bitmap })(defaultSettings.transform as never)).toThrow(
+        'Invalid raster transform dimensions or values'
+      );
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    it('throws on a zero-height size', () => {
+      expect(() => transform({ size: { width: 40, height: 0 }, bitmap })(defaultSettings.transform as never)).toThrow(
+        'Invalid raster transform dimensions or values'
+      );
+    });
+
+    it('throws on a negative width', () => {
+      expect(() => transform({ size: { width: -1, height: 24 }, bitmap })(defaultSettings.transform as never)).toThrow(
+        'Invalid raster transform dimensions or values'
+      );
+    });
+
+    it('throws on a negative height', () => {
+      expect(() => transform({ size: { width: 40, height: -1 }, bitmap })(defaultSettings.transform as never)).toThrow(
+        'Invalid raster transform dimensions or values'
+      );
+    });
+
+    it('throws on a zero-by-zero size and allocates nothing', () => {
+      expect(() => transform({ size: { width: 0, height: 0 }, bitmap })(defaultSettings.transform as never)).toThrow(
+        'Invalid raster transform dimensions or values'
+      );
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+  });
+
+  describe('sanitised processors handle a null bitmap without throwing', () => {
+    it('eraser skips drawImage when the bitmap is null', () => {
+      const result = eraser({ size, bitmap: null as unknown as BitmapSource })({
+        ...defaultSettings.eraser,
+        points: [],
+      } as never);
+
+      expect(result).toHaveLength(1);
+      expect(lastCanvas().ctx.drawImage).not.toHaveBeenCalled();
+    });
+
+    it('color-replacement returns an empty canvas when the bitmap is null', () => {
+      const result = colorReplacement({ size, bitmap: null as unknown as BitmapSource })(
+        defaultSettings['color-replacement'] as never
+      );
+
+      expect(result).toHaveLength(1);
+      expect(lastCanvas().ctx.drawImage).not.toHaveBeenCalled();
+    });
+
+    it('crop returns the null bitmap by identity when the rect is null', () => {
+      const result = crop({ size, bitmap: null as unknown as BitmapSource })({
+        ...defaultSettings.crop,
+      } as never);
+
+      expect(result).toEqual([null]);
+    });
+  });
+
+  describe('non-finite ProcessorToolParams', () => {
+    it('transform throws on a NaN width', () => {
+      expect(() =>
+        transform({ size: { width: Number.NaN, height: 24 }, bitmap })(defaultSettings.transform as never)
+      ).toThrow('Invalid raster transform dimensions or values');
+    });
+
+    it('transform throws on an Infinity height', () => {
+      expect(() =>
+        transform({ size: { width: 40, height: Number.POSITIVE_INFINITY }, bitmap })(defaultSettings.transform as never)
+      ).toThrow('Invalid raster transform dimensions or values');
+    });
+
+    it('sharpen returns a canvas without calling getImageData for a NaN size', () => {
+      const result = sharpen({ size: { width: Number.NaN, height: Number.NaN }, bitmap })(
+        defaultSettings.sharpen as never
+      );
+
+      expect(result).toHaveLength(1);
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
+      expect(
+        (lastCanvas().ctx as unknown as Record<string, ReturnType<typeof vi.fn>>).getImageData
+      ).not.toHaveBeenCalled();
+    });
+
+    it('gradient returns a canvas without calling getImageData for a NaN size', () => {
+      const result = gradient({ size: { width: Number.NaN, height: Number.NaN }, bitmap })(
+        defaultSettings.gradient as never
+      );
+
+      expect(result).toHaveLength(1);
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(1);
+      expect(
+        (lastCanvas().ctx as unknown as Record<string, ReturnType<typeof vi.fn>>).getImageData
+      ).not.toHaveBeenCalled();
+    });
+
+    it.fails(
+      'blur should clamp a non-finite width before allocating a canvas, not hand NaN dimensions to OffscreenCanvas',
+      () => {
+        blur({ size: { width: Number.NaN, height: 24 }, bitmap })({ radius: 0, toolName: 'blur' });
+        const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+        expect(canvas.width).not.toBeNaN();
+      }
+    );
+  });
+});
+
+describe('toolProcessors kind-table exhaustiveness', () => {
+  const commitToReplay: Record<ToolCommitKind, ToolReplayKind> = {
+    raster: 'raster-processor',
+    unimplemented: 'unimplemented',
+    source: 'source',
+    'layer-operation': 'layer-operation',
+    geometry: 'geometry',
+    'affine-operation': 'affine-operation',
+    'document-operation': 'document-operation',
+    selection: 'selection',
+  };
+
+  it('declares no duplicate commit kinds', () => {
+    expect(new Set(declaredCommitKinds).size).toBe(declaredCommitKinds.length);
+  });
+
+  it('declares no duplicate replay kinds', () => {
+    expect(new Set(declaredReplayKinds).size).toBe(declaredReplayKinds.length);
+  });
+
+  it('covers every ToolCommitKind in the mapping table', () => {
+    expect(Object.keys(commitToReplay).sort()).toEqual([...declaredCommitKinds].sort());
+  });
+
+  it('reaches every declared replay kind through the commit→replay mapping', () => {
+    const mappedReplays = Object.values(commitToReplay);
+    for (const declared of declaredReplayKinds) {
+      expect(mappedReplays, `replay kind "${declared}" is reachable from some commit kind`).toContain(declared);
+    }
+  });
+
+  it('maps raster and unimplemented to distinct replay kinds, identity otherwise', () => {
+    for (const commit of declaredCommitKinds) {
+      const replay = commitToReplay[commit];
+      if (commit === 'raster') {
+        expect(replay).toBe('raster-processor');
+      } else if (commit === 'unimplemented') {
+        expect(replay).toBe('unimplemented');
+      } else {
+        expect(replay).toBe(commit);
+      }
+    }
   });
 });

@@ -495,6 +495,50 @@ describe('traceMaskBoundary', () => {
     expect(isPointInPolygon({ x: 3.5, y: 2.5 }, polygon.points)).toBe(true);
     expect(isPointInPolygon({ x: 1.5, y: 0.5 }, polygon.points)).toBe(false);
   });
+
+  it('pixelCount equals countSelected for a single pixel', () => {
+    const mask = rectMask(3, 3, [{ left: 1, top: 1, right: 1, bottom: 1 }]);
+    const traced = traceMaskBoundary(mask, 3, 3)!;
+    expect(traced.pixelCount).toBe(countSelected(mask));
+  });
+
+  it('pixelCount equals countSelected for an NxN block', () => {
+    const mask = rectMask(5, 5, [{ left: 0, top: 0, right: 4, bottom: 4 }]);
+    const traced = traceMaskBoundary(mask, 5, 5)!;
+    expect(traced.pixelCount).toBe(countSelected(mask));
+  });
+
+  it('pixelCount equals countSelected for disjoint regions', () => {
+    const mask = rectMask(8, 4, [
+      { left: 0, top: 0, right: 1, bottom: 1 },
+      { left: 4, top: 0, right: 7, bottom: 3 },
+    ]);
+    const traced = traceMaskBoundary(mask, 8, 4)!;
+    expect(traced.pixelCount).toBe(countSelected(mask));
+  });
+
+  it('pixelCount equals countSelected for an L-shaped region', () => {
+    const mask = rectMask(5, 5, [
+      { left: 0, top: 0, right: 4, bottom: 1 },
+      { left: 0, top: 0, right: 1, bottom: 4 },
+    ]);
+    const traced = traceMaskBoundary(mask, 5, 5)!;
+    expect(traced.pixelCount).toBe(countSelected(mask));
+  });
+
+  it('pixelCount equals countSelected for a mask with a hole', () => {
+    const mask = rectMask(5, 5, [{ left: 0, top: 0, right: 4, bottom: 4 }]);
+    mask[2 * 5 + 2] = 0;
+    const traced = traceMaskBoundary(mask, 5, 5)!;
+    expect(traced.pixelCount).toBe(countSelected(mask));
+  });
+
+  it('pixelCount is consistent with countSelected: an empty mask yields null and zero selected', () => {
+    const mask = rectMask(5, 5, []);
+    const traced = traceMaskBoundary(mask, 5, 5);
+    expect(traced).toBeNull();
+    expect(countSelected(mask)).toBe(0);
+  });
 });
 
 describe('rasterizeSelectionMask', () => {
@@ -550,5 +594,123 @@ describe('createQuickSelectionPolygon', () => {
     // also the behaviourally right one: a traced staircase boundary must not carry a white
     // anchor dot per step.
     expect(QUICK_SELECTION_SOURCE_TOOL).toBe('magic-wand');
+  });
+});
+
+describe('non-finite input handling', () => {
+  it('createQuickSelectionAccumulator with NaN dimensions yields an empty mask', () => {
+    const acc = createQuickSelectionAccumulator({ width: NaN, height: NaN });
+    expect(acc.width).toBe(0);
+    expect(acc.height).toBe(0);
+    expect(acc.mask.length).toBe(0);
+  });
+
+  it('createQuickSelectionAccumulator with Infinity dimensions yields an empty mask', () => {
+    const acc = createQuickSelectionAccumulator({ width: Infinity, height: Infinity });
+    expect(acc.width).toBe(0);
+    expect(acc.height).toBe(0);
+    expect(acc.mask.length).toBe(0);
+  });
+
+  it('createQuickSelectionAccumulator with negative dimensions yields an empty mask', () => {
+    const acc = createQuickSelectionAccumulator({ width: -10, height: -10 });
+    expect(acc.width).toBe(0);
+    expect(acc.height).toBe(0);
+    expect(acc.mask.length).toBe(0);
+  });
+
+  it('growAlongStroke with NaN seed coordinates grows nothing', () => {
+    const imageData = createTwoBlocks();
+    const accumulator = createQuickSelectionAccumulator({ width: 12, height: 4 });
+    const grown = growAlongStroke(accumulator, imageData, [{ x: NaN, y: NaN }], {
+      tolerance: 30,
+      mode: 'add',
+    });
+    expect(grown).toBe(0);
+    expect(countSelected(accumulator.mask)).toBe(0);
+  });
+
+  it('growAlongStroke with Infinity seed coordinates grows nothing', () => {
+    const imageData = createTwoBlocks();
+    const accumulator = createQuickSelectionAccumulator({ width: 12, height: 4 });
+    const grown = growAlongStroke(accumulator, imageData, [{ x: Infinity, y: Infinity }], {
+      tolerance: 30,
+      mode: 'add',
+    });
+    expect(grown).toBe(0);
+    expect(countSelected(accumulator.mask)).toBe(0);
+  });
+
+  it('growAlongStroke skips non-finite seeds but grows from valid ones', () => {
+    const imageData = createTwoBlocks();
+    const accumulator = createQuickSelectionAccumulator({ width: 12, height: 4 });
+    const grown = growAlongStroke(
+      accumulator,
+      imageData,
+      [
+        { x: NaN, y: NaN },
+        { x: 1, y: 1 },
+        { x: Infinity, y: Infinity },
+      ],
+      { tolerance: 30, mode: 'add' }
+    );
+    expect(grown).toBe(1);
+    expect(countSelected(accumulator.mask)).toBe(16);
+  });
+
+  it('traceMaskBoundary with non-finite dimensions returns null', () => {
+    expect(traceMaskBoundary(new Uint8Array(0), NaN, NaN)).toBeNull();
+    expect(traceMaskBoundary(new Uint8Array(0), Infinity, Infinity)).toBeNull();
+    expect(traceMaskBoundary(new Uint8Array(0), -5, -5)).toBeNull();
+  });
+
+  it('rasterizeSelectionMask with non-finite size yields an empty mask', () => {
+    const result = rasterizeSelectionMask([], { width: NaN, height: NaN });
+    expect(result.length).toBe(0);
+  });
+});
+
+describe('known limitations (it.fails tripwires)', () => {
+  const rectMask = (
+    width: number,
+    height: number,
+    rects: { left: number; top: number; right: number; bottom: number }[]
+  ): Uint8Array => {
+    const mask = new Uint8Array(width * height);
+    for (const { left, top, right, bottom } of rects) {
+      for (let y = top; y <= bottom; y++) {
+        for (let x = left; x <= right; x++) {
+          mask[y * width + x] = 1;
+        }
+      }
+    }
+
+    return mask;
+  };
+
+  it.fails('round-trips a mask with a hole back to the same pixels', () => {
+    // traceMaskBoundary returns only the largest outer contour, so rasterizing it fills the
+    // hole back in. The `hasHoles` flag exists precisely so the caller can refuse this commit.
+    const mask = rectMask(5, 5, [{ left: 0, top: 0, right: 4, bottom: 4 }]);
+    mask[2 * 5 + 2] = 0;
+
+    const traced = traceMaskBoundary(mask, 5, 5)!;
+    const rasterized = rasterizeSelectionMask(traced.points, { width: 5, height: 5 });
+
+    expect(Array.from(rasterized)).toEqual(Array.from(mask));
+  });
+
+  it.fails('round-trips a multi-region mask back to the same pixels', () => {
+    // traceMaskBoundary returns only the largest outer contour, so a mask with two disjoint
+    // regions cannot be reconstructed from a single polygon.
+    const mask = rectMask(8, 4, [
+      { left: 0, top: 0, right: 1, bottom: 1 },
+      { left: 4, top: 0, right: 7, bottom: 3 },
+    ]);
+
+    const traced = traceMaskBoundary(mask, 8, 4)!;
+    const rasterized = rasterizeSelectionMask(traced.points, { width: 8, height: 4 });
+
+    expect(Array.from(rasterized)).toEqual(Array.from(mask));
   });
 });

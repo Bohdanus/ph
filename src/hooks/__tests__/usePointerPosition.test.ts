@@ -881,4 +881,83 @@ describe('usePointerPosition', () => {
       }
     });
   });
+
+  describe('edge cases', () => {
+    it('propagates non-finite client coordinates as NaN without throwing', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: NaN, clientY: NaN }));
+
+      expect(Number.isNaN(coords.x)).toBe(true);
+      expect(Number.isNaN(coords.y)).toBe(true);
+    });
+
+    it('collapses infinite client coordinates to NaN through the view transform', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: Infinity, clientY: -Infinity }));
+
+      // Even with zero rotation the inverse-view math evaluates
+      // `translated.x * cos - translated.y * sin` with `sin === 0`, and
+      // `(-Infinity) * 0` is NaN, so an infinite client coordinate cannot
+      // survive the transform and the mapped coordinate is NaN rather than
+      // Infinity.
+      expect(Number.isNaN(coords.x)).toBe(true);
+      expect(Number.isNaN(coords.y)).toBe(true);
+    });
+
+    it('tolerates a null event target for coordinate mapping', () => {
+      // `getLocalCoords` reads layout from the container ref, not from the event's target,
+      // so a detached / null-targeted pointer event must map just like a targeted one.
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: 10, clientY: 20, target: null }));
+
+      expect(coords).toEqual({ x: 5, y: 10 });
+    });
+
+    it('does not throw for a zero-size container and reports a zero scale to onResize', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 0, height: 0 });
+      const onResize = vi.fn();
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
+
+      expect(onResize).toHaveBeenCalledWith(
+        expect.objectContaining({ scale: 0, outerWidth: 0, outerHeight: 0, innerWidth: 0, innerHeight: 0 })
+      );
+
+      // A zero scale means dividing by zero, so the mapped coordinates are NaN rather than
+      // finite. This pins the current behaviour: the call must not throw.
+      const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: 0, clientY: 0 }));
+      expect(Number.isNaN(coords.x)).toBe(true);
+      expect(Number.isNaN(coords.y)).toBe(true);
+    });
+
+    // Desired behaviour: non-finite client coordinates are clamped to the document origin
+    // rather than leaking NaN into downstream drawing / masking math. The hook currently
+    // propagates NaN, so this tripwire is expected to fail until the guard lands.
+    it.fails('clamps non-finite client coordinates to {0,0}', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: NaN, clientY: NaN }));
+
+      expect(coords).toEqual({ x: 0, y: 0 });
+    });
+
+    // Desired behaviour: a zero-size container must not divide through a zero scale and emit
+    // NaN; it should fall back to finite coordinates. The hook currently produces a zero
+    // scale, so this tripwire is expected to fail until the zero-scale guard lands.
+    it.fails('returns finite coordinates for a zero-size container', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 0, height: 0 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const coords = result.current.getLocalCoords(pointerEvent(el, { clientX: 0, clientY: 0 }));
+
+      expect(Number.isFinite(coords.x)).toBe(true);
+      expect(Number.isFinite(coords.y)).toBe(true);
+    });
+  });
 });

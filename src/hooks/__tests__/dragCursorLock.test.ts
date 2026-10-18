@@ -124,4 +124,133 @@ describe('dragCursorLock', () => {
     expect(document.body).not.toHaveClass('cursor-grabbing');
     expect(document.body.style.userSelect).toBe('');
   });
+
+  /**
+   * The count is the one piece of state the module owns that the DOM cannot show:
+   * `classList.add` on a present token reads the same before and after, and the
+   * class is removed at depth 1 -> 0 the same way it is at 5 -> 0. So the edge
+   * cases below pin the numeric and element integrity that no DOM assertion can.
+   */
+  describe('edge cases: non-finite coords, null element, and boundary transitions', () => {
+    it('keeps the count finite and non-negative across pathological over-release cycles', () => {
+      // Non-finite coords analog: the lock depth is the one number this module owns.
+      // A regression that dropped the `Math.max(0, ...)` floor would let it slide
+      // negative, and a bad branch could push it toward -Infinity under abort load.
+      // The count must stay a finite, non-negative integer no matter how many times
+      // an abort route over-releases before a gesture ever started.
+      for (let i = 0; i < 50; i++) unlockDragCursor();
+
+      expect(liveDragCursorCount()).toBe(0);
+      expect(Number.isFinite(liveDragCursorCount())).toBe(true);
+      expect(liveDragCursorCount()).toBeGreaterThanOrEqual(0);
+
+      lockDragCursor();
+      lockDragCursor();
+      unlockDragCursor();
+      unlockDragCursor();
+      unlockDragCursor();
+
+      expect(Number.isFinite(liveDragCursorCount())).toBe(true);
+      expect(liveDragCursorCount()).toBe(0);
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('');
+    });
+
+    it('ignores non-finite and junk arguments passed to the lock pair', () => {
+      // The public API takes no params, but a caller that forwards a pointer event's
+      // coords (Infinity/NaN/null) or a DOM node by mistake must not corrupt the
+      // count. The functions are parameterless, so any arguments are silently dropped
+      // — pin that as a contract so a future "validate coords" refactor goes red
+      // against a passing test rather than silently breaking the lock.
+      (lockDragCursor as (...args: unknown[]) => void)(Infinity, NaN, null, undefined, 'cursor');
+      expect(liveDragCursorCount()).toBe(1);
+      expect(document.body).toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('none');
+
+      (unlockDragCursor as (...args: unknown[]) => void)(Infinity, null, 'release');
+      expect(liveDragCursorCount()).toBe(0);
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('');
+    });
+
+    it('never nulls or replaces document.body across lock/unlock cycles', () => {
+      // `dragCursorLock` is wired to the global body; if a future refactor reassigned
+      // `document.body` (e.g. a templating pass swapping in a fresh body) the lock
+      // would silently target the wrong node. Pin identity and non-nullness.
+      const before = document.body;
+      expect(before).not.toBeNull();
+
+      lockDragCursor();
+      lockDragCursor();
+      unlockDragCursor();
+      unlockDragCursor();
+
+      expect(document.body).not.toBeNull();
+      expect(document.body).toBe(before);
+      expect(liveDragCursorCount()).toBe(0);
+    });
+
+    it('applies the cursor-grabbing class at the exact depth-1 boundary, not at depth 0', () => {
+      // The class must appear the instant a writer takes the first lock and must be
+      // absent before any writer locks — the boundary between 0 and 1 is the only
+      // place the DOM mutation fires.
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(liveDragCursorCount()).toBe(0);
+
+      lockDragCursor();
+      expect(liveDragCursorCount()).toBe(1);
+      expect(document.body).toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('none');
+    });
+
+    it('removes the cursor-grabbing class only at the exact depth-0 boundary, not one level early', () => {
+      // Two writers: the class must survive the first release (depth 2 -> 1, still
+      // held) and vanish only on the second (depth 1 -> 0). Removing at depth 1
+      // would steal the cursor from the still-live gesture.
+      lockDragCursor();
+      lockDragCursor();
+      expect(liveDragCursorCount()).toBe(2);
+      expect(document.body).toHaveClass('cursor-grabbing');
+
+      unlockDragCursor();
+      expect(liveDragCursorCount()).toBe(1);
+      expect(document.body).toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('none');
+
+      unlockDragCursor();
+      expect(liveDragCursorCount()).toBe(0);
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('');
+    });
+  });
+
+  /**
+   * Tripwires: each pins a desired guard that the current module does NOT yet
+   * deliver. `it.fails` is green while the gap is open; the moment the guard lands
+   * and the assertion starts passing, `it.fails` flips to an unexpected-pass signal
+   * and the pin must be converted to `it` (and the comment retired) in the same
+   * change.
+   */
+  describe('tripwires (it.fails: known gaps that should fail until fixed)', () => {
+    it.fails('throws when unlockDragCursor is called while the lock is already at zero', () => {
+      // An abort route that releases before it ever locked currently floors silently
+      // at zero instead of surfacing the imbalance. A double-release should throw so
+      // the contract violation is audible. Pinned: remove `it.fails` once the floor
+      // becomes a throw.
+      expect(liveDragCursorCount()).toBe(0);
+      expect(() => unlockDragCursor()).toThrow();
+    });
+
+    it.fails('restores a pre-existing inline user-select value on the final release', () => {
+      // `unlockDragCursor` calls `removeProperty('user-select')`, which discards
+      // whatever inline value the page had already set. A pre-existing `user-select`
+      // should be restored (or at least not erased) on the final release. Pinned:
+      // remove `it.fails` once the module snapshots and restores the prior value.
+      document.body.style.userSelect = 'text';
+      lockDragCursor();
+      expect(document.body.style.userSelect).toBe('none');
+      unlockDragCursor();
+      expect(document.body.style.userSelect).toBe('text');
+    });
+  });
 });

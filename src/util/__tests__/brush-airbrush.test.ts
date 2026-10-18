@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AIRBRUSH_MAX_DABS_PER_FRAME, createAirbrushEmitter } from '../brush-airbrush.ts';
+import { AIRBRUSH_INTERVAL_MS, AIRBRUSH_MAX_DABS_PER_FRAME, createAirbrushEmitter } from '../brush-airbrush.ts';
 
 describe('createAirbrushEmitter', () => {
   it('emits floor(debt / D) dabs and carries the float remainder', () => {
@@ -89,5 +89,91 @@ describe('createAirbrushEmitter', () => {
     expect(emitter.debt()).toBe(0);
     expect(emitter.accumulate(4)).toBe(0);
     expect(emitter.accumulate(4)).toBe(1);
+  });
+
+  describe('edge cases', () => {
+    it('falls back to the default interval for non-finite intervalMs', () => {
+      for (const intervalMs of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        const emitter = createAirbrushEmitter({ intervalMs });
+        expect(emitter.accumulate(AIRBRUSH_INTERVAL_MS)).toBe(1);
+        expect(emitter.debt()).toBeCloseTo(0, 9);
+      }
+    });
+
+    it('falls back to the default interval for non-positive intervalMs', () => {
+      for (const intervalMs of [0, -0, -8.3]) {
+        const emitter = createAirbrushEmitter({ intervalMs });
+        expect(emitter.accumulate(AIRBRUSH_INTERVAL_MS)).toBe(1);
+        expect(emitter.debt()).toBeCloseTo(0, 9);
+      }
+    });
+
+    it('silently zeroes the cap for non-finite maxDabsPerFrame', () => {
+      for (const maxDabsPerFrame of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        const emitter = createAirbrushEmitter({ maxDabsPerFrame });
+        expect(emitter.accumulate(1000)).toBe(0);
+      }
+    });
+
+    it('silently zeroes the cap for non-positive or sub-unit maxDabsPerFrame', () => {
+      for (const maxDabsPerFrame of [0, -0, -1, 0.5, 0.9]) {
+        const emitter = createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame });
+        expect(emitter.accumulate(8)).toBe(0);
+      }
+    });
+
+    it('honours a cap of exactly 1', () => {
+      const emitter = createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame: 1 });
+      expect(emitter.accumulate(48)).toBe(1);
+      expect(emitter.debt()).toBe(0);
+    });
+
+    it('floors fractional maxDabsPerFrame to an integer cap', () => {
+      expect(createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame: 2.9 }).accumulate(48)).toBe(2);
+      expect(createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame: 3.1 }).accumulate(48)).toBe(3);
+    });
+
+    it('emits zero dabs and leaves debt at zero for non-finite dt', () => {
+      const emitter = createAirbrushEmitter({ intervalMs: 8 });
+      for (const dt of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+        expect(emitter.accumulate(dt)).toBe(0);
+        expect(emitter.debt()).toBe(0);
+      }
+    });
+
+    it('recovers to a clean state after non-finite dt', () => {
+      const emitter = createAirbrushEmitter({ intervalMs: 8 });
+      expect(emitter.accumulate(Number.NaN)).toBe(0);
+      expect(emitter.accumulate(Number.POSITIVE_INFINITY)).toBe(0);
+      expect(emitter.accumulate(8)).toBe(1);
+      expect(emitter.debt()).toBe(0);
+    });
+
+    it('holds debt below the interval and emits once it crosses', () => {
+      const emitter = createAirbrushEmitter({ intervalMs: 8 });
+      expect(emitter.accumulate(7)).toBe(0);
+      expect(emitter.debt()).toBe(7);
+      expect(emitter.accumulate(1)).toBe(1);
+      expect(emitter.debt()).toBe(0);
+    });
+
+    it('uses the spec default interval and cap when options omit both', () => {
+      const emitter = createAirbrushEmitter();
+      expect(emitter.accumulate(AIRBRUSH_INTERVAL_MS)).toBe(1);
+      expect(emitter.debt()).toBeCloseTo(0, 9);
+    });
+
+    describe('tripwires', () => {
+      it.fails('treats Infinity maxDabsPerFrame as unlimited rather than zero', () => {
+        const emitter = createAirbrushEmitter({ maxDabsPerFrame: Number.POSITIVE_INFINITY });
+        expect(emitter.accumulate(1000)).toBe(120);
+      });
+
+      it.fails('preserves debt when maxDabsPerFrame collapses the cap to zero', () => {
+        const emitter = createAirbrushEmitter({ intervalMs: 8, maxDabsPerFrame: 0 });
+        expect(emitter.accumulate(8)).toBe(0);
+        expect(emitter.debt()).toBe(8);
+      });
+    });
   });
 });

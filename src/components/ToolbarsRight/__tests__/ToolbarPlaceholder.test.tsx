@@ -117,6 +117,62 @@ describe('PlaceholderTool', () => {
     expect(screen.getByText('Empty Tool')).toBeInTheDocument();
     expect(screen.getByText('TODO: tool behavior not implemented yet.')).toBeInTheDocument();
   });
+
+  it('renders without crashing when title is null', () => {
+    render(<PlaceholderTool title={null as unknown as string} options={['Option']} />);
+
+    expect(screen.getByText('Option')).toBeInTheDocument();
+  });
+
+  it('renders an empty title span without crashing', () => {
+    render(<PlaceholderTool title="" options={['Option']} />);
+
+    expect(screen.getByText('Option')).toBeInTheDocument();
+  });
+
+  it('renders an empty description without adding extra text', () => {
+    render(<PlaceholderTool title="Tool" options={['Opacity']} description="" />);
+
+    expect(screen.getByText('Tool')).toBeInTheDocument();
+    expect(screen.queryByText('TODO: tool behavior not implemented yet.')).not.toBeInTheDocument();
+  });
+
+  it('renders option chips with special characters correctly', () => {
+    render(<PlaceholderTool title="Tool" options={['<script>', '&amp;', '"quoted"']} />);
+
+    expect(screen.getByText('<script>')).toBeInTheDocument();
+    expect(screen.getByText('&amp;')).toBeInTheDocument();
+    expect(screen.getByText('"quoted"')).toBeInTheDocument();
+  });
+
+  it('renders a whitespace-only title without crashing', () => {
+    render(<PlaceholderTool title="   " options={['Option']} />);
+
+    expect(screen.getByText('Option')).toBeInTheDocument();
+  });
+
+  // Tripwire: the component does not guard `options.map`, so undefined options
+  // crash the render. Once a null-guard is added, flip this to a positive
+  // assertion that the component renders gracefully.
+  it.fails('does not crash when options is undefined', () => {
+    render(<PlaceholderTool title="Tool" options={undefined as unknown as readonly string[]} />);
+
+    expect(screen.getByText('Tool')).toBeInTheDocument();
+  });
+
+  // Tripwire: each option is used as its own React key, so duplicates trigger a
+  // key-collision warning. Once the component deduplicates, flip this to a
+  // positive assertion that no warning is emitted.
+  it.fails('deduplicates repeated options without a React key warning', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    render(<PlaceholderTool title="Tool" options={['Opacity', 'Opacity']} />);
+
+    expect(spy).not.toHaveBeenCalledWith(
+      expect.stringContaining('Encountered two children with the same key'),
+      expect.anything()
+    );
+    spy.mockRestore();
+  });
 });
 
 describe('toolbarPlaceholderConfig', () => {

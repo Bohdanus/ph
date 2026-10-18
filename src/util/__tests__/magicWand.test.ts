@@ -5,6 +5,7 @@ import {
   createMagicWandSelectionFromImageData,
   getMagicWandColorDistance,
 } from '../magicWand.ts';
+import { getToleranceDistance } from '../flood-fill.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
   const imageData = {
@@ -602,5 +603,238 @@ describe('createMagicWandSelectionFromCanvas', () => {
 
   it('propagates the image-data guards for an out-of-bounds seed on a real canvas', () => {
     expect(createMagicWandSelectionFromCanvas(solidCanvas(3, 3, [0, 0, 0, 255]), { x: 3, y: 0 })).toBeNull();
+  });
+});
+
+describe('non-finite and out-of-range tolerance', () => {
+  // A 3x1 strip: the seed and its neighbour are an exact red match, the third pixel is
+  // black, which sits 220 colour-distance units from the red seed (220 / 510 ~= 43.14%
+  // of the maximum). Every tolerance at or above that threshold therefore pulls in all
+  // three pixels; everything below it keeps the two red pixels.
+  const toleranceStrip = () => {
+    const imageData = createImageData(3, 1, [220, 0, 0, 255]);
+    setPixel(imageData, 2, 0, [0, 0, 0, 255]);
+    return imageData;
+  };
+
+  it.each([
+    ['Infinity', Infinity, 3],
+    ['-Infinity', -Infinity, 2],
+    ['just over the slider cap (101)', 101, 3],
+    ['the per-channel maximum (255)', 255, 3],
+    ['above 255 (256)', 256, 3],
+    ['well above 255 (1000)', 1000, 3],
+    ['one below zero (-1)', -1, 2],
+    ['a large negative (-1000)', -1000, 2],
+  ])('clamps %s to the slider bounds', (_label, tolerance, expectedCount) => {
+    const result = createMagicWandSelectionFromImageData(toleranceStrip(), { x: 0, y: 0 }, { tolerance });
+
+    expect(result?.selectedPixelCount).toBe(expectedCount);
+  });
+
+  it('maps an Infinity tolerance to the same selection as the maximum slider value', () => {
+    const infinite = createMagicWandSelectionFromImageData(toleranceStrip(), { x: 0, y: 0 }, { tolerance: Infinity });
+    const maximum = createMagicWandSelectionFromImageData(toleranceStrip(), { x: 0, y: 0 }, { tolerance: 100 });
+
+    expect(infinite).toEqual(maximum);
+    expect(infinite?.bounds).toEqual({ x: 0, y: 0, width: 3, height: 1 });
+  });
+
+  it('maps a -Infinity tolerance to an exact-match selection, like tolerance zero', () => {
+    const negativeInfinite = createMagicWandSelectionFromImageData(
+      toleranceStrip(),
+      { x: 0, y: 0 },
+      { tolerance: -Infinity }
+    );
+    const exact = createMagicWandSelectionFromImageData(toleranceStrip(), { x: 0, y: 0 }, { tolerance: 0 });
+
+    expect(negativeInfinite).toEqual(exact);
+    expect(negativeInfinite?.selectedPixelCount).toBe(2);
+  });
+
+  it('selects the whole image at an Infinity tolerance even across the largest colour gap', () => {
+    // The diamond's white centre is 441.6 units from its black surround, the single
+    // biggest distance in the 5x5 frame still falls under `Infinity` -> 510, so every
+    // one of the 25 pixels is pulled in.
+    const result = createMagicWandSelectionFromImageData(
+      createDiamondImageData(),
+      { x: 2, y: 2 },
+      { tolerance: Infinity }
+    );
+
+    expect(result?.selectedPixelCount).toBe(25);
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: 5, height: 5 });
+  });
+});
+
+describe('single-pixel images', () => {
+  it('traces a one-pixel image as the four corners of that pixel', () => {
+    const result = createMagicWandSelectionFromImageData(createImageData(1, 1, [255, 0, 0, 255]), { x: 0, y: 0 });
+
+    expect(result?.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+    expect(result?.selectedPixelCount).toBe(1);
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    expect(result?.sampleColor).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+  });
+
+  it('treats a single-pixel image the same in non-contiguous mode', () => {
+    const result = createMagicWandSelectionFromImageData(
+      createImageData(1, 1, [12, 34, 56, 78]),
+      { x: 0, y: 0 },
+      { contiguous: false }
+    );
+
+    expect(result?.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+    expect(result?.selectedPixelCount).toBe(1);
+  });
+
+  it('leaves a single-pixel selection untouched by smoothing', () => {
+    const result = createMagicWandSelectionFromImageData(
+      createImageData(1, 1, [255, 0, 0, 255]),
+      { x: 0, y: 0 },
+      { smoothing: 5 }
+    );
+
+    expect(result?.points).toHaveLength(4);
+  });
+});
+
+describe('empty selections', () => {
+  it('returns null rather than an empty points array when no pixels match', () => {
+    // A NaN tolerance makes every `distance <= NaN` comparison false, so even the seed
+    // pixel is unselected and `selectedPixelCount` never leaves zero. The contract is a
+    // clean `null`, never a result carrying an empty `points` array.
+    const result = createMagicWandSelectionFromImageData(
+      createImageData(1, 1, [255, 0, 0, 255]),
+      { x: 0, y: 0 },
+      { tolerance: Number.NaN }
+    );
+
+    expect(result).toBeNull();
+    expect(result?.points).toBeUndefined();
+  });
+
+  it('returns null when the seed colour is absent outside a zero-tolerance flood', () => {
+    // The seed is unique, but in contiguous mode it still matches itself, so this selects
+    // exactly that one pixel and returns a one-pixel outline rather than null.
+    const imageData = createImageData(3, 3, [0, 0, 0, 255]);
+    setPixel(imageData, 1, 1, [255, 0, 0, 255]);
+
+    const result = createMagicWandSelectionFromImageData(imageData, { x: 1, y: 1 }, { tolerance: 0 });
+
+    expect(result?.selectedPixelCount).toBe(1);
+    expect(result?.points).toEqual([
+      { x: 1, y: 1 },
+      { x: 2, y: 1 },
+      { x: 2, y: 2 },
+      { x: 1, y: 2 },
+    ]);
+  });
+});
+
+describe('non-contiguous edge cases', () => {
+  it('traces only the seed pixel when that colour appears nowhere else', () => {
+    // Non-contiguous mode still selects only the pixels within tolerance of the seed
+    // colour; here the seed is the sole match, so exactly one pixel is selected.
+    const imageData = createImageData(3, 1, [0, 0, 255, 255]);
+    setPixel(imageData, 1, 0, [255, 0, 0, 255]);
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 1, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.selectedPixelCount).toBe(1);
+    expect(result?.points).toEqual([
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 2, y: 1 },
+      { x: 1, y: 1 },
+    ]);
+    expect(result?.sampleColor).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+  });
+
+  it('returns null for a non-contiguous selection of a ring, since the outline cannot carry a hole', () => {
+    const ring = createImageData(5, 5, [0, 0, 0, 255]);
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 5; x++) {
+        const inHole = x >= 1 && x < 4 && y >= 1 && y < 4;
+        if (!inHole) setPixel(ring, x, y, [255, 0, 0, 255]);
+      }
+    }
+
+    expect(createMagicWandSelectionFromImageData(ring, { x: 0, y: 0 }, { tolerance: 0, contiguous: false })).toBeNull();
+  });
+
+  it('returns the largest region even when the seed lands on a smaller matching region', () => {
+    // Seed on the lone 1x1 red pixel, but a 3x3 red block exists elsewhere; the global
+    // mask pulls in all 10 red pixels and the longest contour wins, so the returned
+    // polygon bounds the block, not the seed.
+    const imageData = createImageData(5, 5, [0, 0, 255, 255]);
+    setPixel(imageData, 0, 0, [255, 0, 0, 255]);
+    for (let y = 2; y < 5; y++) {
+      for (let x = 2; x < 5; x++) setPixel(imageData, x, y, [255, 0, 0, 255]);
+    }
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 0, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.selectedPixelCount).toBe(10);
+    expect(getPointBounds(result!.points)).toEqual({ minX: 2, minY: 2, maxX: 5, maxY: 5 });
+    expect(result?.bounds).toEqual({ x: 0, y: 0, width: 5, height: 5 });
+  });
+});
+
+describe('known gaps (it.fails tripwires)', () => {
+  // Tripwires assert the behaviour this module *ought* to have but does not yet, so a
+  // passing tripwire here means the suite is red until the gap is closed and the tripwire
+  // is promoted to a plain `it`. They are deliberately kept separate from the blessed
+  // behaviour above.
+
+  it.fails('clamps a NaN tolerance to zero instead of propagating NaN through the colour distance', () => {
+    // `getToleranceDistance` leans on `Math.min/max` clamping, which leaves NaN as NaN
+    // (Number.NaN is not comparable, so every pixel test later becomes `distance <= NaN`
+    // and fails). Every other non-finite/out-of-range value lands on a real bound --
+    // -Infinity and negatives clamp to 0 -- so NaN should clamp to 0 as well, matching
+    // `getToleranceDistance(0)`, instead of silently nullifying the whole selection.
+    expect(getToleranceDistance(Number.NaN)).toBe(0);
+    expect(getToleranceDistance(Number.NaN)).toBe(getToleranceDistance(0));
+  });
+
+  it.fails('returns the seed region on an equal-area non-contiguous tie', () => {
+    // `selectLargestBoundaryLoop` breaks ties with a strict `>` against a `bestArea`
+    // initialised to 0, so the first loop the tracer emits wins regardless of the seed.
+    // Two 1px regions of equal area: the seed sits on (3,0) yet the (0,0) region is
+    // traced first and comes back. Clicking a region should round-trip to that region.
+    const imageData = createImageData(4, 1, [0, 0, 0, 255]);
+    setPixel(imageData, 0, 0, [255, 0, 0, 255]);
+    setPixel(imageData, 3, 0, [255, 0, 0, 255]);
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 3, y: 0 },
+      { tolerance: 0, contiguous: false }
+    );
+
+    expect(result?.points).toEqual([
+      { x: 3, y: 0 },
+      { x: 4, y: 0 },
+      { x: 4, y: 1 },
+      { x: 3, y: 1 },
+    ]);
   });
 });
