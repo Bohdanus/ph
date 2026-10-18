@@ -183,10 +183,12 @@ variant or an equivalent atomic history action.
    rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
    operation, and legacy plus durable logical replay both transform every extant layer.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
-   publication intentionally remains legacy: a trial durable projection disagreed on
-   transformed layer bounds (`-1,0,65,64` versus approximately `0,0,64,64`). Do not
-   enable the frame gate until an exact browser pixel-parity test closes that difference. Previews and
-   unsupported documents still use the complete legacy compatibility path. Unsupported-source
+   publication intentionally remains legacy. A direct browser differential now proves byte-identical
+   legacy/durable composition and exact `0,0,64,64` materialized bounds for one 90-degree raster-layer
+   crop; exact quarter-turn matrices prevent floating trigonometric residue from expanding the pixel
+   grid. This closes that fixture only, not the frame gate: arbitrary angles, multiple layer positions,
+   other source kinds and the full retained-affine operation surface still need parity proof. Previews
+   and unsupported documents still use the complete legacy compatibility path. Unsupported-source
    fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
    then retire legacy logical replay only after
    durable replay can provide the same complete state for append, branch, preview,

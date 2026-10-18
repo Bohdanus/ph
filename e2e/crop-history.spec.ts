@@ -972,5 +972,176 @@ test.describe('Crop history', () => {
       const redonePixels = await getWorkspaceCanvas(page).screenshot();
       expect(redonePixels.equals(committedPixels), 'redo must reproduce the rotated-crop pixels exactly').toBe(true);
     });
+
+    test('durable materialization matches legacy pixels for a quarter-turn crop without an extra edge pixel', async ({
+      page,
+    }) => {
+      await openDocument(page);
+
+      const result = await page.evaluate(async () => {
+        const load = (specifier: string) => import(/* @vite-ignore */ new URL(specifier, location.origin).href);
+        const [
+          { AssetRegistry },
+          { composeDurableDocument },
+          { documentAffineToLayerLocal, rotationAffineAroundPoint },
+          { legacyHistoryToDurable },
+          { drawLayersToCanvas },
+          { createAffineLayerOperation },
+          { replayDurableAtCursor },
+          { OPEN_DOCUMENT_ACTION, SET_DOCUMENT_FRAME_ACTION },
+        ] = await Promise.all([
+          load('/src/contexts/asset-registry.ts'),
+          load('/src/contexts/durable-compositor.ts'),
+          load('/src/contexts/affine-transform.ts'),
+          load('/src/contexts/history-adapter.ts'),
+          load('/src/contexts/layer-renderer.ts'),
+          load('/src/contexts/layer-utils.ts'),
+          load('/src/contexts/durable-replay.ts'),
+          load('/src/util/constants.ts'),
+        ]);
+
+        const sourceCanvas = document.createElement('canvas');
+        sourceCanvas.width = 64;
+        sourceCanvas.height = 64;
+        const sourceContext = sourceCanvas.getContext('2d');
+        if (!sourceContext) throw new Error('A 2D canvas context is required for the crop parity fixture');
+        sourceContext.fillStyle = '#ff0000';
+        sourceContext.fillRect(0, 0, 32, 64);
+        sourceContext.fillStyle = '#0000ff';
+        sourceContext.fillRect(32, 0, 32, 64);
+
+        const layerId = 'quarter-turn-crop-layer';
+        const baseFrame = { x: 0, y: 0, width: 64, height: 64 };
+        const cropFrame = { x: 16, y: 16, width: 32, height: 32 };
+        const position = { x: 0, y: 0, width: 64, height: 64 };
+        const source = {
+          kind: 'image',
+          bitmap: sourceCanvas,
+          name: 'quarter-turn-crop.png',
+          isBedrock: false,
+          pos: position,
+        };
+        const layer = {
+          id: layerId,
+          name: layerId,
+          isBedrock: false,
+          tmpCanvas: null,
+          bitmap: sourceCanvas,
+          visible: true,
+          opacity: 1,
+          locked: false,
+          blendMode: 'source-over',
+          order: 0,
+          pos: position,
+          presentationBounds: null,
+          source,
+          operations: [],
+        };
+        const transform = rotationAffineAroundPoint(-Math.PI / 2, { x: 32, y: 32 });
+        const legacyLayer = {
+          ...layer,
+          operations: [
+            createAffineLayerOperation(documentAffineToLayerLocal(transform, position), 'quarter-turn-crop'),
+          ],
+        };
+        const legacySurface = document.createElement('canvas');
+        if (!drawLayersToCanvas(legacySurface, [legacyLayer], cropFrame)) {
+          throw new Error('Legacy rotated-crop composition was refused');
+        }
+        const legacyContext = legacySurface.getContext('2d');
+        if (!legacyContext) throw new Error('Legacy crop composition produced no 2D context');
+        const legacyPixels = Array.from(legacyContext.getImageData(0, 0, 32, 32).data);
+
+        const documentId = 'quarter-turn-crop-pixel-parity';
+        const registry = new AssetRegistry();
+        try {
+          const converted = legacyHistoryToDurable(
+            [
+              {
+                id: 'baseline',
+                actionName: OPEN_DOCUMENT_ACTION,
+                layerId,
+                documentSource: {
+                  layers: { [layerId]: layer },
+                  size: { width: 64, height: 64 },
+                  frame: baseFrame,
+                },
+              },
+              {
+                id: 'rotated-crop',
+                actionName: SET_DOCUMENT_FRAME_ACTION,
+                layerId: 'document',
+                args: { previousFrame: baseFrame, nextFrame: cropFrame, transform },
+              },
+            ],
+            { documentId, registry, initialSize: { width: 64, height: 64 }, initialFrame: baseFrame }
+          );
+          if (converted.diagnostics.length > 0) {
+            throw new Error(`Durable crop conversion failed: ${JSON.stringify(converted.diagnostics)}`);
+          }
+          const cursor = converted.legacyCursorToDurableCursor[1];
+          if (typeof cursor !== 'number') throw new Error('Rotated crop did not map to a durable cursor');
+          const replay = replayDurableAtCursor(converted.document, cursor);
+          const composite = await composeDurableDocument(replay, {
+            documentId,
+            baselineAssetGeneration: registry.getDocumentGeneration(documentId),
+            operationSetRevision: converted.document.durableRevision,
+            assetRegistry: registry,
+          });
+          try {
+            const durableSurface = document.createElement('canvas');
+            durableSurface.width = 32;
+            durableSurface.height = 32;
+            const durableContext = durableSurface.getContext('2d');
+            if (!durableContext) throw new Error('Durable crop composition produced no 2D context');
+            durableContext.drawImage(composite.bitmap as CanvasImageSource, 0, 0);
+            const durablePixels = Array.from(durableContext.getImageData(0, 0, 32, 32).data);
+            const hasOpaqueRgb = (pixels: number[], rgb: readonly [number, number, number]): boolean => {
+              for (let index = 0; index < pixels.length; index += 4) {
+                if (
+                  pixels[index] === rgb[0] &&
+                  pixels[index + 1] === rgb[1] &&
+                  pixels[index + 2] === rgb[2] &&
+                  (pixels[index + 3] ?? 0) > 0
+                ) {
+                  return true;
+                }
+              }
+              return false;
+            };
+            const red: readonly [number, number, number] = [255, 0, 0];
+            const blue: readonly [number, number, number] = [0, 0, 255];
+            const materializedBounds = composite.layers[layerId]?.bounds;
+            if (!materializedBounds) throw new Error('Durable crop produced no materialized layer bounds');
+            let differingBytes = 0;
+            for (let index = 0; index < legacyPixels.length; index += 1) {
+              if (legacyPixels[index] !== durablePixels[index]) differingBytes += 1;
+            }
+            return {
+              legacyPixels,
+              durablePixels,
+              legacyHasRed: hasOpaqueRgb(legacyPixels, red),
+              legacyHasBlue: hasOpaqueRgb(legacyPixels, blue),
+              durableHasRed: hasOpaqueRgb(durablePixels, red),
+              durableHasBlue: hasOpaqueRgb(durablePixels, blue),
+              differingBytes,
+              materializedBounds,
+            };
+          } finally {
+            composite.release();
+          }
+        } finally {
+          registry.shutdown();
+        }
+      });
+
+      expect(result.legacyHasRed, 'legacy crop must contain fixture red pixels').toBe(true);
+      expect(result.legacyHasBlue, 'legacy crop must contain fixture blue pixels').toBe(true);
+      expect(result.durableHasRed, 'durable crop must contain fixture red pixels').toBe(true);
+      expect(result.durableHasBlue, 'durable crop must contain fixture blue pixels').toBe(true);
+      expect(result.differingBytes, 'durable and legacy crop rasters must be byte-identical').toBe(0);
+      expect(result.durablePixels).toEqual(result.legacyPixels);
+      expect(result.materializedBounds).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+    });
   });
 });

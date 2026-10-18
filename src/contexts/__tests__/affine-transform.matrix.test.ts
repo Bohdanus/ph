@@ -23,6 +23,7 @@ import {
   isTrapezoidOnlyTransform,
   multiplyAffineTransforms,
   normalizeTransformHistoryArgs,
+  rotationAffineAroundPoint,
   transformCorners,
   transformToolArgsToAffine,
   validateAffineTransform,
@@ -90,6 +91,24 @@ describe('affine constants', () => {
     expect(AFFINE_DETERMINANT_EPSILON).toBe(1e-8);
     expect(MAX_AFFINE_COORDINATE).toBe(1_000_000);
     expect(MAX_AFFINE_PIXELS).toBe(64 * 1024 * 1024);
+  });
+});
+
+describe('rotationAffineAroundPoint', () => {
+  it.each([
+    ['zero turn', 0, { x: 32, y: 32 }, transform(1, 0, 0, 1, 0, 0)],
+    ['clockwise quarter turn', Math.PI / 2, { x: 32, y: 32 }, transform(0, 1, -1, 0, 64, 0)],
+    ['half turn', Math.PI, { x: 32, y: 32 }, transform(-1, 0, 0, -1, 64, 64)],
+    ['counter-clockwise quarter turn', -Math.PI / 2, { x: 32, y: 32 }, transform(0, -1, 1, 0, 0, 64)],
+    ['quarter turn around a negative center', -Math.PI / 2, { x: -32, y: -32 }, transform(0, -1, 1, 0, 0, -64)],
+  ])('returns exact matrix values for an exact %s', (_label, angle, center, expected) => {
+    expect(rotationAffineAroundPoint(angle, center)).toEqual(expected);
+  });
+
+  it('preserves real subpixel rotation around a quarter turn', () => {
+    const angle = Math.PI / 2 + 1e-8;
+
+    expect(rotationAffineAroundPoint(angle, { x: 32, y: 32 }).a).toBe(Math.cos(angle));
   });
 });
 

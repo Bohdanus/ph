@@ -75,11 +75,19 @@ remaining surfaces still need independent parity gates before they are mounted.
 The Crop panel and keyboard commit pass the pending angle; one history entry carries the frame and
 global affine, and both `replayHistory()` and `replayDurableDocument()` apply it to every extant
 layer. `e2e/crop-history.spec.ts` verifies the imported red/blue fixture rotates correctly and one
-undo/redo restores the exact pixels. Do not add `SET_DOCUMENT_FRAME_ACTION` to background
-presentation: the affine materializer reports bounds `-1,0,65,64` while the legacy evaluator
-reports approximately `0,0,64,64` for the same 64px rotated fixture. The test intentionally observes
-legacy presentation on commit and renderer-incompatible fallback on redo; resolve this pixel-grid
-difference and add exact browser parity before enabling the durable frame gate.
+undo/redo restores the exact pixels. Its direct browser differential now also proves byte-identical
+legacy/durable composition for a 90-degree raster-layer crop, with materialized bounds
+`0,0,64,64`; exact quarter-turn matrices avoid a phantom edge from `cos(pi / 2)` floating residue.
+This closes that fixture's bounds discrepancy, not the general frame gate. Do not add
+`SET_DOCUMENT_FRAME_ACTION` to background presentation: the differential covers one right-angle
+raster layer only, and retained affine operations remain unapproved for arbitrary angles, multiple
+layer positions, other source kinds, and frame transitions. The UI test intentionally continues to
+observe legacy presentation on commit and renderer-incompatible fallback on redo.
+
+Separate follow-up: `transformToolArgsToAffine()` still builds retained Transform-tool rotations from
+raw `Math.cos`/`Math.sin`; exact quarter-turns on thin or non-square layers may produce the same
+phantom pixel bound. This crop fix only canonicalizes `rotationAffineAroundPoint()`; resolve the
+Transform-tool path separately before treating all retained affine bounds as pixel-grid parity-approved.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;

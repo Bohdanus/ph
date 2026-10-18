@@ -82,12 +82,35 @@ export function applyAffineTransform(transform: AffineTransform, point: Point): 
 }
 
 export function rotationAffineAroundPoint(angleRadians: number, center: Point): AffineTransform {
-  const cosine = Math.cos(angleRadians);
-  const sine = Math.sin(angleRadians);
+  let cosine = Math.cos(angleRadians);
+  let sine = Math.sin(angleRadians);
+  const halfPi = Math.PI / 2;
+  const quarterTurns = Math.round(angleRadians / halfPi);
+  if (Number.isSafeInteger(quarterTurns) && angleRadians === quarterTurns * halfPi) {
+    // Keep exact quarter-turn bounds on the pixel grid; cos(pi / 2)'s residue can add a phantom pixel.
+    switch (((quarterTurns % 4) + 4) % 4) {
+      case 0:
+        cosine = 1;
+        sine = 0;
+        break;
+      case 1:
+        cosine = 0;
+        sine = 1;
+        break;
+      case 2:
+        cosine = -1;
+        sine = 0;
+        break;
+      case 3:
+        cosine = 0;
+        sine = -1;
+        break;
+    }
+  }
   return validateAffineTransform({
     a: cosine,
     b: sine,
-    c: -sine,
+    c: sine === 0 ? 0 : -sine,
     d: cosine,
     e: center.x - cosine * center.x + sine * center.y,
     f: center.y - sine * center.x - cosine * center.y,
