@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { availableTools } from '../../toolbar-mapping.ts';
+import { availableTools, toolbarMap } from '../../toolbar-mapping.ts';
 import { renderToolDocs, renderTooltips } from '../generate-tool-docs.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -166,8 +166,16 @@ describe('the generated files', () => {
     expect(readRepoFile('src/tools/descriptions/tooltips.ts')).toBe(expected);
   });
 
-  it('projects the record into the tooltip projection without changing a value', async () => {
-    const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+  it('projects description values and the toolbar-declared shortcut into tooltips', async () => {
+    const { descriptionKeyFor, toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+    const toolbarShortcuts = new Map();
+    for (const section of toolbarMap) {
+      for (const group of section) {
+        for (const entry of group) {
+          toolbarShortcuts.set(descriptionKeyFor(entry.name, entry.figure), entry.shortcut);
+        }
+      }
+    }
     const drifted = [];
 
     for (const [key, tool] of Object.entries(registeredDescriptions)) {
@@ -178,15 +186,43 @@ describe('the generated files', () => {
       }
       if (projection.summary !== tool.summary) drifted.push(`${key}: summary differs`);
       if (projection.implementation !== tool.implementation) drifted.push(`${key}: implementation differs`);
+      if (projection.shortcut !== toolbarShortcuts.get(key)) drifted.push(`${key}: toolbar shortcut differs`);
     }
 
     expect(drifted).toEqual([]);
     expect(Object.keys(toolTooltips).sort()).toEqual(Object.keys(registeredDescriptions).sort());
   });
 
+  it('does not project family-cycle keys or command shortcuts as a tool-tile shortcut', async () => {
+    const { toolTooltips } = await import('../../src/tools/descriptions/tooltips.ts');
+
+    for (const key of [
+      'pencil',
+      'color-replacement',
+      'patch',
+      'gradient',
+      'sponge',
+      'smudge',
+      'rotate-view',
+      'transform',
+    ]) {
+      expect(toolTooltips[key].shortcut, key).toBeUndefined();
+    }
+  });
+
   it('documents every tool', () => {
     const doc = readRepoFile('docs/TOOLS.md');
     const missing = availableTools.filter((name) => !doc.includes(`\`${name}\``));
     expect(missing, `tools absent from docs/TOOLS.md: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('documents the Star Tool and the generic Shape Tool group under distinct headings', () => {
+    const doc = readRepoFile('docs/TOOLS.md');
+    const headings = [...doc.matchAll(/^### (.+)$/gm)].map(([, heading]) => heading);
+
+    expect(headings.filter((heading) => heading === 'Star Tool')).toHaveLength(1);
+    expect(
+      headings.filter((heading) => heading === 'Shape Tool (the Tools panel group; no entry by that name)')
+    ).toHaveLength(1);
   });
 });

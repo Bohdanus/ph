@@ -1792,13 +1792,11 @@ Sources:
 
 ### Star Tool
 
-`shape`
+`star`
 
-Photoshop's name for it is **Shape Tool (the Tools panel group; no entry by that name)**.
+Drag-defined star with a configurable number of points and alternating outer and inner radii.
 
-Draws a vector shape, a path, or a filled pixel region, and stamps it onto its own shape layer.
-
-Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photoshop tool behind this one: the panel groups seven separate tools — Rectangle, Ellipse, Triangle, Polygon, Star, Line and Custom Shape — behind a single group icon, and the Star arrived as a tool of its own in 26.10. Whichever of the seven is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.
+The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke; Shift constrains proportions and Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.
 
 **Options bar**
 
@@ -1819,6 +1817,9 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 | Mode                                  | The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.                                                                                                                                                                                                                                                                          | `missing`                                                        |
 | Opacity                               | Pixel mode only: transparency of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider, because a shape layer and a path have no opacity of their own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:409` |
 | Anti-alias                            | Pixel mode only: smooths the shape edges when rasterizing. Photoshop applies it automatically, so it has no meaningful unchecked state in practice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missing`                                                        |
+| Number of Points                      | Number of outer points in the star. This app reuses the Polygon bounds of 3–100 points and defaults to 5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `present` — `src/components/ToolbarsRight/Figures/Shape.tsx:330` |
+| Star Ratio / Indent                   | Percentage of the outer radius used by each inner vertex, controlling the depth of the star indents. Adobe documents Inner Radius and Outer Radius, but not an exact default; this app represents their ratio as 1–99% and chooses 50% as an app-side default.                                                                                                                                                                                                                                                                                                                                                                                                             | `present` — `src/components/ToolbarsRight/Figures/Shape.tsx:357` |
+| Radius                                | Rounds the shape corners in pixels, default 0 px. Adobe documents the control on the Rectangle tool ("Radius of rounded corners: Manually set the radius…") and on the Triangle tool ("specify Width, Height, and Corner Radius"); the Ellipse and Line tools have no rounded corners. The Rectangle tool keeps four independent radii and the Triangle tool a single value that rounds every corner at once. Whether the Polygon tool offers it is third-party only — no Adobe page listing the Polygon tool’s bar was found — so the polygon half of that gap is a judgment, not a match.                                                                                | `missing`                                                        |
 
 **Modifiers**
 
@@ -1829,30 +1830,21 @@ Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photos
 **Shortcuts**
 
 - `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
-- `Shift+U` — Cycles to the next tool in the shapes tool group. The rail flyout and keyboard cycle hold seven entries — rectangle, ellipse, line, triangle, polygon, star and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.
 
-**In this app:** `partial` — The Star entry is now present in the app’s seven-entry shapes fly-out (`toolbar-mapping.ts`), and the `shape` registry entry this description hangs off remains the group container rather than a tool the rail displays by itself. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
+**In this app:** `partial` — The Star is implemented as another figure in the shared shape processor. Its path alternates outer and inner vertices, points default to 5, and the Star Ratio / Indent control reaches the renderer. Shape, Path and Pixels modes, Fill/Stroke behaviour, Shift constraint and Alt-from-center are inherited from the existing family. Adobe does not publish exact inner/outer defaults or all min/max bounds, so the 50% ratio default and 1–99% app range are explicit app decisions, not Adobe defaults. Corner Radius, Photoshop’s separate Inner Radius and Outer Radius fields, and true vector/path-mode commits remain limitations of the shared app architecture.
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:170`
-- `src/tools/shape.ts:251`
+- `src/tools/toolProcessors.ts:191`
+- `src/tools/shape.ts:242`
 - `src/tools/shape.ts:107`
-- `src/components/ToolbarsRight/Figures/Shape.tsx:225`
-- `src/tools/toolsMap.ts:65`
+- `src/components/ToolbarsRight/Figures/Shape.tsx:330`
+- `src/tools/settings.ts:67`
 
 Sources:
 
-- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html>
-- <https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207>
-- <https://helpx.adobe.com/photoshop/using/modify-shapes.html>
-- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/create-shapes.html>
-- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html>
 - <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html>
-- <https://community.adobe.com/questions-712/photoshop-v26-10-create-the-perfect-star-shape-for-your-designs-and-multiple-enhancements-1181840>
-- <https://www.cgchannel.com/2025/08/adobe-releases-photoshop-26-10/>
-- <https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/>
-- <https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/>
+- <https://helpx.adobe.com/photoshop/using/create-star-shape.html>
 
 ---
 
@@ -1921,13 +1913,13 @@ Sources:
 
 ---
 
-### Star Tool
+### Shape Tool (the Tools panel group; no entry by that name)
 
-`star`
+`shape`
 
-Drag-defined star with a configurable number of points and alternating outer and inner radii.
+Draws a vector shape, a path, or a filled pixel region, and stamps it onto its own shape layer.
 
-The Star tool draws a customizable star from the Shapes tool group. Adobe documents Number of Points, Outer Radius, Inner Radius and Corner Radius, plus Fill and Stroke; Shift constrains proportions and Alt/Option draws from the centre. The app exposes points through the existing 3–100 Polygon bounds and represents the two radii as a Star Ratio / Indent percentage.
+Adobe’s Tools panel has no entry named “Shape Tool”, so there is no Photoshop tool behind this one: the panel groups seven separate tools — Rectangle, Ellipse, Triangle, Polygon, Star, Line and Custom Shape — behind a single group icon, and the Star arrived as a tool of its own in 26.10. Whichever of the seven is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.
 
 **Options bar**
 
@@ -1948,9 +1940,6 @@ The Star tool draws a customizable star from the Shapes tool group. Adobe docume
 | Mode                                  | The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.                                                                                                                                                                                                                                                                          | `missing`                                                        |
 | Opacity                               | Pixel mode only: transparency of the rasterized shape, 1–100%. Shape and Path modes expose no Opacity slider, because a shape layer and a path have no opacity of their own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `partial` — `src/components/ToolbarsRight/Figures/Shape.tsx:409` |
 | Anti-alias                            | Pixel mode only: smooths the shape edges when rasterizing. Photoshop applies it automatically, so it has no meaningful unchecked state in practice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missing`                                                        |
-| Number of Points                      | Number of outer points in the star. This app reuses the Polygon bounds of 3–100 points and defaults to 5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `present` — `src/components/ToolbarsRight/Figures/Shape.tsx:330` |
-| Star Ratio / Indent                   | Percentage of the outer radius used by each inner vertex, controlling the depth of the star indents. Adobe documents Inner Radius and Outer Radius, but not an exact default; this app represents their ratio as 1–99% and chooses 50% as an app-side default.                                                                                                                                                                                                                                                                                                                                                                                                             | `present` — `src/components/ToolbarsRight/Figures/Shape.tsx:357` |
-| Radius                                | Rounds the shape corners in pixels, default 0 px. Adobe documents the control on the Rectangle tool ("Radius of rounded corners: Manually set the radius…") and on the Triangle tool ("specify Width, Height, and Corner Radius"); the Ellipse and Line tools have no rounded corners. The Rectangle tool keeps four independent radii and the Triangle tool a single value that rounds every corner at once. Whether the Polygon tool offers it is third-party only — no Adobe page listing the Polygon tool’s bar was found — so the polygon half of that gap is a judgment, not a match.                                                                                | `missing`                                                        |
 
 **Modifiers**
 
@@ -1961,21 +1950,30 @@ The Star tool draws a customizable star from the Shapes tool group. Adobe docume
 **Shortcuts**
 
 - `U` — Selects the shapes tool group. The six geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.
+- `Shift+U` — Cycles to the next tool in the shapes tool group. The rail flyout and keyboard cycle hold seven entries — rectangle, ellipse, line, triangle, polygon, star and Custom Shape. The group closes, so the press after Custom Shape returns to the Rectangle.
 
-**In this app:** `partial` — The Star is implemented as another figure in the shared shape processor. Its path alternates outer and inner vertices, points default to 5, and the Star Ratio / Indent control reaches the renderer. Shape, Path and Pixels modes, Fill/Stroke behaviour, Shift constraint and Alt-from-center are inherited from the existing family. Adobe does not publish exact inner/outer defaults or all min/max bounds, so the 50% ratio default and 1–99% app range are explicit app decisions, not Adobe defaults. Corner Radius, Photoshop’s separate Inner Radius and Outer Radius fields, and true vector/path-mode commits remain limitations of the shared app architecture.
+**In this app:** `partial` — The Star entry is now present in the app’s seven-entry shapes fly-out (`toolbar-mapping.ts`), and the `shape` registry entry this description hangs off remains the group container rather than a tool the rail displays by itself. The processor is live and every drag commits a layer, so nothing here is a placeholder, but the group diverges from Photoshop in three further ways worth naming. Path mode does not create a path: the mode only suppresses the fill inside the rasterizer, so a Path-mode shape still rasterizes to a layer with a stroke. Pixels mode is not a mode of its own: the figure is rasterized and put on a new layer exactly as in Shape mode, where Photoshop paints straight into the active layer and leaves nothing new in the Layers panel. And the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. A click with no drag is the group’s one place where the app meets Adobe head-on: Adobe documents the click dialog in a single sentence, for the rectangle — "Click on the canvas to bring up the Create Rectangle dialog" — and the app opens a `CreateShapeDialog` modal for every figure except the Line, titled per figure, offering Width, Height and From Center, plus a Corner Radius field on the rectangle that is seeded from that figure’s live Radius slider and applied to the layer being created rather than to the bar. The click itself commits nothing: OK is the only commit, Cancel, the backdrop, the header × and Escape all close without one, and OK is disabled outright while a dimension is under 1 px. The Line is the exception and is excluded by contract rather than by taste — Adobe documents the drag and the release for it and never names a Create Line dialog, so a click there refuses on the console instead of inventing a dialog Adobe has not got. What the dialog still leaves out is per-figure rather than shared, and the triangle and polygon entries below each name their own figure’s gaps against what this renderer can honour.
 
 Implementation:
 
-- `src/tools/toolProcessors.ts:191`
-- `src/tools/shape.ts:242`
+- `src/tools/toolProcessors.ts:170`
+- `src/tools/shape.ts:251`
 - `src/tools/shape.ts:107`
-- `src/components/ToolbarsRight/Figures/Shape.tsx:330`
-- `src/tools/settings.ts:67`
+- `src/components/ToolbarsRight/Figures/Shape.tsx:225`
+- `src/tools/toolsMap.ts:65`
 
 Sources:
 
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html>
+- <https://community.adobe.com/questions-712/how-to-change-shape-tool-options-1181207>
+- <https://helpx.adobe.com/photoshop/using/modify-shapes.html>
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/create-shapes.html>
+- <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html>
 - <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html>
-- <https://helpx.adobe.com/photoshop/using/create-star-shape.html>
+- <https://community.adobe.com/questions-712/photoshop-v26-10-create-the-perfect-star-shape-for-your-designs-and-multiple-enhancements-1181840>
+- <https://www.cgchannel.com/2025/08/adobe-releases-photoshop-26-10/>
+- <https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/>
+- <https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/>
 
 ---
 

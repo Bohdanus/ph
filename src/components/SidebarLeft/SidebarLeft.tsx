@@ -19,6 +19,8 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { findToolProcessor, toolProcessors } from '../../tools/toolProcessors.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
+import { useFirstUse } from '../../hooks/useFirstUse.ts';
+import { useFirstUseContext } from '../../contexts/FirstUseContext.tsx';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -226,8 +228,10 @@ const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
+  const { isToolNew, markToolAsSeen } = useFirstUse();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
+  const { highlightedTools } = useFirstUseContext();
   // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
   // single column" — the double-chevron at the top of the Tools panel switches to two columns
   // to save vertical room, which is only coherent if one column is where you start. It is also
@@ -599,8 +603,10 @@ const SidebarLeft = () => {
      * flyout carries the unimplemented Custom Shape.
      */
     const tileTool = identity === undefined ? group[0] : null;
-    const isTileUnimplemented =
-      tileTool !== null && isUnimplementedTool(descriptionKeyFor(tileTool.name, tileTool.figure));
+    const tileToolName = tileTool !== null ? descriptionKeyFor(tileTool.name, tileTool.figure) : null;
+    const isTileUnimplemented = tileToolName !== null && isUnimplementedTool(tileToolName);
+    const isTileNew = tileToolName !== null && isUnimplementedTool(tileToolName) && isToolNew(tileToolName);
+    const isTileHighlighted = tileToolName !== null && highlightedTools.includes(tileToolName);
 
     return (
       <li
@@ -633,7 +639,7 @@ const SidebarLeft = () => {
             aria-pressed={identity === undefined ? group.some((tool) => tool.name === toolName) : undefined}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}${
               isTileUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''
-            }`}
+            }${isTileHighlighted ? ' tool-highlight-pulse' : ''}`}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
@@ -757,12 +763,26 @@ const SidebarLeft = () => {
             // the tool tiles: a rail whose first section has collapsed away must still be
             // able to report a tile height, and the three-dots tile is then the only one left.
             data-toolbar-tile=""
+            onMouseEnter={() => {
+              if (isTileNew) {
+                markToolAsSeen(tileToolName);
+              }
+            }}
+            onFocus={() => {
+              if (isTileNew) {
+                markToolAsSeen(tileToolName);
+              }
+            }}
           >
             <Icon title={tileLabel} />
+            {isTileNew && (
+              <span className="tool-new-badge" data-testid={`tool-new-badge-${tileToolName}`} aria-hidden="true" />
+            )}
             {hasFlyout && (
               <span
                 aria-hidden="true"
                 className="absolute bottom-0.5 right-0.5 h-0 w-0 border-b-[5px] border-l-[5px] border-b-current border-l-transparent opacity-70"
+                data-testid="tool-flyout-indicator"
               />
             )}
           </button>
@@ -897,7 +917,10 @@ const SidebarLeft = () => {
                  * figure is resolved exactly as a tile's is, so the Rectangle Tool row is
                  * undimmed and the Custom Shape Tool row beside it is not.
                  */
-                const isUnimplemented = isUnimplementedTool(descriptionKeyFor(tool.name, tool.figure));
+                const toolDescriptionKey = descriptionKeyFor(tool.name, tool.figure);
+                const isUnimplemented = isUnimplementedTool(toolDescriptionKey);
+                const isFlyoutItemNew = isUnimplemented && isToolNew(toolDescriptionKey);
+                const isFlyoutItemHighlighted = highlightedTools.includes(toolDescriptionKey);
 
                 return (
                   <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
@@ -933,11 +956,17 @@ const SidebarLeft = () => {
                       // `getToolIcon(tool)`), so it is untouched today, and it is the one thing
                       // that would render at 24px inside a 24.5px row if a row ever rendered an
                       // `identity.Icon`.
-                      className={`flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
+                      className={`relative flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-[11px] transition-colors [&_svg]:!h-4 [&_svg]:!w-4 ${
                         isSelected
                           ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}`}
+                      }${isUnimplemented ? ` ${UNIMPLEMENTED_TOOL_CLASS}` : ''}${isFlyoutItemHighlighted ? ' tool-highlight-pulse' : ''}`}
+                      onMouseEnter={() => {
+                        if (isFlyoutItemNew) markToolAsSeen(toolDescriptionKey);
+                      }}
+                      onFocus={() => {
+                        if (isFlyoutItemNew) markToolAsSeen(toolDescriptionKey);
+                      }}
                       onClick={() => {
                         // The three-dots tile is excluded: its identity is the tile's, so a
                         // pick must not promote anything to be its icon. Every other tile
@@ -945,6 +974,9 @@ const SidebarLeft = () => {
                         // survive the next collapse into the three-dots tile and expand back.
                         if (identity === undefined) {
                           setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
+                        }
+                        if (isFlyoutItemNew) {
+                          markToolAsSeen(toolDescriptionKey);
                         }
                         selectTool(tool);
                         // No focus restore: a click here may be a mouse pick, which has
@@ -973,6 +1005,13 @@ const SidebarLeft = () => {
                     >
                       <FlyoutIcon title={tool.label} />
                       <span className="flex-1 whitespace-nowrap">{tool.label}</span>
+                      {isFlyoutItemNew && (
+                        <span
+                          className="tool-new-badge"
+                          data-testid={`tool-new-badge-${toolDescriptionKey}`}
+                          aria-hidden="true"
+                        />
+                      )}
                       {tool.shortcut && <kbd className="text-[9px] opacity-65">{tool.shortcut}</kbd>}
                     </button>
                   </li>
