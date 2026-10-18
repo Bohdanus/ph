@@ -137,6 +137,7 @@ export type DurablePresentationRecord = Readonly<{
   status: DurablePresentationStatus;
   cursor: number | null;
   reason: DurablePresentationReason | null;
+  detail?: string;
 }>;
 
 export type DurableNavigationPresentationOutcome =
@@ -175,18 +176,28 @@ type DurablePresentationPublication = Readonly<{
   record: DurablePresentationRecord;
 }>;
 
+export function durablePresentationMismatch(
+  replayLayer: DurableReplayLayer,
+  existing: Layer,
+  bounds: Layer['pos']
+): string | null {
+  const sourceSupported =
+    replayLayer.snapshot.source.kind === 'raster' ||
+    replayLayer.snapshot.source.kind === 'blank' ||
+    replayLayer.snapshot.source.kind === 'vector';
+  if (!sourceSupported) return `source kind ${replayLayer.snapshot.source.kind} is unsupported`;
+  if (replayLayer.operations.length > 0) {
+    return `durable layer operations are not pixel-parity approved (${replayLayer.operations.map(({ kind }) => kind).join(', ')})`;
+  }
+  return isEqual(bounds, existing.pos) ? null : 'materialized bounds differ from the untransformed layer position';
+}
+
 export function durablePresentationIsRendererIdentical(
   replayLayer: DurableReplayLayer,
   existing: Layer,
   bounds: Layer['pos']
 ): boolean {
-  return (
-    replayLayer.operations.length === 0 &&
-    isEqual(bounds, existing.pos) &&
-    (replayLayer.snapshot.source.kind === 'raster' ||
-      replayLayer.snapshot.source.kind === 'blank' ||
-      replayLayer.snapshot.source.kind === 'vector')
-  );
+  return durablePresentationMismatch(replayLayer, existing, bounds) === null;
 }
 
 export type StoreData = {
@@ -1439,12 +1450,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           );
         }
         const replayLayer = replay.layers[layerId];
-        const isRendererIdentical = durablePresentationIsRendererIdentical(replayLayer, existing, materialized.bounds);
-        if (!isRendererIdentical) {
+        const rendererMismatch = durablePresentationMismatch(replayLayer, existing, materialized.bounds);
+        if (rendererMismatch) {
           failureReason = 'renderer-incompatible';
           throw new DurableCompositionRefusal(
             'renderer-incompatible',
-            `Durable presentation layer ${layerId} is not renderer-identical`
+            `Durable presentation layer ${layerId} is not renderer-identical: ${rendererMismatch}`
           );
         }
         nextLayers[layerId] = {
@@ -1500,7 +1511,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       detached?.release();
       const reason: DurablePresentationReason = error instanceof DurableCompositionRefusal ? error.code : failureReason;
-      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, reason });
+      const detail = error instanceof Error ? error.message : String(error);
+      const accepted = publishRecord({ status: 'legacy-fallback', cursor: durableCursor, reason, detail });
       if (!accepted || String(reason) === 'stale') return { status: 'stale', reason: 'stale', cursor: durableCursor };
       return { status: 'legacy-fallback', reason, cursor: durableCursor };
     } finally {
@@ -1722,10 +1734,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
       const boundaryDiagnostics = action.payload.durableDiagnostics ?? [];
-      // Source-backed appends can introduce or replace raster ownership. Keep
-      // those transitions on the legacy selector until their import/cache
-      // parity has its own gate; logical property edits can use the background
-      // publication without changing immutable-import or frame-transition timing.
+      // Source-backed appends and all frame-changing commits remain on the legacy
+      // selector until their ownership or frame-parity gates are explicit.
       const allowBackgroundPresentation = ![
         NEW_LAYER_ACTION,
         MERGE_ACTION,

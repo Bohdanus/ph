@@ -25,6 +25,9 @@ export const SHOW_LAYER_ACTION = 'show';
 export const HIDE_LAYER_ACTION = 'hide';
 export const RENAME_LAYER_ACTION = 'rename';
 export const SET_LAYER_OPACITY_ACTION = 'set layer opacity';
+export const SET_LAYER_BLEND_MODE_ACTION = 'set layer blend mode';
+export const LOCK_LAYER_ACTION = 'lock layer';
+export const UNLOCK_LAYER_ACTION = 'unlock layer';
 // Retained as a legacy diagnostic label only; it is not a legal ActionType
 // because no writer, durable translator, or replay arm exists for it.
 export const LAYER_TRANSPARENCY_ACTION = 'layer transparency';
@@ -44,6 +47,9 @@ export type ActionType =
   | typeof HIDE_LAYER_ACTION
   | typeof RENAME_LAYER_ACTION
   | typeof SET_LAYER_OPACITY_ACTION
+  | typeof SET_LAYER_BLEND_MODE_ACTION
+  | typeof LOCK_LAYER_ACTION
+  | typeof UNLOCK_LAYER_ACTION
   // | typeof UPDATE_LAYER_ACTION
   | typeof REORDER_ACTION
   | typeof MERGE_ACTION

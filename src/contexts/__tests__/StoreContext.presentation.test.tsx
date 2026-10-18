@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as durableCompositor from '../durable-compositor.ts';
+import { documentAffineToLayerLocal, getAffineBounds, rotationAffineAroundPoint } from '../affine-transform.ts';
 import type { DurableComposite } from '../durable-compositor.ts';
 import {
   durablePresentationIsRendererIdentical,
@@ -14,6 +15,7 @@ import {
 } from '../StoreContext.tsx';
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
+import { createAffineLayerOperation } from '../layer-utils.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { ImageLayerSource, Layer, LayersRecord } from '../layer-types.ts';
 import type { MaterializedLayer } from '../materialization.ts';
@@ -143,6 +145,35 @@ describe('durable render presentation guard', () => {
         existing.pos
       )
     ).toBe(true);
+
+    const transform = rotationAffineAroundPoint(-Math.PI / 4, { x: 60, y: 45 });
+    const transformedLayer = {
+      ...existing,
+      operations: [createAffineLayerOperation(transform, 'affine')],
+    };
+    expect(
+      durablePresentationIsRendererIdentical(
+        {
+          operations: [{ kind: 'apply-affine-transform', layerId, transform }],
+          snapshot: { source: { kind: 'raster' as const } },
+        } as never,
+        transformedLayer,
+        existing.pos
+      )
+    ).toBe(false);
+    expect(
+      durablePresentationIsRendererIdentical(
+        {
+          operations: [
+            { kind: 'apply-affine-transform', layerId, transform },
+            { kind: 'apply-filter', layerId, filter: 'blur' },
+          ],
+          snapshot: { source: { kind: 'raster' as const } },
+        } as never,
+        transformedLayer,
+        existing.pos
+      )
+    ).toBe(false);
   });
 });
 
@@ -1167,6 +1198,63 @@ describe('renderSelector contract', () => {
       unmount();
     });
   }
+
+  it('keeps rotated crops on the legacy selector until the frame-parity gate is explicit', async () => {
+    const compose = vi.spyOn(durableCompositor, 'composeDurableDocument');
+    const { store, dispatch, unmount } = renderWithProbe();
+    const layer = rasterLayer();
+    replaceDocument(dispatch(), { [layerId]: layer });
+    compose.mockClear();
+
+    const nextFrame = { x: 30, y: 25, width: 220, height: 170 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 5, {
+      x: nextFrame.x + nextFrame.width / 2,
+      y: nextFrame.y + nextFrame.height / 2,
+    });
+    const localTransform = documentAffineToLayerLocal(transform, layer.pos);
+    const localBounds = getAffineBounds(localTransform, { width: layer.pos.width, height: layer.pos.height });
+    const transformedLayer = {
+      ...layer,
+      operations: [...layer.operations, createAffineLayerOperation(localTransform, 'rotated-crop:layer-1')],
+    };
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: {
+            documentFrame: nextFrame,
+            layers: { [layerId]: transformedLayer },
+          },
+          historyItem: {
+            id: 'rotated-crop',
+            actionName: SET_DOCUMENT_FRAME_ACTION,
+            layerId: 'document',
+            args: { previousFrame: defaultFrame, nextFrame, transform },
+          },
+        },
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(compose).not.toHaveBeenCalled();
+    expect(store().documentFrame).toEqual(nextFrame);
+    expect(transformedLayer.pos).toEqual(layer.pos);
+    expect(localBounds.width).toBeGreaterThan(0);
+    expect(store().renderSelector.source).toBe('legacy');
+    expect(store().durablePresentation.status).toBe('unpublished');
+    expect(store().durableDocument!.history.at(-1)?.operation).toMatchObject({
+      kind: 'transform-document',
+      previous: defaultFrame,
+      next: nextFrame,
+      transform,
+    });
+    unmount();
+  });
 
   it('does not enter pending while append composition is in flight, preserving preview interleaving', async () => {
     let resolveComposition!: (composite: DurableComposite) => void;

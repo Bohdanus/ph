@@ -71,6 +71,16 @@ and eligible committed append/reorder are now staged callers; source-backed impo
 frame changes, previews, and the
 remaining surfaces still need independent parity gates before they are mounted.
 
+**Rotated crop is now an explicit logical operation, but its presentation gate remains closed.**
+The Crop panel and keyboard commit pass the pending angle; one history entry carries the frame and
+global affine, and both `replayHistory()` and `replayDurableDocument()` apply it to every extant
+layer. `e2e/crop-history.spec.ts` verifies the imported red/blue fixture rotates correctly and one
+undo/redo restores the exact pixels. Do not add `SET_DOCUMENT_FRAME_ACTION` to background
+presentation: the affine materializer reports bounds `-1,0,65,64` while the legacy evaluator
+reports approximately `0,0,64,64` for the same 64px rotated fixture. The test intentionally observes
+legacy presentation on commit and renderer-incompatible fallback on redo; resolve this pixel-grid
+difference and add exact browser parity before enabling the durable frame gate.
+
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
 the durable selector renders its complete projected layer record after materialization. Wiring

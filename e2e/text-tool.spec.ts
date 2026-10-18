@@ -15,7 +15,8 @@ import {
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { imageBoundsToCss } from './helpers/screenshot-scale';
+import { imageBoundsToCss, imagePointToCss } from './helpers/screenshot-scale';
+import { clickToolButton } from './helpers/toolbar-helpers';
 
 /**
  * The Text tool had no end-to-end coverage: `e2e/color.spec.ts` is a single test about
@@ -40,6 +41,7 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
  * and it leaves room for a dev-server cold start and font rasterisation on CI's runner.
  */
 const TEXT_TOOL_TIMEOUT_MS = 60_000;
+const TEXT_RESIZE_HANDLE_OFFSET = 4;
 
 /**
  * The rail's measured width, in CSS px.
@@ -1426,6 +1428,75 @@ test.describe('Text tool', () => {
     expect.soft(inkCss.top, 'ink escaped the top of the dragged rectangle').toBeGreaterThanOrEqual(rect.top);
     expect.soft(inkCss.right, 'ink escaped the right of the dragged rectangle').toBeLessThanOrEqual(rect.right);
     expect.soft(inkCss.bottom, 'ink escaped the bottom of the dragged rectangle').toBeLessThanOrEqual(rect.bottom);
+  });
+
+  test('resizing a committed text layer rerenders glyphs from its retained text source', async ({ page }, testInfo) => {
+    test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const canvasClip = toClip({
+      left: box.x,
+      top: box.y,
+      right: box.x + box.width,
+      bottom: box.y + box.height,
+    });
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box);
+    await replaceDraftText(page, 'MMMM');
+    await commitButton(page).click();
+    await expect(draftOverlay(page)).toHaveCount(0);
+    await waitForCanvasPixels(page, toClip(draftRectCss(box, POLL_MARGIN)), hasRedPixels, {
+      description: 'committed text before resize',
+    });
+
+    const beforeCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-before-layer-resize');
+    const beforeInk = await scanPixelsForBounds(await loadImageData(beforeCapture), isRedInk);
+    expect(beforeInk.found, 'committed text was not visible before resizing').toBe(true);
+
+    await clickToolButton(page, 'reposition');
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
+    await page.mouse.move(box.x + 300, box.y + 250);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 302, box.y + 252, { steps: 2 });
+    await page.mouse.up();
+    await waitForCanvasPixels(page, canvasClip, async (png) => (await getSelectionBounds(png)) !== null, {
+      description: 'the text layer transform frame',
+    });
+
+    const selectedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-selected-for-resize');
+    const selectedFrame = await getSelectionBounds(selectedCapture);
+    expect(selectedFrame, 'the committed text layer has no transform handles').toBeTruthy();
+    const handle = imagePointToCss({ width: selectedFrame!.imageWidth, height: selectedFrame!.imageHeight }, box, {
+      x: selectedFrame!.right - TEXT_RESIZE_HANDLE_OFFSET,
+      y: selectedFrame!.bottom - TEXT_RESIZE_HANDLE_OFFSET,
+    });
+    await page.mouse.move(handle.x, handle.y);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 100, handle.y + 60, { steps: 8 });
+    await page.mouse.up();
+    await waitForCanvasPixels(
+      page,
+      canvasClip,
+      async (png) => {
+        const current = await getSelectionBounds(png);
+        return (
+          current !== null &&
+          current.right - current.left > selectedFrame!.right - selectedFrame!.left &&
+          current.bottom - current.top > selectedFrame!.bottom - selectedFrame!.top
+        );
+      },
+      { description: 'the expanded text layer transform frame' }
+    );
+
+    const resizedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-resized');
+    const resizedInk = await scanPixelsForBounds(await loadImageData(resizedCapture), isRedInk);
+    expect(resizedInk.found, 'committed text disappeared while its layer was resized').toBe(true);
+    const beforeWidth = beforeInk.right - beforeInk.left + 1;
+    const beforeHeight = beforeInk.bottom - beforeInk.top + 1;
+    const resizedWidth = resizedInk.right - resizedInk.left + 1;
+    const resizedHeight = resizedInk.bottom - resizedInk.top + 1;
+    expect(resizedWidth, 'text width did not track the transformed layer').toBeGreaterThan(beforeWidth);
+    expect(resizedHeight, 'text height did not track the transformed layer').toBeGreaterThan(beforeHeight);
   });
 
   test('Cancel discards the draft without committing a layer', async ({ page }) => {

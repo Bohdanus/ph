@@ -61,6 +61,60 @@ describe('drawLayerSource', () => {
     expect(ctx.drawImage).toHaveBeenCalledWith(sourceCanvas, 4, 6, 200, 100);
   });
 
+  it('rematerializes retained text at the layer bounds instead of scaling its committed bitmap', () => {
+    const sourceCanvas = { width: 200, height: 100 } as OffscreenCanvas;
+    const apply = vi.fn((): [OffscreenCanvas] => [sourceCanvas]);
+    const processor = vi.spyOn(toolProcessors.text, 'imageProcessor').mockReturnValue(apply);
+    const ctx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      drawImage: vi.fn(),
+      filter: 'none',
+    } as unknown as CanvasRenderingContext2D;
+    const sourcePosition = { x: 4, y: 6, width: 100, height: 50 };
+    const resizedPosition = { x: 4, y: 6, width: 200, height: 100 };
+    const layer: Layer = {
+      id: 'text',
+      name: 'Text',
+      isBedrock: false,
+      bitmap: { width: 100, height: 50 } as ImageBitmap,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 1,
+      pos: sourcePosition,
+      presentationBounds: null,
+      operations: [],
+      source: {
+        kind: 'tool',
+        pos: sourcePosition,
+        args: {
+          toolName: 'text',
+          align: 'left',
+          bold: false,
+          color: '#000000',
+          fontFamily: 'Arial',
+          fontSize: 24,
+          italic: false,
+          lineHeight: 1.2,
+          rect: { x1: 10, y1: 5, x2: 90, y2: 35 },
+        },
+      },
+    };
+
+    expect(drawLayerSource(ctx, layer, resizedPosition)).toBe(true);
+    expect(processor).toHaveBeenCalledWith({ size: resizedPosition });
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontSize: 48,
+        rect: { x1: 20, y1: 10, x2: 180, y2: 70 },
+      })
+    );
+    expect(ctx.drawImage).toHaveBeenCalledWith(sourceCanvas, 4, 6, 200, 100);
+  });
+
   it('renders a committed shape at its preview bounds through a non-zero frame', () => {
     const sourceCanvas = { width: 64, height: 64 } as OffscreenCanvas;
     const apply = vi.fn((): [OffscreenCanvas] => [sourceCanvas]);

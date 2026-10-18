@@ -1,5 +1,5 @@
 import type { Pos, Size } from './general-types.ts';
-import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
+import type { Layer, LayerOperation } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
@@ -13,6 +13,7 @@ import {
   drawEvaluatedPresentation,
   evaluatePresentationForDraw,
   getPresentationFilter,
+  scaleTextArgs,
   scaleVectorArgs,
   type PresentationDrawTarget,
   type PresentationOperation,
@@ -53,17 +54,19 @@ function requireLayerFilterSupport(operations: readonly LayerOperation[]): void 
 
 const vectorToolNames = new Set<ToolName>(['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']);
 
-function isVectorSource(source: Layer['source']): source is ToolLayerSource {
-  return !!source && source.kind === 'tool' && vectorToolNames.has(source.args.toolName);
-}
-
 function getLayerBitmap(layer: Layer, position: Pos) {
   if (layer.tmpCanvas) return layer.tmpCanvas;
-  if (!isVectorSource(layer.source)) return layer.bitmap;
+  const source = layer.source;
+  if (!source || source.kind !== 'tool') return layer.bitmap;
 
-  const args = ('pos' in layer.source
-    ? scaleVectorArgs(layer.source.args as unknown as Record<string, unknown>, layer.source.pos, position)
-    : layer.source.args) as unknown as ToolArgs;
+  const toolName = source.args.toolName;
+  if (toolName !== 'text' && !vectorToolNames.has(toolName)) return layer.bitmap;
+  const sourceArgs = source.args as unknown as Record<string, unknown>;
+  const sourcePos = 'pos' in source ? source.pos : undefined;
+  const args =
+    toolName === 'text'
+      ? (scaleTextArgs(sourceArgs, sourcePos, position) as unknown as ToolArgs)
+      : (scaleVectorArgs(sourceArgs, sourcePos, position) as unknown as ToolArgs);
   const processor = findToolProcessor(args.toolName);
   // A vector source is only ever created by a creator tool, and a tool with no processor
   // (`PIXEL_FREE_TOOLS`) is never one, so this is unreachable — and falls back to the layer's own

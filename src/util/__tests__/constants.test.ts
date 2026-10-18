@@ -4,6 +4,7 @@ import {
   DEFAULT_TOOL,
   HANDLE_SIZE,
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -12,10 +13,12 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TEXT_PADDING,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
   type ActionType,
 } from '../constants.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
@@ -30,8 +33,11 @@ describe('action type constants', () => {
     TOOL_ACTION,
     SHOW_LAYER_ACTION,
     HIDE_LAYER_ACTION,
+    LOCK_LAYER_ACTION,
     RENAME_LAYER_ACTION,
+    SET_LAYER_BLEND_MODE_ACTION,
     SET_LAYER_OPACITY_ACTION,
+    UNLOCK_LAYER_ACTION,
     REORDER_ACTION,
     MERGE_ACTION,
     REMOVE_ACTION,
@@ -52,6 +58,7 @@ describe('action type constants', () => {
     expect(SHOW_LAYER_ACTION).not.toBe(HIDE_LAYER_ACTION);
     expect(REORDER_ACTION).not.toBe(MERGE_ACTION);
     expect(REMOVE_ACTION).not.toBe(MERGE_ACTION);
+    expect(LOCK_LAYER_ACTION).not.toBe(UNLOCK_LAYER_ACTION);
   });
 });
 

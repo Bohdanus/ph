@@ -300,10 +300,10 @@ counter, not a branch, and `updateHistoryTimeline()` in
 
 ### The durable document — the shadow
 
-Typed in `src/contexts/history-model.ts`: twelve operation kinds
+Typed in `src/contexts/history-model.ts`: thirteen operation kinds
 (`create-layer`, `remove-layer`, `set-layer-properties`, `reposition-layer`,
 `reorder-layers`, `apply-filter`, `apply-affine-transform`,
-`apply-raster-processor`, `set-document-frame`, `replace-layer-source`,
+`apply-raster-processor`, `set-document-frame`, `transform-document`, `replace-layer-source`,
 `merge-document`, `set-selection`), wrapped in a versioned entry, deep-frozen on
 every write by `freezeDurableDocument()` — or, for a write that only moves the
 cursor or appends to the tip, by `refreezeDurableDocument()`, which reuses the
@@ -353,30 +353,28 @@ importer of its own.
 
 Two registries with different key sets, which is easy to misread as one:
 
-- **`src/tools/toolsMap.ts`** — **45** entries, and **exactly one per `ToolName`**:
-  `ToolName` is `keyof ToolArgsByName`, which has **45** members, and the two key
+- **`src/tools/toolsMap.ts`** — **53** entries, and **exactly one per `ToolName`**:
+  `ToolName` is `keyof ToolArgsByName`, which has **53** members, and the two key
   sets are **identical** — only the declaration order differs. Prove the equality by
   `diff`-ing two sorted key lists:
   `awk '/^export type ToolArgsByName = \{/,/^\};/' src/contexts/tool-types.ts | grep -oE "^  '?[a-zA-Z][a-zA-Z0-9-]*'?:" | tr -d " ':" | sort`
   against the same pipeline over
   `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts`.
-  **A `[a-zA-Z]+` pattern undercounts**, because it drops the **19** hyphenated keys
-  (`polygonal-lasso`, `feather-magnetic-lasso`, `color-replacement`,
-  `add-anchor-point`, `custom-shape` and fifteen more) — 44 − 19 = 25, which is how a
-  44-entry map came to be documented as 25 members and as "not one per `ToolName`".
-  Each entry spreads its processor and adds an `icon` and a `toolboxComponent`. The
-  whole-tool map therefore includes the two pixel-free entries, `eyedropper` and
-  `ruler`, which have _only_ icon and component, and **seven** `placeholderTool` entries — the six-key `pen` group
+  **A `[a-zA-Z]+` pattern undercounts** because it drops the **24** hyphenated keys;
+  53 − 24 = 29 keys are unhyphenated. Processor-backed entries spread their processor
+  and add an `icon` and a `toolboxComponent`. The six pixel-free entries — `eyedropper`,
+  `ruler`, `color-sampler`, `hand`, `zoom`, and `rotate-view` — carry only the icon and
+  component, and there are **seven** `placeholderTool` entries: the six-key `pen` group
   (`pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
   `delete-anchor-point`, `convert-point`) plus `custom-shape`, which uses its own
   `custom-shape` group. Count them with
   `awk '/^export const toolsMap: ToolsMap = \{/,/^\};/' src/tools/toolsMap.ts | grep -cE "^  '?[a-zA-Z-]+'?:"`;
   the quoted keys are why the `-` is required in that character class.
-- **`src/tools/toolProcessors.ts`** — **43** entries, `PixelToolName` derived by
+- **`src/tools/toolProcessors.ts`** — **47** entries, `PixelToolName` derived by
   `Exclude` from `PIXEL_FREE_TOOLS`, both declared in `toolProcessors.ts`, which
   is how a tool that needs
-  no raster stays out of this registry — `PIXEL_FREE_TOOLS` is `['eyedropper',
-'ruler']`, its two members, which is why the two registries differ by exactly two. Each entry is
+  no raster stays out of this registry — `PIXEL_FREE_TOOLS` contains those same six
+  members, which is why the registries differ by exactly six. Each entry is
   curried: `(params) => (args) => pixels`, where `params` carries the layer's
   raster and size and `args` the stroke — the shape `ToolProcessorDefinition.imageProcessor` declares.
   `commit` is one of eight kinds, `ToolCommitKind`, and `replay` is a typed

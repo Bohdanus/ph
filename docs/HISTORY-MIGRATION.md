@@ -43,15 +43,15 @@ than create a replacement layer and leave the old one behind.
 `DurableLayerPropertyPatch` still deliberately omits `source`, so the
 capability needs its own operation: `create-layer` and `merge-document` carry
 complete layer snapshots, while the property, position, order, filter, affine,
-raster-processor, frame and selection operations change something other than a
-layer's arguments.
+raster-processor, frame, document-transform and selection operations change
+something other than a layer's arguments.
 
 **The authorized operation has landed and is named.** `replace-layer-source`
 carries a `layerId`, an `EditableDurableLayerSource` and the layer's `pos`, and
 `source` and `pos` travel together deliberately: a source edit re-measures the
 layer box, so a legacy entry that moved both must produce ONE operation or the
 legacy-to-durable cursor map grows by two for one edit. `DurableOperation` holds
-twelve kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
+thirteen kinds. The operation is derived by `deriveReplaceLayerSourceEntry()`
 (`history-adapter.ts`), reached from `legacyHistoryToDurable`, planned at the
 append boundary (`history-append.ts`), replayed by the `'replace-layer-source'`
 case in `durable-replay.ts`, and deep-frozen by `cloneOperation`
@@ -80,10 +80,11 @@ no recorded override for this requirement; agents must not invent one or write
 
 The earlier proposal for an automatic `rasterize-layer` escape hatch — one more
 durable operation, whichever number it would have taken — is superseded.
-`DurableOperation` now holds twelve kinds, eleven from the finalisation audit plus
-the authorized `replace-layer-source`. That source-edit operation is a different
-requirement: it preserves editable text and shape sources and is not a
-rasterization path. Count the union in `history-model.ts`, not from this
+`DurableOperation` now holds thirteen kinds: eleven from the finalisation audit,
+the authorized `replace-layer-source`, and `transform-document` for atomic rotated
+crop replay. The source-edit operation preserves editable text and shape sources;
+the document transform stays behind the frame-presentation gate until its browser
+pixel parity is proven. Count the union in `history-model.ts`, not from this
 sentence.
 The count is also derived by `history-model.reachability.test.ts`'s
 `it('declares exactly the kinds the DurableOperation union declares')`, rather
@@ -178,7 +179,13 @@ variant or an equivalent atomic history action.
    adapter parity, and atomic failure fallback are closed; supported committed
    eligible append/reorder presentation now composes in the background with legacy
    as the immediate selector; source-backed imports/replacements and frame-changing
-   commits remain legacy until their ownership or frame-parity gates are explicit. Previews and
+   commits remain legacy until their ownership or frame-parity gates are explicit. A
+   rotated crop is one `SET_DOCUMENT_FRAME_ACTION` with a `transform-document` durable
+   operation, and legacy plus durable logical replay both transform every extant layer.
+   `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
+   publication intentionally remains legacy: a trial durable projection disagreed on
+   transformed layer bounds (`-1,0,65,64` versus approximately `0,0,64,64`). Do not
+   enable the frame gate until an exact browser pixel-parity test closes that difference. Previews and
    unsupported documents still use the complete legacy compatibility path. Unsupported-source
    fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
    then retire legacy logical replay only after

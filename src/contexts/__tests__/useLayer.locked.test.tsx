@@ -10,16 +10,8 @@ import type { ToolArgs } from '../tool-types.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 
 /**
- * `layer.locked` is read from an imported PSD (`src/util/psd-utils.ts:160`) and written back out
- * as composite + position protection (`:267-268`), and it is set true in exactly one place: that
- * import walk. Every other construction path writes `false`, and no panel renders a lock control —
- * so this is an IMPORTED-file defect, and the honest shape of the test is a layer that arrived
- * locked rather than one the UI locked.
- *
- * The claim being pinned is that `commit: 'raster'` no longer overwrites it. The guard has to live
- * in the ONE raster path rather than in each tool area, because there are thirteen raster tools
- * and each one would need its own copy of the check — and `isBedrock` is already refused per area
- * in some of them and not in others.
+ * Imported and panel-locked layers share the same full-lock guard. It must cover every raster tool
+ * at the common mutation boundary rather than relying on individual tool areas to refuse writes.
  */
 
 const drawLayersToCanvas = vi.hoisted(() => vi.fn(() => true));

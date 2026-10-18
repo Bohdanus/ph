@@ -27,13 +27,28 @@ import {
 } from './history-model.ts';
 import { durableEntryProvenance } from './history-provenance.ts';
 import type { HistoryItem } from './history-types.ts';
-import type { Layer, LayerId, LayerSource, LayersRecord, ToolLayerSource } from './layer-types.ts';
+import {
+  isLayerBlendMode,
+  type Layer,
+  type LayerId,
+  type LayerSource,
+  type LayersRecord,
+  type ToolLayerSource,
+} from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
+import {
+  getTransformFromHistoryArgs,
+  isIdentityAffineTransform,
+  isTrapezoidOnlyTransform,
+  validateAffineTransform,
+  type AffineTransform,
+} from './affine-transform.ts';
 import type { ActionType } from '../util/constants.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -42,11 +57,12 @@ import {
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
 } from '../util/constants.ts';
-import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
 import { deriveLayerNameAndOrder, type LayerOrderRecord, toolLayerBlendMode } from './layer-utils.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 
@@ -392,13 +408,23 @@ export function deriveSetDocumentFrameEntry(
   item: HistoryItem,
   currentFrame: DocumentFrame
 ): DurableHistoryEntry | null {
-  const args = item.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+  const args = item.args as
+    { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame; transform?: AffineTransform } | undefined;
   if (!isValidDocumentFrame(args?.nextFrame)) return null;
-  const operation = Object.freeze({
-    kind: 'set-document-frame',
-    previous: args?.previousFrame ?? { ...currentFrame },
-    next: { ...args.nextFrame },
-  });
+  let transform: AffineTransform | null = null;
+  if (args?.transform !== undefined) {
+    try {
+      transform = validateAffineTransform(args.transform);
+    } catch {
+      return null;
+    }
+  }
+  const previous = args?.previousFrame ?? { ...currentFrame };
+  const next = { ...args.nextFrame };
+  const operation =
+    transform && !isIdentityAffineTransform(transform)
+      ? Object.freeze({ kind: 'transform-document' as const, previous, next, transform })
+      : Object.freeze({ kind: 'set-document-frame' as const, previous, next });
   return entry(item, operation, isEntryEnabled(item));
 }
 
@@ -478,13 +504,16 @@ export function deriveSetSelectionEntry(
  * property without an explicit derivation and validation arm. That is also why
  * an action must not own a property without adding its explicit derivation branch.
  */
-type LayerPropertyKey = 'visible' | 'name' | 'opacity';
+type LayerPropertyKey = 'visible' | 'name' | 'opacity' | 'blendMode' | 'locked';
 
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
   [SET_LAYER_OPACITY_ACTION]: 'opacity',
+  [SET_LAYER_BLEND_MODE_ACTION]: 'blendMode',
+  [LOCK_LAYER_ACTION]: 'locked',
+  [UNLOCK_LAYER_ACTION]: 'locked',
 } as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
@@ -534,6 +563,12 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     const opacity = (item.args as { opacity?: unknown } | undefined)?.opacity;
     if (typeof opacity !== 'number' || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
     patch = { opacity };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'blendMode') {
+    const blendMode = (item.args as { blendMode?: unknown } | undefined)?.blendMode;
+    if (!isLayerBlendMode(blendMode)) return null;
+    patch = { blendMode };
+  } else if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'locked') {
+    patch = { locked: item.actionName === LOCK_LAYER_ACTION };
   } else {
     // Visibility comes from the action, never from `args.visible`: that is the
     // rule legacy replay applies, and a hand-built args object must not be able
@@ -703,6 +738,8 @@ function duplicateChangesLegacyState(
       );
     case 'set-document-frame':
       return !isEqual(frameBefore, operation.next);
+    case 'transform-document':
+      return !isEqual(frameBefore, operation.next) || !isIdentityAffineTransform(operation.transform);
     case 'set-selection':
       return !isEqual(selectionsBefore, operation.after);
     case 'replace-layer-source': {

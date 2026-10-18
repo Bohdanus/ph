@@ -1,6 +1,9 @@
 import { expect, type Page, test } from './fixtures/extended-test';
-import { type BoundingBox, getWorkspaceCanvas } from './helpers/canvas-helpers';
+import path from 'node:path';
+import { getWorkspaceCanvas } from './helpers/canvas-helpers';
+import type { BoundingBox } from './helpers/canvas-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
+import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { canvasBands, type CanvasBand, visibleCanvasBox, waitForBands } from './helpers/history-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
@@ -326,6 +329,26 @@ async function applyCrop(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
 }
 
+async function openRasterFixture(page: Page, rootDir: string): Promise<void> {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-open-button').click();
+  await acceptDiscardPrompt(page);
+  await (await chooser).setFiles(path.join(rootDir, 'fixtures/split-half-red-blue.png'));
+}
+
+async function readCanvasColor(page: Page, x: number, y: number) {
+  return getWorkspaceCanvas(page).evaluate(
+    (canvas, point) => {
+      const context = (canvas as HTMLCanvasElement).getContext('2d');
+      if (!context) throw new Error('document canvas has no 2D context');
+      const pixel = context.getImageData(point.x, point.y, 1, 1).data;
+      return { red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3] };
+    },
+    { x, y }
+  );
+}
+
 /**
  * That a release really did leave the document, on the edge it claims to have left by.
  *
@@ -520,7 +543,7 @@ test.describe('Crop history', () => {
     // something larger. An undo that only partly restored the frame, or restored the pixels while
     // leaving the extent cropped, both fail on this line.
     await page.getByTestId('undo-button').click();
-    expect(await documentSize(page), 'one undo must put the whole frame back').toEqual(opening);
+    await expect.poll(() => documentSize(page), 'one undo must put the whole frame back').toEqual(opening);
     const restoredFit = await readFit(page);
     expect(
       { width: restoredFit.documentWidth, height: restoredFit.documentHeight },
@@ -627,7 +650,7 @@ test.describe('Crop history', () => {
     // above about ORDER rather than about a stuck cursor. A crop that had destroyed the pixels
     // would leave the canvas clean here too, and no assertion above would have noticed.
     await page.getByTestId('undo-button').click();
-    expect(await documentSize(page), 'undoing the crop restores the opening frame').toEqual(opening);
+    await expect.poll(() => documentSize(page), 'undoing the crop restores the opening frame').toEqual(opening);
     const restoredFit = await readFit(page);
     await waitForInk(page, restoredFit, inkIn(bandOfDocumentY(restoredFit, BAR_ABOVE_Y)));
     await expect(
@@ -840,10 +863,12 @@ test.describe('Crop history', () => {
       // that merely shrank. A growth written as a frame commit plus a fill would be two entries,
       // and one undo would leave the larger frame behind and fail on this line.
       await page.getByTestId('undo-button').click();
-      expect(
-        await documentSize(page),
-        'one undo must put the whole opening frame back, band included, not merely shrink it'
-      ).toEqual(opening);
+      await expect
+        .poll(
+          () => documentSize(page),
+          'one undo must put the whole opening frame back, band included, not merely shrink it'
+        )
+        .toEqual(opening);
       const container = page.getByTestId('workspace-container');
       await expect(container, 'and the app is fitting the opening document again, on the width').toHaveAttribute(
         'data-fit-document-width',
@@ -884,6 +909,68 @@ test.describe('Crop history', () => {
         'data-rotation',
         /8[5-9]|9[0-5]/
       );
+    });
+
+    test('a rotated crop transforms pixels in one history step and redo reproduces them exactly', async ({
+      page,
+    }, testInfo) => {
+      await openDocument(page);
+      await openRasterFixture(page, testInfo.config.rootDir);
+      await expect.poll(() => documentSize(page)).toEqual({ width: 64, height: 64 });
+      await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      const originalPixels = await getWorkspaceCanvas(page).screenshot();
+
+      const cropFit = await openCropTool(page);
+      await dragOnCanvas(page, cropFit, { x: 16, y: 16 }, { x: 48, y: 48 });
+      const surface = page.locator('.cursor-crop');
+      const rotationHandle = documentPoint(cropFit, 15.5, 15.5);
+      await page.mouse.move(rotationHandle.x, rotationHandle.y);
+      await page.mouse.down();
+      const rotatedCorner = documentPoint(cropFit, 48.5, 15.5);
+      await page.mouse.move(rotatedCorner.x, rotatedCorner.y, { steps: 12 });
+      await page.mouse.up();
+      await expect(surface, 'the pending crop has a nonzero rotation').toHaveAttribute(
+        'data-rotation',
+        /8[5-9]|9[0-5]/
+      );
+
+      await applyCrop(page);
+      await expect
+        .poll(() => documentSize(page), 'rotated crop commits the requested frame')
+        .toEqual({
+          width: 32,
+          height: 32,
+        });
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'unpublished');
+      await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      const committedPixels = await getWorkspaceCanvas(page).screenshot();
+
+      await page.getByTestId('undo-button').click();
+      await expect
+        .poll(() => documentSize(page), 'one undo restores the frame and pixels before crop')
+        .toEqual({
+          width: 64,
+          height: 64,
+        });
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'durable');
+      await expect.poll(() => readCanvasColor(page, 16, 32)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 48, 32)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      expect((await getWorkspaceCanvas(page).screenshot()).equals(originalPixels)).toBe(true);
+
+      await page.getByTestId('redo-button').click();
+      await expect
+        .poll(() => documentSize(page), 'one redo reapplies the complete rotated crop')
+        .toEqual({
+          width: 32,
+          height: 32,
+        });
+      await expect(page.getByTestId('dev-status-strip')).toHaveAttribute('data-presentation-status', 'legacy-fallback');
+      await expect.poll(() => readCanvasColor(page, 16, 8)).toEqual({ red: 0, green: 0, blue: 255, alpha: 255 });
+      await expect.poll(() => readCanvasColor(page, 16, 24)).toEqual({ red: 255, green: 0, blue: 0, alpha: 255 });
+      const redonePixels = await getWorkspaceCanvas(page).screenshot();
+      expect(redonePixels.equals(committedPixels), 'redo must reproduce the rotated-crop pixels exactly').toBe(true);
     });
   });
 });

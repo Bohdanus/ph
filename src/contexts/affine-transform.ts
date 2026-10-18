@@ -67,11 +67,31 @@ export function multiplyAffineTransforms(left: AffineTransform, right: AffineTra
   });
 }
 
+/** Converts a document-space transform to the local coordinates of a layer. */
+export function documentAffineToLayerLocal(transform: AffineTransform, position: Pos): AffineTransform {
+  const toDocument: AffineTransform = { a: 1, b: 0, c: 0, d: 1, e: position.x, f: position.y };
+  const toLayer: AffineTransform = { a: 1, b: 0, c: 0, d: 1, e: -position.x, f: -position.y };
+  return multiplyAffineTransforms(toLayer, multiplyAffineTransforms(transform, toDocument));
+}
+
 export function applyAffineTransform(transform: AffineTransform, point: Point): Point {
   return {
     x: transform.a * point.x + transform.c * point.y + transform.e,
     y: transform.b * point.x + transform.d * point.y + transform.f,
   };
+}
+
+export function rotationAffineAroundPoint(angleRadians: number, center: Point): AffineTransform {
+  const cosine = Math.cos(angleRadians);
+  const sine = Math.sin(angleRadians);
+  return validateAffineTransform({
+    a: cosine,
+    b: sine,
+    c: -sine,
+    d: cosine,
+    e: center.x - cosine * center.x + sine * center.y,
+    f: center.y - sine * center.x - cosine * center.y,
+  });
 }
 
 export function invertAffineTransform(transform: AffineTransform): AffineTransform | null {

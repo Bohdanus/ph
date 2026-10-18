@@ -10,6 +10,7 @@ import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { RENAME_LAYER_ACTION, SET_LAYER_OPACITY_ACTION } from '../../util/constants.ts';
 import { useModalA11y } from './useModalA11y.ts';
+import { LayerBlendModeSelect, LayerLockToggle } from '../SidebarRight/LayersTab.tsx';
 
 export interface MobileLayersDrawerProps {
   isOpen: boolean;
@@ -57,7 +58,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
   const finishOpacityGesture = (layer: Layer) => {
     const percent = draftOpacity?.layerId === layer.id ? draftOpacity.percent : null;
     setDraftOpacity(null);
-    if (layer.locked || percent === null) return;
+    if (layer.locked || layer.isBedrock || percent === null) return;
     const opacity = percent / 100;
     if (layer.opacity !== opacity) {
       updateLayer(layer.id, { opacity }, SET_LAYER_OPACITY_ACTION);
@@ -315,6 +316,11 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1.5">
+                        <LayerLockToggle
+                          layer={layer}
+                          updateLayer={updateLayer}
+                          className="min-h-11 min-w-11 rounded-lg"
+                        />
                         <button
                           type="button"
                           onClick={(event) => {
@@ -361,14 +367,14 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                           max={100}
                           step={1}
                           value={opacityPercent}
-                          disabled={layer.locked}
+                          disabled={layer.locked || layer.isBedrock}
                           aria-label={`Opacity for ${layer.name}`}
                           aria-valuetext={`${opacityPercent}%`}
                           onClick={(event) => event.stopPropagation()}
                           onPointerDown={(event) => event.stopPropagation()}
                           onChange={(event) => {
                             event.stopPropagation();
-                            if (!layer.locked) {
+                            if (!layer.locked && !layer.isBedrock) {
                               setDraftOpacity({ layerId: layer.id, percent: Number(event.currentTarget.value) });
                             }
                           }}
@@ -382,6 +388,12 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                           {opacityPercent}%
                         </output>
                       </label>
+                      {isActive && (
+                        <label className="flex basis-full items-center gap-2 px-2 pb-1 text-xs text-gray-600 dark:text-gray-300">
+                          <span>Blend mode</span>
+                          <LayerBlendModeSelect layer={layer} updateLayer={updateLayer} className="min-h-11 flex-1" />
+                        </label>
+                      )}
                     </div>
                   </li>
                 );

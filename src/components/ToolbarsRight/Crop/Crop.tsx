@@ -44,6 +44,7 @@ const Crop: React.FC<{}> = () => {
     overlayOrientation = 0,
     overlayVisibility = 'always',
     gridDivisions = GRID_DIVISIONS_DEFAULT,
+    angle,
   } = args;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const orientationValue =
@@ -58,8 +59,8 @@ const Crop: React.FC<{}> = () => {
 
   /**
    * A ratio change publishes the refitted rect, because the store has to hold what the user is
-   * shown — `Apply` hands `rect` straight to `applyDocumentCrop`, and refitting only the overlay's
-   * private ref would crop the document to a region the user never saw.
+   * shown — `Apply` hands the published `rect` and `angle` to `applyDocumentCrop`, and refitting only
+   * the overlay's private ref would crop the document to a region the user never saw.
    *
    * Publishing it is a REGRESSION-CAUSED loss, and this is the way back: the pre-ratio rect was
    * never stored anywhere, so `Free`/`Original` had nothing to restore and left the rect 16:9
@@ -210,7 +211,9 @@ const Crop: React.FC<{}> = () => {
           className={PRIMARY_BUTTON}
           disabled={!rect}
           onClick={() => {
-            if (rect && applyDocumentCrop(rect)) onChange(clearDraft());
+            if (rect && (angle === undefined ? applyDocumentCrop(rect) : applyDocumentCrop(rect, angle))) {
+              onChange(clearDraft());
+            }
           }}
         >
           Apply

@@ -6,6 +6,7 @@ import {
   createSelectionHistoryItem,
 } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import {
   decideDurableAppend,
   deriveReorderLayersEntry,
@@ -30,14 +31,17 @@ import {
 } from '../history-model.ts';
 import {
   HIDE_LAYER_ACTION,
+  LOCK_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
+  SET_LAYER_BLEND_MODE_ACTION,
   SET_LAYER_OPACITY_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
+  UNLOCK_LAYER_ACTION,
   type ActionType,
 } from '../../util/constants.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
@@ -85,6 +89,20 @@ function cropItem(nextFrame: DocumentFrame = croppedFrame): NewHistoryItem {
     layerId: 'document',
     actionName: SET_DOCUMENT_FRAME_ACTION,
     args: { previousFrame: baselineFrame, nextFrame },
+  };
+}
+
+function rotatedCropItem(): NewHistoryItem {
+  return {
+    ...cropItem(),
+    args: {
+      previousFrame: baselineFrame,
+      nextFrame: croppedFrame,
+      transform: rotationAffineAroundPoint(-Math.PI / 4, {
+        x: croppedFrame.x + croppedFrame.width / 2,
+        y: croppedFrame.y + croppedFrame.height / 2,
+      }),
+    },
   };
 }
 
@@ -182,6 +200,23 @@ describe('planHistoryAppend: durable translation', () => {
       previous: baselineFrame,
       next: croppedFrame,
     });
+  });
+
+  it('plans a rotated crop as one transform-document history operation', () => {
+    const result = planHistoryAppend({
+      item: rotatedCropItem(),
+      timeline: timeline(createMockHistory(1)),
+      currentFrame: baselineFrame,
+    });
+
+    expect(result.durableEntry?.operation).toEqual({
+      kind: 'transform-document',
+      previous: baselineFrame,
+      next: croppedFrame,
+      transform: (result.entry.args as { transform: unknown }).transform,
+    });
+    expect(result.durableEntry?.id).toBe(result.entry.id);
+    expect(result.diagnostics).toEqual([]);
   });
 
   it('falls back to the current durable frame when the writer observed none', () => {
@@ -331,6 +366,24 @@ describe('planHistoryAppend: layer-property translation', () => {
       actionName: SET_LAYER_OPACITY_ACTION,
       args: { opacity: 0.25 },
       patch: { opacity: 0.25 },
+    },
+    {
+      label: 'a blend-mode update',
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      args: { blendMode: 'multiply' },
+      patch: { blendMode: 'multiply' },
+    },
+    {
+      label: 'a full lock',
+      actionName: LOCK_LAYER_ACTION,
+      args: { locked: true },
+      patch: { locked: true },
+    },
+    {
+      label: 'a full unlock',
+      actionName: UNLOCK_LAYER_ACTION,
+      args: { locked: false },
+      patch: { locked: false },
     },
   ] satisfies ReadonlyArray<{
     label: string;
@@ -1089,6 +1142,24 @@ describe('decideDurableAppend: layer-property entries', () => {
       args: { opacity: 0.42 },
       patch: { opacity: 0.42 },
     },
+    {
+      label: 'a blend-mode update',
+      actionName: SET_LAYER_BLEND_MODE_ACTION,
+      args: { blendMode: 'multiply' },
+      patch: { blendMode: 'multiply' },
+    },
+    {
+      label: 'a lock',
+      actionName: LOCK_LAYER_ACTION,
+      args: { locked: true },
+      patch: { locked: true },
+    },
+    {
+      label: 'an unlock',
+      actionName: UNLOCK_LAYER_ACTION,
+      args: { locked: false },
+      patch: { locked: false },
+    },
   ] satisfies ReadonlyArray<{
     label: string;
     actionName: ActionType;
@@ -1130,6 +1201,40 @@ describe('decideDurableAppend: layer-property entries', () => {
     expect(decision.outcome).toBe('mismatch');
     if (decision.outcome === 'mismatch') {
       expect(decision.reason).toBe('the durable layer opacity does not match the legacy entry');
+    }
+  });
+
+  it('reports a mismatch when the planned blend mode differs from the legacy entry', () => {
+    const blendModePlan = planHistoryAppend({
+      item: propertyItem(SET_LAYER_BLEND_MODE_ACTION, { blendMode: 'multiply' }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(blendModePlan, {
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { blendMode: 'screen' } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable layer blend mode does not match the legacy entry');
+    }
+  });
+
+  it('reports a mismatch when the planned lock state contradicts its action', () => {
+    const lockPlan = planHistoryAppend({
+      item: propertyItem(LOCK_LAYER_ACTION, { locked: true }),
+      timeline: prior,
+      currentFrame: baselineFrame,
+    });
+
+    const decision = decidePlan(lockPlan, {
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { locked: false } },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable layer lock state does not match the legacy entry');
     }
   });
 

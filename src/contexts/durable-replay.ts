@@ -10,6 +10,7 @@ import {
 } from './history-model.ts';
 import type { LayerId } from './layer-types.ts';
 import type { Size } from './general-types.ts';
+import { documentAffineToLayerLocal } from './affine-transform.ts';
 
 export type DurableReplayLayer = Readonly<{
   snapshot: DurableLayerSnapshot;
@@ -35,11 +36,17 @@ export type DurableReplayResult = Readonly<{
 }>;
 
 function layerWithSnapshot(layer: DurableReplayLayer, snapshot: DurableLayerSnapshot): DurableReplayLayer {
-  return Object.freeze({ snapshot: cloneLayerSnapshot(snapshot), operations: Object.freeze([...layer.operations]) });
+  return Object.freeze({
+    snapshot: cloneLayerSnapshot(snapshot),
+    operations: Object.freeze([...layer.operations]),
+  });
 }
 
 function addOperation(layer: DurableReplayLayer, operation: DurableOperation): DurableReplayLayer {
-  return Object.freeze({ snapshot: layer.snapshot, operations: Object.freeze([...layer.operations, operation]) });
+  return Object.freeze({
+    snapshot: layer.snapshot,
+    operations: Object.freeze([...layer.operations, operation]),
+  });
 }
 
 /** Pure logical reducer. It never resolves an asset and never creates a canvas. */
@@ -122,6 +129,18 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
       case 'set-document-frame':
         frame = Object.freeze({ ...operation.next });
         break;
+      case 'transform-document': {
+        frame = Object.freeze({ ...operation.next });
+        for (const [layerId, layer] of layers) {
+          const transform = documentAffineToLayerLocal(operation.transform, layer.snapshot.pos);
+          const transformed = addOperation(
+            layer,
+            Object.freeze({ kind: 'apply-affine-transform', layerId, transform })
+          );
+          layers.set(layerId, transformed);
+        }
+        break;
+      }
       case 'replace-layer-source': {
         const layer = layers.get(operation.layerId);
         // Absent layer is a no-op, the same answer `remove-layer`,

@@ -13,6 +13,7 @@ import {
   type PlainObject,
 } from '../history-model.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
+import { rotationAffineAroundPoint } from '../affine-transform.ts';
 import type { Selection } from '../general-types.ts';
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 import type { ActionType } from '../../util/constants.ts';
@@ -270,6 +271,23 @@ describe('cloneDurableDocument operation cloning', () => {
     expect(frameOperation.next).not.toBe(next);
     expect(reorderOperation.orderByLayerId).not.toBe(orderByLayerId);
     expect(replayDurableDocument(frozen).frame).toEqual({ x: 10, y: 20, width: 50, height: 40 });
+  });
+
+  it('deep-clones the transform matrix and frames of a document-transform operation', () => {
+    const previous = { x: 0, y: 0, width: 100, height: 80 };
+    const next = { x: 10, y: 12, width: 80, height: 60 };
+    const transform = rotationAffineAroundPoint(-Math.PI / 6, { x: 50, y: 42 });
+    const frozen = cloneDurableDocument(
+      document([entry('transform', { kind: 'transform-document', previous, next, transform })])
+    );
+    const operation = frozen.history[0].operation;
+    if (operation.kind !== 'transform-document') throw new Error('unexpected operation kind');
+
+    expect(operation.transform).not.toBe(transform);
+    expect(Object.isFrozen(operation.transform)).toBe(true);
+    expect(operation.previous).not.toBe(previous);
+    expect(operation.next).not.toBe(next);
+    expect(replayDurableDocument(frozen).frame).toEqual(next);
   });
 });
 

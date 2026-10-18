@@ -1,4 +1,5 @@
 import {
+  LOCK_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
@@ -38,11 +39,17 @@ import {
   type SelectionSnapshot,
 } from './history-model.ts';
 import { durableEntryProvenance } from './history-provenance.ts';
-import { isTrapezoidOnlyTransform, multiplyAffineTransforms, type AffineTransform } from './affine-transform.ts';
+import {
+  isIdentityAffineTransform,
+  isTrapezoidOnlyTransform,
+  multiplyAffineTransforms,
+  validateAffineTransform,
+  type AffineTransform,
+} from './affine-transform.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
-import type { Layer, LayerId, LayerSource, ToolLayerSource } from './layer-types.ts';
+import { isLayerBlendMode, type Layer, type LayerId, type LayerSource, type ToolLayerSource } from './layer-types.ts';
 import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { ToolName } from './tool-types.ts';
 
@@ -1164,10 +1171,11 @@ export function validatePlannedDurableEntry(
   })();
 
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
-    if (planned.operation.kind !== 'set-document-frame') {
+    if (planned.operation.kind !== 'set-document-frame' && planned.operation.kind !== 'transform-document') {
       return `a document frame change produced a "${planned.operation.kind}" operation`;
     }
-    const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+    const args = entry.args as
+      { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame; transform?: AffineTransform } | undefined;
     if (!args?.nextFrame) return 'a document frame change has no next frame';
     // Whether the planned `next` is a DOCUMENT FRAME is a separate question from
     // whether it equals the legacy arg, and `sameFrame` cannot answer it: it
@@ -1191,6 +1199,36 @@ export function validatePlannedDurableEntry(
       return 'the durable next frame does not match the legacy entry';
     if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
       return 'the durable previous frame does not match the legacy entry';
+    }
+    if (args.transform !== undefined) {
+      let expectedTransform: AffineTransform;
+      try {
+        expectedTransform = validateAffineTransform(args.transform);
+      } catch {
+        return 'the legacy document transform is invalid';
+      }
+      if (isIdentityAffineTransform(expectedTransform)) {
+        if (planned.operation.kind === 'transform-document') {
+          return 'an identity document transform produced a transform-document operation';
+        }
+      } else {
+        if (planned.operation.kind !== 'transform-document') {
+          return 'a non-identity document transform produced a frame-only operation';
+        }
+        const actualTransform = planned.operation.transform;
+        if (
+          actualTransform.a !== expectedTransform.a ||
+          actualTransform.b !== expectedTransform.b ||
+          actualTransform.c !== expectedTransform.c ||
+          actualTransform.d !== expectedTransform.d ||
+          actualTransform.e !== expectedTransform.e ||
+          actualTransform.f !== expectedTransform.f
+        ) {
+          return 'the durable document transform does not match the legacy entry';
+        }
+      }
+    } else if (planned.operation.kind === 'transform-document') {
+      return 'a document transform has no legacy transform matrix';
     }
     return provenanceMismatch;
   }
@@ -1274,6 +1312,19 @@ export function validatePlannedDurableEntry(
         return patch.opacity === opacity
           ? provenanceMismatch
           : 'the durable layer opacity does not match the legacy entry';
+      }
+      case 'blendMode': {
+        const blendMode = (entry.args as { blendMode?: unknown } | undefined)?.blendMode;
+        if (!isLayerBlendMode(blendMode)) return 'the layer-property value is invalid';
+        return patch.blendMode === blendMode
+          ? provenanceMismatch
+          : 'the durable layer blend mode does not match the legacy entry';
+      }
+      case 'locked': {
+        const locked = entry.actionName === LOCK_LAYER_ACTION;
+        return patch.locked === locked
+          ? provenanceMismatch
+          : 'the durable layer lock state does not match the legacy entry';
       }
       default:
         return 'the action does not own a durable layer property';
