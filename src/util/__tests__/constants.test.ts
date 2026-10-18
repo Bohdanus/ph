@@ -27,34 +27,32 @@ import type { ToolName } from '../../contexts/tool-types.ts';
 import { toolsMap } from '../../tools/toolsMap.ts';
 import { THROTTLE_DRAW, THROTTLE_TIME } from '../../constants/index.ts';
 
-// Runtime mirror of the `ActionType` union (src/util/constants.ts:38-52). The tests below
-// assert this array grows in lock-step with the union, so a newly added action constant is
-// never silently dropped from the safety net and a commented-out member never drifts back in
-// unnoticed.
-const LEGAL_ACTION_VALUES: readonly ActionType[] = [
-  OPEN_DOCUMENT_ACTION,
-  NEW_LAYER_ACTION,
-  SELECTION_ACTION,
-  TOOL_ACTION,
-  SHOW_LAYER_ACTION,
-  HIDE_LAYER_ACTION,
-  RENAME_LAYER_ACTION,
-  SET_LAYER_OPACITY_ACTION,
-  SET_LAYER_BLEND_MODE_ACTION,
-  LOCK_LAYER_ACTION,
-  UNLOCK_LAYER_ACTION,
-  REORDER_ACTION,
-  MERGE_ACTION,
-  REPLACE_LAYER_SOURCE_ACTION,
-  REMOVE_ACTION,
-  SET_DOCUMENT_FRAME_ACTION,
-];
+// Record<ActionType, true> requires new action names to enter the test inventory at compile time.
+const LEGAL_ACTION_VALUES: Record<ActionType, true> = {
+  [OPEN_DOCUMENT_ACTION]: true,
+  [NEW_LAYER_ACTION]: true,
+  [SELECTION_ACTION]: true,
+  [TOOL_ACTION]: true,
+  [SHOW_LAYER_ACTION]: true,
+  [HIDE_LAYER_ACTION]: true,
+  [RENAME_LAYER_ACTION]: true,
+  [SET_LAYER_OPACITY_ACTION]: true,
+  [SET_LAYER_BLEND_MODE_ACTION]: true,
+  [LOCK_LAYER_ACTION]: true,
+  [UNLOCK_LAYER_ACTION]: true,
+  [REORDER_ACTION]: true,
+  [MERGE_ACTION]: true,
+  [REPLACE_LAYER_SOURCE_ACTION]: true,
+  [REMOVE_ACTION]: true,
+  [SET_DOCUMENT_FRAME_ACTION]: true,
+};
+const LEGAL_ACTION_NAMES = Object.keys(LEGAL_ACTION_VALUES);
 
 describe('action type constants', () => {
   it('exhaustively mirrors every member of the ActionType union', () => {
-    // Keep the runtime mirror complete as the union grows.
-    expect(LEGAL_ACTION_VALUES).toHaveLength(16);
-    expect(LEGAL_ACTION_VALUES).toEqual(
+    // The typed record provides compile-time exhaustiveness and this pins its runtime inventory.
+    expect(LEGAL_ACTION_NAMES).toHaveLength(16);
+    expect(LEGAL_ACTION_NAMES).toEqual(
       expect.arrayContaining([
         OPEN_DOCUMENT_ACTION,
         NEW_LAYER_ACTION,
@@ -75,27 +73,9 @@ describe('action type constants', () => {
       ])
     );
   });
-  const actions: Record<string, ActionType> = {
-    OPEN_DOCUMENT_ACTION,
-    NEW_LAYER_ACTION,
-    SELECTION_ACTION,
-    TOOL_ACTION,
-    SHOW_LAYER_ACTION,
-    HIDE_LAYER_ACTION,
-    LOCK_LAYER_ACTION,
-    RENAME_LAYER_ACTION,
-    SET_LAYER_BLEND_MODE_ACTION,
-    SET_LAYER_OPACITY_ACTION,
-    UNLOCK_LAYER_ACTION,
-    REORDER_ACTION,
-    MERGE_ACTION,
-    REPLACE_LAYER_SOURCE_ACTION,
-    REMOVE_ACTION,
-    SET_DOCUMENT_FRAME_ACTION,
-  };
 
   it('declares a distinct, non-empty, lowercase value for every action', () => {
-    const values = Object.values(actions);
+    const values = LEGAL_ACTION_NAMES;
     expect(new Set(values).size).toBe(values.length);
     for (const value of values) {
       expect(value.length).toBeGreaterThan(0);
@@ -112,6 +92,9 @@ describe('action type constants', () => {
     expect(HIDE_LAYER_ACTION).toBe('hide');
     expect(RENAME_LAYER_ACTION).toBe('rename');
     expect(SET_LAYER_OPACITY_ACTION).toBe('set layer opacity');
+    expect(SET_LAYER_BLEND_MODE_ACTION).toBe('set layer blend mode');
+    expect(LOCK_LAYER_ACTION).toBe('lock layer');
+    expect(UNLOCK_LAYER_ACTION).toBe('unlock layer');
     expect(REORDER_ACTION).toBe('reorder layers');
     expect(MERGE_ACTION).toBe('merge layers');
     expect(REPLACE_LAYER_SOURCE_ACTION).toBe('edit layer source');
@@ -125,17 +108,17 @@ describe('action type constants', () => {
     expect(REORDER_ACTION).not.toBe(MERGE_ACTION);
     expect(REMOVE_ACTION).not.toBe(MERGE_ACTION);
     expect(REPLACE_LAYER_SOURCE_ACTION).not.toBe(MERGE_ACTION);
+    expect(SET_LAYER_BLEND_MODE_ACTION).not.toBe(SET_LAYER_OPACITY_ACTION);
+    expect(LOCK_LAYER_ACTION).not.toBe(UNLOCK_LAYER_ACTION);
   });
 
   it('keeps the legacy LAYER_TRANSPARENCY_ACTION label distinct from legal actions', () => {
     expect(LAYER_TRANSPARENCY_ACTION).toBe('layer transparency');
-    // It is deliberately outside `ActionType` (src/util/constants.ts:28-30), so it must
-    // never collide with a real action value.
-    expect(LEGAL_ACTION_VALUES as readonly string[]).not.toContain(LAYER_TRANSPARENCY_ACTION);
-    for (const value of LEGAL_ACTION_VALUES as readonly string[]) {
+    // It is retained as a diagnostic label, but deliberately excluded from ActionType.
+    expect(LEGAL_ACTION_NAMES).not.toContain(LAYER_TRANSPARENCY_ACTION);
+    for (const value of LEGAL_ACTION_NAMES) {
       expect(LAYER_TRANSPARENCY_ACTION).not.toBe(value);
     }
-    expect(LOCK_LAYER_ACTION).not.toBe(UNLOCK_LAYER_ACTION);
   });
 });
 
@@ -302,31 +285,5 @@ describe('throttle constants', () => {
     // boundary is "strictly positive", not merely non-negative.
     expect(THROTTLE_DRAW).toBeGreaterThan(0);
     expect(THROTTLE_TIME).toBeGreaterThan(0);
-  });
-});
-
-describe('known gaps (it.fails tripwires)', () => {
-  // Tripwires assert the state this module *ought* to reach but has not yet. A passing
-  // tripwire here is green only because its body throws; the moment the gap is closed the
-  // body starts passing, the tripwire flips red, and the author must either promote it to a
-  // plain `it` or retire it. Every pin below names the documented source boundary it targets
-  // so the tripwire cannot outlive the decision that created it.
-
-  it.fails('treats the legacy LAYER_TRANSPARENCY_ACTION label as a legal ActionType', () => {
-    // `src/util/constants.ts:28-30` retains LAYER_TRANSPARENCY_ACTION as a legacy diagnostic
-    // label and explicitly keeps it out of `ActionType` ("because no writer, durable
-    // translator, or replay arm exists for it"). Until that machinery exists, the label is not
-    // a legal action, so this membership check fails and the tripwire stays green.
-    const legalValues = LEGAL_ACTION_VALUES as readonly string[];
-    expect(legalValues.includes(LAYER_TRANSPARENCY_ACTION)).toBe(true);
-  });
-
-  it.fails('wires the commented-out UPDATE_LAYER_ACTION into the legal ActionType union', () => {
-    // `src/util/constants.ts:31` comments out `UPDATE_LAYER_ACTION = 'some update'` and its
-    // union member (`src/util/constants.ts:47`). The literal is named directly so the
-    // tripwire compiles while the symbol stays commented out; it fails until the action is
-    // uncommented and added to `ActionType` — a deliberate decision either way.
-    const legalValues = LEGAL_ACTION_VALUES as readonly string[];
-    expect(legalValues.includes('some update')).toBe(true);
   });
 });
