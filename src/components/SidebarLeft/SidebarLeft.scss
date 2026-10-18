@@ -35,8 +35,8 @@
 /**
  * A dot badge that marks an unimplemented tool as new for the user seeing it for the first time.
  *
- * Shown only on tools that carry `commit: 'unimplemented'` and have not yet been hovered or
- * clicked by this user. The marker disappears once `useFirstUse` records the interaction.
+ * Shown only on tools that carry `commit: 'unimplemented'` and have not yet been introduced.
+ * The `useFirstUse` hook records a tile or flyout-row hover/focus/click and refreshes the badge.
  */
 .tool-new-badge {
   position: absolute;
@@ -83,5 +83,11 @@
   100% {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6);
     transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-highlight-pulse {
+    animation: none;
   }
 }

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FirstUseTour,
@@ -54,6 +55,15 @@ describe('FirstUseTour', () => {
       expect(hasSeenFirstUseTour()).toBe(true);
       spy.mockRestore();
     });
+
+    it('does not throw when persisting the seen flag fails', () => {
+      const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('storage unavailable');
+      });
+
+      expect(() => markFirstUseTourSeen()).not.toThrow();
+      spy.mockRestore();
+    });
   });
 
   describe('rendering', () => {
@@ -81,13 +91,18 @@ describe('FirstUseTour', () => {
       expect(progressBar).toBeInTheDocument();
       expect(progressBar).toHaveAttribute('aria-valuenow', '1');
     });
+
+    it('announces the current step to assistive technology', () => {
+      renderInProvider();
+      expect(screen.getByRole('status')).toHaveTextContent('Step 1 of 8: Move layers and pan');
+    });
   });
 
   describe('navigation', () => {
     it('advances to the next step on Next click', () => {
       renderInProvider();
 
-      expect(screen.getByRole('heading', { name: /move and transform/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /move layers and pan/i })).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
@@ -98,9 +113,7 @@ describe('FirstUseTour', () => {
       const onComplete = vi.fn();
       renderInProvider(onComplete);
 
-      // 9 steps (indices 0-8). 8 "Next" clicks advance to the last step (transform).
-      // At the last step the button reads "Finish", and clicking it completes the tour.
-      for (let i = 0; i < 8; i++) {
+      while (screen.queryByRole('button', { name: 'Next' })) {
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       }
       fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
@@ -112,7 +125,7 @@ describe('FirstUseTour', () => {
     it('persists the seen flag when the last step is completed', () => {
       renderInProvider();
 
-      for (let i = 0; i < 8; i++) {
+      while (screen.queryByRole('button', { name: 'Next' })) {
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       }
       fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
@@ -123,13 +136,9 @@ describe('FirstUseTour', () => {
     it('shows Finish instead of Next on the last step', () => {
       renderInProvider();
 
-      // 9 steps (indices 0-8). 7 clicks reach step 7 (crop), which is NOT last yet.
-      // The 8th click lands on step 8 (transform), which IS last and shows "Finish".
-      for (let i = 0; i < 7; i++) {
+      while (screen.queryByRole('button', { name: 'Next' })) {
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       }
-      expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       expect(screen.getByRole('button', { name: 'Finish' })).toBeInTheDocument();
     });
   });
@@ -177,9 +186,9 @@ describe('FirstUseTour', () => {
   });
 
   describe('focus management', () => {
-    it('focuses the dialog on mount', () => {
+    it('focuses the first dialog control on mount', () => {
       renderInProvider();
-      expect(document.activeElement).toBe(screen.getByRole('dialog'));
+      expect(document.activeElement).toBe(screen.getByLabelText('Close tour'));
     });
 
     it('restores focus to the previously focused element on unmount', () => {
@@ -190,7 +199,7 @@ describe('FirstUseTour', () => {
       expect(document.activeElement).toBe(trigger);
 
       const { unmount } = renderInProvider();
-      expect(document.activeElement).toBe(screen.getByRole('dialog'));
+      expect(document.activeElement).toBe(screen.getByLabelText('Close tour'));
 
       unmount();
 
@@ -208,12 +217,35 @@ describe('FirstUseTour', () => {
       const last = focusableElements[focusableElements.length - 1];
 
       first.focus();
-      fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+      fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
       expect(document.activeElement).toBe(last);
 
       last.focus();
-      fireEvent.keyDown(dialog, { key: 'Tab' });
+      fireEvent.keyDown(last, { key: 'Tab' });
       expect(document.activeElement).toBe(first);
+    });
+
+    it('prevents focused tour keys from reaching application-level listeners', () => {
+      const appKeydown = vi.fn();
+      document.addEventListener('keydown', appKeydown);
+      renderInProvider();
+
+      fireEvent.keyDown(screen.getByLabelText('Close tour'), { key: 'b' });
+
+      expect(appKeydown).not.toHaveBeenCalled();
+      document.removeEventListener('keydown', appKeydown);
+    });
+
+    it('recovers focus and suppresses keys that start outside the dialog', () => {
+      const appKeydown = vi.fn();
+      document.addEventListener('keydown', appKeydown);
+      renderInProvider();
+
+      fireEvent.keyDown(document.body, { key: 'b' });
+
+      expect(appKeydown).not.toHaveBeenCalled();
+      expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+      document.removeEventListener('keydown', appKeydown);
     });
   });
 
@@ -222,7 +254,7 @@ describe('FirstUseTour', () => {
       const onComplete = vi.fn();
       renderInProvider(onComplete);
 
-      const backdrop = document.querySelector('.bg-black\\/40');
+      const backdrop = document.querySelector('[aria-hidden="true"]');
       expect(backdrop).toBeInTheDocument();
 
       fireEvent.click(backdrop as Element);
@@ -242,6 +274,23 @@ describe('FirstUseTour', () => {
       expect(kbd.tagName.toLowerCase()).toBe('kbd');
       expect(kbd).toHaveTextContent('V');
     });
+
+    it('does not advertise the Brush key for Pencil', () => {
+      renderInProvider();
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+      expect(screen.getByRole('heading', { name: /pixel-precise strokes/i })).toBeInTheDocument();
+      expect(screen.queryByText('Shortcut:')).not.toBeInTheDocument();
+    });
+
+    it('only describes Brush controls that exist in the options bar', () => {
+      renderInProvider();
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+      expect(screen.getByRole('heading', { name: /paint with the brush/i })).toBeInTheDocument();
+      expect(screen.getByRole('dialog')).not.toHaveTextContent(/flow/i);
+    });
   });
 
   describe('Move tool guidance', () => {
@@ -259,9 +308,11 @@ describe('FirstUseTour', () => {
   });
 
   describe('getHighlightedToolsForStep', () => {
-    it('returns the tool for the step at the given index', () => {
+    it('returns the visible tile for standalone and flyout steps', () => {
       const tools = getHighlightedToolsForStep(0);
       expect(tools).toEqual(['reposition']);
+      expect(getHighlightedToolsForStep(2)).toEqual(['brush']);
+      expect(getHighlightedToolsForStep(5)).toEqual(['rectangle']);
     });
 
     it('returns an empty array for an out-of-bounds index', () => {
@@ -290,6 +341,40 @@ describe('FirstUseTour', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       // Second step is 'brush'
       expect(screen.getByTestId('probe')).toHaveTextContent('brush');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      // Pencil is a Brush flyout member, so the visible Brush tile remains highlighted.
+      expect(screen.getByTestId('probe')).toHaveTextContent('brush');
+    });
+
+    it('clears the highlight when the tour unmounts', () => {
+      const Probe = () => {
+        const { highlightedTools } = useFirstUseContext();
+        return <div data-testid="probe">{highlightedTools.join(',')}</div>;
+      };
+      const RemovableTour = () => {
+        const [visible, setVisible] = useState(true);
+        return (
+          <>
+            {visible && <FirstUseTour onComplete={vi.fn()} />}
+            <button onClick={() => setVisible(false)} type="button">
+              Remove tour
+            </button>
+            <Probe />
+          </>
+        );
+      };
+
+      render(
+        <FirstUseProvider>
+          <RemovableTour />
+        </FirstUseProvider>
+      );
+      expect(screen.getByTestId('probe')).toHaveTextContent('reposition');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove tour' }));
+
+      expect(screen.getByTestId('probe')).toBeEmptyDOMElement();
     });
   });
 });

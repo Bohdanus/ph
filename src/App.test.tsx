@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { setViewportWidth } from './test/setup.ts';
+import { TOUR_SEEN_KEY } from './components/Common/FirstUseTour.tsx';
 
 const setBlankImage = vi.hoisted(() => vi.fn());
 const dispatch = vi.hoisted(() => vi.fn());
@@ -348,5 +349,65 @@ describe('App mobile surface reset', () => {
     const shell = screen.getByTestId('mobile-shell-props');
     expect(shell).toHaveAttribute('data-tool-sheet', 'false');
     expect(shell).toHaveAttribute('data-layers', 'false');
+  });
+});
+
+describe('App first-use tour lifecycle', () => {
+  beforeEach(() => {
+    setViewportWidth(1280, 800);
+    storeState.hasImage = false;
+    useStoreMock.mockImplementation(() => [storeState, dispatch]);
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    setViewportWidth(1280, 800);
+  });
+
+  it('waits for the blank document before opening the tour', () => {
+    const view = render(<App />);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    storeState.hasImage = true;
+    view.rerender(<App />);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(view.container.firstElementChild).toHaveAttribute('inert');
+  });
+
+  it('does not show the tour to a returning user', () => {
+    storeState.hasImage = true;
+    localStorage.setItem(TOUR_SEEN_KEY, 'true');
+
+    render(<App />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('defers the tour on mobile and shows it after moving into the tablet/desktop band', () => {
+    setViewportWidth(500, 800);
+    const view = render(<App />);
+    storeState.hasImage = true;
+    view.rerender(<App />);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    act(() => setViewportWidth(1280, 800));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('hides the tour across the mobile band without marking it seen', () => {
+    const view = render(<App />);
+    storeState.hasImage = true;
+    view.rerender(<App />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    act(() => setViewportWidth(500, 800));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(localStorage.getItem(TOUR_SEEN_KEY)).toBeNull();
+
+    act(() => setViewportWidth(1280, 800));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

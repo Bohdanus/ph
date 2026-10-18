@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { useFirstUseContext } from '../../contexts/FirstUseContext.tsx';
+import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment.ts';
 import { toolTooltips } from '../../tools/descriptions/tooltips.ts';
 
 /**
@@ -13,6 +14,8 @@ export { TOUR_SEEN_KEY };
 export type FirstUseStep = {
   /** The tool name the step points at. */
   tool: ToolName;
+  /** The visible toolbar tile to highlight when the tool is a flyout member. */
+  highlightTool?: ToolName;
   /** The heading text for this step. */
   heading: string;
   /** The body text explaining what the tool does and what the user can achieve. */
@@ -20,33 +23,34 @@ export type FirstUseStep = {
 };
 
 /**
- * The implemented tools that give the strongest first-use confidence.
+ * Concrete actions for the implemented tools that have a visible toolbar tile.
  *
- * Ordered to roughly follow the toolbar's left-to-right layout so a first-time
- * user can click through and see the whole rail light up. Each step uses the
- * description record's summary as its body, so the tour and the tooltip say the
- * same thing — the two surfaces are sourced from the same line.
+ * The bodies are hand-authored to describe controls that exist in this app.
+ * Steps are ordered roughly left-to-right; flyout members point at their visible
+ * parent tile. Transform is a menu command, not a toolbar tool, so it is not part
+ * of this toolbar tour.
  */
 const TOUR_STEPS: FirstUseStep[] = [
   {
     tool: 'reposition',
-    heading: 'Move and transform',
-    body: 'Drag a layer to move it; hold Space while dragging to pan the view. The Move tool is your starting point for everything else.',
+    heading: 'Move layers and pan',
+    body: 'Use Move to drag a layer or selection. Hold Space and drag to pan the canvas.',
   },
   {
     tool: 'brush',
     heading: 'Paint with the Brush',
-    body: 'Click and drag to paint the foreground color. Press [ or ] to resize the tip, and watch the Opacity and Flow controls in the options bar.',
+    body: 'Click and drag to paint with the foreground color. Press [ or ] to resize the tip, or adjust Size and Opacity in the options bar.',
   },
   {
     tool: 'pencil',
+    highlightTool: 'brush',
     heading: 'Pixel-precise strokes',
-    body: 'The Pencil paints hard-edged lines with no anti-aliasing — ideal for pixel art or sharp selections.',
+    body: 'Choose Pencil from the Brush flyout for crisp, hard-edged strokes.',
   },
   {
     tool: 'rectangular-selection',
     heading: 'Select a region',
-    body: 'Drag a rectangle to select part of your image. Shift makes it a square, Alt grows it from the center.',
+    body: 'Drag a rectangle to select part of your image. Shift constrains it to a square; Alt or Option grows it from the center.',
   },
   {
     tool: 'magic-wand',
@@ -55,8 +59,9 @@ const TOUR_STEPS: FirstUseStep[] = [
   },
   {
     tool: 'shape',
+    highlightTool: 'rectangle',
     heading: 'Draw shapes',
-    body: 'Drag a rectangle, ellipse, or line. Hold Shift to constrain proportions, and release the mouse before releasing Shift.',
+    body: 'Choose a shape from the toolbar group and drag to draw it. Hold Shift to constrain its proportions.',
   },
   {
     tool: 'text',
@@ -67,11 +72,6 @@ const TOUR_STEPS: FirstUseStep[] = [
     tool: 'crop',
     heading: 'Crop your image',
     body: 'Drag the crop box to reframe, then press Enter to commit. Esc restores the original framing.',
-  },
-  {
-    tool: 'transform',
-    heading: 'Resize and rotate',
-    body: 'Cmd/Ctrl+T scales, rotates, and skews a layer. Drag a corner, drag outside the box to rotate.',
   },
 ];
 
@@ -107,9 +107,9 @@ export type FirstUseTourProps = {
  * A full-screen onboarding overlay that walks a first-time user through the
  * toolbar, one implemented tool at a time.
  *
- * The overlay follows Bandura's verbal/social persuasion source of self-efficacy:
- * it tells the user what each tool can do and that they can achieve results with it,
- * which raises their belief in their own capability before they touch a tool.
+ * The overlay uses Bandura's verbal/social persuasion source as a design hypothesis:
+ * it offers concrete, accurate actions before use. This implementation has not
+ * evaluated whether the tour changes users' self-efficacy.
  *
  * The tour is dismissed via the X button at the top right, or it completes after
  * the last step. Completion is persisted to localStorage.
@@ -120,92 +120,43 @@ export type FirstUseTourProps = {
  */
 export const FirstUseTour = ({ onComplete }: FirstUseTourProps) => {
   const [stepIndex, setStepIndex] = useState(0);
-  const { setCurrentStepIndex } = useFirstUseContext();
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const { setHighlightedTools } = useFirstUseContext();
   const step = TOUR_STEPS[stepIndex];
   const progress = ((stepIndex + 1) / TOUR_STEPS.length) * 100;
   const isLast = stepIndex === TOUR_STEPS.length - 1;
 
-  // Report the active step to the shared context so the sidebar can highlight
-  // the corresponding tile. Clear on unmount so a closed tour leaves no stale
-  // highlight.
+  const handleSkip = useCallback(() => {
+    markFirstUseTourSeen();
+    onComplete();
+  }, [onComplete]);
+  const { panelRef, handleKeyDown } = useDialogFocusContainment({ onEscape: handleSkip });
+
+  // Publish the visible tile identity, then clear it on the next step or close.
   useEffect(() => {
-    setCurrentStepIndex(stepIndex);
-    return () => setCurrentStepIndex(null);
-  }, [stepIndex, setCurrentStepIndex]);
+    setHighlightedTools(getHighlightedToolsForStep(stepIndex));
+    return () => setHighlightedTools([]);
+  }, [stepIndex, setHighlightedTools]);
 
   const handleNext = useCallback(() => {
     if (isLast) {
       markFirstUseTourSeen();
       onComplete();
     } else {
-      setStepIndex(stepIndex + 1);
+      setStepIndex((current) => current + 1);
     }
-  }, [stepIndex, isLast, onComplete]);
+  }, [isLast, onComplete]);
 
-  const handleSkip = useCallback(() => {
-    markFirstUseTourSeen();
-    onComplete();
-  }, [onComplete]);
-
-  // The tool description records carry the shortcut for each tool; the tour
-  // surfaces it so the user learns the fastest way to reach each tool.
+  // Only toolbar shortcuts declared for the tool itself are projected here.
   const shortcut = toolTooltips[step.tool]?.shortcut;
-
-  // Capture focus before showing the tour so we can restore it on close.
-  // Close on Escape so keyboard users can dismiss without hunting for the X.
-  useEffect(() => {
-    previouslyFocusedRef.current = document.activeElement as HTMLElement;
-    dialogRef.current?.focus();
-
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') handleSkip();
-    };
-    window.addEventListener('keydown', handler);
-    return () => {
-      window.removeEventListener('keydown', handler);
-      previouslyFocusedRef.current?.focus();
-    };
-  }, [stepIndex, handleSkip]);
-
-  // Trap focus within the dialog so keyboard users cannot tab behind the overlay.
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    const handleTab = (event: KeyboardEvent) => {
-      const focusables = dialog.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
-      if (focusables.length === 0) return;
-
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-
-      if (event.key === 'Tab') {
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    };
-
-    dialog.addEventListener('keydown', handleTab);
-    return () => dialog.removeEventListener('keydown', handleTab);
-  }, [stepIndex]);
 
   return (
     <>
       {/* Dimmed backdrop that lets the toolbar glow through in theme color */}
-      <div className="fixed inset-0 z-[100] bg-black/40" onClick={handleSkip} />
+      <div aria-hidden="true" className="fixed inset-0 z-[100] bg-black/40" onClick={handleSkip} />
 
       {/* The tooltip-style card that walks through each step */}
       <div
-        ref={dialogRef}
+        ref={panelRef}
         id="first-use-tour"
         role="dialog"
         aria-modal="true"
@@ -218,6 +169,7 @@ export const FirstUseTour = ({ onComplete }: FirstUseTourProps) => {
           transform: 'translateX(-50%)',
         }}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={handleKeyDown}
         tabIndex={-1}
       >
         {/* Close button */}
@@ -245,17 +197,22 @@ export const FirstUseTour = ({ onComplete }: FirstUseTourProps) => {
         {/* Progress bar */}
         <div
           role="progressbar"
+          aria-label="Tour progress"
           aria-valuenow={stepIndex + 1}
           aria-valuemin={1}
           aria-valuemax={TOUR_STEPS.length}
           className="h-1 w-full rounded bg-gray-200 dark:bg-gray-700"
         >
           <div
-            className="h-full rounded bg-blue-500 transition-all duration-200"
+            className="h-full rounded bg-blue-500 transition-all duration-200 motion-reduce:transition-none"
             style={{ width: `${progress}%` }}
             aria-hidden="true"
           />
         </div>
+
+        <span aria-atomic="true" aria-live="polite" className="sr-only" role="status">
+          Step {stepIndex + 1} of {TOUR_STEPS.length}: {step.heading}
+        </span>
 
         {/* Heading */}
         <h3 id="first-use-tour-heading" className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -308,5 +265,5 @@ export const FirstUseTour = ({ onComplete }: FirstUseTourProps) => {
  */
 export const getHighlightedToolsForStep = (stepIndex: number): ToolName[] => {
   const step = TOUR_STEPS[stepIndex];
-  return step ? [step.tool] : [];
+  return step ? [step.highlightTool ?? step.tool] : [];
 };

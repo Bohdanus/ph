@@ -414,10 +414,9 @@ describe('ToolTooltip', () => {
     expect(tooltip.querySelector('kbd')).not.toBeInTheDocument();
   });
 
-  it('falls back to the description shortcut when the prop is undefined', () => {
-    // Renders the brush tool with no explicit shortcut prop; the description record carries
-    // 'B', which should surface in the tooltip badge.
-    const { unmount } = renderWithTooltip('Test Tool', undefined, 'brush');
+  it('does not substitute a description shortcut when the tile has no declared shortcut', () => {
+    // Description records include cycling and command keys that are not assigned to this tile.
+    const { unmount } = renderWithTooltip('Test Tool', undefined, 'pencil');
     const trigger = screen.getByTestId('trigger');
 
     act(() => {
@@ -428,7 +427,7 @@ describe('ToolTooltip', () => {
     });
 
     const tooltip = screen.getByRole('tooltip');
-    expect(tooltip.querySelector('kbd')).toHaveTextContent('B');
+    expect(tooltip.querySelector('kbd')).not.toBeInTheDocument();
     unmount();
   });
 

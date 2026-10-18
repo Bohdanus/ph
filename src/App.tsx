@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -51,12 +51,13 @@ function AppContainer() {
   const layout = usePanelLayout();
   const isMobile = useIsMobileViewport();
 
-  // The first-use tour appears on initial load, before any image exists. Once
-  // the user dismisses it (or finishes it) the flag is persisted to localStorage.
-  const [showFirstUseTour, setShowFirstUseTour] = useState(() => {
-    if (hasImage || isMobile) return false;
-    return !hasSeenFirstUseTour();
-  });
+  // Defer the first-use tour until the blank document is ready: SidebarLeft is
+  // intentionally absent before then, and the tour's steps point at its tiles.
+  // Keep eligibility separate from viewport visibility so crossing into the
+  // mobile band hides, but does not permanently dismiss, the desktop/tablet tour.
+  const [shouldOfferFirstUseTour, setShouldOfferFirstUseTour] = useState(() => !hasImage && !hasSeenFirstUseTour());
+  const isFirstUseTourVisible = shouldOfferFirstUseTour && hasImage && !isMobile;
+  const completeFirstUseTour = useCallback(() => setShouldOfferFirstUseTour(false), []);
   const { isOpen: isRightPanelOpen } = useRightPanelVisibility();
   const rightPanelPlacement = edgePlacement(
     layout.dockSide,
@@ -98,35 +99,39 @@ function AppContainer() {
     // The `left` and `right` area NAMES are unchanged, and so is the DOM order of the children.
     // Re-docking swaps which component claims which area, which is a grid placement and not a
     // reorder, so the focus order the shell has always had is intact.
-    <div className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900">
-      <AppKeyboardShortcuts />
-      <BlankImageStarter />
-      <Menu />
-      <SidebarLeft />
+    <>
+      <div
+        inert={isFirstUseTourVisible}
+        className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[auto_1fr_auto] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[auto_1fr_auto] max-md:[grid-template-areas:'header''main''bottom'] dark:bg-gray-900"
+      >
+        <AppKeyboardShortcuts />
+        <BlankImageStarter />
+        <Menu />
+        <SidebarLeft />
 
-      {/* The canvas and the tool sidebar are the two regions that own user work.
+        {/* The canvas and the tool sidebar are the two regions that own user work.
           Each is contained on its own so a throw in one still leaves the other,
           the menu and the footer usable. */}
-      <ErrorBoundary
-        label="Canvas"
-        fallbackClassName="relative overflow-y-auto mobile-safe-bottom"
-        fallbackStyle={{ gridArea: 'main' }}
-      >
-        <Main />
-      </ErrorBoundary>
+        <ErrorBoundary
+          label="Canvas"
+          fallbackClassName="relative overflow-y-auto mobile-safe-bottom"
+          fallbackStyle={{ gridArea: 'main' }}
+        >
+          <Main />
+        </ErrorBoundary>
 
-      <ErrorBoundary
-        label="Right sidebar"
-        fallbackClassName={`relative flex min-h-0 flex-col overflow-y-auto bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
-          layout.dockSide === 'left' ? 'border-r border-gray-300' : 'border-l border-gray-300'
-        } ${isRightPanelOpen ? rightPanelPlacement : 'hidden'}`}
-        fallbackStyle={{ width: layout.effectiveDockWidth }}
-      >
-        <SidebarRight />
-      </ErrorBoundary>
-      <Footer />
+        <ErrorBoundary
+          label="Right sidebar"
+          fallbackClassName={`relative flex min-h-0 flex-col overflow-y-auto bg-gray-100 dark:bg-gray-800 dark:border-gray-700 max-md:hidden ${
+            layout.dockSide === 'left' ? 'border-r border-gray-300' : 'border-l border-gray-300'
+          } ${isRightPanelOpen ? rightPanelPlacement : 'hidden'}`}
+          fallbackStyle={{ width: layout.effectiveDockWidth }}
+        >
+          <SidebarRight />
+        </ErrorBoundary>
+        <Footer />
 
-      {/* Mounted unconditionally and hidden with `md:hidden`, rather than swapped in by a
+        {/* Mounted unconditionally and hidden with `md:hidden`, rather than swapped in by a
           `isMobile` ternary.
 
           A ternary makes crossing 768px an unmount: the two branches are both Fragments, so
@@ -143,14 +148,15 @@ function AppContainer() {
           subscriptions stay live on desktop. That is a deliberate trade: the store only
           dispatches on discrete events, not per pointer-move, so a handful of extra
           subscribers costs nothing per frame — while a remount costs the user's work. */}
-      <MobileShell
-        isToolSheetOpen={isToolSheetOpen}
-        onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
-        isLayersOpen={isLayersDrawerOpen}
-        onToggleLayers={() => setIsLayersDrawerOpen((open) => !open)}
-      />
-      {showFirstUseTour && <FirstUseTour onComplete={() => setShowFirstUseTour(false)} />}
-    </div>
+        <MobileShell
+          isToolSheetOpen={isToolSheetOpen}
+          onToggleToolSheet={() => setIsToolSheetOpen((open) => !open)}
+          isLayersOpen={isLayersDrawerOpen}
+          onToggleLayers={() => setIsLayersDrawerOpen((open) => !open)}
+        />
+      </div>
+      {isFirstUseTourVisible && <FirstUseTour onComplete={completeFirstUseTour} />}
+    </>
   );
 }
 

@@ -225,11 +225,10 @@ export const renderTooltips = async () => {
     // Star is a FigureType carried by the shared shape ToolName, not a separate registry name.
     .filter(([key]) => key !== 'star')
     .map(([key, tool]) => {
-      // Project the first toolbar-level shortcut into the tooltip. Photoshop's options bar
-      // shortcut (e.g. 'B' for Brush) is what users look for on hover; the projection keeps
-      // only that first entry because the full set lives in docs/TOOLS.md. A tool whose
-      // shortcuts array is empty gets `undefined`, which renders nothing.
-      const shortcut = tool.shortcuts.length > 0 ? tool.shortcuts[0].keys : undefined;
+      // Only show the key assigned to this toolbar entry. Description shortcuts also include
+      // family-cycling keys, modifiers and menu commands, which may select a different tool.
+      const toolbarEntry = toolbarMap.flat(2).find((entry) => descriptionKeyFor(entry.name, entry.figure) === key);
+      const shortcut = toolbarEntry?.shortcut;
       const shortcutField = shortcut !== undefined ? `, shortcut: ${JSON.stringify(shortcut)}` : '';
       return `  ${JSON.stringify(key)}: { summary: ${JSON.stringify(tool.summary)}, implementation: ${JSON.stringify(tool.implementation)}${shortcutField} },`;
     })

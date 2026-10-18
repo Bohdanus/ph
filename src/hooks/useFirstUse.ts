@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { findToolProcessor, toolProcessors } from '../tools/toolProcessors.ts';
 import type { ToolName } from '../contexts/tool-types.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 /**
  * The localStorage key under which "has the user been introduced to this tool" is recorded.
@@ -42,33 +42,14 @@ const writeRecord = (record: FirstUseRecord): void => {
 };
 
 /**
- * The set of unimplemented tool names that have NOT yet been introduced to the user.
- *
- * A tool is "introduced" when the user hovers over its tile or flyout row — that is the
- * first moment the tooltip or the row's title attribute would name the tool, which is the
- * earliest point at which the name becomes visible. The record is keyed by tool name; a
- * value of `true` means "mark as new", `false` (or absent) means "already shown".
- */
-export const getUnintroducedTools = (): ToolName[] => {
-  const record = readRecord();
-  const unimplemented = Object.keys(toolProcessors).filter(
-    (name) => findToolProcessor(name as ToolName)?.commit === 'unimplemented'
-  ) as ToolName[];
-  return unimplemented.filter((name) => record[name] !== false);
-};
-
-/**
- * Returns true when the tool should still carry a "new" marker.
- */
+/** Returns true while an unimplemented tool has no stored seen marker. */
 export const isToolNew = (toolName: ToolName): boolean => {
   if (!isUnimplementedTool(toolName)) return false;
   const record = readRecord();
   return record[toolName] !== false;
 };
 
-/**
- * Marks a tool as having been introduced to the user, removing its "new" marker.
- */
+/** Marks an unimplemented tool as seen; a stored `false` means the marker is cleared. */
 export const markToolAsSeen = (toolName: ToolName): void => {
   if (!isUnimplementedTool(toolName)) return;
   const record = readRecord();
@@ -77,28 +58,33 @@ export const markToolAsSeen = (toolName: ToolName): void => {
 };
 
 /**
- * The React hook counterpart to `markToolAsSeen`. Returns whether the tool is new and a
- * callback that clears the flag. Safe to call on any tool name — implemented tools report
- * `false` and the callback is a no-op.
+ * Keep consumers of the synchronous record helpers current in this tab and across tabs.
+ * The pure helpers remain the single source of badge truth; this hook supplies their
+ * React invalidation signal and owns the storage-event lifecycle.
  */
-export const useFirstUse = (toolName: ToolName): [boolean, () => void] => {
-  const [isNew, setIsNew] = useState(() => isToolNew(toolName));
+export const useFirstUse = (): {
+  isToolNew: typeof isToolNew;
+  markToolAsSeen: (toolName: ToolName) => void;
+} => {
+  const [, setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision((revision) => revision + 1), []);
 
-  const markSeen = () => {
-    if (!isNew) return;
-    markToolAsSeen(toolName);
-    setIsNew(false);
-  };
+  const markSeen = useCallback(
+    (toolName: ToolName) => {
+      markToolAsSeen(toolName);
+      refresh();
+    },
+    [refresh]
+  );
 
-  // Sync across tab windows: a `storage` event fires when another tab writes the record.
   useEffect(() => {
     const handler = (event: StorageEvent) => {
-      if (event.key !== STORAGE_KEY) return;
-      setIsNew(isToolNew(toolName));
+      if (event.key !== STORAGE_KEY && event.key !== null) return;
+      refresh();
     };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
-  }, [toolName]);
+  }, [refresh]);
 
-  return [isNew, markSeen];
+  return { isToolNew, markToolAsSeen: markSeen };
 };
