@@ -520,6 +520,34 @@ describe('drawShape', () => {
     expect(ctx.beginPath).not.toHaveBeenCalled();
   });
 
+  it('draws nothing for null start or end on any figure', () => {
+    // `!start || !end` must catch null as well as the omitted/undefined case above: a null
+    // that slipped past the guard would inject NaN into every coordinate of every branch.
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
+      const ctx = createCtx();
+      drawShape(ctx, { ...baseArgs, figure, start: null, end: null } as unknown as ShapeToolArgs);
+      expect(ctx.beginPath, `${figure}/null`).not.toHaveBeenCalled();
+      expect(ctx.moveTo, `${figure}/null`).not.toHaveBeenCalled();
+      expect(ctx.stroke, `${figure}/null`).not.toHaveBeenCalled();
+    }
+  });
+
+  it('draws nothing when only one of start/end is supplied on any figure', () => {
+    // The guard fires on `!start` and `!end` independently — a drag that released without
+    // an end (or started with no anchor) is incomplete, not a degenerate zero box.
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon', 'star'] as const) {
+      const missingEnd = createCtx();
+      drawShape(missingEnd, { ...baseArgs, figure, start: { x: 10, y: 20 } });
+      expect(missingEnd.beginPath, `${figure}/missing end`).not.toHaveBeenCalled();
+      expect(missingEnd.stroke, `${figure}/missing end`).not.toHaveBeenCalled();
+
+      const missingStart = createCtx();
+      drawShape(missingStart, { ...baseArgs, figure, end: { x: 60, y: 45 } });
+      expect(missingStart.beginPath, `${figure}/missing start`).not.toHaveBeenCalled();
+      expect(missingStart.stroke, `${figure}/missing start`).not.toHaveBeenCalled();
+    }
+  });
+
   it('strokes a plain rectangle with the given geometry', () => {
     const ctx = createCtx();
     drawShape(ctx, { ...baseArgs, figure: 'rectangle', start: { x: 10, y: 20 }, end: { x: 60, y: 45 } });
@@ -653,6 +681,19 @@ describe('drawShape', () => {
     expect(pathCalls(drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 10))).toEqual(roundedBox50x25);
   });
 
+  it('clamps cornerRadius that exceeds half the smaller dimension', () => {
+    // 50 wide × 25 tall: half-height (12.5) is the binding edge. A radius of 20 and 250
+    // both clamp to 12.5, so the paths must be identical — the clamp, not the input,
+    // determines the corner.
+    const clamped = drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 20);
+    const huge = drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 250);
+
+    expect(pathCalls(clamped)).toEqual(pathCalls(huge));
+    // moveTo starts at x + r where r = 12.5 = half the 25px height.
+    expect(pathCalls(clamped)).toContainEqual({ method: 'moveTo', args: [22.5, 20] });
+    expect(pathCalls(clamped)).toContainEqual({ method: 'quadraticCurveTo', args: [60, 45, 47.5, 45] });
+  });
+
   it('draws an oval with independent radii', () => {
     const ctx = createCtx();
     drawShape(ctx, { ...baseArgs, figure: 'oval', start: { x: 10, y: 20 }, end: { x: 60, y: 50 } });
@@ -762,6 +803,22 @@ describe('drawShape', () => {
       drawShape(ctx, { ...baseArgs, figure: 'polygon', start: { x: 0, y: 0 }, end: { x: 20, y: 20 } });
       expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
     });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'draws the fallback polygon when sides is %p',
+      (sides) => {
+        const ctx = createCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'polygon',
+          sides,
+          start: { x: 0, y: 0 },
+          end: { x: 20, y: 20 },
+        });
+        expect(ctx.moveTo).toHaveBeenCalledTimes(1);
+        expect(ctx.lineTo).toHaveBeenCalledTimes(DEFAULT_POLYGON_SIDES - 1);
+      }
+    );
   });
 
   describe("the Star's points and ratio", () => {
@@ -809,6 +866,27 @@ describe('drawShape', () => {
       expect(starRatio(100)).toBe(MAX_STAR_RATIO);
       expect(starRatio(49.6)).toBe(50);
     });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+      'draws a finite star when starRatio is %p',
+      (ratio) => {
+        const { ctx, calls } = createRecordingCtx();
+        drawShape(ctx, {
+          ...baseArgs,
+          figure: 'star',
+          sides: 5,
+          starRatio: ratio,
+          start: { x: 0, y: 0 },
+          end: { x: 100, y: 100 },
+        });
+        // starRatio sanitizes before the angle loop, so no coordinate NaN/Infinity leaks.
+        for (const { args } of calls) {
+          for (const arg of args) {
+            expect(Number.isFinite(arg), `${ratio} produced ${arg}`).toBe(true);
+          }
+        }
+      }
+    );
   });
 
   it('fills only when hasFill is set and toolMode is not path', () => {
@@ -992,6 +1070,34 @@ describe('setShapeCtx', () => {
     setShapeCtx(ctx, { ...baseArgs, hasFill: true, backgroundColor: null });
 
     expect(ctx.fillStyle).toBe('#00ff00');
+  });
+
+  it('passes lineWidth 0 straight to the context without clamping', () => {
+    // The Size slider floor is 0.5, so 0 should not arrive from the panel — but setShapeCtx
+    // writes the value verbatim, and that pass-through is the current contract.
+    const ctx = createCtx();
+    setShapeCtx(ctx, { ...baseArgs, lineWidth: 0 });
+    expect(ctx.lineWidth).toBe(0);
+  });
+
+  /*
+   * `setShapeCtx` (shape.ts:222-224) assigns `ctx.lineWidth` and `ctx.globalAlpha` with no
+   * sanitisation, mirroring the pen processors `paint-tools.test.ts` pins with the same pair.
+   * A non-finite lineWidth renders nothing per the canvas spec, and a non-finite alpha makes
+   * `globalAlpha` NaN — both silent, invisible to the `drawShape` call-count assertions above.
+   */
+  describe('known limitations (it.fails tripwires)', () => {
+    it.fails('clamps non-finite lineWidth before it reaches the tool context (shape.ts)', () => {
+      const ctx = createCtx();
+      setShapeCtx(ctx, { ...baseArgs, lineWidth: Number.NaN });
+      expect(Number.isFinite(ctx.lineWidth)).toBe(true);
+    });
+
+    it.fails('clamps non-finite alpha into [0, 1] before it reaches globalAlpha (shape.ts)', () => {
+      const ctx = createCtx();
+      setShapeCtx(ctx, { ...baseArgs, alpha: Number.NaN });
+      expect(Number.isFinite(ctx.globalAlpha)).toBe(true);
+    });
   });
 });
 

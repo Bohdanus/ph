@@ -517,3 +517,44 @@ describe('waitForBandInked', () => {
     expect(harness.screenshot).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('edge cases: non-finite inputs and empty stacks', () => {
+  it('rejects a NaN image height before touching the bands', () => {
+    expect(() => bandRows(bands(), Number.NaN)).toThrow(/imageHeight must be a positive integer/);
+  });
+
+  it('rejects an infinite image height', () => {
+    expect(() => bandRows(bands(), Infinity)).toThrow(/imageHeight must be a positive integer/);
+  });
+
+  it('reports a 0x0 capture as clean, with no pixels to inspect', async () => {
+    await expect(bandIsInked(createImageData(0, 0))).resolves.toBe(false);
+  });
+
+  it('refuses an empty band stack before touching the capture', async () => {
+    await expect(bandInkFlags(createImageData(BOX.width, BOX.height), [])).rejects.toThrow(/at least one band/);
+  });
+
+  it('gives every band the single available row when the capture is one pixel tall', () => {
+    const rows = bandRows(bands(), 1);
+    for (const row of rows) {
+      expect(row).toEqual({ top: 0, bottom: 1 });
+    }
+  });
+});
+
+describe('known gaps (it.fails tripwires)', () => {
+  // Each tripwire asserts the behaviour we WANT but the helper does NOT yet deliver.
+  // Wrapped in `it.fails`, it stays green while the gap is open; the moment the
+  // guard lands and the assertion starts passing, `it.fails` flips and reports an
+  // unexpected pass, which is the signal to promote it to a plain `it`.
+
+  it.fails('throws on a non-finite box dimension', () => {
+    expect(() => bandClip({ ...BOX, width: Number.NaN }, 0, BAND_COUNT)).toThrow();
+  });
+
+  it.fails('throws on a non-finite band clip value in bandRows', () => {
+    const badBand: CanvasBand = { index: 0, clip: { ...BOX, y: Number.NaN } };
+    expect(() => bandRows([badBand], BOX.height)).toThrow();
+  });
+});

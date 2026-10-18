@@ -5,6 +5,7 @@ import {
   BRUSH_HARDNESS_DEFAULT,
   BRUSH_HARDNESS_MAX,
   BRUSH_HARDNESS_MIN,
+  BRUSH_OPACITY_DEFAULT,
   BRUSH_SIZE_DEFAULT,
   BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
@@ -121,6 +122,37 @@ describe('clampBrushTipSettings', () => {
     expect(clamped).not.toBe(input);
     expect(input).toEqual({ size: 900, spacing: 0 });
   });
+
+  it('clamps a non-finite control per-field to the Photoshop default, not to a range end', () => {
+    for (const nonFinite of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(clampBrushTipSettings({ size: nonFinite })).toMatchObject({ size: BRUSH_SIZE_DEFAULT });
+      expect(clampBrushTipSettings({ hardness: nonFinite })).toMatchObject({ hardness: BRUSH_HARDNESS_DEFAULT });
+      expect(clampBrushTipSettings({ opacity: nonFinite })).toMatchObject({ opacity: BRUSH_OPACITY_DEFAULT });
+      expect(clampBrushTipSettings({ spacing: nonFinite })).toMatchObject({ spacing: BRUSH_SPACING_DEFAULT });
+    }
+  });
+
+  it('clamps a negative control into its range lower bound', () => {
+    expect(clampBrushTipSettings({ size: -1 })).toMatchObject({ size: BRUSH_SIZE_MIN });
+    expect(clampBrushTipSettings({ hardness: -0.01 })).toMatchObject({ hardness: BRUSH_HARDNESS_MIN });
+    expect(clampBrushTipSettings({ opacity: -1 })).toMatchObject({ opacity: 0 });
+    expect(clampBrushTipSettings({ spacing: -10 })).toMatchObject({ spacing: BRUSH_SPACING_MIN });
+  });
+
+  it('clamps every slider to both ends of its Photoshop range in one pass', () => {
+    const clamped = clampBrushTipSettings({
+      size: -BRUSH_SIZE_MAX,
+      hardness: BRUSH_HARDNESS_MAX + 999,
+      opacity: Number.POSITIVE_INFINITY,
+      spacing: -BRUSH_SPACING_MAX,
+    });
+    expect(clamped).toEqual({
+      size: BRUSH_SIZE_MIN,
+      hardness: BRUSH_HARDNESS_MAX,
+      opacity: 1,
+      spacing: BRUSH_SPACING_MIN,
+    });
+  });
 });
 
 describe('tipAlphaAt', () => {
@@ -185,6 +217,51 @@ describe('tipAlphaAt', () => {
   it('clamps an out-of-range or non-finite hardness instead of reading it raw', () => {
     expect(tipAlphaAt(3, 6, 250)).toBe(tipAlphaAt(3, 6, 100));
     expect(tipAlphaAt(3, 6, -40)).toBe(tipAlphaAt(3, 6, 0));
+    expect(tipAlphaAt(3, 6, Number.NaN)).toBe(tipAlphaAt(3, 6, BRUSH_HARDNESS_DEFAULT));
+  });
+
+  it('returns 0 for a zero-radius tip at every offset, so a degenerate tip stamps nothing', () => {
+    for (const hardness of [BRUSH_HARDNESS_MIN, 0, 50, 100, BRUSH_HARDNESS_MAX]) {
+      expect(tipAlphaAt(0, 0, hardness)).toBe(0);
+      expect(tipAlphaAt(1, 0, hardness)).toBe(0);
+      expect(tipAlphaAt(0, -6, hardness)).toBe(0);
+    }
+  });
+
+  it('treats the hardness boundaries 0 and 100 exactly as clamping does, so a preview cannot disagree with a stamp', () => {
+    expect(tipAlphaAt(2, 6, BRUSH_HARDNESS_MIN)).toBe(
+      tipAlphaAt(2, 6, clampBrushTipSettings({ hardness: 0 }).hardness)
+    );
+    expect(tipAlphaAt(2, 6, BRUSH_HARDNESS_MAX)).toBe(
+      tipAlphaAt(2, 6, clampBrushTipSettings({ hardness: 100 }).hardness)
+    );
+    // Hardness 0 has no core: the whole radius is falloff, but the centre is still full.
+    expect(tipAlphaAt(0, 6, BRUSH_HARDNESS_MIN)).toBe(1);
+    // Hardness 100 is flat 1 across the whole radius, then 0 on the half-open rim.
+    expect(tipAlphaAt(5.999, 6, BRUSH_HARDNESS_MAX)).toBe(1);
+    expect(tipAlphaAt(6, 6, BRUSH_HARDNESS_MAX)).toBe(0);
+  });
+
+  it('is non-decreasing in hardness for a fixed in-range distance, so a soft-to-hard sweep never dips coverage', () => {
+    const radius = 6;
+    for (const distance of [0, 0.5, 1, 2, 3, 4, 5, 5.999]) {
+      let previous = -Infinity;
+      for (let hardness = 0; hardness <= BRUSH_HARDNESS_MAX; hardness += 0.5) {
+        const current = tipAlphaAt(distance, radius, hardness);
+        // Allow a hair of float noise where the cosine plateau meets the flat core, but
+        // never let the weight step backwards as the brush hardens.
+        expect(current).toBeGreaterThanOrEqual(previous - 1e-9);
+        previous = current;
+      }
+    }
+  });
+
+  it('clamps an out-of-range hardness that is also non-finite, never reading it raw', () => {
+    // A non-finite hardness is `unset` and falls back to the Photoshop default (100),
+    // matching `clampSlider`'s fallback arm — distinct from a finite negative value, which
+    // clamps into range at 0.
+    expect(tipAlphaAt(3, 6, Number.POSITIVE_INFINITY)).toBe(tipAlphaAt(3, 6, BRUSH_HARDNESS_DEFAULT));
+    expect(tipAlphaAt(3, 6, Number.NEGATIVE_INFINITY)).toBe(tipAlphaAt(3, 6, BRUSH_HARDNESS_DEFAULT));
     expect(tipAlphaAt(3, 6, Number.NaN)).toBe(tipAlphaAt(3, 6, BRUSH_HARDNESS_DEFAULT));
   });
 });
@@ -339,6 +416,33 @@ describe('brushDabCenters', () => {
     expect(centers[0]).not.toBe(input[0]);
     expect(centers[0]).toEqual(input[0]);
   });
+
+  it('falls back to the default tip size for a negative size as well as a non-finite one', () => {
+    expect(brushDabCenters(samples(2, 100), -1, 100)).toEqual(
+      brushDabCenters(samples(2, 100), BRUSH_SIZE_DEFAULT, 100)
+    );
+    expect(brushDabCenters(samples(2, 100), -1, 100)).toHaveLength(9);
+  });
+
+  it('clamps a non-finite or out-of-range spacing percent into the stroked band', () => {
+    // A non-finite `step` would turn the `while` walk into a never-terminating one;
+    // NaN/Infinity must fall back to the default, not to a range end.
+    expect(brushDabCenters(samples(2, 100), 20, Number.NaN)).toEqual(
+      brushDabCenters(samples(2, 100), 20, BRUSH_SPACING_DEFAULT)
+    );
+    expect(brushDabCenters(samples(2, 100), 20, Number.POSITIVE_INFINITY)).toEqual(
+      brushDabCenters(samples(2, 100), 20, BRUSH_SPACING_DEFAULT)
+    );
+    expect(brushDabCenters(samples(2, 100), 20, Number.NEGATIVE_INFINITY)).toEqual(
+      brushDabCenters(samples(2, 100), 20, BRUSH_SPACING_DEFAULT)
+    );
+    expect(brushDabCenters(samples(2, 100), 20, -50)).toEqual(brushDabCenters(samples(2, 100), 20, BRUSH_SPACING_MIN));
+  });
+
+  it('keeps emitting the first and last sample for a degenerate-size stroke, so a click still lands a dab', () => {
+    expect(brushDabCenters([{ x: 5, y: 5 }], 0, 25)).toEqual([{ x: 5, y: 5 }]);
+    expect(brushDabCenters([{ x: 5, y: 5 }], Number.NaN, Number.NaN)).toEqual([{ x: 5, y: 5 }]);
+  });
 });
 
 describe('stampBrushDab', () => {
@@ -478,6 +582,62 @@ describe('stampBrushDab', () => {
 
     expect(input).toEqual({ size: 900, hardness: 400, opacity: 2, spacing: 0 });
   });
+
+  it('clamps a non-finite or negative tip setting before stamping, matching the clamped default', () => {
+    const size = { width: 13, height: 13 };
+    const defaults = filledBuffer(13, 13, TRANSPARENT_BLACK);
+    const bad = filledBuffer(13, 13, TRANSPARENT_BLACK);
+    const badSettings: BrushTipSettings = {
+      size: Number.NaN,
+      hardness: Number.POSITIVE_INFINITY,
+      opacity: Number.NEGATIVE_INFINITY,
+      spacing: Number.NaN,
+    };
+
+    stampBrushDab(defaults, size, { x: 6, y: 6 }, clampBrushTipSettings({}), OPAQUE_WHITE);
+    stampBrushDab(bad, size, { x: 6, y: 6 }, badSettings, OPAQUE_WHITE);
+
+    expect(Array.from(defaults)).toEqual(Array.from(bad));
+  });
+
+  it('stamps a single pixel for a zero-size tip, whose radius floors to 0.5px', () => {
+    const data = filledBuffer(5, 5, TRANSPARENT_BLACK);
+
+    stampBrushDab(data, { width: 5, height: 5 }, { x: 2, y: 2 }, settings({ size: 0 }), OPAQUE_RED);
+
+    expect(countMatching(data, { width: 5, height: 5 }, (pixel) => pixel.a > 0)).toBe(1);
+    expect(at(data, 5, 2, 2)).toEqual(OPAQUE_RED);
+    expect(at(data, 5, 1, 2)).toEqual(TRANSPARENT_BLACK);
+  });
+
+  it('paints a full-radius disc at hardness 100 and a cosine gradient at hardness 0', () => {
+    const size = { width: 5, height: 5 };
+    const hard = filledBuffer(5, 5, TRANSPARENT_BLACK);
+    const soft = filledBuffer(5, 5, TRANSPARENT_BLACK);
+
+    // Radius 2 around (2, 2): nine pixels sit at distance < 2, the rim at distance 2 is
+    // outside the half-open tip for both hardness values.
+    stampBrushDab(hard, size, { x: 2, y: 2 }, settings({ size: 4, hardness: 100 }), OPAQUE_WHITE);
+    stampBrushDab(soft, size, { x: 2, y: 2 }, settings({ size: 4, hardness: 0 }), OPAQUE_WHITE);
+
+    expect(countMatching(hard, size, (pixel) => pixel.a === 255)).toBe(9);
+    expect(at(hard, 5, 2, 2)).toEqual({ r: 255, g: 255, b: 255, a: 255 });
+    expect(at(hard, 5, 0, 2)).toEqual(TRANSPARENT_BLACK);
+
+    expect(at(soft, 5, 2, 2).a).toBe(255);
+    expect(at(soft, 5, 2, 1).a).toBeLessThan(255);
+    expect(at(soft, 5, 2, 1).a).toBeGreaterThan(0);
+    expect(at(soft, 5, 0, 2)).toEqual(TRANSPARENT_BLACK);
+  });
+
+  it('stamps nothing for a negative opacity, which clamps to fully transparent', () => {
+    const data = filledBuffer(3, 3, TRANSPARENT_BLACK);
+    const before = Array.from(data);
+
+    stampBrushDab(data, { width: 3, height: 3 }, { x: 1, y: 1 }, settings({ opacity: -1 }), OPAQUE_RED);
+
+    expect(Array.from(data)).toEqual(before);
+  });
 });
 
 describe('stampBrushStroke', () => {
@@ -605,5 +765,66 @@ describe('stampBrushStroke', () => {
       { x: 1, y: 1 },
       { x: 9, y: 9 },
     ]);
+  });
+
+  it('clamps a non-finite or negative tip setting before stamping, matching the clamped default', () => {
+    const size = { width: 13, height: 13 };
+    const click = [{ x: 6, y: 6 }];
+    const badSettings: BrushTipSettings = {
+      size: Number.NaN,
+      hardness: Number.POSITIVE_INFINITY,
+      opacity: Number.NEGATIVE_INFINITY,
+      spacing: Number.NaN,
+    };
+
+    const normal = filledBuffer(13, 13, TRANSPARENT_BLACK);
+    const bad = filledBuffer(13, 13, TRANSPARENT_BLACK);
+    stampBrushStroke(normal, size, click, clampBrushTipSettings({}), OPAQUE_WHITE);
+    stampBrushStroke(bad, size, click, badSettings, OPAQUE_WHITE);
+
+    expect(Array.from(normal)).toEqual(Array.from(bad));
+  });
+
+  it('stamps a single pixel for a zero-size tip, whose radius floors to 0.5px', () => {
+    const data = filledBuffer(5, 5, TRANSPARENT_BLACK);
+
+    stampBrushStroke(data, { width: 5, height: 5 }, [{ x: 2, y: 2 }], settings({ size: 0 }), OPAQUE_RED);
+
+    expect(countMatching(data, { width: 5, height: 5 }, (pixel) => pixel.a > 0)).toBe(1);
+    expect(at(data, 5, 2, 2)).toEqual(OPAQUE_RED);
+  });
+
+  it('leaves the buffer untouched for a stroke whose opacity clamps to 0', () => {
+    const data = filledBuffer(4, 4, { r: 8, g: 16, b: 32, a: 255 });
+    const before = Array.from(data);
+
+    stampBrushStroke(data, { width: 4, height: 4 }, samples(2, 30), settings({ opacity: -1 }), OPAQUE_RED);
+
+    expect(Array.from(data)).toEqual(before);
+  });
+});
+
+describe('fail-closed tripwires (known gaps this hardens)', () => {
+  // Each block below asserts the behaviour we WANT from a missing input guard. It is
+  // wrapped in `it.fails` so it stays green while the gap is open; the moment the guard
+  // lands and the assertion starts passing, `it.fails` flips and the tripwire reports an
+  // unexpected pass, which is the signal to delete it. They are grouped so they are found
+  // and retired together rather than left to accumulate as silent green.
+  it.fails('returns 0 for a non-finite distance instead of reading NaN/Infinity into the coverage', () => {
+    // -Infinity currently slips past `distance < radius` and falls inside the core, reading
+    // as 1 coverage; NaN and +Infinity are already 0. Once distance is guarded, all three
+    // must be 0 and this tripwire turns red.
+    expect(tipAlphaAt(Number.NaN, 6, 50)).toBe(0);
+    expect(tipAlphaAt(Number.POSITIVE_INFINITY, 6, 50)).toBe(0);
+    expect(tipAlphaAt(Number.NEGATIVE_INFINITY, 6, 50)).toBe(0);
+  });
+
+  it.fails('returns 0 for a non-finite radius instead of covering the whole plane', () => {
+    // An infinite radius currently makes every distance `<= core`, so a +Infinity radius
+    // stamps full coverage everywhere. NaN and -Infinity are already 0; guarding radius
+    // to `> 0` will make +Infinity 0 too and flip this to an unexpected pass.
+    expect(tipAlphaAt(3, Number.NaN, 50)).toBe(0);
+    expect(tipAlphaAt(3, Number.POSITIVE_INFINITY, 50)).toBe(0);
+    expect(tipAlphaAt(3, Number.NEGATIVE_INFINITY, 50)).toBe(0);
   });
 });

@@ -339,3 +339,315 @@ describe('documentFrame', () => {
     expect(frame).toEqual(snapshot);
   });
 });
+
+/**
+ * WHY THESE BLOCKS EXIST, and how they are not redundant with the suite above.
+ *
+ * The block above pins the round-trip property `f⁻¹(f(x)) = x` for the contain-fit
+ * mapping at normal coordinates — the happy path the app actually walks. These
+ * blocks below pin the UNHAPPY path: NaN, Infinity, zero-sized documents, and
+ * coordinates that overflow float64. They do not assert that the helper produces a
+ * "correct" answer for a non-existent input — there is no correct canvas offset for a
+ * document point of NaN — but they pin WHAT THE ARITHMETIC DOES, so that a refactor
+ * which silently changes the propagation (say, NaN becoming 0, or Infinity becoming a
+ * clamp) is a diff, not a drift. A regression that converts a NaN into a finite
+ * number is as much a change as one that converts a finite number into NaN.
+ *
+ * The tripwires at the end use `it.fails`: each asserts the behaviour we WANT but the
+ * mapping does NOT yet deliver. It stays green while the gap is open; the moment a
+ * guard lands and the assertion starts passing, `it.fails` flips and reports an
+ * unexpected pass — the signal to promote it to a plain `it`.
+ */
+
+describe('edge cases: non-finite coordinates', () => {
+  const BOX = { x: 0, y: 0, width: 974, height: 583 };
+
+  it('propagates NaN through the forward mapping without swallowing it', () => {
+    // NaN is an address, not a magnitude — a coordinate of NaN means "no point was
+    // named", and the mapping is a pure float64 pipeline: `offsetX + (NaN - 0) * scale`
+    // is NaN. The function does not guard against it, because a guard here would mask
+    // a caller that failed to resolve its input rather than fix the cause.
+    const offset = documentToCanvasOffset(BOX, Number.NaN, Number.NaN);
+    expect(Number.isNaN(offset.x)).toBe(true);
+    expect(Number.isNaN(offset.y)).toBe(true);
+  });
+
+  it('propagates NaN only on the axis that carries it', () => {
+    // A mixed finite/NaN pair proves the propagation is per-axis, not a blanket
+    // short-circuit: the finite axis still resolves to a real canvas offset.
+    const { scale, offsetY } = containFit(BOX);
+    const offset = documentToCanvasOffset(BOX, Number.NaN, DEFAULT_DOCUMENT_HEIGHT);
+    expect(Number.isNaN(offset.x)).toBe(true);
+    expect(Number.isFinite(offset.y)).toBe(true);
+    expect(offset.y).toBeCloseTo(offsetY + DEFAULT_DOCUMENT_HEIGHT * scale, 9);
+  });
+
+  it('propagates Infinity through the forward mapping', () => {
+    // `offsetX + (Infinity - 0) * scale` is `offsetX + Infinity`, which is Infinity
+    // for any positive scale. The function carries the sign through unchanged.
+    const offset = documentToCanvasOffset(BOX, Infinity, Infinity);
+    expect(offset.x).toBe(Infinity);
+    expect(offset.y).toBe(Infinity);
+  });
+
+  it('propagates -Infinity through the forward mapping', () => {
+    const offset = documentToCanvasOffset(BOX, -Infinity, -Infinity);
+    expect(offset.x).toBe(-Infinity);
+    expect(offset.y).toBe(-Infinity);
+  });
+
+  it('propagates NaN only on the axis that carries it in the inverse mapping', () => {
+    const { scale, offsetY } = containFit(BOX);
+    const doc = canvasOffsetToDocument(BOX, Number.NaN, 200);
+    expect(Number.isNaN(doc.x)).toBe(true);
+    expect(Number.isFinite(doc.y)).toBe(true);
+    expect(doc.y).toBeCloseTo((200 - offsetY) / scale, 9);
+  });
+
+  it('propagates Infinity through the inverse mapping', () => {
+    // `(Infinity - offsetX) / scale` is `Infinity / scale`, which is Infinity for
+    // any positive scale — the same propagation the forward direction exhibits.
+    const doc = canvasOffsetToDocument(BOX, Infinity, Infinity);
+    expect(doc.x).toBe(Infinity);
+    expect(doc.y).toBe(Infinity);
+  });
+
+  it('returns NaN, not Infinity, from a non-finite stroke boundary', () => {
+    // `Infinity - Math.round(Infinity)` is `Infinity - Infinity` = NaN in IEEE 754,
+    // and `Math.min(..., NaN, ...)` is NaN. So a stroke endpoint at Infinity does
+    // NOT produce an infinite margin — it produces NaN, which then poisons the
+    // minimum. This is the quiet failure a caller might misread as "exactly on
+    // the grid" (margin 0) rather than as "input was non-finite".
+    const margin = documentStrokeBoundaryMargin({ x: Infinity, y: Infinity }, { x: 0, y: 0 }, DRAW_TOOL_STROKE_WIDTH);
+    expect(Number.isNaN(margin)).toBe(true);
+  });
+
+  it('returns NaN from a NaN stroke endpoint', () => {
+    const margin = documentStrokeBoundaryMargin({ x: Number.NaN, y: 0 }, { x: 10, y: 20 }, DRAW_TOOL_STROKE_WIDTH);
+    expect(Number.isNaN(margin)).toBe(true);
+  });
+
+  it('returns NaN from a non-finite stroke width', () => {
+    // `half = NaN / 2` is NaN, and every `offGrid` argument it touches becomes NaN,
+    // so `Math.min` returns NaN regardless of the endpoints.
+    const margin = documentStrokeBoundaryMargin(
+      { x: 123.203285, y: 58.234086 },
+      { x: 287.474333, y: 58.234086 },
+      Number.NaN
+    );
+    expect(Number.isNaN(margin)).toBe(true);
+  });
+});
+
+describe('edge cases: zero-sized documents', () => {
+  const BOX = { x: 0, y: 0, width: 974, height: 583 };
+
+  it('containFit reports an infinite scale and NaN offsets for a zero-sized document', () => {
+    // `box.width / 0` is Infinity in IEEE 754, and `0 * Infinity` is NaN, so the
+    // offset half of the contain fit is NaN even as the scale blows up. The app
+    // never seeds a zero document — the default is 800×600 — so this pins the
+    // arithmetic boundary rather than a state the suite reaches.
+    const fit = containFit(BOX, { width: 0, height: 0 });
+    expect(fit.scale).toBe(Infinity);
+    expect(Number.isNaN(fit.offsetX)).toBe(true);
+    expect(Number.isNaN(fit.offsetY)).toBe(true);
+  });
+
+  it('forward mapping of a zero-sized document produces NaN on both axes', () => {
+    // Because `containFit` returns NaN offsets and an Infinity scale, the point
+    // collapses: `NaN + finite × Infinity` is NaN. There is no document to map
+    // against, so NaN is the only honest propagation.
+    const offset = documentToCanvasOffset(BOX, 400, 300, { width: 0, height: 0 });
+    expect(Number.isNaN(offset.x)).toBe(true);
+    expect(Number.isNaN(offset.y)).toBe(true);
+  });
+
+  it('inverse mapping of a zero-sized document produces NaN on both axes', () => {
+    const doc = canvasOffsetToDocument(BOX, 400, 300, { width: 0, height: 0 });
+    expect(Number.isNaN(doc.x)).toBe(true);
+    expect(Number.isNaN(doc.y)).toBe(true);
+  });
+
+  it('does not form a valid round trip with a zero-sized document', () => {
+    // The round-trip property pinned elsewhere cannot hold when the document size
+    // is zero: both directions collapse to NaN, so the inverse of the forward map
+    // is NaN, not the original point. This is expected — the mapping is
+    // non-invertible for a non-invertible document.
+    const forward = documentToCanvasOffset(BOX, 100, 100, { width: 0, height: 0 });
+    const back = canvasOffsetToDocument(BOX, forward.x, forward.y, { width: 0, height: 0 });
+    expect(Number.isNaN(back.x)).toBe(true);
+    expect(Number.isNaN(back.y)).toBe(true);
+  });
+
+  it('fits to the surviving axis when only one document dimension is zero', () => {
+    // A document that is zero-wide but non-zero-tall is degenerate but not
+    // undefined: `Math.min(box.width / 0, box.height / 600) = Math.min(Infinity, finite)`
+    // picks the finite arm, so the scale is finite and non-zero. The zero axis
+    // still collapses to offsetX, but the math does not blow up.
+    const zeroWidth = containFit(BOX, { width: 0, height: DEFAULT_DOCUMENT_HEIGHT });
+    expect(Number.isFinite(zeroWidth.scale)).toBe(true);
+    expect(zeroWidth.scale).toBeGreaterThan(0);
+    expect(Number.isFinite(zeroWidth.offsetX)).toBe(true);
+    expect(zeroWidth.offsetX).toBeCloseTo(BOX.width / 2, 9);
+
+    const zeroHeight = containFit(BOX, { width: DEFAULT_DOCUMENT_WIDTH, height: 0 });
+    expect(Number.isFinite(zeroHeight.scale)).toBe(true);
+    expect(zeroHeight.scale).toBeGreaterThan(0);
+    expect(Number.isFinite(zeroHeight.offsetY)).toBe(true);
+  });
+
+  it('forward mapping of a zero-sized box is finite (collapses to origin)', () => {
+    // Reinforces the "degenerate boxes do not produce NaN" assertion from the block
+    // above, here alongside the zero-DOCUMENT case to make the asymmetry explicit:
+    // a zero box has scale 0 and finite offsets, so every document point maps to
+    // (offsetX, offsetY) — finite, but a single point.
+    const { offsetX, offsetY } = containFit({ width: 0, height: 0 });
+    const offset = documentToCanvasOffset({ width: 0, height: 0 }, 400, 300);
+    expect(Number.isFinite(offset.x)).toBe(true);
+    expect(Number.isFinite(offset.y)).toBe(true);
+    expect(offset.x).toBe(offsetX);
+    expect(offset.y).toBe(offsetY);
+  });
+
+  it('inverse mapping of a zero-sized box overflows to Infinity (the asymmetry)', () => {
+    // The forward map of a zero-sized box is finite because scale = 0 and
+    // `0 + coord × 0 = 0`. But the inverse divides by scale = 0: `10 / 0` is
+    // Infinity in IEEE 754. The app never inverts a zero box — the forward-only
+    // test above does not cover this direction — so this is a known limitation,
+    // not a regression.
+    const doc = canvasOffsetToDocument({ width: 0, height: 0 }, 10, 10);
+    expect(doc.x).toBe(Infinity);
+    expect(doc.y).toBe(Infinity);
+  });
+});
+
+describe('edge cases: extreme offsets', () => {
+  const BOX = { x: 0, y: 0, width: 974, height: 583 };
+
+  it('preserves large but sub-overflowing coordinates as finite', () => {
+    // 1e15 is well within float64's ~1.8e308 range, and the box scale (~0.97)
+    // keeps the product finite: 1e15 × 0.97 = 9.7e14, still representable.
+    const coord = 1e15;
+    const offset = documentToCanvasOffset(BOX, coord, coord);
+    expect(Number.isFinite(offset.x)).toBe(true);
+    expect(Number.isFinite(offset.y)).toBe(true);
+  });
+
+  it('preserves coordinates at float64 max as finite for a normal box', () => {
+    // Number.MAX_VALUE (~1.8e308) times the box scale (~0.97) is ~1.75e308,
+    // still below the overflow threshold — so the forward map does not blow up
+    // for a normal box even at the float64 limit.
+    const coord = Number.MAX_VALUE;
+    const offset = documentToCanvasOffset(BOX, coord, coord);
+    expect(Number.isFinite(offset.x)).toBe(true);
+    expect(Number.isFinite(offset.y)).toBe(true);
+  });
+
+  it('overflows to Infinity when the scale-coordinate product exceeds float64 max', () => {
+    // A box large enough that its scale exceeds 1, combined with a coordinate
+    // near 1e308, overflows: at a 100k×100k box the scale is 125
+    // (min(125, 166.7)), so 1e308 × 125 overflows float64 to Infinity. This is
+    // the boundary the mapping has no guard for — a caller that feeds a
+    // pathological box plus a near-max coordinate gets Infinity, which would
+    // reach `page.mouse.move` as a non-finite client coordinate.
+    const bigBox = { x: 0, y: 0, width: 100_000, height: 100_000 };
+    const { scale } = containFit(bigBox);
+    expect(scale).toBeGreaterThan(1);
+    const offset = documentToCanvasOffset(bigBox, 1e308, 1e308);
+    expect(offset.x).toBe(Infinity);
+    expect(offset.y).toBe(Infinity);
+  });
+
+  it('round-trips large coordinates within float64 precision', () => {
+    // At 1e15 the float64 unit-in-the-last-place is ~0.125, so a round trip
+    // through containFit's scale and its inverse stays within one ulp — checked
+    // as a relative error many orders of magnitude tighter than the transport
+    // error the export line margin was designed around (§4.1e-5).
+    const coord = 1e15;
+    const offset = documentToCanvasOffset(BOX, coord, coord);
+    const back = canvasOffsetToDocument(BOX, offset.x, offset.y);
+    expect(Math.abs(back.x / coord - 1)).toBeLessThan(1e-12);
+    expect(Math.abs(back.y / coord - 1)).toBeLessThan(1e-12);
+  });
+
+  it('round-trips at the float64 limit with machine-epsilon relative error', () => {
+    // At 1e308 the ulp is ~3.8e292, so the ABSOLUTE round-trip error is enormous
+    // — but the RELATIVE error is machine epsilon (2.2e-16), because float64
+    // multiply and divide preserve relative precision. `toBeCloseTo` checks
+    // absolute error and would fail; the right invariant is relative.
+    const coord = 1e308;
+    const offset = documentToCanvasOffset(BOX, coord, coord);
+    const back = canvasOffsetToDocument(BOX, offset.x, offset.y);
+    expect(Math.abs(back.x / coord - 1)).toBeLessThan(1e-15);
+    expect(Math.abs(back.y / coord - 1)).toBeLessThan(1e-15);
+    // And `toBeCloseTo` (absolute) is the wrong oracle at this scale:
+    expect(back.x).not.toBeCloseTo(coord, 3);
+    expect(back.y).not.toBeCloseTo(coord, 3);
+  });
+
+  it('round-trips Number.MAX_VALUE exactly', () => {
+    // At the float64 max the scale (~0.97) is small enough that
+    // `MAX_VALUE × scale` does not overflow, and the inverse `÷ scale` recovers
+    // the original exactly — the ratio is 1.0 with no precision loss.
+    const coord = Number.MAX_VALUE;
+    const offset = documentToCanvasOffset(BOX, coord, coord);
+    const back = canvasOffsetToDocument(BOX, offset.x, offset.y);
+    expect(back.x).toBeCloseTo(coord, 100);
+    expect(back.y).toBeCloseTo(coord, 100);
+  });
+});
+
+describe('known gaps (it.fails tripwires)', () => {
+  // Each tripwire asserts the behaviour we WANT but the mapping does NOT yet
+  // deliver. Wrapped in `it.fails`, it stays green while the gap is open; the
+  // moment a guard lands and the assertion starts passing, `it.fails` flips and
+  // reports an unexpected pass, which is the signal to promote it to a plain `it`.
+  //
+  // These are deliberately scoped to the mapping module's own behaviours — they do
+  // NOT repeat the input-validation tripwires already pinned in
+  // `canvas-helpers.unit.test.ts` for `containFit`, `documentToCanvasOffset`, and
+  // `canvasOffsetToDocument` (which assert that the functions throw on non-finite
+  // inputs). What is unique here: zero-sized DOCUMENTS, the zero-box inverse
+  // asymmetry, overflow clamping, and `documentStrokeBoundaryMargin` validation.
+
+  const BOX = { x: 0, y: 0, width: 974, height: 583 };
+
+  it.fails('containFit rejects a zero-sized document with a thrown guard', () => {
+    // containFit carries no validation — it is the shared arithmetic, and guards
+    // live at callers per the JSDoc. If a guard is ever added here, it should
+    // reject the zero-sized document that currently returns scale=Infinity with
+    // NaN offsets, turning the silent NaN into a loud error at the boundary.
+    expect(() => containFit(BOX, { width: 0, height: 0 })).toThrow();
+  });
+
+  it.fails('canvasOffsetToDocument of a zero-sized box returns a finite coordinate', () => {
+    // The forward map of a zero-sized box is finite (scale 0, collapses to the
+    // origin), but the inverse divides by scale 0 and returns Infinity. If a guard
+    // is added that special-cases zero scale — returning the box origin instead —
+    // this flips. See the "asymmetry" test above for the current behaviour.
+    const doc = canvasOffsetToDocument({ width: 0, height: 0 }, 10, 10);
+    expect(Number.isFinite(doc.x)).toBe(true);
+    expect(Number.isFinite(doc.y)).toBe(true);
+  });
+
+  it.fails('documentStrokeBoundaryMargin rejects a non-finite stroke coordinate', () => {
+    // A NaN or Infinity endpoint currently produces NaN from `offGrid`, which then
+    // poisons `Math.min` into returning NaN — a silent "no boundary" that a caller
+    // might misread as "on the grid" (margin 0). If a guard is added that throws on
+    // non-finite inputs, this tripwire fires.
+    expect(() =>
+      documentStrokeBoundaryMargin({ x: Number.NaN, y: 0 }, { x: 10, y: 10 }, DRAW_TOOL_STROKE_WIDTH)
+    ).toThrow();
+  });
+
+  it.fails('documentToCanvasOffset clamps an overflowing coordinate into the box', () => {
+    // With a box scale > 1 and a coordinate near 1e308, the product overflows to
+    // Infinity. If a clamp is added that keeps the result inside the box bounds,
+    // this flips. See the "overflows to Infinity" test above for the current
+    // behaviour.
+    const bigBox = { x: 0, y: 0, width: 100_000, height: 100_000 };
+    const offset = documentToCanvasOffset(bigBox, 1e308, 1e308);
+    expect(Number.isFinite(offset.x)).toBe(true);
+    expect(Number.isFinite(offset.y)).toBe(true);
+  });
+});

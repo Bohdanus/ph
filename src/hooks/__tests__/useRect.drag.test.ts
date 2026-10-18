@@ -1270,3 +1270,174 @@ describe('useRect fresh-drag modifiers', () => {
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 60, y1: 80, x2: 140, y2: 120 });
   });
 });
+
+/**
+ * Guards for inputs the hook does not yet handle: non-finite pointer coordinates
+ * (NaN, ±Infinity), degenerate drag deltas that collapse an aspect-ratio constraint
+ * to a point, and zero-area commits.
+ *
+ * The regular tests pin the CURRENT behaviour — including its faults — so a future
+ * change is visible as a breaking test rather than a silent pivot. The two
+ * `it.fails` tripwires below assert the guard each one currently lacks; when the
+ * guard lands they flip to red and are converted to `it`.
+ */
+describe('useRect drag edge cases: non-finite deltas, zero-area and constraints', () => {
+  beforeEach(resetPointerMock);
+
+  // --- Non-finite drag deltas ---
+
+  it('propagates NaN drag deltas through the free-drag path without throwing', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Number.NaN, 120));
+    });
+    flushFrame();
+
+    // adjustFreePoint passes NaN through verbatim; sortRect turns the pair into a
+    // rect whose x-edges are NaN while the y-edges stay finite.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      x1: Number.NaN,
+      y1: 60,
+      x2: Number.NaN,
+      y2: 120,
+    });
+  });
+
+  it('clamps an Infinity drag delta to the canvas edge on paint but reports Infinity', () => {
+    const onChange = vi.fn();
+    const { ctx, result, event, flushFrame } = setup({ onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Infinity, 120));
+    });
+    flushFrame();
+
+    // trimRect clamps x2 = Infinity to 800, so the painted stroke is (50, 60, 750, 60).
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(50, 60, 750, 60);
+    // The reported rect is never clamped — Infinity survives into onChange.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 60, x2: Infinity, y2: 120 });
+  });
+
+  it('clamps a -Infinity drag delta to the canvas origin on paint but reports -Infinity', () => {
+    const onChange = vi.fn();
+    const { ctx, result, event, flushFrame } = setup({ onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(-Infinity, -Infinity));
+    });
+    flushFrame();
+
+    // sortRect turns (50,60) + (-Inf,-Inf) into (-Inf,-Inf)-(50,60); trimRect
+    // clamps to (0,0)-(50,60).
+    expect(ctx.strokeRect).toHaveBeenLastCalledWith(0, 0, 50, 60);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      x1: -Infinity,
+      y1: -Infinity,
+      x2: 50,
+      y2: 60,
+    });
+  });
+
+  // --- Zero-area drags ---
+
+  it('keeps a zero-area drag degenerate under a 1:1 aspect ratio', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ aspectRatio: 1, onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(50, 60));
+    });
+    flushFrame();
+
+    // 0/0 yields NaN, NaN > 1 is false, so the else-branch runs: y2 = y1 + 0.
+    // No NaN leaks; the rect stays a point, exactly as the no-ratio zero-drag does.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 60, x2: 50, y2: 60 });
+  });
+
+  // --- Constraint edge cases ---
+
+  it('collapses a zero-width drag to a point under a 1:1 aspect ratio', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ aspectRatio: 1, onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(50, 120));
+    });
+    flushFrame();
+
+    // width = 0, height = 60. 0/60 = 0 < 1, so the else-branch derives y2 from
+    // width: y2 = y1 + (0/1) = y1. The whole rect collapses to its anchor.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 60, x2: 50, y2: 60 });
+  });
+
+  it('propagates NaN through the aspect-ratio path as well', () => {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ aspectRatio: 1, onChange });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Number.NaN, 120));
+    });
+    flushFrame();
+
+    // width = |NaN| = NaN, height = 60. NaN/60 = NaN, NaN > 1 is false, so
+    // y2 = y1 + NaN. sortRect then turns the pair into an all-NaN rect.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      x1: Number.NaN,
+      y1: Number.NaN,
+      x2: Number.NaN,
+      y2: Number.NaN,
+    });
+  });
+
+  // --- Tripwires: desired guards not yet implemented ---
+
+  /**
+   * `getLocalCoords` is a passthrough of `clientX`/`clientY`, so NaN flows
+   * through `calculateMaskRect` -> `sortRect` -> `onChangeEnd` unchecked. The hook
+   * should reject a non-finite delta before committing it.
+   */
+  it.fails('rejects a NaN drag delta instead of committing it', () => {
+    const onChangeEnd = vi.fn();
+    const { result, event, flushFrame } = setup({ onChangeEnd });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerMove(event(Number.NaN, 120));
+    });
+    flushFrame();
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(Number.NaN, 120));
+    });
+
+    expect(onChangeEnd).toHaveBeenCalled();
+    const committed = onChangeEnd.mock.calls[0][0];
+    expect(Number.isFinite(committed.x1)).toBe(true);
+    expect(Number.isFinite(committed.y1)).toBe(true);
+    expect(Number.isFinite(committed.x2)).toBe(true);
+    expect(Number.isFinite(committed.y2)).toBe(true);
+  });
+
+  /**
+   * A click-and-release with no pointer travel still commits a zero-extent rect.
+   * The hook should detect the empty delta and bail: "no travel, no commit."
+   */
+  it.fails('does not commit a zero-extent rect when the drag never moved', () => {
+    const onChangeEnd = vi.fn();
+    const { result, event } = setup({ onChangeEnd });
+
+    startDrag({ result, event }, { x: 50, y: 60 });
+    act(() => {
+      result.current.pointerHandlers.onPointerUp(event(50, 60));
+    });
+
+    expect(onChangeEnd).not.toHaveBeenCalled();
+  });
+});

@@ -24,7 +24,10 @@ class RecordingOffscreenCanvas {
   height: number;
   readonly drawImageCalls: unknown[][] = [];
 
-  private readonly context: { drawImage: ReturnType<typeof vi.fn> };
+  private readonly context: {
+    drawImage: ReturnType<typeof vi.fn>;
+    rotate: ReturnType<typeof vi.fn>;
+  };
 
   constructor(width: number, height: number) {
     this.constructedWidth = Math.max(1, Math.ceil(width));
@@ -36,12 +39,16 @@ class RecordingOffscreenCanvas {
       drawImage: vi.fn((...args: unknown[]) => {
         this.drawImageCalls.push(args);
       }),
+      rotate: vi.fn(),
     };
 
     RecordingOffscreenCanvas.instances.push(this);
   }
 
-  getContext(): { drawImage: ReturnType<typeof vi.fn> } {
+  getContext(): {
+    drawImage: ReturnType<typeof vi.fn>;
+    rotate: ReturnType<typeof vi.fn>;
+  } {
     return this.context;
   }
 }
@@ -58,7 +65,7 @@ const BITMAP = makeBitmap(DOCUMENT_SIZE.width, DOCUMENT_SIZE.height);
  * The crop processor's signature: a curried call. `crop({ bitmap, size })`
  * returns `(args: CropToolArgs) => [canvas, size]`.
  */
-const runCrop = (rect: RectXYSorted | null, overrides: Partial<ProcessorToolParams> = {}) => {
+const runCrop = (rect: RectXYSorted | null | undefined, overrides: Partial<ProcessorToolParams> = {}) => {
   RecordingOffscreenCanvas.instances = [];
   const processor = crop({ bitmap: BITMAP, size: DOCUMENT_SIZE, ...overrides });
   const canvas = processor({ rect, toolName: 'crop' })[0] as unknown as RecordingOffscreenCanvas;
@@ -66,7 +73,7 @@ const runCrop = (rect: RectXYSorted | null, overrides: Partial<ProcessorToolPara
   return canvas;
 };
 
-const runCropWithResult = (rect: RectXYSorted | null, overrides: Partial<ProcessorToolParams> = {}) => {
+const runCropWithResult = (rect: RectXYSorted | null | undefined, overrides: Partial<ProcessorToolParams> = {}) => {
   RecordingOffscreenCanvas.instances = [];
   const processor = crop({ bitmap: BITMAP, size: DOCUMENT_SIZE, ...overrides });
   return processor({ rect, toolName: 'crop' });
@@ -223,5 +230,148 @@ describe('crop processor', () => {
     const [canvas] = crop({ bitmap: customBitmap, size: DOCUMENT_SIZE })({ rect, toolName: 'crop' });
 
     expect((canvas as unknown as RecordingOffscreenCanvas).drawImageCalls[0][0]).toBe(customBitmap);
+  });
+
+  /*
+   * `crop.ts`'s `hasFiniteRect()` is the replay safety net for hand-edited or stale records: a
+   * rect that is null/undefined, carries a non-finite coordinate, or has an undefined field
+   * cannot describe a bitmap. The processor must short-circuit and return the source bitmap
+   * untouched — no offscreen canvas allocated, no drawImage, no size emitted — rather than
+   * clamping NaN through `trimRect` (which would still yield NaN and reach drawImage) or
+   * manufacturing a 0x0 canvas.
+   */
+  describe('hasFiniteRect guard (non-finite, undefined and null rect)', () => {
+    const BASE_RECT: RectXYSorted = { x1: 100, y1: 50, x2: 400, y2: 300 };
+
+    it('returns the bitmap unchanged when rect is null', () => {
+      const result = runCropWithResult(null);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    it('returns the bitmap unchanged when rect is undefined', () => {
+      const result = runCropWithResult(undefined);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    // Each edge can go non-finite independently in a hand-edited replay record. The guard must
+    // reject the whole rect the moment ANY field is not a finite number, rather than letting the
+    // bad coordinate propagate.
+    it.each<[string, string, number]>([
+      ['x1', 'NaN', Number.NaN],
+      ['y1', 'NaN', Number.NaN],
+      ['x2', 'NaN', Number.NaN],
+      ['y2', 'NaN', Number.NaN],
+      ['x1', '+Infinity', Number.POSITIVE_INFINITY],
+      ['y1', '+Infinity', Number.POSITIVE_INFINITY],
+      ['x2', '+Infinity', Number.POSITIVE_INFINITY],
+      ['y2', '+Infinity', Number.POSITIVE_INFINITY],
+      ['x1', '-Infinity', Number.NEGATIVE_INFINITY],
+      ['y1', '-Infinity', Number.NEGATIVE_INFINITY],
+      ['x2', '-Infinity', Number.NEGATIVE_INFINITY],
+      ['y2', '-Infinity', Number.NEGATIVE_INFINITY],
+    ])('returns the bitmap unchanged when %s is %s', (field, _label, value) => {
+      const rect = { ...BASE_RECT, [field]: value } as unknown as RectXYSorted;
+
+      const result = runCropWithResult(rect);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    // A rect with the right shape but a missing field is malformed for the same reason a NaN
+    // field is: `typeof undefined !== 'number'`, so the guard rejects it outright instead of
+    // feeding `trimRect` a half-populated box.
+    it('returns the bitmap unchanged when one rect field is undefined', () => {
+      const rect = { x1: 100, y1: undefined, x2: 400, y2: 300 } as unknown as RectXYSorted;
+
+      const result = runCropWithResult(rect);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+
+    it('returns the bitmap unchanged when every rect field is undefined', () => {
+      const rect = {
+        x1: undefined,
+        y1: undefined,
+        x2: undefined,
+        y2: undefined,
+      } as unknown as RectXYSorted;
+
+      const result = runCropWithResult(rect);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(BITMAP);
+      expect(result[1]).toBeUndefined();
+      expect(RecordingOffscreenCanvas.instances).toHaveLength(0);
+    });
+  });
+
+  /*
+   * `trimRect` clamps each edge to the document frame BEFORE deriving width/height, so a rect
+   * that overshoots by an enormous margin must collapse to the visible intersection rather than
+   * overflow into Infinity or hand huge values to drawImage. `hasFiniteRect` never sees these as
+   * non-finite — they are valid finite numbers — so the processor must do real work with them.
+   */
+  describe('rect coordinates far beyond the image bounds', () => {
+    it('clamps a rect whose edges overshoot every side by a billion pixels to the full intersection', () => {
+      const rect = { x1: -1_000_000_000, y1: -1_000_000_000, x2: 1_000_000_000, y2: 1_000_000_000 };
+
+      const canvas = runCrop(rect);
+
+      expect(canvas.width).toBe(800);
+      expect(canvas.height).toBe(600);
+      expect(canvas.drawImageCalls[0]).toEqual([BITMAP, 0, 0, 800, 600, 0, 0, 800, 600]);
+    });
+
+    it('clamps only the overshooting far corner, leaving the in-bounds near corner in place', () => {
+      // Near corner is inside the document; the far corner flies off past every edge. trimRect
+      // clamps x2→800, y2→600, leaving a 700x550 crop from (100,50).
+      const rect = { x1: 100, y1: 50, x2: 2_000_000_000, y2: 2_000_000_000 };
+
+      const canvas = runCrop(rect);
+
+      expect(canvas.width).toBe(700);
+      expect(canvas.height).toBe(550);
+      expect(canvas.drawImageCalls[0]).toEqual([BITMAP, 100, 50, 700, 550, 0, 0, 700, 550]);
+    });
+  });
+
+  /*
+   * Photoshop's crop rotates the image inside a stationary box — "Place the pointer a little
+   * outside the corner handles and drag to rotate the image. A grid displays inside the crop box
+   * and the image rotates behind it" (docs/TOOLS.md §Crop). The committed rectangle carries an
+   * `angle` field for exactly this (`src/tools/crop.ts`), yet the processor destructures only
+   * `rect` and never transforms the context, so a rotated crop is silently performed unrotated.
+   *
+   * These tripwires stay red until rotation lands on the replay path: the moment `ctx.rotate` is
+   * actually invoked they flip green, which is the signal to drop the `it.fails`. `rect` here is
+   * finite so `hasFiniteRect` passes and the processor reaches the draw path — the only thing
+   * missing is the rotation itself.
+   */
+  describe('known limitations (it.fails tripwires)', () => {
+    it.fails('applies a non-zero angle as a context rotation before drawing the source region', () => {
+      const rect = { x1: 100, y1: 50, x2: 400, y2: 300 };
+
+      RecordingOffscreenCanvas.instances = [];
+      const [canvas] = crop({ bitmap: BITMAP, size: DOCUMENT_SIZE })({ rect, angle: 45, toolName: 'crop' });
+
+      const ctx = (canvas as unknown as RecordingOffscreenCanvas).getContext();
+      // A 45° angle should reach `ctx.rotate` as radians.
+      expect(ctx.rotate).toHaveBeenCalledTimes(1);
+      expect(ctx.rotate).toHaveBeenCalledWith(expect.any(Number));
+    });
   });
 });

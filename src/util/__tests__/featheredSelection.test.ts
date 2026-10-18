@@ -94,6 +94,35 @@ describe('alphaFromSignedDistance', () => {
       }
     }
   });
+
+  it('returns NaN for a NaN feather radius, since no clamping rescue applies', () => {
+    // `Math.max(0, NaN)` evaluates to NaN, and `NaN === 0` is false, so the zero-radius
+    // branch is skipped. The interpolation `t` then becomes `Math.max(0, Math.min(1, NaN))`,
+    // which is NaN, and every subsequent step propagates it. The caller (the mask builder)
+    // writes NaN into a Uint8Array, which coerces it to 0 — so NaN radius silently erases a
+    // selection rather than throwing.
+    expect(alphaFromSignedDistance(0, NaN)).toBeNaN();
+    expect(alphaFromSignedDistance(-5, NaN)).toBeNaN();
+    expect(alphaFromSignedDistance(5, NaN)).toBeNaN();
+  });
+
+  it('returns NaN for an Infinity feather radius, since Infinity / Infinity is NaN', () => {
+    // `Math.max(0, Infinity)` is Infinity, and `Infinity === 0` is false, so the
+    // zero-radius branch is skipped. The interpolation becomes
+    // `(signedDistance + Infinity) / (Infinity * 2)` = `Infinity / Infinity` = NaN,
+    // which propagates to the return value.
+    expect(alphaFromSignedDistance(0, Infinity)).toBeNaN();
+    expect(alphaFromSignedDistance(-5, Infinity)).toBeNaN();
+    expect(alphaFromSignedDistance(5, Infinity)).toBeNaN();
+  });
+
+  it('treats a -Infinity feather radius as zero, since Math.max clamps it', () => {
+    // `-Infinity` is clamped to 0 by `Math.max(0, -Infinity)`, so both branches of the
+    // zero-radius path produce the same result as a radius of 0 — the half-pixel anti-aliased
+    // step inside and the hard threshold outside.
+    expect(alphaFromSignedDistance(0, -Infinity)).toBe(alphaFromSignedDistance(0, 0));
+    expect(alphaFromSignedDistance(0, -Infinity, false)).toBe(alphaFromSignedDistance(0, 0, false));
+  });
 });
 
 describe('createFeatheredAlphaMask', () => {
@@ -161,5 +190,53 @@ describe('createFeatheredAlphaMask', () => {
     expect(row[3]).toBe(Math.max(...row));
     expect(row[3]).toBeGreaterThan(row[1]);
     expect(row[1]).toBeGreaterThan(row[0]);
+  });
+
+  it('collapses to an all-zero mask when the feather radius is NaN', () => {
+    // Every pixel calls `alphaFromSignedDistance` with the NaN radius, which returns NaN.
+    // Assigning NaN to a Uint8Array element coerces it to 0, so the mask is uniformly
+    // transparent even for pixels that were solidly selected.
+    const coverageMask = Uint8Array.from([0, 1, 1, 255]);
+
+    expect(Array.from(createFeatheredAlphaMask(coverageMask, 4, 1, NaN, true))).toEqual([0, 0, 0, 0]);
+  });
+
+  it('collapses to an all-zero mask when the feather radius is Infinity', () => {
+    const coverageMask = Uint8Array.from([0, 1, 1, 255]);
+
+    expect(Array.from(createFeatheredAlphaMask(coverageMask, 4, 1, Infinity, true))).toEqual([0, 0, 0, 0]);
+  });
+
+  it('treats a -Infinity feather radius as zero, since Math.max clamps it', () => {
+    // `-Infinity` is clamped to 0 by `Math.max(0, -Infinity)`, so the mask is identical to
+    // a zero-radius call — partial coverage is preserved, not erased.
+    const coverageMask = Uint8Array.from([0, 64, 128, 255]);
+
+    expect(createFeatheredAlphaMask(coverageMask, 4, 1, -Infinity, true)).toEqual(
+      createFeatheredAlphaMask(coverageMask, 4, 1, 0, true)
+    );
+  });
+
+  it('returns an empty mask for an empty binary mask', () => {
+    // No pixels means no iterations and no distance propagation; the output is a
+    // zero-length Uint8Array, which is the only shape a width×height of 0×0 can take.
+    const result = createFeatheredAlphaMask(new Uint8Array(0), 0, 0, 0, true);
+
+    expect(result).toHaveLength(0);
+    expect(result).toBeInstanceOf(Uint8Array);
+  });
+
+  it('produces a single opaque pixel for a single selected pixel with no feather', () => {
+    // A 1×1 mask with the one pixel inside has no outside neighbour at all, so its distance
+    // to outside stays at the 1_000_000 sentinel; `alphaFromSignedDistance` clamps that to 255.
+    const insideMask = Uint8Array.from([1]);
+
+    expect(Array.from(createFeatheredAlphaMask(insideMask, 1, 1, 0, true))).toEqual([255]);
+  });
+
+  it('produces a single transparent pixel for a single unselected pixel with no feather', () => {
+    const outsideMask = Uint8Array.from([0]);
+
+    expect(Array.from(createFeatheredAlphaMask(outsideMask, 1, 1, 0, true))).toEqual([0]);
   });
 });

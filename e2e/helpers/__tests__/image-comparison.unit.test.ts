@@ -105,6 +105,62 @@ const shiftedBlack = (steps: number, channels: readonly ('r' | 'g' | 'b')[] = ['
   return solidPng(SQUARE_10, lifted);
 };
 
+/** PNG signature, eight bytes at the start of every well-formed PNG file. */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** Reversed-polynomial CRC-32 table, computed once for PNG chunk checksums. */
+const CRC_TABLE: number[] = (() => {
+  const table = new Array(256).fill(0);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c;
+  }
+  return table;
+})();
+
+/** CRC-32 over a Buffer, matching the polynomial PNG uses for every chunk. */
+const crc32 = (buf: Buffer): number => {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+/** A single PNG chunk: 4-byte length + 4-byte type + data + 4-byte CRC. */
+const pngChunk = (type: string, data: Buffer): Buffer => {
+  const typeBuf = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+  return Buffer.concat([length, typeBuf, data, crc]);
+};
+
+/**
+ * A minimal PNG whose IHDR declares zero dimensions, with a valid-but-empty zlib
+ * IDAT so the structure is otherwise well-formed. `sharp` refuses to ENCODE zero-dimension
+ * images (pinned under "sharp fixture guards"), and it also refuses to DECODE them — this
+ * helper crafts the raw bytes that reach `compareScreenshots`'s decode call so the
+ * rejection can be asserted rather than assumed.
+ */
+const zeroDimensionPng = (width: number, height: number): Buffer => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 0);
+  ihdr[4] = 8;
+  ihdr[5] = 6;
+  ihdr[6] = 0;
+  ihdr[7] = 0;
+  ihdr[8] = 0;
+  const zlibEmpty = Buffer.from([0x78, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+  return Buffer.concat([
+    PNG_SIGNATURE,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlibEmpty),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+};
+
 describe('Image Comparison Helpers', () => {
   describe('DEFAULT_THRESHOLD', () => {
     it('is 0.2', () => {
@@ -746,6 +802,87 @@ describe('Image Comparison Helpers', () => {
 
     it('ChannelDelta carries a mean and a max, both plain numbers', () => {
       expectTypeOf<ChannelDelta>().toEqualTypeOf<{ mean: number; max: number }>();
+    });
+  });
+
+  describe('compareScreenshots - zero-size images', () => {
+    /**
+     * `sharp` refuses to encode zero-dimension input — pinned under "sharp fixture guards"
+     * — but it also refuses to DECODE a PNG that declares them. These tests verify that
+     * `compareScreenshots` propagates sharp's rejection rather than reaching pixelmatch
+     * with a zero-pixel buffer, which would divide by zero and leak NaN into `diffRatio`.
+     */
+    it('rejects a 0x0 PNG whose IHDR declares zero dimensions', async () => {
+      await expect(compareScreenshots(zeroDimensionPng(0, 0), zeroDimensionPng(0, 0))).rejects.toThrow(/corrupt/i);
+    });
+
+    it('rejects a 0xN PNG with zero width but nonzero height', async () => {
+      await expect(compareScreenshots(zeroDimensionPng(0, SQUARE_10.height), await red10x10())).rejects.toThrow(
+        /corrupt/i
+      );
+    });
+  });
+
+  describe('compareScreenshots - non-finite thresholds', () => {
+    /**
+     * pixelmatch computes `maxDelta = 35215 * threshold * threshold` and flags a pixel
+     * only when `abs(delta) > maxDelta`. Non-finite inputs collapse that comparison:
+     *   NaN  →  maxDelta is NaN, and `x > NaN` is ALWAYS false
+     *   ±Inf →  maxDelta is Inf, and `x > Inf` is ALWAYS false
+     * So EVERY pixel is silently forgiven and `diffPixels` reads 0 — a false-positive
+     * match on completely different images. `channelDelta` is structurally blind to
+     * the threshold (it never sees it), which is the safety net these tests pin: the
+     * movement is still reported even when `diffPixels` swallows it.
+     */
+    it('silently matches completely different images with threshold: NaN', async () => {
+      const result = await compareScreenshots(await redPng100(), await greenPng100(), {
+        threshold: NaN,
+      });
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+      expect(result.channelDelta.r).toEqual({ mean: OPAQUE_CHANNEL_MAX, max: OPAQUE_CHANNEL_MAX });
+      expect(result.channelDelta.g).toEqual({ mean: OPAQUE_CHANNEL_MAX, max: OPAQUE_CHANNEL_MAX });
+    });
+
+    it('silently matches completely different images with threshold: Infinity', async () => {
+      const result = await compareScreenshots(await redPng100(), await greenPng100(), {
+        threshold: Infinity,
+      });
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+      expect(result.channelDelta.r).toEqual({ mean: OPAQUE_CHANNEL_MAX, max: OPAQUE_CHANNEL_MAX });
+    });
+
+    it('treats NaN threshold harmlessly for identical images', async () => {
+      const img = await redPng100();
+
+      const result = await compareScreenshots(img, img, { threshold: NaN });
+
+      expect(result.diffPixels).toBe(0);
+      expect(result.diffRatio).toBe(0);
+      expect(result.matches).toBe(true);
+      expect(result.channelDelta).toEqual(NO_MOVEMENT);
+    });
+  });
+
+  describe('compareScreenshots - it.fails tripwires', () => {
+    /**
+     * Guard tripwires: each asserts the DANGEROUS outcome that the current code
+     * prevents. `it.fails` expects the inner test to fail; if the guard is ever
+     * removed the assertion passes, the test succeeds, and the tripwire trips.
+     */
+    it.fails('would compute NaN diffRatio for a 0x0 image if sharp did not reject it', async () => {
+      const result = await compareScreenshots(zeroDimensionPng(0, 0), zeroDimensionPng(0, 0));
+      expect(Number.isNaN(result.diffRatio)).toBe(true);
+    });
+
+    it.fails('would falsely match an empty buffer if the decode guard did not reject it', async () => {
+      const result = await compareScreenshots(Buffer.alloc(0), await redPng100());
+      expect(result.matches).toBe(true);
     });
   });
 });

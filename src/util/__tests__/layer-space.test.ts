@@ -64,6 +64,78 @@ describe('documentPointToLayerLocal', () => {
     // is what stops a caller mutating a hook's live accumulator in place.
     expect(documentPointToLayerLocal(point, ORIGIN)).toEqual(point);
   });
+
+  it('propagates non-finite point coordinates through the rebase without throwing', () => {
+    // The module is a pure subtraction with no input sanitiser, so a NaN/Infinity sample — a
+    // corrupt gesture, not a real coordinate — passes straight through. This pins the CURRENT
+    // contract; the tripwire at the foot of the file argues the boundary ought to refuse it.
+    expect(documentPointToLayerLocal({ x: Number.NaN, y: 5 }, OFFSET)).toEqual({ x: Number.NaN, y: -20 });
+    expect(documentPointToLayerLocal({ x: Infinity, y: -Infinity }, OFFSET)).toEqual({
+      x: Infinity,
+      y: -Infinity,
+    });
+    // Only the axis a non-finite value touches goes non-finite: a NaN origin corrupts just the
+    // coordinate it is subtracted from.
+    expect(documentPointToLayerLocal({ x: 40, y: 25 }, { x: Number.NaN, y: 0, width: 1, height: 1 })).toEqual({
+      x: Number.NaN,
+      y: 25,
+    });
+  });
+
+  it('does not coerce a non-finite layerPos to the origin, per the deliberate non-guard', () => {
+    // A NaN origin is a corrupt store, deliberately distinct from an absent (null/undefined)
+    // one: absent rebases as (0, 0) and yields the document point back, but NaN must NOT
+    // silently become 0 — that is the wrong-raster failure this module exists to make impossible.
+    expect(
+      documentPointToLayerLocal({ x: 40, y: 25 }, { x: Number.NaN, y: Number.NaN, width: 100, height: 80 })
+    ).toEqual({ x: Number.NaN, y: Number.NaN });
+    // The corrupted result is not the document point folded to the origin.
+    expect(
+      documentPointToLayerLocal({ x: 40, y: 25 }, { x: Number.NaN, y: Number.NaN, width: 100, height: 80 })
+    ).not.toEqual({ x: 40, y: 25 });
+  });
+
+  it('rebases a layerPos carrying Infinity without throwing', () => {
+    // Infinity is no real origin, but the module does not guard it either: the subtraction still
+    // runs and the result reflects IEEE-754 arithmetic, never the origin. Infinity on an axis
+    // inverts the sign of the offset it is subtracted from.
+    expect(documentPointToLayerLocal({ x: 40, y: 25 }, { x: Infinity, y: -Infinity, width: 1, height: 1 })).toEqual({
+      x: -Infinity,
+      y: Infinity,
+    });
+    expect(documentPointToLayerLocal({ x: 40, y: 25 }, { x: -Infinity, y: -Infinity, width: 1, height: 1 })).toEqual({
+      x: Infinity,
+      y: Infinity,
+    });
+  });
+
+  it('rebases a zero-size layer exactly, whose dimensions are irrelevant to the origin', () => {
+    // A 0x0 layer still presents a buffer staged at its origin, and the rebase only reads
+    // `x`/`y`; width/height never enter the arithmetic. The layer's own corner still maps to
+    // (0, 0), and a document point on it still rebases by the origin.
+    const zero: Pos = { x: 7, y: 3, width: 0, height: 0 };
+    expect(documentPointToLayerLocal({ x: 7, y: 3 }, zero)).toEqual({ x: 0, y: 0 });
+    expect(documentPointToLayerLocal({ x: 0, y: 0 }, zero)).toEqual({ x: -7, y: -3 });
+    expect(documentPointToLayerLocal({ x: 12.5, y: 16.5 }, zero)).toEqual({ x: 5.5, y: 13.5 });
+  });
+
+  it('rebases large offsets exactly within double precision', () => {
+    // A layer pushed far from the document origin still rebases by plain subtraction: the
+    // layer's own corner is (0, 0) in its local frame, and a point a billion pixels to its
+    // right is a billion pixels in — exact at this magnitude (well under MAX_SAFE_INTEGER).
+    const far: Pos = { x: 1_000_000_000, y: -1_000_000_000, width: 100, height: 80 };
+    expect(documentPointToLayerLocal({ x: 1_000_000_000, y: -1_000_000_000 }, far)).toEqual({ x: 0, y: 0 });
+    expect(documentPointToLayerLocal({ x: 2_000_000_000, y: 0 }, far)).toEqual({ x: 1_000_000_000, y: 1_000_000_000 });
+  });
+
+  it('returns a new point for a non-finite result, never the input', () => {
+    // The no-mutation contract holds even when the arithmetic is non-finite: the result is still
+    // a fresh object, so a caller can never alias a hook accumulator.
+    const point = { x: Number.NaN, y: 0 };
+    const result = documentPointToLayerLocal(point, OFFSET);
+    expect(result).not.toBe(point);
+    expect(result).toEqual({ x: Number.NaN, y: -25 });
+  });
 });
 
 describe('documentPointsToLayerLocal', () => {
@@ -173,5 +245,106 @@ describe('documentPointsToLayerLocal', () => {
 
       expect(back).toEqual(stroke);
     }
+  });
+
+  it('propagates a single non-finite point in a gesture while rebasing the rest', () => {
+    // A corrupt sample does not take out the whole gesture: the rebase maps each point
+    // independently, so the NaN leaks only into its own coordinate and every other point is
+    // rebased by the origin exactly as before.
+    const stroke = [
+      { x: 40, y: 25 },
+      { x: Number.NaN, y: 50 },
+      { x: 90, y: 30 },
+    ];
+    const snapshot = stroke.map((point) => ({ ...point }));
+
+    expect(documentPointsToLayerLocal(stroke, OFFSET)).toEqual([
+      { x: 0, y: 0 },
+      { x: Number.NaN, y: 25 },
+      { x: 50, y: 5 },
+    ]);
+    // The input gesture is left exactly as it was found.
+    expect(stroke).toEqual(snapshot);
+  });
+
+  it('propagates a non-finite layerPos across every element of a gesture', () => {
+    // A corrupt origin corrupts the whole gesture the same way it corrupts a single point:
+    // every coordinate it is subtracted from goes non-finite, and the result is still a fresh
+    // array with fresh elements.
+    const stroke = [
+      { x: 40, y: 25 },
+      { x: 60, y: 45 },
+    ];
+    const result = documentPointsToLayerLocal(stroke, { x: Number.NaN, y: Number.NaN, width: 100, height: 80 });
+
+    expect(result).toEqual([
+      { x: Number.NaN, y: Number.NaN },
+      { x: Number.NaN, y: Number.NaN },
+    ]);
+    expect(result).not.toBe(stroke);
+    expect(result[0]).not.toBe(stroke[0]);
+  });
+
+  it('rebases a gesture against a zero-size layer exactly as against any origin', () => {
+    const zero: Pos = { x: 7, y: 3, width: 0, height: 0 };
+    const stroke = [
+      { x: 7, y: 3 },
+      { x: 12.5, y: 16.5 },
+    ];
+
+    expect(documentPointsToLayerLocal(stroke, zero)).toEqual([
+      { x: 0, y: 0 },
+      { x: 5.5, y: 13.5 },
+    ]);
+  });
+
+  it('round-trips a large-offset gesture back to the original points', () => {
+    // The only operation this module does is a translation, so adding the layer origin back to
+    // each rebased point restores the document-space gesture exactly, even at a billion-pixel
+    // offset.
+    const far: Pos = { x: 1_000_000_000, y: -1_000_000_000, width: 100, height: 80 };
+    const stroke = [
+      { x: 0, y: 0 },
+      { x: 1_000_000_000, y: -1_000_000_000 },
+      { x: 1_500_000_000, y: 2_000_000_000 },
+    ];
+
+    const back = documentPointsToLayerLocal(stroke, far).map((point) => ({
+      x: point.x + far.x,
+      y: point.y + far.y,
+    }));
+
+    expect(back).toEqual(stroke);
+  });
+});
+
+describe('known gaps (it.fails tripwires)', () => {
+  // Tripwires pin behaviour the module *ought* to have but does not yet: a passing tripwire
+  // here is red until the gap is closed, then flips green and reports itself. The rest of the
+  // codebase sanitises non-finite numerics at the tool-callback boundary (tolerance in
+  // magicWand, alpha/radius in paint tools, etc.), but the layer rebase that `usePaintStroke`
+  // hands a processor does not. A non-finite sample is a corrupt gesture, not a coordinate,
+  // and propagating NaN through it silently nullifies the segment downstream (every
+  // `distance <= NaN` is false) with no signal — the exact class of silent stroke failure
+  // this module exists to make impossible, just from the other input. Note this targets the
+  // POINT, never the layerPos: a non-finite origin is the deliberate non-guard above.
+
+  it.fails('rebases a non-finite point onto a finite coordinate instead of emitting NaN', () => {
+    const result = documentPointToLayerLocal({ x: Number.NaN, y: 0 }, OFFSET);
+
+    expect(Number.isFinite(result.x)).toBe(true);
+    expect(Number.isFinite(result.y)).toBe(true);
+  });
+
+  it.fails('does not leak a non-finite sample into a rebased gesture', () => {
+    const result = documentPointsToLayerLocal(
+      [
+        { x: Number.NaN, y: 0 },
+        { x: 60, y: 45 },
+      ],
+      OFFSET
+    );
+
+    expect(result.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true);
   });
 });

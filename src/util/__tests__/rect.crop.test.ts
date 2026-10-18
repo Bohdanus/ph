@@ -194,6 +194,136 @@ describe('trimRect for crop', () => {
       isTrimmed: true,
     });
   });
+
+  it('clamps a rect extending far past the far edge to the document boundary', () => {
+    const huge: RectXY = { x1: 0, y1: 0, x2: 1e9, y2: 1e9 };
+    expect(trimRect(huge, imageSize)).toEqual({ x: 0, y: 0, width: 800, height: 600, isTrimmed: true });
+  });
+
+  it('clamps a deeply inverted rect whose far edge lies beyond the image', () => {
+    // x1 > x2 and the larger edge is off the far side: sortRect re-orders, then clamp
+    // collapses the outside edge to the boundary instead of producing a phantom rect.
+    const inverted: RectXY = { x1: 2000, y1: 1500, x2: 100, y2: 50 };
+    expect(trimRect(inverted, imageSize)).toEqual({ x: 100, y: 50, width: 700, height: 550, isTrimmed: true });
+  });
+
+  it('collapses a zero-WIDTH degenerate rect (x1 === x2) to a vertical zero-width span', () => {
+    const degenerate: RectXY = { x1: 100, y1: 50, x2: 100, y2: 300 };
+    expect(trimRect(degenerate, imageSize)).toEqual({ x: 100, y: 50, width: 0, height: 250, isTrimmed: false });
+  });
+
+  it('does not throw on a NaN coordinate and propagates it through the Pos', () => {
+    // A corrupt upstream record can inject NaN; the crop processor feeds the Pos straight into
+    // drawImage, so the contract here is "don't throw" — the NaN then flows into x and width.
+    const result = trimRect({ x1: NaN, y1: NaN, x2: NaN, y2: NaN }, imageSize);
+    expect(result.isTrimmed).toBe(false);
+    expect(result.x).toBeNaN();
+    expect(result.width).toBeNaN();
+  });
+
+  it('clamps Infinity down and -Infinity up exactly like the clampEdge map', () => {
+    expect(trimRect({ x1: -Infinity, y1: 0, x2: Infinity, y2: Infinity }, imageSize)).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+      isTrimmed: true,
+    });
+  });
+
+  // --- non-finite coordinates: NaN propagates through sortRect and clampEdge ---
+
+  it('propagates NaN from only the near edge through the Pos without throwing', () => {
+    // Math.min(NaN, 200) = NaN, so the far edge is also pulled into NaN.
+    const result = trimRect({ x1: NaN, y1: 10, x2: 200, y2: 100 }, imageSize);
+    expect(result.x).toBeNaN();
+    expect(result.width).toBeNaN();
+    expect(result.y).toBe(10);
+    expect(result.height).toBe(90);
+    expect(result.isTrimmed).toBe(false);
+  });
+
+  it('propagates NaN from only the far edge through the Pos without throwing', () => {
+    // Math.min(10, NaN) = NaN, so the near edge is also pulled into NaN.
+    const result = trimRect({ x1: 10, y1: 10, x2: NaN, y2: 100 }, imageSize);
+    expect(result.x).toBeNaN();
+    expect(result.width).toBeNaN();
+    expect(result.y).toBe(10);
+    expect(result.height).toBe(90);
+    expect(result.isTrimmed).toBe(false);
+  });
+
+  it('clamps -Infinity on the near edge to 0, keeping the finite far edge', () => {
+    const result = trimRect({ x1: -Infinity, y1: 100, x2: 400, y2: 300 }, imageSize);
+    expect(result).toEqual({ x: 0, y: 100, width: 400, height: 200, isTrimmed: true });
+  });
+
+  it('clamps Infinity on the far edge to the document boundary, keeping the finite near edge', () => {
+    const result = trimRect({ x1: 100, y1: 100, x2: Infinity, y2: 300 }, imageSize);
+    expect(result).toEqual({ x: 100, y: 100, width: 700, height: 200, isTrimmed: true });
+  });
+
+  // --- very large values: clamping must not overflow or produce negative extents ---
+
+  it('collapses a rect to Number.MAX_SAFE_INTEGER down to the document boundary', () => {
+    const huge = Number.MAX_SAFE_INTEGER;
+    expect(trimRect({ x1: 0, y1: 0, x2: huge, y2: huge }, imageSize)).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+      isTrimmed: true,
+    });
+  });
+
+  it('clamps a negative MAX_SAFE_INTEGER near-edge rect to the document origin', () => {
+    const huge = Number.MAX_SAFE_INTEGER;
+    expect(trimRect({ x1: -huge, y1: 0, x2: 100, y2: 100 }, imageSize)).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      isTrimmed: true,
+    });
+  });
+
+  it('clamps a 1e15 far-edge rect down to the document boundary', () => {
+    expect(trimRect({ x1: 0, y1: 0, x2: 1e15, y2: 1e15 }, imageSize)).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+      isTrimmed: true,
+    });
+  });
+
+  // --- degenerate spans: zero-width or zero-height rects ---
+
+  it('produces a zero-height horizontal span when y1 === y2', () => {
+    const result = trimRect({ x1: 100, y1: 50, x2: 400, y2: 50 }, imageSize);
+    expect(result).toEqual({ x: 100, y: 50, width: 300, height: 0, isTrimmed: false });
+  });
+
+  it('collapses a zero-width span pinned to the right edge to that edge point', () => {
+    // x1 === x2 === imageWidth: no edge crosses the boundary, so isTrimmed stays false.
+    const result = trimRect({ x1: 800, y1: 100, x2: 800, y2: 200 }, imageSize);
+    expect(result).toEqual({ x: 800, y: 100, width: 0, height: 100, isTrimmed: false });
+  });
+
+  // --- it.fails tripwires: known gaps the isTrimmed guard does not yet cover ---
+
+  it.fails('flags a rect whose coordinates are all NaN as trimmed (NaN escapes every < and > comparison)', () => {
+    // `x1 < 0 || y1 < 0 || x2 > imageWidth || y2 > imageHeight` is false for NaN
+    // because NaN is never < or > anything. A corrupt rect is not "within bounds".
+    const result = trimRect({ x1: NaN, y1: NaN, x2: NaN, y2: NaN }, imageSize);
+    expect(result.isTrimmed).toBe(true);
+  });
+
+  it.fails('flags a rect with a single NaN edge as trimmed (the NaN edge is invisible to the guard)', () => {
+    // The far edge is NaN, but NaN > imageWidth is false, so isTrimmed is false.
+    const result = trimRect({ x1: 10, y1: 10, x2: NaN, y2: 100 }, imageSize);
+    expect(result.isTrimmed).toBe(true);
+  });
 });
 
 describe('trimRect2 for crop', () => {
@@ -228,6 +358,24 @@ describe('trimRect2 for crop', () => {
 
     expect(trimRect2(rect, imageSize)).toEqual(rect);
   });
+
+  it('clamps a rect extending far past the far edge to the document boundary', () => {
+    const huge: RectXY = { x1: 0, y1: 0, x2: 1e9, y2: 1e9 };
+    expect(trimRect2(huge, imageSize)).toEqual({ x1: 0, y1: 0, x2: 800, y2: 600 });
+  });
+
+  it('clamps a deeply inverted rect whose far edge lies beyond the image', () => {
+    const inverted: RectXY = { x1: 2000, y1: 1500, x2: 100, y2: 50 };
+    expect(trimRect2(inverted, imageSize)).toEqual({ x1: 100, y1: 50, x2: 800, y2: 600 });
+  });
+
+  it('does not throw on a NaN coordinate and propagates it to the clamped edges', () => {
+    const result = trimRect2({ x1: NaN, y1: 0, x2: 150, y2: 20 }, imageSize);
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(0);
+    expect(result.y2).toBe(20);
+  });
 });
 
 describe('sortRect for crop', () => {
@@ -247,6 +395,23 @@ describe('sortRect for crop', () => {
     const point = { x1: 200, y1: 150, x2: 200, y2: 150 };
 
     expect(sortRect(point)).toEqual(point);
+  });
+
+  it('sorts Infinity and -Infinity as ordinary extended reals', () => {
+    expect(sortRect({ x1: Infinity, y1: -Infinity, x2: 100, y2: 50 })).toEqual({
+      x1: 100,
+      y1: -Infinity,
+      x2: Infinity,
+      y2: 50,
+    });
+  });
+
+  it('does not throw on a NaN coordinate and propagates it to the affected axis', () => {
+    const result = sortRect({ x1: NaN, y1: 50, x2: 200, y2: 150 });
+    expect(result.x1).toBeNaN();
+    expect(result.x2).toBeNaN();
+    expect(result.y1).toBe(50);
+    expect(result.y2).toBe(150);
   });
 });
 
@@ -327,6 +492,21 @@ describe('sortRoundRect for crop', () => {
     expect(result.y).toBe(-6);
     expect(result.width).toBe(11);
     expect(result.height).toBe(6);
+  });
+
+  it('does not clamp, so Infinity survives as an unbounded extent', () => {
+    // sortRoundRect is crop's grow-the-canvas arm: a rect dragged past the far edge
+    // must not be cropped, so Infinity is not a bug to trim here.
+    const result = sortRoundRect({ x1: -Infinity, y1: 0, x2: Infinity, y2: 50 });
+    expect(result).toEqual({ x: -Infinity, y: 0, width: Infinity, height: 50 });
+  });
+
+  it('does not throw on a NaN coordinate and propagates it into the extent', () => {
+    const result = sortRoundRect({ x1: NaN, y1: 0, x2: 10, y2: 20 });
+    expect(result.x).toBeNaN();
+    expect(result.width).toBeNaN();
+    expect(result.y).toBe(0);
+    expect(result.height).toBe(20);
   });
 });
 
