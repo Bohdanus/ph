@@ -360,6 +360,14 @@ describe('useLayers drawAllLayers', () => {
 
     expect(result.current.store.renderSelector.source).toBe('pending');
 
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+
+    // The logical replay is staged, but no presentation authority has been
+    // accepted yet, so repainting would replace the last visible document.
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
+
     const composite = makeComposite(layerPos, layerId, docFrame);
     vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(composite);
 
