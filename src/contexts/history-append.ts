@@ -203,14 +203,8 @@ function compareDurableSourceToLegacy(source: LayerSource, durable: DurableLayer
     ) {
       return 'the durable raster layer source does not match the legacy source';
     }
-    // The SHAPE of the asset id, and nothing else. Whether the registry can
-    // actually resolve it is a different question that this function cannot
-    // answer — it holds no registry — so it is asked by the caller through
-    // `registryResolvesAsset`. The message this replaced ("the durable raster
-    // layer source has no registered asset") named a check that existed nowhere
-    // on `main`, so a plan naming an asset that was never registered, or that was
-    // registered and then disposed, validated clean here and published a durable
-    // document whose raster threw at materialization time instead.
+    // This checks only descriptor shape and dimensions. The caller checks that
+    // the id is live and is registered from this exact legacy bitmap object.
     return typeof durableSource.assetId === 'string' && durableSource.assetId.length > 0
       ? null
       : 'the durable raster layer source names no asset id';
@@ -660,12 +654,12 @@ export type DurableAppendInput = Readonly<{
    */
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null;
   /**
-   * The asset registry, for the raster liveness question only.
+   * The asset registry, for raster liveness and source-identity validation.
    *
    * A source-backed plan naming a raster registers its asset inside the store's
    * document asset transaction, so nothing about the plan itself proves the asset
-   * resolves. This is the independent copy of that fact, and it is what turns
-   * `registryResolvesAsset` from an absent predicate into a check.
+   * resolves or was registered from the legacy bitmap. This independently checks
+   * both facts without mutating registry ownership.
    *
    * Omitted, it defaults to the process registry — the same singleton the store
    * registers the asset in and the same default `legacyHistoryToDurable` converts
@@ -788,8 +782,8 @@ export function registryResolvesAsset(registry: AssetRegistryProbe | null | unde
   return registry ? !!registry.getRecord(assetId) : false;
 }
 
-/** The only registry capability the boundary asks for. */
-export type AssetRegistryProbe = Pick<AssetRegistry, 'getRecord'>;
+/** The registry capabilities needed to verify a planned raster source. */
+export type AssetRegistryProbe = Pick<AssetRegistry, 'getRecord' | 'matchesRegisteredSource'>;
 
 type RetainedToolOperationKind =
   'apply-filter' | 'apply-affine-transform' | 'apply-raster-processor' | 'reposition-layer';
@@ -1153,7 +1147,8 @@ export function validatePlannedDurableEntry(
   planned: DurableHistoryEntry,
   preLayerOrder?: readonly LayerId[] | null,
   preLayers?: ReadonlyMap<LayerId, DurableLayerSnapshot> | null,
-  registry?: AssetRegistryProbe | null
+  registry?: AssetRegistryProbe | null,
+  documentId?: string
 ): string | null {
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
@@ -1390,8 +1385,20 @@ export function validatePlannedDurableEntry(
     const sourceProblem = compareDurableSourceToLegacy(source, snapshot);
     if (sourceProblem) return sourceProblem;
 
-    if (snapshot.source.kind === 'raster' && registry && !registryResolvesAsset(registry, snapshot.source.assetId)) {
-      return `the durable raster layer source names asset ${snapshot.source.assetId}, which the asset registry cannot resolve`;
+    if (snapshot.source.kind === 'raster') {
+      if (source.kind !== 'image') return 'the durable raster layer source has no matching legacy image source';
+      if (!registry) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which cannot be verified without the asset registry`;
+      }
+      if (!registryResolvesAsset(registry, snapshot.source.assetId)) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which the asset registry cannot resolve`;
+      }
+      if (!documentId) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which cannot be verified for a document without its id`;
+      }
+      if (!registry.matchesRegisteredSource(snapshot.source.assetId, source.bitmap, documentId)) {
+        return `the durable raster layer source names asset ${snapshot.source.assetId}, which is not owned by this document and registered from the legacy source bitmap`;
+      }
     }
 
     if (operation.kind === 'merge-document') {
@@ -1538,13 +1545,10 @@ export function decideDurableAppend({
     }
   }
 
-  // A raster source is the one thing a planned entry cannot be self-consistent
-  // about: it names an asset that lives in the runtime registry, so nothing in the
-  // entry proves the asset resolves. A store that explicitly withheld its registry
-  // cannot answer, which is the same class of refusal as the reorder arm's three and
-  // is reported as a precondition for the same reason — a store that cannot check is
-  // not a writer that answered wrongly, and the reconversion that replaces it
-  // registers the asset itself.
+  // A raster source names a runtime asset, so the planned entry alone proves
+  // neither liveness nor source identity. A store that explicitly withheld its
+  // registry cannot answer, which is a precondition refusal rather than a writer
+  // mismatch; reconversion registers the legacy source itself.
   const registry = suppliedRegistry === null ? null : (suppliedRegistry ?? getAssetRegistry());
   const plannedSnapshot =
     planned.operation.kind === 'create-layer'
@@ -1559,7 +1563,7 @@ export function decideDurableAppend({
     };
   }
 
-  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers, registry);
+  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder, preLayers, registry, documentId);
   if (problem) return { outcome: 'mismatch', reason: problem };
 
   const cursor = base.history.length;

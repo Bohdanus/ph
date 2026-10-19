@@ -15,7 +15,7 @@ import {
   type DurableDocument,
   type DurableHistoryEntry,
 } from '../history-model.ts';
-import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
+import type { HistoryItem } from '../history-types.ts';
 import type { LayerSource } from '../layer-types.ts';
 import { NEW_LAYER_ACTION } from '../../util/constants.ts';
 
@@ -81,7 +81,7 @@ describe('history append source-backed create planning', () => {
       if (!entry || entry.operation.kind !== 'create-layer' || entry.operation.layer.source.kind !== 'raster') return;
       expect(registry.getRecord(entry.operation.layer.source.assetId)).toBeDefined();
       expect([...collectDurableAssetIds(durableDocument(entry))]).toEqual([entry.operation.layer.source.assetId]);
-      expect(validatePlannedDurableEntry(item, entry)).toBeNull();
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBeNull();
     } finally {
       registry.shutdown();
     }
@@ -163,7 +163,21 @@ describe('history append raster asset liveness', () => {
       const item = createItem('image-layer', imageSource());
       const entry = deriveCreateLayerEntry(item, context(registry))!;
 
-      expect(validatePlannedDurableEntry(item, entry, null, null, registry)).toBeNull();
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBeNull();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('does not validate a raster asset when no registry can verify its source identity', () => {
+    const registry = new AssetRegistry();
+    try {
+      const item = createItem('image-layer', imageSource());
+      const entry = deriveCreateLayerEntry(item, context(registry))!;
+
+      expect(validatePlannedDurableEntry(item, entry, null, null, null, documentId)).toMatch(
+        /cannot be verified without the asset registry/
+      );
     } finally {
       registry.shutdown();
     }
@@ -175,8 +189,26 @@ describe('history append raster asset liveness', () => {
       const item = createItem('image-layer', imageSource());
       const entry = withAssetId(deriveCreateLayerEntry(item, context(registry))!, 'never-registered' as AssetId);
 
-      expect(validatePlannedDurableEntry(item, entry, null, null, registry)).toBe(
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBe(
         'the durable raster layer source names asset never-registered, which the asset registry cannot resolve'
+      );
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('refuses a live same-sized asset registered from a different source bitmap', () => {
+    const registry = new AssetRegistry();
+    try {
+      const item = createItem('image-layer', imageSource());
+      const planned = deriveCreateLayerEntry(item, context(registry))!;
+      const otherBitmap = { width: 40, height: 30, close: () => {} } as unknown as ImageBitmap;
+      const otherAssetId = registry.registerBaseline(documentId, otherBitmap, { ownership: 'adopt' });
+      const substituted = withAssetId(planned, otherAssetId);
+
+      expect(registry.getRecord(otherAssetId)).toBeDefined();
+      expect(validatePlannedDurableEntry(item, substituted, null, null, registry, documentId)).toBe(
+        `the durable raster layer source names asset ${otherAssetId}, which is not owned by this document and registered from the legacy source bitmap`
       );
     } finally {
       registry.shutdown();
@@ -199,7 +231,7 @@ describe('history append raster asset liveness', () => {
       registry.disposeDocument(documentId);
 
       expect(registry.getRecord(assetId as AssetId)).toBeUndefined();
-      expect(validatePlannedDurableEntry(item, entry, null, null, registry)).toBe(
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBe(
         `the durable raster layer source names asset ${assetId}, which the asset registry cannot resolve`
       );
     } finally {
@@ -209,8 +241,10 @@ describe('history append raster asset liveness', () => {
 
   describe('decideDurableAppend: a store that cannot see the registry', () => {
     let lastPlan: ReturnType<typeof deriveCreateLayerEntry> | null = null;
+    let lastEntry: HistoryItem | null = null;
     beforeEach(() => {
       lastPlan = null;
+      lastEntry = null;
     });
     /**
      * `registry: null` is the explicit "this store cannot answer", which is why the
@@ -221,18 +255,23 @@ describe('history append raster asset liveness', () => {
     function decide(
       planner: AssetRegistry,
       supplied: AssetRegistry | null,
-      options: Readonly<{ replan?: boolean }> = {}
+      options: Readonly<{ replan?: boolean; substituteWith?: AssetId }> = {}
     ) {
-      const newItem: NewHistoryItem = {
-        actionName: NEW_LAYER_ACTION,
-        layerId: 'image-layer',
-        layerSource: imageSource(),
-      };
-      const entry: HistoryItem = { id: 'create-1', ...newItem };
-      const planned =
+      const entry: HistoryItem =
+        options.replan === false && lastEntry
+          ? lastEntry
+          : {
+              id: 'create-1',
+              actionName: NEW_LAYER_ACTION,
+              layerId: 'image-layer',
+              layerSource: imageSource(),
+            };
+      lastEntry = entry;
+      const derived =
         options.replan === false
           ? lastPlan
           : deriveCreateLayerEntry(entry, { documentId, registry: planner, preLayers: new Map() });
+      const planned = derived && options.substituteWith ? withAssetId(derived, options.substituteWith) : derived;
       lastPlan = planned;
       const base = {
         documentId,
@@ -283,6 +322,23 @@ describe('history append raster asset liveness', () => {
       }
     });
 
+    it('falls back when a supplied plan substitutes another live same-sized asset', () => {
+      const registry = new AssetRegistry();
+      try {
+        const unrelatedBitmap = { width: 40, height: 30, close: () => {} } as unknown as ImageBitmap;
+        const unrelatedAssetId = registry.registerBaseline(documentId, unrelatedBitmap, { ownership: 'adopt' });
+
+        const decision = decide(registry, registry, { substituteWith: unrelatedAssetId });
+
+        expect(decision.outcome).toBe('mismatch');
+        if (decision.outcome !== 'mismatch') return;
+        expect(decision.reason).toContain('not owned by this document and registered from the legacy source bitmap');
+        expect(decision).not.toHaveProperty('document');
+      } finally {
+        registry.shutdown();
+      }
+    });
+
     it('refuses the same plan after the registry disposes its asset', () => {
       const registry = new AssetRegistry();
       try {
@@ -294,6 +350,32 @@ describe('history append raster asset liveness', () => {
         expect(decision.outcome).toBe('mismatch');
         if (decision.outcome !== 'mismatch') return;
         expect(decision.reason).toMatch(/which the asset registry cannot resolve$/);
+      } finally {
+        registry.shutdown();
+      }
+    });
+
+    it('refuses publication after document disposal even while a lease keeps the asset live', async () => {
+      const registry = new AssetRegistry();
+      try {
+        expect(decide(registry, registry).outcome).toBe('published');
+        const planned = lastPlan;
+        if (!planned || planned.operation.kind !== 'create-layer' || planned.operation.layer.source.kind !== 'raster') {
+          throw new Error('expected a planned raster layer');
+        }
+
+        const lease = await registry.resolve(planned.operation.layer.source.assetId);
+        registry.disposeDocument(documentId);
+        expect(registry.getRecord(planned.operation.layer.source.assetId)).toBeDefined();
+
+        const decision = decide(registry, registry, { replan: false });
+
+        expect(decision.outcome).toBe('mismatch');
+        if (decision.outcome !== 'mismatch') return;
+        expect(decision.reason).toContain('not owned by this document');
+
+        lease.release();
+        expect(registry.getRecord(planned.operation.layer.source.assetId)).toBeUndefined();
       } finally {
         registry.shutdown();
       }

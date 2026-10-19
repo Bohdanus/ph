@@ -58,8 +58,8 @@ function baseline(layers: Record<string, Layer>): HistoryItem {
   };
 }
 
-function mergeItem(layerId: string, id = 'merge'): HistoryItem {
-  return { id, actionName: MERGE_ACTION, layerId, layerSource: source };
+function mergeItem(layerId: string, id = 'merge', layerSource: LayerSource = source): HistoryItem {
+  return { id, actionName: MERGE_ACTION, layerId, layerSource };
 }
 
 function preLayers(document: ReturnType<typeof legacyHistoryToDurable>['document']) {
@@ -89,7 +89,7 @@ describe('history append atomic merge planning', () => {
       const entry = deriveMergeDocumentEntry(item, mergeContext(registry, before));
 
       expect(entry?.operation).toMatchObject({ kind: 'merge-document', removedLayerIds: ['layer-1', 'layer-2'] });
-      expect(validatePlannedDurableEntry(item, entry!, undefined, before)).toBeNull();
+      expect(validatePlannedDurableEntry(item, entry!, undefined, before, registry, documentId)).toBeNull();
     } finally {
       registry.shutdown();
     }
@@ -128,6 +128,56 @@ describe('history append atomic merge planning', () => {
       expect(decision.document.history).toHaveLength(converted.document.history.length + 1);
       expect(decision.document.history.at(-1)?.operation.kind).toBe('merge-document');
       expect(decision.document.durableRevision).toBe(converted.document.durableRevision + 1);
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('rejects a raster merge result that names another live same-sized source asset', () => {
+    const registry = new AssetRegistry();
+    try {
+      const converted = legacyHistoryToDurable([baseline({ 'layer-1': blankLayer('layer-1', 0) })], {
+        documentId,
+        registry,
+      });
+      const before = preLayers(converted.document);
+      const bitmap = { width: 40, height: 30, close: () => {} } as unknown as ImageBitmap;
+      const imageSource: LayerSource = {
+        kind: 'image',
+        bitmap,
+        name: 'Photo',
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 100, height: 80 },
+      };
+      const item = mergeItem('merged', 'merge-raster', imageSource);
+      const planned = deriveMergeDocumentEntry(item, mergeContext(registry, before));
+
+      expect(validatePlannedDurableEntry(item, planned!, undefined, before, registry, documentId)).toBeNull();
+      if (
+        !planned ||
+        planned.operation.kind !== 'merge-document' ||
+        planned.operation.result.source.kind !== 'raster'
+      ) {
+        throw new Error('expected a raster merge result');
+      }
+
+      const otherBitmap = { width: 40, height: 30, close: () => {} } as unknown as ImageBitmap;
+      const otherAssetId = registry.registerBaseline(documentId, otherBitmap, { ownership: 'adopt' });
+      const substituted = {
+        ...planned,
+        operation: {
+          ...planned.operation,
+          result: {
+            ...planned.operation.result,
+            source: { ...planned.operation.result.source, assetId: otherAssetId },
+          },
+        },
+      };
+
+      expect(registry.getRecord(otherAssetId)).toBeDefined();
+      expect(validatePlannedDurableEntry(item, substituted, undefined, before, registry, documentId)).toContain(
+        'not owned by this document and registered from the legacy source bitmap'
+      );
     } finally {
       registry.shutdown();
     }

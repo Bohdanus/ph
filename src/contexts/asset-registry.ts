@@ -112,11 +112,14 @@ function immutableRasterCopy(bitmap: BitmapSource): BitmapSource {
  *
  * `registerBaseline` accepts an ImageBitmap or snapshots a mutable drawable
  * into a registry-owned immutable ImageBitmap before assigning an AssetId.
+ * A mutable source object's identity represents that first snapshot while the
+ * asset remains live; callers must use a new object to register revised pixels.
  */
 export class AssetRegistry {
   private readonly assets = new Map<AssetId, AssetEntry>();
   private readonly externalIds = new WeakMap<object, AssetId>();
   private readonly documentGenerations = new Map<string, number>();
+  private readonly documentDisposalEpochs = new Map<string, number>();
   private readonly disposedDocuments = new Set<string>();
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pendingMaterializations = new Map<string, Promise<CacheEntry>>();
@@ -232,17 +235,53 @@ export class AssetRegistry {
     if (sourceType(bitmap) === 'image-bitmap') {
       return this.registerBaseline(documentId, bitmap, options);
     }
+    const external = bitmap as unknown as object;
+    const existingId = this.externalIds.get(external);
+    const existing = existingId ? this.assets.get(existingId) : undefined;
+    if (existing && !existing.disposed) return this.registerBaseline(documentId, bitmap, options);
+
+    const generation = this.getDocumentGeneration(documentId);
+    const disposalEpoch = this.documentDisposalEpochs.get(documentId) ?? 0;
     const create = globalThis.createImageBitmap;
     if (!create) throw new Error('createImageBitmap is required to adopt a mutable raster source');
     const immutable = await create(bitmap as never);
+    if (
+      generation !== this.getDocumentGeneration(documentId) ||
+      disposalEpoch !== (this.documentDisposalEpochs.get(documentId) ?? 0)
+    ) {
+      disposeOwnedBitmap(immutable);
+      throw new DOMException('Baseline registration invalidated by document disposal', 'AbortError');
+    }
+
+    const concurrentId = this.externalIds.get(external);
+    const concurrent = concurrentId ? this.assets.get(concurrentId) : undefined;
+    if (concurrent && !concurrent.disposed) {
+      disposeOwnedBitmap(immutable);
+      return this.registerBaseline(documentId, bitmap, options);
+    }
+    if (concurrentId) this.externalIds.delete(external);
+
     // The registry owns the immutable copy; the mutable caller resource was
     // borrowed and remains the caller's responsibility.
-    return this.registerBaseline(documentId, immutable, { ownership: 'adopt' });
+    const assetId = this.registerBaseline(documentId, immutable, { ownership: 'adopt' });
+    this.externalIds.set(external, assetId);
+    return assetId;
   }
 
   getRecord(assetId: AssetId): AssetRecord | undefined {
     const entry = this.assets.get(assetId);
     return entry && !entry.disposed ? entry.record : undefined;
+  }
+
+  /** Whether this document owns a live asset registered from this exact source object. */
+  matchesRegisteredSource(assetId: AssetId, source: BitmapSource, documentId: string): boolean {
+    const entry = this.assets.get(assetId);
+    return (
+      !!entry &&
+      !entry.disposed &&
+      entry.baselineDocuments.has(documentId) &&
+      this.externalIds.get(source as unknown as object) === assetId
+    );
   }
 
   retain(assetId: AssetId): void {
@@ -366,6 +405,7 @@ export class AssetRegistry {
   }
 
   disposeDocument(documentId: string): void {
+    this.documentDisposalEpochs.set(documentId, (this.documentDisposalEpochs.get(documentId) ?? 0) + 1);
     if (this.disposedDocuments.has(documentId)) return;
     this.disposedDocuments.add(documentId);
     for (const entry of this.assets.values()) {
