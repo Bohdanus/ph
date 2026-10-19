@@ -518,6 +518,7 @@ export const useLayers = () => {
       assertWithinDocumentPixelBudget(params.size, 'Document');
     }
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
+    if (currentLayers === null) return;
 
     const source: BlankLayerSource = { kind: 'blank', ...params };
     const newLayer = createLayerSource({ layers: currentLayers, source });
@@ -542,6 +543,7 @@ export const useLayers = () => {
 
   const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
+    if (currentLayers === null) return;
 
     const source: ImageLayerSource = {
       kind: 'image',
@@ -625,7 +627,6 @@ export const useLayers = () => {
     const layer = layers[id];
     if (!layer || source.kind !== 'tool') return null;
     if (isLayerLocked(layer)) return null;
-    delete previewLayersRef.current[id];
     const nextSource = { ...source, args: { ...source.args }, pos: { ...source.pos } };
     const currentArgs = layer.source?.kind === 'tool' ? layer.source.args : null;
     const nextArgs = nextSource.args as ToolArgs & { editingLayerId?: unknown };
@@ -636,6 +637,8 @@ export const useLayers = () => {
       layer.pos.x === nextSource.pos.x &&
       layer.pos.y === nextSource.pos.y
     ) {
+      delete previewLayersRef.current[id];
+      drawAllLayers();
       return layer;
     }
     // Render the replacement before recording it so the live layer's source and raster advance
@@ -647,6 +650,7 @@ export const useLayers = () => {
       console.error('Unable to render a replacement layer source', error);
       return null;
     }
+    delete previewLayersRef.current[id];
     const nextLayer: Layer = {
       ...layer,
       name: rebuilt.name,
@@ -728,6 +732,7 @@ export const useLayers = () => {
     // between, so the `layers` this scope was chosen from is the same record `commitDirtyTool`
     // reads, and the layer it publishes is the layer whose pixels were written.
     const committedLayers = commitDirtyTool(true, id);
+    if (committedLayers === null) return;
     const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
     if (!committedArgs) return;
     const item = { layerId: id, actionName: TOOL_ACTION, args: committedArgs } as const;
@@ -782,7 +787,7 @@ export const useLayers = () => {
    * change to the layer whose pixels were published. So a scoped call leaves every preview and
    * every dirty cache it does not own exactly where it found them.
    */
-  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId): LayersRecord => {
+  const commitDirtyTool = (deferDispatch = false, ownedLayerId?: LayerId): LayersRecord | null => {
     // can be run safely if no dirty layer
 
     // special case
@@ -825,13 +830,26 @@ export const useLayers = () => {
         : activeLayerId
           ? layers[activeLayerId]
           : undefined;
+      if (
+        requestedLayerId &&
+        (!activeLayer || activeLayer.source?.kind !== 'tool' || activeLayer.source.args.toolName !== 'text')
+      ) {
+        const cleared = { ...args, text: '', rect: null };
+        delete cleared.editingLayerId;
+        cancelLayerPreview(requestedLayerId);
+        if (setToolArgs) setToolArgs(cleared);
+        else currentArgsRef.current = cleared;
+        clearOverlay();
+        return layers;
+      }
       if (activeLayer?.source?.kind === 'tool' && activeLayer.source.args.toolName === 'text') {
         const measuredRect = calculateNewRect(args, canvasRef, totalSize) ?? args.rect;
         const pos = canvasToDocumentPos(sortedRectToPos(sortRect(measuredRect)), documentFrame);
         // A new drag on a different origin creates a new text layer. Selection hydration
         // preserves the active layer's origin, which is the explicit in-place-edit signal.
         if (requestedLayerId || (pos.x === activeLayer.pos.x && pos.y === activeLayer.pos.y)) {
-          const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+          const replacementArgs = { ...args };
+          delete replacementArgs.editingLayerId;
           const source: ToolLayerSource = {
             kind: 'tool',
             // Layer-LOCAL, because that is what the create arm stores and what `createLayerSource`
@@ -841,23 +859,24 @@ export const useLayers = () => {
             // -100, a replace armed rendered an EMPTY layer at the right position. The origin
             // comparison above still uses the un-reduced rect, so the guard is unaffected.
             args: {
-              ...persistedArgs,
+              ...replacementArgs,
               rect: reduceRect(sortRect(measuredRect), pos),
               placeholderUntouched: false,
             },
             pos,
           };
           const replaced = replaceLayerSource(activeLayer.id, source);
-          if (replaced) {
-            const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
-            const cleared = { ...persistedArgs, text: '', rect: null };
-            if (setToolArgs) setToolArgs(cleared);
-            else currentArgsRef.current = cleared;
-            clearOverlay();
-            return { ...layers, [activeLayer.id]: replaced };
-          }
+          if (!replaced) return null;
+
+          const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+          const cleared = { ...persistedArgs, text: '', rect: null };
+          if (setToolArgs) setToolArgs(cleared);
+          else currentArgsRef.current = cleared;
+          clearOverlay();
+          return { ...layers, [activeLayer.id]: replaced };
         }
       }
+      if (requestedLayerId) return null;
 
       const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
       const layer = createLayerFromTool({ args: { ...persistedArgs, placeholderUntouched: false } });
@@ -961,9 +980,15 @@ export const useLayers = () => {
     return committedLayers;
   };
 
+  const activeTextEditArgs = () => {
+    const args = currentArgsRef.current;
+    return toolName === 'text' && args?.toolName === 'text' && args.rect ? args : null;
+  };
+
   const removeLayer = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
+    if (activeTextEditArgs()?.editingLayerId === id) return;
 
     const { [id]: removedLayer, ...remainingLayers } = layers;
     const deletedLayer = { ...removedLayer, bitmap: null, tmpCanvas: null };
@@ -1021,6 +1046,9 @@ export const useLayers = () => {
       (actionName === UNLOCK_LAYER_ACTION && patch.locked !== false) ||
       ((actionName === LOCK_LAYER_ACTION || actionName === UNLOCK_LAYER_ACTION) && layer.isBedrock)
     ) {
+      return;
+    }
+    if (actionName === LOCK_LAYER_ACTION && activeTextEditArgs()) {
       return;
     }
     const item = { layerId: id, actionName, args: patch };
@@ -1307,7 +1335,7 @@ export const useLayers = () => {
 
   const beginTextLayerEdit = (id: LayerId) => {
     const layer = layers[id];
-    if (!layer) return;
+    if (!layer || isLayerLocked(layer)) return;
     previewLayersRef.current[id] = {
       // Remove only the runtime raster from this preview. The contenteditable overlay is the sole
       // visible representation while the source is being edited; the marker is never persisted.
@@ -1469,6 +1497,7 @@ export const useLayers = () => {
 
   async function mergeLayers(name: string): Promise<Layer | null> {
     const currentLayers = commitDirtyTool();
+    if (currentLayers === null) return null;
 
     // getBitmap of the canvas
     if (!canvasRef.current) return null;
@@ -1554,6 +1583,7 @@ export const useLayers = () => {
     if (!pixels) return null;
 
     const currentLayers = commitDirtyTool();
+    if (currentLayers === null) return null;
 
     // Through `immutableRaster`, so the editable layer can never alias a mutable
     // surface: a `File > New` backing image is an OffscreenCanvas, and aliasing it

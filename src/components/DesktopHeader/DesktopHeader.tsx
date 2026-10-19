@@ -309,10 +309,10 @@ const DesktopHeader = () => {
     // so it early-returns and an unapplied text layer is dropped with nothing to undo.
     // Selecting first lets that commit read the text args it is meant to read.
     if (figure !== undefined) {
-      goToTool('shape');
+      if (goToTool('shape') === false) return;
       patchToolArgs('shape', { figure });
     } else {
-      goToTool(toolName);
+      if (goToTool(toolName) === false) return;
     }
     closeMenus();
   };
@@ -462,6 +462,7 @@ const DesktopHeader = () => {
                       flushSync(() => {
                         exportLayers = commitDirtyTool();
                       });
+                      if (exportLayers === null) return;
                       const data = await openSaveImageDialog({
                         fileName,
                         layers: exportLayers,

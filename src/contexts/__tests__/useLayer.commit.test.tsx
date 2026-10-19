@@ -496,7 +496,7 @@ describe('useLayers commitDirtyTool history boundary', () => {
       });
     });
 
-    let returned: LayersRecord | undefined;
+    let returned: LayersRecord | null | undefined;
     act(() => {
       returned = result.current.layers.commitDirtyTool(true);
     });
@@ -505,7 +505,7 @@ describe('useLayers commitDirtyTool history boundary', () => {
     });
 
     // A deferred commit returns the merged record for the caller's own dispatch.
-    expect(Object.keys(returned!)).toEqual(['edited']);
+    expect(Object.keys(returned ?? {})).toEqual(['edited']);
     expect(result.current.store.history).toEqual([]);
     expect(result.current.store.previewLayers.current).toEqual({});
     processor.mockRestore();
@@ -719,7 +719,7 @@ describe('useLayers text commit boundary', () => {
     act(() => {
       result.current.store.currentArgs.current = { toolName: 'text', text: '' } as ToolArgs;
       const returned = result.current.layers.commitDirtyTool();
-      expect(Object.keys(returned)).toEqual([]);
+      expect(returned).toEqual({});
     });
 
     expect(result.current.store.history).toEqual([]);
@@ -735,7 +735,7 @@ describe('useLayers text commit boundary', () => {
     act(() => {
       result.current.store.currentArgs.current = { toolName: 'text', text: 'Hello', rect: null } as ToolArgs;
       const returned = result.current.layers.commitDirtyTool();
-      expect(Object.keys(returned)).toEqual([]);
+      expect(returned).toEqual({});
     });
 
     // The stale text survives in the shared draft: the guard is the cleared rect,

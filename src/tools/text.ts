@@ -5,6 +5,49 @@ import type { CreatorToolParams } from './toolProcessors.ts';
 import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
 import type { LayerId } from '../contexts/layer-types.ts';
 
+/** The app's explicit Type font choices, shared by the picker and its tests. */
+export const FONT_FAMILIES = [
+  'Arial',
+  'Helvetica',
+  'Times New Roman',
+  'Courier New',
+  'Verdana',
+  'Georgia',
+  'Palatino',
+  'Garamond',
+  'Comic Sans MS',
+  'Roboto',
+  'Impact',
+  'Trebuchet MS',
+  'Tahoma',
+  'Brush Script MT',
+  'Inter',
+  'Poppins',
+  'Montserrat',
+  'Open Sans',
+  'Lato',
+  'Source Sans Pro',
+  'Nunito',
+  'Merriweather',
+  'Playfair Display',
+  'Raleway',
+  'Oswald',
+  'Roboto Slab',
+  'Ubuntu',
+  'PT Sans',
+  'Work Sans',
+  'Muli',
+  'Quicksand',
+  'DM Sans',
+  'Space Grotesk',
+  'Outfit',
+  'Plus Jakarta Sans',
+  'Manrope',
+  'Instrument Sans',
+  'Syne',
+  'Clash Display',
+] as const;
+
 /**
  * Adobe's `CharacterStyle.size` is `0.01..1296` "in pixels for a 72ppi document"
  * (https://developer.adobe.com/photoshop/uxp/2022/ps-reference/classes/characterstyle). The bound

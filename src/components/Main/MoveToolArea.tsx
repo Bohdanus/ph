@@ -347,7 +347,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     const layer = layerId ? layers[layerId] : undefined;
     const target = layer ? textLayerEditTarget(layer, documentFrame) : null;
     if (!target) return;
-    goToTool('text');
+    if (goToTool('text') === false) return;
     setActiveLayer(target.layerId);
     beginTextLayerEdit(target.layerId);
     setToolArgs(target.args);

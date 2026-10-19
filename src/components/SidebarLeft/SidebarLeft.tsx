@@ -556,7 +556,7 @@ const SidebarLeft = () => {
     tool.name === toolName && (!tool.figure || (toolArgs.toolName === 'shape' && toolArgs.figure === tool.figure));
 
   const selectTool = (tool: ToolbarTool) => {
-    goToTool(tool.name);
+    if (goToTool(tool.name) === false) return;
     if (tool.figure) patchToolArgs('shape', { figure: tool.figure });
   };
 
@@ -1244,11 +1244,9 @@ const SidebarLeft = () => {
         </div>
         {/* One rule, not two, and 8px of margin instead of 12. The rail carries a single
             divider: it separates the tools from the colour cluster, which is the only
-            boundary in the rail that is a boundary. The second `<hr>` this replaces stood
-            between the colour cluster and NOTHING — the commented-out Zoom control that
-            followed it was deleted with it, so nothing renders below the cluster at all — so
-            it spent 24px of margin (`my-3` is 12px a side) and a 1px hairline painting a rule
-            across the bottom of the panel for no division at all. */}
+            boundary in the rail that is a boundary. The obsolete bottom Zoom control was
+            a separate view shortcut, not the Zoom tool in `toolbarMap`; after the colour
+            cluster there is no second panel section to divide. */}
         <hr className="my-2 shrink-0 border-gray-300 dark:border-gray-700" />
 
         <div className="flex shrink-0 flex-col items-center">

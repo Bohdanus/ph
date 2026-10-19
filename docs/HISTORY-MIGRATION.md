@@ -185,14 +185,18 @@ variant or an equivalent atomic history action.
    `e2e/crop-history.spec.ts` proves the real raster result and one-step undo/redo, but
    publication intentionally remains legacy. Direct browser differentials now prove byte-identical
    legacy/durable composition for a 90-degree single-raster crop (exact `0,0,64,64` materialized
-   bounds), a non-quarter 37-degree crop with two differently positioned raster layers, and a
-   37-degree text-source crop. Both 37-degree frames have non-zero origins. Exact quarter-turn
-   matrices prevent floating trigonometric residue from expanding the pixel grid. The 90-degree
-   fixture pins exact materialized bounds; the 37-degree fixtures pin composed pixels and source
-   presence, not exact fractional per-layer bounds. These fixtures close only their own parity cases,
-   not the frame gate: other angles, vector/blank/paint sources, other text geometries and the full
-   retained-affine operation surface still need parity proof. Previews and unsupported documents still
-   use the complete legacy compatibility path.
+   bounds), a non-quarter 37-degree crop with two differently positioned raster layers, Arial point
+   text, serif paragraph text, non-centered right-aligned monospace point text, blank, vector-shape,
+   and Draw paint sources. A three-transition mixed-source case checks each durable cursor against
+   the matching legacy frame: 37-degree transform, frame-only transition, then -17-degree transform.
+   The text cases exercise left, center and right alignment; the rotated fixtures use non-zero frame
+   origins. Exact quarter-turn matrices prevent floating trigonometric residue from expanding the
+   pixel grid. Only the 90-degree fixture pins exact materialized bounds; the remaining cases assert
+   byte-identical pixels and materialized-layer presence, not exact fractional per-layer bounds.
+   These fixtures close only their listed cases, not the frame gate: other angles and source/tool
+   variants, additional text styling/rotation combinations, other frame sequences and the full
+   retained-affine operation surface still need parity proof. Previews and unsupported documents
+   still use the complete legacy compatibility path.
    Unsupported-source
    fallback is pinned by the StoreContext publication seam; the next authority work is to prove preview behavior and
    then retire legacy logical replay only after

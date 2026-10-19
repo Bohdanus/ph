@@ -135,7 +135,13 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
        * Paths, Actions, History, or Styles panel; or select any available menu command"
        * (https://helpx.adobe.com/photoshop/using/creating-type.html).
        */
-      if (placing && args.text && args.rect) flushSync(() => commitDirtyTool());
+      if (placing && args.text && args.rect) {
+        let committed = false;
+        flushSync(() => {
+          committed = commitDirtyTool() !== null;
+        });
+        if (!committed) return;
+      }
 
       // Adobe's placeholder, born with the box rather than typed into it: "A layer is created
       // immediately, containing placeholder text that previews font, size and colour, and that is

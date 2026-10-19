@@ -214,7 +214,7 @@ export const AppKeyboardShortcuts = () => {
         return;
       }
 
-      goToTool('shape');
+      if (goToTool('shape') === false) return;
       patchToolArgs('shape', { figure: orderedFigures[nextIndex] });
       return;
     }
@@ -224,7 +224,7 @@ export const AppKeyboardShortcuts = () => {
       return;
     }
 
-    goToTool('shape');
+    if (goToTool('shape') === false) return;
     patchToolArgs('shape', { figure: 'rectangle' });
   };
 
@@ -358,6 +358,7 @@ export const AppKeyboardShortcuts = () => {
       flushSync(() => {
         exportLayers = commitDirtyTool();
       });
+      if (exportLayers === null) return;
       const data = await openSaveImageDialog({
         fileName,
         layers: exportLayers,
