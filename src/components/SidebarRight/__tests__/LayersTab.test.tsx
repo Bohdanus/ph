@@ -48,6 +48,7 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
     moveLayerAfter: vi.fn(),
     setActiveLayer: vi.fn(),
     beginTextLayerEdit: vi.fn(),
+    commitDirtyTool: vi.fn(),
     updateLayer: vi.fn(),
   };
   return {
@@ -65,7 +66,14 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
   };
 });
 
-const currentToolState = vi.hoisted(() => ({ toolArgs: { toolName: 'move' }, setToolArgs: vi.fn() }));
+const currentToolState = vi.hoisted(() => ({
+  toolArgs: { toolName: 'move' } as {
+    toolName: string;
+    rect?: { x1: number; y1: number; x2: number; y2: number } | null;
+    editingLayerId?: string;
+  },
+  setToolArgs: vi.fn(),
+}));
 
 vi.mock('@/contexts/StoreContext.tsx', async () => {
   const { useSyncExternalStore } = await import('react');
@@ -269,6 +277,56 @@ describe('LayersTab', () => {
 
     expect(screen.getByRole('slider', { name: 'Layer opacity' })).toBeDisabled();
     expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('disables Lock All while a text edit is active', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+    };
+    render(<LayersTab />);
+
+    const lockButton = screen.getByRole('button', { name: 'Lock Layer 2' });
+    expect(lockButton).toBeDisabled();
+    expect(lockButton).toHaveAttribute('title', 'Finish text editing before locking layers');
+    fireEvent.click(lockButton);
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('disables removal of the text layer while that layer is being edited', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+      editingLayerId: 'layer-2',
+    };
+    render(<LayersTab />);
+
+    const removeButton = getListItemFor('Layer 2').querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove layer"]'
+    );
+    if (!removeButton) throw new Error('no remove button for Layer 2');
+    expect(removeButton).toBeDisabled();
+    expect(removeButton).toHaveAttribute('title', 'Finish text editing before removing this layer');
+    fireEvent.click(removeButton);
+
+    expect(layerMocks.removeLayer).not.toHaveBeenCalled();
+  });
+
+  it('keeps layer selection when the active text edit cannot be committed', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+    };
+    layerMocks.commitDirtyTool.mockReturnValueOnce(null);
+    render(<LayersTab />);
+
+    const row = getListItemFor('Top Layer').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Top Layer');
+    fireEvent.click(row);
+
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
   });
 
   it('toggles visibility on eye button click', () => {

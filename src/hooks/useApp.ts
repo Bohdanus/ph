@@ -19,7 +19,7 @@ export interface UseAppType {
 
   handleImageSave: (data: ImageSaveResponse) => void;
 
-  goToTool: (toolName: ToolName) => void;
+  goToTool: (toolName: ToolName) => boolean;
 }
 
 async function immutableRaster(bitmap: BitmapSource): Promise<BitmapSource> {
@@ -166,7 +166,7 @@ export const useApp = (): UseAppType => {
 
   function goToTool(nextToolName: ToolName) {
     // commit any dirty tool changes before switching
-    commitDirtyTool();
+    if (commitDirtyTool() === null) return false;
 
     if (nextToolName !== toolName && nextToolName !== 'patch' && activeSelectionId) {
       // The same single writer the Clear/Deselect controls use, so this deselect
@@ -194,6 +194,7 @@ export const useApp = (): UseAppType => {
     }
 
     dispatch({ type: 'SET_TOOL_NAME', payload: nextToolName });
+    return true;
   }
 
   return {

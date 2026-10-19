@@ -550,6 +550,20 @@ describe('TextToolArea', () => {
       expect(h.commitDirtyTool.mock.invocationCallOrder[0]).toBeLessThan(h.setToolArgs.mock.invocationCallOrder[0]);
     });
 
+    it('keeps the current draft when commit fails instead of placing another box', () => {
+      const open = { x1: 10, y1: 10, x2: 40, y2: 30 };
+      const placed = { x1: 100, y1: 100, x2: 100, y2: 100 };
+      toolArgs = makeTextArgs({ text: 'typed so far', rect: open, kind: 'point' });
+      vi.mocked(calculateNewRect).mockReturnValue(placed);
+      h.commitDirtyTool.mockReturnValueOnce(null);
+
+      const rendered = renderArea();
+      gesture(rendered, { x: 100, y: 100 }, { x: 102, y: 101 }, placed);
+
+      expect(h.commitDirtyTool).toHaveBeenCalledOnce();
+      expect(h.setToolArgs).not.toHaveBeenCalled();
+    });
+
     it('a press inside an existing box moves it without committing or re-seeding the text', () => {
       const existing = { x1: 10, y1: 10, x2: 120, y2: 40 };
       const moved = { x1: 12, y1: 12, x2: 122, y2: 42 };

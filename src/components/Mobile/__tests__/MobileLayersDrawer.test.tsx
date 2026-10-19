@@ -25,6 +25,14 @@ const moveLayerAfterMock = vi.hoisted(() => vi.fn());
 const resetHistoryToMock = vi.hoisted(() => vi.fn());
 const toggleDisabledMock = vi.hoisted(() => vi.fn());
 const dispatchMock = vi.hoisted(() => vi.fn());
+const commitDirtyToolMock = vi.hoisted(() => vi.fn());
+const currentToolState = vi.hoisted(() => ({
+  toolArgs: { toolName: 'move' } as {
+    toolName: string;
+    rect?: { x1: number; y1: number; x2: number; y2: number } | null;
+    editingLayerId?: string;
+  },
+}));
 
 /**
  * Four layers with DISTINCT `order` values. The old fixture omitted `order`
@@ -54,7 +62,12 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
     setActiveLayer: setActiveLayerMock,
     updateLayer: updateLayerMock,
     moveLayerAfter: moveLayerAfterMock,
+    commitDirtyTool: commitDirtyToolMock,
   }),
+}));
+
+vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
+  useCurrentTool: () => currentToolState,
 }));
 
 // `getHistoryItemTitle` is spread through from the real module. The old test
@@ -164,6 +177,7 @@ afterEach(() => {
 describe('MobileLayersDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentToolState.toolArgs = { toolName: 'move' };
     storeStateMock.layers = freshLayers();
     storeStateMock.activeLayerId = 'upper';
     storeStateMock.history = [];
@@ -197,6 +211,48 @@ describe('MobileLayersDrawer', () => {
     fireEvent.click(lockButton);
     expect(updateLayerMock).toHaveBeenCalledWith('upper', { locked: true }, LOCK_LAYER_ACTION);
     expect(screen.getByRole('button', { name: 'Lock Bottom' })).toBeDisabled();
+  });
+
+  it('disables Lock All across the layer stack while text editing is active', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+    };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const lockButton = screen.getByRole('button', { name: 'Lock Upper' });
+    expect(lockButton).toBeDisabled();
+    fireEvent.click(lockButton);
+    expect(updateLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('does not delete the text layer while that layer is being edited', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+      editingLayerId: 'upper',
+    };
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete active layer' });
+    expect(deleteButton).toBeDisabled();
+    fireEvent.click(deleteButton);
+    expect(removeLayerMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected layer when a text commit fails on touch selection', () => {
+    currentToolState.toolArgs = {
+      toolName: 'text',
+      rect: { x1: 10, y1: 10, x2: 80, y2: 40 },
+      editingLayerId: 'upper',
+    };
+    commitDirtyToolMock.mockReturnValueOnce(null);
+    render(<MobileLayersDrawer isOpen={true} onClose={vi.fn()} />);
+
+    fireEvent.click(layerRow('Top'));
+
+    expect(commitDirtyToolMock).toHaveBeenCalledOnce();
+    expect(setActiveLayerMock).not.toHaveBeenCalled();
   });
 
   it('provides an inverse history action to unlock a full-locked layer', () => {

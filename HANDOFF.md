@@ -77,15 +77,19 @@ global affine, and both `replayHistory()` and `replayDurableDocument()` apply it
 layer. `e2e/crop-history.spec.ts` verifies the imported red/blue fixture rotates correctly and one
 undo/redo restores the exact pixels. Its direct browser differentials now prove byte-identical
 legacy/durable composition for a 90-degree single-raster crop (materialized bounds `0,0,64,64`), a
-non-quarter 37-degree crop with two differently positioned raster layers, and a 37-degree text-source
-crop. Both 37-degree frames have non-zero origins. Exact quarter-turn matrices avoid a phantom edge
-from `cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the
-90-degree case pins exact materialized bounds. The text and two-layer 37-degree cases assert source
-pixels and materialized-layer presence but not exact fractional bounds. They do not close the general
-frame gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: other angles, vector,
-blank and paint sources, other text geometries, and frame-transition cases remain unproven, and
-retained affine operations remain unapproved. The UI test intentionally continues to observe legacy
-presentation on commit and renderer-incompatible fallback on redo.
+non-quarter 37-degree crop with two differently positioned raster layers, Arial point text, serif
+paragraph text, non-centered right-aligned monospace point text, blank, vector-shape, and Draw paint
+sources, plus a three-transition mixed-source sequence. The sequence checks every durable cursor
+against its corresponding legacy composition: a 37-degree frame transform, a frame-only transition,
+and a -17-degree frame transform. The text cases cover left, center and right alignment; the rotated
+fixtures use non-zero frame origins. Exact quarter-turn matrices avoid a phantom edge from
+`cos(pi / 2)` floating residue. These fixtures establish composed-pixel parity; only the 90-degree
+case pins exact materialized bounds. The remaining parity cases assert source pixels and
+materialized-layer presence but not exact fractional bounds. They do not close the general frame
+gate. Do not add `SET_DOCUMENT_FRAME_ACTION` to background presentation: additional angles, vector
+tool variants, blank opacities, paint tools, text styling/rotation combinations and frame sequences
+remain unproven, and retained affine operations remain unapproved. The UI test intentionally
+continues to observe legacy presentation on commit and renderer-incompatible fallback on redo.
 
 **Also wrong at the boundary.** The legacy compatibility path reads `layer.tmpCanvas` before
 `layer.bitmap` through `getLayerBitmap()`, with vector-source handling between those fallbacks;
@@ -409,19 +413,30 @@ returns, which is a product decision rather than a test one.
 
 ---
 
-## 74. The toolbar is a Photoshop clone, and 45 of 49 rail entries are wrong
+## 74. Photoshop toolbar roster: current implementation and unresolved default target
 
-**Not a defect — a standing product requirement, recorded with its cost.** `AGENTS.md` now carries
-"The toolbar is a Photoshop clone — HARD REQUIREMENT". This entry is the implementable target, the
-corrections to the research behind it, and the sequencing.
+**Not a defect — a standing product requirement, recorded with its cost.** `AGENTS.md` carries
+"The toolbar is a Photoshop clone — HARD REQUIREMENT". This entry records the source-backed roster
+evidence, the implementation count, and the remaining uncertainty about Adobe's restored default
+panel.
 
-**The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, same rendered
-names, same groups, same letters. A tool Photoshop does not have is **deleted, not relabelled** —
-the app already has the Brush, which is `draw`'s nearest. Adjustments and transforms are
-`Image ▸ Adjustments` and `Edit ▸ Transform` commands and leave the rail entirely. The registry
-identifier stays free (`reposition` for the Move tool is fine); the **rendered label** does not.
+**The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, rendered names,
+groups, and letters. An invented Photoshop tool is not relabelled into existence. `Draw` is the
+explicit app-only **OVR-2 override** and is preserved; exclude it from Photoshop roster counts.
+`color`, `levels`, and `transform` are `Image ▸ Adjustments` / `Edit ▸ Transform` commands, not rail
+tools. The registry identifier stays free (`reposition` for the Move tool is fine); the rendered
+label does not.
 
-**Shape of the work: 41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete.**
+**Current code counts, which use different units.** `toolbar-mapping.ts` has **50 rendered entries**:
+49 Adobe-named tools plus Draw, across 21 groups and four source sections. `SidebarLeft` lays those
+groups out in one or two columns. The entries use 45 distinct rail `ToolName` identifiers because
+flyout figures share the `shape` identifier. `availableTools`
+has 53 registry IDs, including five shape aliases and the three command IDs; `ToolIconName` and its
+hand-copied test roster each contain 59 icon names. None of these counts is a Photoshop default
+panel total. `docs/TOOLS-INVENTORY.md` now lists 22 non-preview tool-panel candidates not mapped
+to the rail (with default visibility unverified for some groups) and one separate default-off
+Technology Preview. Adobe publishes no complete numbered default roster, so the historical
+41/70/36/34 arithmetic is not a verified current target.
 
 **Four corrections to the inventory in `AGENTS.md`, from a second research pass. Read these before
 building the target list — the list as written ships a rail that is still not a clone.**
@@ -440,73 +455,57 @@ enumeration). And the trap that produced the Clone Source false positive: **Adob
 a panel** (`Window ▸ Clone Source`), not a Tools-panel entry. A name appearing in a panel's title is
 how a tool gets miscounted.
 
-**Group order is a hypothesis, and the requirement says so.** Adobe publishes no page that
-enumerates the Tools panel top-to-bottom. The 21-tile order is reconstructed from two independent
-third-party 2026 diagrams, cross-checked against Adobe for **membership only**. Four placements are
-unresolved and a screenshot of a restored PS 27.x default workspace settles all four: the Frame
-tool's separator (its own tile, but does it close the Crop band or open Measurement?);
-Content-Aware Tracing's slot inside the Pen flyout; **Line before Star or Star before Line** in the
-Shape flyout (one line, and a line a user's hand learns); and whether Note and Count are in the
-default panel or sitting in Extra Tools.
+**Group order remains a hypothesis, and the requirement says so.** Adobe publishes no page that
+enumerates the Tools panel top-to-bottom. The 21-group order is reconstructed from third-party 2026
+diagrams and cross-checked against Adobe for membership and named flyout families. Adobe now places
+Note and Count in the Eyedropper family, Artboard in the Move group, and Content-Aware Move with Spot
+Healing; Content-Aware Tracing is a default-off Technology Preview in the Pen group when enabled.
+Still unresolved: the Frame separator; **Line before Star or Star before Line** in the Shape flyout;
+Adjustment Brush's default group/visibility; and Content-Aware Tracing's exact Pen-flyout slot if the
+preview is enabled. Note/Count default visibility and the total default roster still need a restored
+Photoshop default-workspace reference.
 
-**`toolbar-mapping.ts` — the doc comment above `toolbarMap` says "Unsupported Photoshop tools are
-intentionally omitted rather
-than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx` — the module-level `const toolbarGroups =
-toolbarMap.flat()` discards the
-map's section boundaries entirely, so the five current sections are not Photoshop's separators and
-the new layout has to decide deliberately whether a section concept survives at all.
+**`toolbar-mapping.ts` documents unsupported Adobe tools as omitted and calls out Draw as the OVR-2
+exception.** Keep that exception; Draw is not a Photoshop tool, but it must not be removed. The map
+contains four source sections and 21 group arrays. `SidebarLeft.tsx` renders the groups in one or two
+columns; the exact full-panel order and separator model remain hypotheses until checked against a
+restored Photoshop default workspace.
 
-**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands, and their
-processors are reused unchanged — but this is **not** the pure routing change with "the history and
-durable paths untouched" that this line used to claim, and the claim was refuted before it shipped:
-`'color' | 'levels'` are a **durable schema type** (`src/contexts/history-model.ts` — `DurableFilter`,
-`src/contexts/layer-types.ts` — `LayerOperationArgs`), so every already-committed operation of either
-crosses the durable
-boundary whether or not the surface it was minted from moves. `shape` dissolves into the five figure
-`ToolName`s that
-already have processors and are already dispatched. `draw` is last and is the expensive one: it is
-the suite's default way to make a mark, **25 call sites across 14 e2e specs**, and
-`e2e/pen-types.spec.ts` is specifically about it and dies with the tool. Its engine does not die —
-`brush`, `pencil` and `color-replacement` are all built on `buildDrawArgs` and `draw()` — only the
-tool goes, and the engine should be renamed to stop pretending to be one.
+**Current routing state.** `color`, `levels`, and `transform` are already absent from the toolbar map
+and remain available as command IDs in `extraTools`; do not delete their processors or durable types
+as part of a rail change. The `shape` flyout still maps six rendered entries through the `shape`
+name and a `figure` value; registry aliases are a separate type-system count, not six additional map
+names. `draw` remains as the explicit OVR-2 override. Its painting implementation may continue to
+share the `buildDrawArgs` engine with Brush/Pencil; it is not a deletion candidate.
 
-**Cheapest real additions**, and they are parallelisable because they touch disjoint files: Single
-Row and Single Column Marquee (SHIPPED 2026-10-01, `src/tools/singleRowColumnMarquee.ts`; the
-phrase "two lines of geometry reusing `rectangularSelection`" held up), Sponge, Red
-Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
-is the measurement band — Color Sampler, Note, Count — because these are `PIXEL_FREE_TOOLS` like
-the Eyedropper and the Ruler, committing no pixels and needing no durable operation. **The Ruler is
-built**: `src/tools/ruler.ts` for the arithmetic, `src/components/Main/RulerToolArea.tsx` for the
-gesture and the nonprinting overlay, and `src/components/ToolbarsRight/Ruler/Ruler.tsx` for the
-readout bar. What it still lacks is the `Image ▸ Analysis` measurement scale, which is a menu
-command rather than a tool and belongs with the menu gaps rather than here.
+**Already implemented from the earlier low-cost list:** Single Row and Single Column Marquee,
+Sponge, Red Eye, Star, Color Sampler, Ruler, Hand, Zoom, and Rotate View. They are not additions
+remaining for this task. The measurement-family gaps are Note and Count; Adobe places them in the
+Eyedropper family, and they are pixel-free like the existing Eyedropper/Ruler tools. The `Image ▸
+Analysis` measurement scale remains a menu command, not a rail tool.
 
-**Largest, and they need a primitive the app does not have:** Object Selection, Spot Healing,
-Content-Aware Move, Remove (a generative backend), History Brush and Art History Brush (a read-out
-across the whole history array, which touches the replay boundary), Vertical Type and its two
-masks (glyph→selection rasterisation), Path Selection and Direct Selection (a path model absent
-from `src/tools/shape.ts` entirely), and Artboard and Frame (layer kinds the app has no type for).
+**The remaining inventory still contains architectural gaps:** Object/Selection Brush tools and
+Content-Aware Move/Remove need selection or retouch primitives; History and Art History Brush need
+retained-raster history; Type Mask tools need glyph-to-selection rasterization; Path Selection and
+Direct Selection need a path model; Artboard and Frame need layer kinds the app does not have. The
+current candidate list and its evidence live in `docs/TOOLS-INVENTORY.md`; Content-Aware Tracing is
+separate because Adobe marks it default-off.
 
-**One step is a baseline hazard and belongs on its own branch:** Hand, Zoom and Rotate View. The
-app's zoom state is commented out (`StoreContext.tsx` — the commented-out `// zoom data` block;
-`ZoomData` survives only as a
-type), so the seam exists and the state does not. It is small in lines and large in blast radius,
-because it touches the renderer and every e2e screenshot baseline.
+**View tools are implemented.** Hand, Zoom, and Rotate View now have dedicated rail mappings and
+view state; Ruler is also implemented. They should not be counted as missing Photoshop tools. Any
+future view-gesture or screenshot-baseline work is separate from the roster reconciliation.
 
-**The first step is the highest-value thing in the plan and it is not a feature:** land the target
-as data, and add a test asserting the **set of rail labels** equals the target set — not the order,
-not the tiles. Any future invented tool fails it. It is cheap, and it is the tripwire that makes the
-other eight steps safe.
+**The first step remains a source-backed target set, not a guessed number:** once the restored
+default roster is established, encode its label set and test it separately from flyout order and
+layout. Adobe does not publish a full numbered default list, so the old 70/72 target cannot be used
+as an oracle. Preserve the Draw override in its own explicit expected-set entry.
 
-**What this costs in tests, before a single tool is added.** The hand-copied lists are the expense,
-and they are already drifted: `toolIcons.test.tsx` — `toolIconNames` holds a 46-name union by hand;
-`tool-processors.test.ts`
-carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx` — the
-`it('renders the available tools in Photoshop-inspired order')` title pins
-the exact 16-tile order by name; and `toolbar-mapping.test.ts` — the `it('lists the shape flyout in
-the exact expected order and shape')` title compares a hand-copied
-expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
+**Current roster-test coverage.** `toolIcons.test.tsx` now carries a 59-name icon union; the
+`ToolIconName` type and test stay in sync. `tool-processors.test.ts` derives the processor and
+pixel-free sets from registered tools, and checks its hand-copied icon/shape tables against those
+sets. `SidebarLeft.rendering.test.tsx` pins the current primary-tile order; `toolbar-mapping.test.ts`
+pins the shape flyout's six rendered entries. Neither currently asserts the exact source-verified
+Adobe default label set, which remains blocked on the missing default-roster evidence.
 `AppKeyboardShortcuts.tsx` — the doc comment above `brushGroup` asserts in prose that its cycle
 groups match the mapping's groups;
 **one of its seven does not** — the Pen tile is six wide and its cycle is three. Nothing tests that
@@ -1869,69 +1868,6 @@ scheduling changes, or it is a tripwire for a defect that cannot occur.
 `src/components/SidebarLeft/SidebarLeft.tsx` — `twoColumnEntries`,
 `react-dom` `mountSyncExternalStore` (a **passive** `mountEffect`, and a consistency check that only
 runs on a concurrent render that yielded — neither is a pre-paint refit).
-
----
-
-## 151. Hand, Zoom and Rotate View are absent because the view transform is commented out, and no document records that as a defect
-
-**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and nothing states
-the root cause anywhere in the tree. `toolbar-mapping.ts` (repo root) has no `hand`, `zoom` or
-`rotate` entry. The store's view state is entirely commented out:
-
-- `StoreContext.tsx` — `StoreData`'s commented-out `zoomDataRef` / `setZoomData` members, with only
-  the type left live.
-- `StoreContext.tsx` — `StoreProvider`'s whole commented zoom block, `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest.
-- `general-types.ts` — `export type ZoomData = { dx, dy, zoom }` is still a live export with
-  **zero** live consumers. A type with no consumer is the residue of the removal.
-
-**The `'zoom'` default is a trap, and it is the half nobody has written down.**
-`Main.tsx` initialises `let interactionMode = 'zoom'` and the string `'zoom'`
-is assigned by **no branch** in the file — the `if`/`else if` chain that assigns `interactionMode`
-runs from its first `else if` to the `else EventHandler = DummyToolArea` that terminates it. So
-`'zoom'` is not a mode anything enters; it is the value every tool without its own arm falls through
-to, and it lands on a `display: none` div with no handlers. `Main.tsx` still carries the matching
-`// transform: translate(${dx}px, ${dy}px) scale(${zoom})` on the `.zoom-container` div, and
-`Main.scss`'s `.zoom-container` rule sets `transform-origin` with no `transform` to anchor.
-
-**A second, smaller finding in the same cause.** `src/components/SidebarLeft/SidebarLeft.tsx`
-has exactly one `<hr>`, and the comment above that `<hr>` justifies it by describing a
-commented-out Zoom control: "The second `<hr>` this replaces stood between the colour cluster and
-NOTHING — the commented-out Zoom control that followed it was deleted with it". The control it
-reasons about is not in the file.
-
-**Why it is not a wiring bug.** There is no view transform to wire. `usePointerPosition` maps
-client coordinates to image pixels through a `scale` supplied by the host rather than owning a
-transform of its own.
-
-**Fix — start with the scope, not the Hand tool.** Three separate features each want one, and they
-want the same one: pan/zoom, the space-drag temporary-pan every tool inherits, and tool cursors that
-track the view (a brush tip circle is a screen-space circle). A `DocumentViewScope` owning
-`{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image conversion reading from it,
-is the shape the commented-out code was reaching for. Do not begin with a Hand tool; begin with the
-scope and the three tools fall out of it.
-
-Two smaller fixes that can land independently, and are cheap:
-
-1. Replace the `'zoom'` default with something honest — `DummyToolArea` itself, or an explicitly
-   named `UNHANDLED` — so the fallthrough is a decision rather than an accident that reads as a
-   feature. As written, a reader must diff the whole chain to learn that `'zoom'` is never assigned.
-2. Delete or reword the `<hr>` comment in `SidebarLeft.tsx`; the control it cites is gone.
-
-**Why this is being refiled.** `4833e740` deleted the entry that carried it on the grounds that it
-was "already carried by a tracked document". It is not. `docs/TOOLS-INVENTORY.md`'s "Navigation and
-measuring" table has catalogue rows for the three names, and its "Zoom deserves one note of
-accuracy" note records "The app has a zoom **interaction mode** on the canvas and **no Zoom tool**"
-— a description, not a filed defect. `docs/TOOLS-TOO-HARD.md`'s "The Adobe tools the rail omits"
-section repeats that one sentence. `docs/PHOTOSHOP-UX.md`'s "Confidence and provenance" section
-lists the three only as "not Adobe-table-confirmed". The one surviving mention of the root cause is
-`HANDOFF.md` §74, framed as a roadmap step ("belongs on its own branch"), which never names the
-`'zoom'` fallthrough or the stale comment. Verified against `main@cf41f642`.
-
-**Files.** `toolbar-mapping.ts` (repo root), `src/contexts/StoreContext.tsx` (`StoreData` and
-`StoreProvider`), `src/contexts/general-types.ts` (`ZoomData`),
-`src/components/Main/Main.tsx` (`interactionMode`, the `EventHandler` chain, the `.zoom-container`
-div), `src/components/Main/Main.scss` (`.zoom-container`), `src/components/SidebarLeft/SidebarLeft.tsx`
-(the single `<hr>` and the comment above it), `src/hooks/usePointerPosition.ts`
 
 ---
 

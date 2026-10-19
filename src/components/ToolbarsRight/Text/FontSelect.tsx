@@ -1,48 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useKeyDownShortcut } from '../../../hooks/useKeyboardEvents.tsx';
-
-const FONTS = [
-  'Arial',
-  'Helvetica',
-  'Times New Roman',
-  'Courier New',
-  'Verdana',
-  'Georgia',
-  'Palatino',
-  'Garamond',
-  'Comic Sans MS',
-  'Roboto',
-  'Impact',
-  'Trebuchet MS',
-  'Tahoma',
-  'Brush Script MT',
-  'Inter',
-  'Poppins',
-  'Montserrat',
-  'Open Sans',
-  'Lato',
-  'Source Sans Pro',
-  'Nunito',
-  'Merriweather',
-  'Playfair Display',
-  'Raleway',
-  'Oswald',
-  'Roboto Slab',
-  'Ubuntu',
-  'PT Sans',
-  'Work Sans',
-  'Muli',
-  'Quicksand',
-  'DM Sans',
-  'Space Grotesk',
-  'Outfit',
-  'Plus Jakarta Sans',
-  'Manrope',
-  'Instrument Sans',
-  'Syne',
-  'Clash Display',
-];
+import { FONT_FAMILIES } from '../../../tools/text.ts';
 
 const LIST_ID = 'font-family-list';
 /** Matches the popup's `max-h-60`, so the flip decision uses the height it will occupy. */
@@ -88,8 +47,8 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const filteredFonts = !searchQuery
-    ? FONTS
-    : FONTS.filter((font) => font.toLowerCase().includes(searchQuery.toLowerCase()));
+    ? FONT_FAMILIES
+    : FONT_FAMILIES.filter((font) => font.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // Focus search input when dropdown opens
   useLayoutEffect(() => {

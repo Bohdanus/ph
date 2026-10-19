@@ -2,9 +2,10 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
+import { FONT_FAMILIES } from '../../../../tools/text.ts';
 import FontSelect from '../FontSelect.tsx';
 
-const FONTS = [
+const EXPECTED_FONT_FAMILIES = [
   'Arial',
   'Helvetica',
   'Times New Roman',
@@ -102,7 +103,7 @@ describe('FontSelect closed state', () => {
 
     expect(triggerText()).toBe('Georgia');
     expect(options()).toHaveLength(0);
-    for (const font of FONTS) {
+    for (const font of FONT_FAMILIES) {
       expect(hasOption(font)).toBe(false);
     }
   });
@@ -151,7 +152,8 @@ describe('FontSelect popup rendering', () => {
 
     fireEvent.click(trigger());
 
-    expect(options().map((el) => el.textContent)).toEqual(FONTS);
+    expect(FONT_FAMILIES).toEqual(EXPECTED_FONT_FAMILIES);
+    expect(options().map((el) => el.textContent)).toEqual(FONT_FAMILIES);
   });
 
   it('highlights the active font with a selected background class', () => {

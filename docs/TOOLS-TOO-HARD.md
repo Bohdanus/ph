@@ -830,12 +830,11 @@ too hard (above), so one of the two Photoshop controls has no honest replacement
 The rail does not carry a number of Adobe tools. The full roster, keyed by Adobe's own
 identity for each tool — name, group, shortcut, headline options, and a source — is
 [`TOOLS-INVENTORY.md`](TOOLS-INVENTORY.md), which took this list over. That file also records
-the roster counts that disagree — the 30 names this section used to carry against "34 to
-add" in `HANDOFF.md` §74 — and leaves the discrepancy unresolved for the operator. **One addition to
-its arithmetic, from this pass:** `HANDOFF.md` §74 names a **sixth** absent tool the 30 never listed,
-**Content-Aware Move**, so the
-union is 30 + 6 = **36**, two over the stated 34 rather than one. `TOOLS-INVENTORY.md` now carries
-that name, at its Selection row.
+the current candidate rows and the unresolved default-roster evidence. The older 30-entry list and
+`HANDOFF.md` §74's 34-to-add arithmetic are historical, not a current target: Adobe publishes no
+complete numbered default Tools-panel roster. `TOOLS-INVENTORY.md` now separates the current
+non-preview candidates from the default-off Content-Aware Tracing preview and records the source-backed
+map counts instead of adding historical totals.
 
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
@@ -852,6 +851,4 @@ need implementation and verification.
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following
 segmentation comparable to the Quick Selection entry. History Brush and Art History Brush
 need the retained-raster history model that Erase to History needs. Perspective Crop is the
-Crop entry's transform work. Zoom is worth one note of accuracy: the app has a zoom
-_interaction mode_ on the canvas, and no Zoom _tool_ — the registry at
-`tool-types.ts` — the `ToolArgsByName` map — has no entry for it, and the rail has none either.
+Crop entry's transform work.
