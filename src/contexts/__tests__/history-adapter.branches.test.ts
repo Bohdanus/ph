@@ -395,8 +395,8 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     // derive, and fabricating one would assert a frame the user never cropped to.
     expect(converted.document.history).toHaveLength(0);
     // And the drop is REPORTED rather than silent. `replayHistory` drops the
-    // same entry (`history-replay.ts:112-117` guards the assignment on
-    // `isValidDocumentFrame`), so the shadow was already in parity — but parity
+    // same entry (`replayHistory`'s `SET_DOCUMENT_FRAME_ACTION` arm guards the
+    // assignment with `isValidDocumentFrame`), so the shadow was already in parity — but parity
     // is not observability, and the only other evidence of a lost crop is a
     // frame that no longer matches what the user cropped to.
     expect(converted.diagnostics).toHaveLength(1);
@@ -742,9 +742,8 @@ describe('document frame conversion diagnostics', () => {
 describe('durable baseline parity with legacy replay', () => {
   /**
    * NOT a protection for the first test below. Its only entry is a disabled one
-   * carrying a `documentSource`, and `replayHistory` skips a disabled item at
-   * `history-replay.ts:75` — before it could reach a dependency — and applies a
-   * `documentSource` by assignment at `history-replay.ts:79-96`, which also
+   * carrying a `documentSource`, and `replayHistory` skips disabled items before
+   * they can reach a dependency. The dedicated `documentSource` branch also
    * returns before any dependency call. So neither body can run for that
    * fixture, and `expect(legacy.layers).toEqual({})` is the assertion that
    * carries the test; deleting it because these deps "already" throw leaves a
@@ -770,7 +769,7 @@ describe('durable baseline parity with legacy replay', () => {
     const legacy = replayHistory([disabledOpen], 0, emptyInitialSize, unreachableDependencies);
     const emptyInitialFrame = { x: 0, y: 0, ...emptyInitialSize };
 
-    // `replayHistory` skips a disabled item outright (`history-replay.ts:75`),
+    // `replayHistory` skips a disabled item before action dispatch,
     // so the document the USER sees after disabling the first History row is
     // empty and retains the replay's initial frame.
     expect(legacy.layers).toEqual({});
@@ -931,7 +930,7 @@ describe('durable baseline parity with legacy replay', () => {
 /**
  * The counterpart of the divergence above, and now an AGREEMENT rather than a
  * divergence: `replayHistory` lets a bedrock source size the document only for the
- * initial entry (`history-replay.ts:104-109`), which is the answer the converter's
+ * initial entry, which is the answer the converter's
  * create-layer arm already gave on its own. Neither side reports anything, so this
  * is the only thing standing between the two documents and a second divergence at
  * the same commit.
@@ -978,14 +977,14 @@ describe('bedrock frame authority between durable shadow and legacy replay', () 
     const legacy = replayHistory(history, 1, initialSize, dependencies);
 
     // A bedrock source sizes the DOCUMENT, so `replayHistory` lets it establish the
-    // frame only for the initial document entry (`history-replay.ts:104-109`) and a
+    // frame only for the initial document entry, and a
     // later layer commit leaves `documentFrame` alone. That is what the user asked
     // for, and it is the SAME answer the converter already gave.
     expect(legacy.documentFrame).toEqual(baselineFrame);
     expect(legacy.totalSize).toEqual(initialSize);
     // The converter's create-layer arm likewise never touches `currentFrame`, and
-    // `replayDurableDocument`'s create-layer case ignores `isBedrock`
-    // (`durable-replay.ts:61-67`), so the two AGREE at the pre-add size. The
+    // `replayDurableDocument`'s `create-layer` case ignores `isBedrock`, so the
+    // two AGREE at the pre-add size. The
     // document has exactly ONE durable entry, so -1 and 0 are the only two
     // positions `replayDurableDocument` can return — any larger cursor clamps to 0
     // and would assert the tip twice.
@@ -1010,8 +1009,8 @@ describe('bedrock frame authority between durable shadow and legacy replay', () 
 describe('disabled durable baseline reporting', () => {
   /**
    * No dependency is reachable for any fixture below: an item carrying a
-   * `documentSource` returns at `history-replay.ts:78-84` before either call, and
-   * a disabled item is skipped at `history-replay.ts:74` before the loop body.
+   * `documentSource` is handled before either dependency call, and a disabled
+   * item is skipped before the loop body.
    * They are tripwires against a future replay that routes either shape through a
    * layer factory, not a protection for the assertions below.
    */
@@ -1903,7 +1902,7 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
 
     expect(converted.diagnostics).toEqual([]);
     // `replayHistory` `continue`s on a named-but-absent anchor
-    // (`history-replay.ts:148`), so the shadow records no entry at all. The
+    // in `replayHistory`'s `REORDER_ACTION` arm, so the shadow records no entry at all. The
     // tolerated alternative would be a fabricated move to index 0, which the
     // document never performs.
     expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-b', 'new-c']);
