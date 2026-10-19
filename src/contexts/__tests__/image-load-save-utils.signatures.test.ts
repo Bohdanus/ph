@@ -581,8 +581,8 @@ describe('loadImageFile rejection paths', () => {
   it('preserves a MIME charset through the document loader', async () => {
     const decoders = installBrowserDecoders();
     const markup = '<svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>';
-    const bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
-    const file = new File([bytes], 'encoded.svg', { type: 'image/svg+xml;charset=windows-1252' });
+    const windows1252Bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
+    const file = new File([windows1252Bytes], 'encoded.svg', { type: 'image/svg+xml;charset=windows-1252' });
 
     await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
 
@@ -593,10 +593,10 @@ describe('loadImageFile rejection paths', () => {
     const decoders = installBrowserDecoders();
     const markup = '<svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>';
     const content = new TextEncoder().encode(markup);
-    const bytes = new Uint8Array(content.length + 3);
-    bytes.set([0xef, 0xbb, 0xbf]);
-    bytes.set(content, 3);
-    const file = new File([bytes], 'bom.svg', { type: 'image/svg+xml;charset=windows-1252' });
+    const bomBytes = new Uint8Array(content.length + 3);
+    bomBytes.set([0xef, 0xbb, 0xbf]);
+    bomBytes.set(content, 3);
+    const file = new File([bomBytes], 'bom.svg', { type: 'image/svg+xml;charset=windows-1252' });
 
     await expect(loadImageFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
 
@@ -607,8 +607,8 @@ describe('loadImageFile rejection paths', () => {
     const decoders = installBrowserDecoders();
     const markup =
       '<?xml version="1.0" encoding="windows-1252"?><svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>';
-    const bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
-    const file = new File([bytes], 'encoded.svg', { type: 'image/svg+xml' });
+    const declaredBytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
+    const file = new File([declaredBytes], 'encoded.svg', { type: 'image/svg+xml' });
 
     await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
 
@@ -618,8 +618,8 @@ describe('loadImageFile rejection paths', () => {
   it('finds XML-declared encodings after long legal declaration whitespace', async () => {
     const decoders = installBrowserDecoders();
     const markup = `<?xml version="1.0"${' '.repeat(2048)}encoding="windows-1252"?><svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>`;
-    const bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
-    const file = new File([bytes], 'encoded.svg', { type: 'image/svg+xml' });
+    const longDeclarationBytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
+    const file = new File([longDeclarationBytes], 'encoded.svg', { type: 'image/svg+xml' });
 
     await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
 
