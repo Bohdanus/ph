@@ -278,6 +278,14 @@ function translate(
     return { entry, durableEntry, diagnostics: [] };
   }
 
+  if (entry.documentSource) {
+    return unavailable(
+      entry,
+      'A document source can only establish the initial baseline; appended entries cannot carry one.',
+      'document-replacement'
+    );
+  }
+
   if (entry.actionName === SELECTION_ACTION) {
     const durableEntry = deriveSetSelectionEntry(entry, currentSelections);
     if (!durableEntry) {
@@ -1186,6 +1194,9 @@ export function validatePlannedDurableEntry(
   })();
 
   if (entry.actionName === SET_DOCUMENT_FRAME_ACTION) {
+    if (entry.documentSource) {
+      return 'a document frame change cannot carry a document replacement; use REPLACE_DOCUMENT';
+    }
     if (planned.operation.kind !== 'set-document-frame' && planned.operation.kind !== 'transform-document') {
       return `a document frame change produced a "${planned.operation.kind}" operation`;
     }
@@ -1247,6 +1258,8 @@ export function validatePlannedDurableEntry(
     }
     return provenanceMismatch;
   }
+
+  if (entry.documentSource) return 'an appended history entry cannot carry a document replacement';
 
   if (entry.actionName === SELECTION_ACTION) {
     if (planned.operation.kind !== 'set-selection') {

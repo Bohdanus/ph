@@ -12,6 +12,7 @@ import {
   deriveReorderLayersEntry,
   durableAppendDiagnostic,
   planHistoryAppend,
+  validatePlannedDurableEntry,
   type AppendBoundaryResult,
   type DurableAppendInput,
 } from '../history-append.ts';
@@ -167,6 +168,34 @@ describe('planHistoryAppend: one entry per append', () => {
 
     expect(result.entry.id).toBe('stable-id');
     expect(result.durableEntry?.id).toBe('stable-id');
+  });
+
+  it('refuses a document source on appended entries in planning and supplied-plan validation', () => {
+    const item = propertyItem(RENAME_LAYER_ACTION, { name: 'Renamed' });
+    const timelineBefore = timeline(createMockHistory(1));
+    const canonical = planHistoryAppend({
+      item,
+      timeline: timelineBefore,
+      currentFrame: baselineFrame,
+      id: 'document-source-append',
+    });
+    if (!canonical.durableEntry) throw new Error('expected the source-free property entry to be translated');
+
+    const sourceBearing = planHistoryAppend({
+      item: {
+        ...item,
+        documentSource: { layers: {}, size: { width: 800, height: 600 }, frame: baselineFrame },
+      },
+      timeline: timelineBefore,
+      currentFrame: baselineFrame,
+      id: 'document-source-append',
+    });
+
+    expect(sourceBearing.durableEntry).toBeNull();
+    expect(sourceBearing.diagnostics[0]).toMatchObject({ code: 'document-replacement' });
+    expect(validatePlannedDurableEntry(sourceBearing.entry, canonical.durableEntry)).toBe(
+      'an appended history entry cannot carry a document replacement'
+    );
   });
 
   it('never mutates the legacy arguments it is given', () => {
