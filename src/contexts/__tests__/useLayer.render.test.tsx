@@ -399,5 +399,17 @@ describe('useLayers drawAllLayers', () => {
     // preview must retain that record's editable source instead of mixing with
     // the durable projection selected just beforehand.
     expect(phase3Rendered[1].source).toBe(secondCommittedLayer.source);
+
+    act(() => {
+      result.current.store.previewLayers.current = {};
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(4);
+    const phase4Rendered = drawnLayers(3);
+    expect(phase4Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase4Rendered[0].tmpCanvas).toBeNull();
+    expect(phase4Rendered[0].source).toBeUndefined();
+    expect(phase4Rendered[1].source).toBeUndefined();
   });
 });
