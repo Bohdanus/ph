@@ -8,6 +8,8 @@ const storeState = vi.hoisted(() => ({
   canvasRef: { current: null },
   color: '#000000',
   currentArgs: { current: null },
+  layers: {} as Record<string, unknown>,
+  activeLayerId: null as string | null,
   totalSize: { width: 800, height: 600 },
 }));
 
@@ -85,6 +87,8 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     canvasRef: { current: null },
     color: '#000000',
     currentArgs: { current: null },
+    layers: {},
+    activeLayerId: null,
     totalSize: { width: 800, height: 600 },
     ...overrides,
   });
@@ -1367,6 +1371,42 @@ describe('Text toolbar', () => {
         expect.objectContaining({ args: expect.objectContaining({ text: 'Hello' }) })
       );
       expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+    });
+
+    it('keeps the edit draft when replacing its source fails', () => {
+      resetToolArgs({ editingLayerId: 'text-layer-1' });
+      resetStoreState({
+        activeLayerId: 'text-layer-1',
+        layers: {
+          'text-layer-1': {
+            id: 'text-layer-1',
+            pos: { x: 0, y: 0, width: 100, height: 50 },
+            source: { kind: 'tool', args: { toolName: 'text', text: 'Original' } },
+          },
+        },
+      });
+      mockReplaceLayerSource.mockReturnValueOnce(null);
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+      expect(mockReplaceLayerSource).toHaveBeenCalledOnce();
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+      expect(toolArgs.text).toBe('Hello');
+      expect(toolArgs.rect).not.toBeNull();
+    });
+
+    it('clears an orphaned edit instead of creating a duplicate layer', () => {
+      resetToolArgs({ editingLayerId: 'missing-layer' });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+      expect(mockCancelLayerPreview).toHaveBeenCalledExactlyOnceWith('missing-layer');
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: '', rect: null }));
     });
 
     it('calls cancelLayerPreview for the editing layer when Cancel is clicked', () => {

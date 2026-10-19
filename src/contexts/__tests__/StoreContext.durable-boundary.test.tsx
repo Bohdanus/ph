@@ -743,7 +743,7 @@ describe('StoreContext removed durable replay publication surface', () => {
 
 describe('StoreContext DurableDocumentStatus contract', () => {
   // A `Record` keyed by the union, not `satisfies DurableDocumentStatus[]`. The array form is a
-  // ONE-WAY check: it rejects a member that is not in the union, but adding a fourth member to the
+  // ONE-WAY check: it rejects a member that is not in the union, but adding another member to the
   // union leaves this suite silently non-exhaustive and green. Keying by the union makes that a
   // COMPILE error, which is the property the deleted exhaustiveness test only promised — and unlike
   // a `toEqual` on this object, it cannot be satisfied by editing the expectation to match.

@@ -315,7 +315,7 @@ function translate(
     // Layer presence is deliberately not a precondition here or in validation:
     // conversion and both replay models retain unknown removals as no-ops, and
     // `replayHistory` filters the id out of the layer record rather than
-    // refusing the entry (`history-replay.ts:158`). The derivation is the parity
+    // refusing the entry (`replayHistory`'s `REMOVE_ACTION` arm filters the id). The derivation is the parity
     // path, so it has no refusal to make for a layer the document never held.
     // This guard is therefore a narrowing guard, not a check: the derivation
     // returns null only for an action that is not a removal, which this arm has
@@ -741,7 +741,7 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * the two deep-copied it is.
  *
  * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory` (`history-replay.ts:122`) read a key-absent id as `null`.
+ * and `replayHistory`'s `SELECTION_ACTION` arm read a key-absent id as `null`.
  * A strict `!==` would report a mismatch between a legacy arg that omits the key
  * and the normalized planned entry, degrading a correct append to reconversion.
  */

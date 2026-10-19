@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
 import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
@@ -19,7 +20,18 @@ export interface MobileLayersDrawerProps {
 
 export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, onClose }) => {
   const [{ layers, activeLayerId, history, historyIndex, totalSize, documentFrame }] = useStore();
-  const { createBlankLayer, toggleVisibility, removeLayer, moveLayerAfter, setActiveLayer, updateLayer } = useLayers();
+  const {
+    createBlankLayer,
+    toggleVisibility,
+    removeLayer,
+    moveLayerAfter,
+    setActiveLayer,
+    updateLayer,
+    commitDirtyTool,
+  } = useLayers();
+  const { toolArgs } = useCurrentTool();
+  const textEditActive = toolArgs.toolName === 'text' && Boolean(toolArgs.rect);
+  const textEditingLayerId = textEditActive && toolArgs.toolName === 'text' ? (toolArgs.editingLayerId ?? null) : null;
   const { resetHistoryTo, toggleDisabled, historyPanelProjection: storedProjection } = useHistory();
   const historyPanelProjection = storedProjection ?? {
     source: 'legacy' as const,
@@ -63,6 +75,14 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     if (layer.opacity !== opacity) {
       updateLayer(layer.id, { opacity }, SET_LAYER_OPACITY_ACTION);
     }
+  };
+
+  const selectLayer = (id: LayerId) => {
+    if (textEditActive && toolArgs.toolName === 'text') {
+      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
+      if (commitDirtyTool() === null) return;
+    }
+    setActiveLayer(id);
   };
 
   /**
@@ -216,8 +236,14 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                   type="button"
                   onClick={() => removeLayer(activeLayerId)}
                   data-testid="mobile-delete-layer-button"
+                  disabled={textEditingLayerId === activeLayerId}
                   className="flex min-h-11 min-w-11 items-center justify-center text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 rounded-lg"
                   aria-label="Delete active layer"
+                  title={
+                    textEditingLayerId === activeLayerId
+                      ? 'Finish text editing before removing this layer'
+                      : 'Delete active layer'
+                  }
                 >
                   <TrashIcon />
                 </button>
@@ -251,7 +277,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                       acting on a layer does not also select it.
                     */}
                     <div
-                      onClick={() => setActiveLayer(layer.id)}
+                      onClick={() => selectLayer(layer.id)}
                       className={`flex flex-wrap items-center justify-between gap-0.5 p-2 rounded-xl border transition-all cursor-pointer ${
                         isActive
                           ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-500 shadow-sm'
@@ -297,7 +323,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                             aria-pressed={isActive}
                             onClick={(event) => {
                               event.stopPropagation();
-                              setActiveLayer(layer.id);
+                              selectLayer(layer.id);
                             }}
                             className="flex min-h-11 min-w-0 flex-1 items-center truncate rounded px-1 text-left"
                           >
@@ -319,6 +345,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                         <LayerLockToggle
                           layer={layer}
                           updateLayer={updateLayer}
+                          textEditActive={textEditActive}
                           className="min-h-11 min-w-11 rounded-lg"
                         />
                         <button

@@ -1,12 +1,10 @@
-# Tools inventory: the Adobe tools the rail does not have
+# Tools inventory: Adobe tools not mapped to the current rail
 
-**This file's one job is to catalogue the Photoshop Tools-panel tools this app does not
-have**, keyed by Adobe's identity for each tool — Adobe's name, its group, its shortcut
-letter, its headline options, and a source — so that the gap is documented once and nobody
-re-audits Adobe's Tools panel to rediscover it. It is not a roadmap, a plan, a priority
-list, or a claim that any of these tools is built. Nothing here implies any of them exists
-in the app; every one of them is absent from `src/contexts/tool-types.ts` and therefore
-absent from the rail.
+**This file's one job is to catalogue Adobe tool-panel tools this app does not map to the
+rail**, keyed by Adobe's identity for each tool — name, group, shortcut, headline options,
+and source. It is not a roadmap or priority list. Every row in the default-mode tables is
+absent from `toolbarMap`; the conditional Technology Preview is kept separate because Adobe
+says its default state is off.
 
 There is no per-tool home for these tools inside the app's own description system. The eight
 family modules under `src/tools/descriptions/` merge into a `Record<ToolName,
@@ -20,72 +18,37 @@ carries the discipline the data files carry in a `sources` array — **a descrip
 source is a rumour** ([`TOOLS-RESEARCH-BRIEF.md`](TOOLS-RESEARCH-BRIEF.md),
 [`DOCUMENTATION.md`](DOCUMENTATION.md) §Citations).
 
-## Two boundaries, stated up front
+## Current snapshot and evidence boundary
 
-**Membership is Adobe-confirmed; group order and separator placement are a hypothesis.**
-Adobe publishes **no page that enumerates the Tools panel top to bottom**. It publishes five
-topical overview tables — selection, retouch, painting, drawing, navigation-and-measuring —
-plus a Customize-toolbar page. Every Adobe tool name below is confirmed from one of those
-tables or from an Adobe page about that tool. The **order and the separators are not**:
-they are a reconstruction from two independent third-party 2026 toolbar diagrams,
-cross-checked against Adobe for membership only. Treat the grouping as a good hypothesis and
-prefer a grouping a user recognises over one a source asserts
-([`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance; `HANDOFF.md` §74). Four
-placements remain unresolved and a screenshot of a restored PS 27.x default workspace settles
-all four: the **Frame** tool's separator, **Content-Aware Tracing**'s slot inside the Pen
-flyout, **Line before Star or Star before Line** in the Shape flyout, and whether **Note** and
-**Count** sit in the default panel or in Extra Tools.
+**The current implementation and Adobe's default toolbar are different counts.** `toolbarMap`
+contains 50 rendered entries: 49 Adobe-named tool entries and the app-only Draw override
+preserved by OVR-2. Those are across 21 flyout groups. `availableTools` has 53 registry IDs
+because it also includes shape aliases and the `color`, `levels`, and `transform` menu-command
+IDs; `ToolIconName` has 59 icon factories. None of those numbers is a count of Photoshop's
+default Tools panel.
 
-**This is a compilation, not fresh verification.** Everything here is drawn from research the
-repository already did — `.kilo/plans/ps-research/` (gitignored; read it from the main checkout, as
-`TOOLS-RESEARCH-BRIEF.md` records), the
-`.notes.md` files beside `src/tools/descriptions/`, `docs/PHOTOSHOP-UX.md`, and
-`docs/TOOLS.md` — plus six web searches against Adobe's help pages for the tools the repo had
-nothing on. **No tool's option bar was opened and audited**, and the shortcuts are the
-weakest part of this file: where a letter is Adobe-published it says so, where it is
-inferred from the flyout family it says that instead, and where nothing is known it says
-**not researched**. The effort spent on unimplemented tools is deliberately small; an honest
-gap is worth more here than an invented sentence.
+The current inventory has **22 documented tool-panel candidates not in the rail**; default visibility
+is still unverified for some groups. Four rows
+from the older inventory are now implemented and have been removed: Color Sampler, Hand, Rotate
+View, and Zoom. The Content-Aware Tracing tool remains a separate conditional entry below because
+Adobe documents it as a Technology Preview whose default state is off.
 
-## The roster: two sources, and a discrepancy that is not resolved here
+Adobe confirms individual membership and several group locations, but publishes no complete,
+numbered enumeration of the default toolbar. Therefore the previous `30 + 6 = 36` combined list
+and the historical `70 / 36 / 34` arithmetic are not current verified targets. Do not call 70 or
+72 an Adobe-confirmed default count. A restored Photoshop default workspace screenshot, or an
+Adobe-published complete default roster, is still needed before the exact target set and total can
+be asserted. The remaining placement uncertainties are the Frame separator, Line-vs-Star order,
+and Adjustment Brush's default group/visibility. Adobe's pages place Note and Count in the Eyedropper
+family; the default visibility of every group member remains unverified.
 
-This list took the roster over from `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits",
-which carried **30** absent tools in six Adobe groups and no longer names them.
-`HANDOFF.md` §74 records the same exercise as **"36 present, 34 to add, 5 to
-delete"** out of a 41-`ToolName` → 70 target, and names absent tools the first list omits.
-**Six of them, not five:** Selection Brush, Adjustment Brush, Remove, Content-Aware Tracing,
-Artboard — and **Content-Aware Move** (`HANDOFF.md` §74).
-
-**30 + 6 = 36 against a stated 34** — the combined list is two over, not one.
-**This file does not resolve it.** An operator should, and this is deliberately left visible
-rather than silently merged — a quietly reconciled roster is a roster nobody can audit.
-
-Content-Aware Move was added to the Selection group below on the evidence of §74 alone, and is
-flagged there as **the one row whose Adobe source has not been opened**. `grep -rni
-"content-aware" src toolbar-mapping.ts` finds it nowhere in the app, so it is absent in fact as
-well as undocumented; a sweep of Adobe's own _overview tables_ misses it, because like Remove and
-Content-Aware Tracing it has its own page instead of appearing in the topical tables.
-
-What makes it unresolvable from the documents alone:
-
-- The **34 is arithmetic, not an observation.** `HANDOFF.md` §74 states the shape as
-  "41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete", and
-  `41 − 5 = 36` and `70 − 36 = 34` are the only two derivations available.
-  **That 41 is §74's own historical figure, not today's count** — the registry carries 53 now,
-  since the Sponge, the two 1-pixel marquees, and additional implementations (Star, Red Eye,
-  the healing flyout family, and others) were added to it. The quotation is left as §74 states it rather than
-  silently re-derived, because §74 is a record of an exercise and not a live total. So 34 is forced by
-  the **70-tool target**, not counted off a roster. A combined list of 36 means either the
-  target is 72 or two entries do not belong.
-- Three combined-list entries are **documented as unsettled**, so any of them could be the
-  spurious one. **Note** and **Count** may sit in Extra Tools rather than the default panel
-  (`HANDOFF.md` §74, fourth unresolved placement). **Content-Aware Tracing** is gated behind
-  `Preferences > Technology Previews` — Adobe's own page says so, so it is a real tool with a
-  release caveat rather than a phantom. **Adjustment Brush** is a large _feature_ as much as a
-  tool (an adjustment layer plus a painted mask), so "34 tools" and "34 entries" are not the
-  same quantity.
-- No source in the repository enumerates the roster as a list, so there is nothing to
-  recount.
+**This is a sourced inventory, not a full options-bar audit.** It uses the tracked research protocol
+(`docs/TOOLS-RESEARCH-BRIEF.md`), the Adobe citations below, and the tracked implementation sources.
+The ignored `.kilo/plans/ps-research/` notes are historical background, not current count authority.
+The rail count and the Note/Count/Content-Aware Tracing placements were rechecked on 2026-10-19.
+**No unimplemented tool's complete option bar was opened and audited**; where a shortcut is
+Adobe-published it says so, where it is inferred it says that, and where evidence is absent it says
+**not researched**. The goal is an auditable gap, not an invented specification.
 
 ## What is deliberately NOT on this list
 
@@ -129,14 +92,12 @@ itself as blocked by the preset format.
 
 ## Selection
 
-| Adobe tool             | Group                                                | Shortcut                                                                    | Headline options                                                                                                          | Source                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Object Selection**   | Selection                                            | `W` — **Adobe-confirmed** (Adobe: _"Select the Object Selection tool (W)"_) | Object Finder toggle; selection modes (New / Add To / Subtract From / Intersect With); Sample All Layers; Hard Edge       | Adobe's selection-tools overview carries the tool and its one-line description; Adobe's Object Selection page prints `(W)` and names Object Finder, the four selection modes, Sample All Layers and Hard Edge.                                                                                                                                                  |
-| **Selection Brush**    | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                             | Hardness, Opacity, Color (gear icon), Add/Subtract brush, selection modes (New / Add To / Subtract From / Intersect With) | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, _"Lasso group"_. `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Adobe's _"Selecting with the Lasso tools"_ page names Hardness, Opacity, the selection modes and the Color overlay.                                                      |
-| **Content-Aware Move** | Selection                                            | not researched                                                              | not researched                                                                                                            | **§74 evidence only — no Adobe page was opened for this row**, which is why it is called out rather than quietly folded in. `HANDOFF.md` §74 names it, in the list headed "Largest, and they need a primitive the app does not have", beside Remove and its generative backend. `grep -rni "content-aware" src toolbar-mapping.ts` finds it nowhere in the app. |
-
-**The rest follow from what this app already lacks.** Object Selection needs an
-edge-following segmentation comparable to what the Quick Selection entry records as too hard.
+| Adobe tool                                                                                    | Group                                                | Shortcut                                                                    | Headline options                                                                                                          | Source                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Object Selection**                                                                          | Selection                                            | `W` — **Adobe-confirmed** (Adobe: _"Select the Object Selection tool (W)"_) | Object Finder toggle; selection modes (New / Add To / Subtract From / Intersect With); Sample All Layers; Hard Edge       | Adobe's selection-tools overview carries the tool and its one-line description; Adobe's Object Selection page prints `(W)` and names Object Finder, the four selection modes, Sample All Layers and Hard Edge.                                                                                             |
+| **Selection Brush**                                                                           | Selection — **Lasso group**, not a marquee neighbour | none of its own                                                             | Hardness, Opacity, Color (gear icon), Add/Subtract brush, selection modes (New / Add To / Subtract From / Intersect With) | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed, _"Lasso group"_. `HANDOFF.md` §74 corrects the earlier claim that it is web-only. Adobe's _"Selecting with the Lasso tools"_ page names Hardness, Opacity, the selection modes and the Color overlay. |
+| **The rest follow from what this app already lacks.** Object Selection needs an               |
+| edge-following segmentation comparable to what the Quick Selection entry records as too hard. |
 
 **Single Row and Single Column Marquee were listed here until 2026-10-01 and are now
 implemented**, so they have been deleted from that table rather than left in it: this file's
@@ -146,11 +107,12 @@ are covered by `e2e/single-row-column-marquee.spec.ts`.
 
 ## Retouch
 
-| Adobe tool            | Group                                                                                    | Shortcut                                                                                                                                             | Headline options                                                                                                                                                                                          | Source                                                                                                                                                                                                                                                                                                                                          |
-| --------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Remove**            | Retouch — healing flyout                                                                 | not researched — no Adobe shortcut page opened                                                                                                       | Size, Mode dropdown (Generative AI on / off / Auto), Sample All Layers, Remove after each stroke, Output to                                                                                               | Adobe's Remove tool page names all five controls; the shortcut is not confirmed on any Adobe page. `HANDOFF.md` §74 established Adobe-documented membership.                                                                                                                                                                                    |
-| **Background Eraser** | Retouch — **Eraser group**, beside the Eraser and Magic Eraser                           | `E` — **Adobe-confirmed** (Adobe NZ/AU: _"Select the Background Eraser tool (E)"_); shared with Eraser and Magic Eraser; `Shift+E` cycles the family | Brush Preset (Size, Hardness, Spacing, Angle, Roundness), Sampling (Continuous / Once / Background Swatch), Limits (Discontiguous / Contiguous / Find Edges), Tolerance (0–100), Protect Foreground Color | Adobe's _"Change pixels to transparent with the Background Eraser tool"_ page names every control; Adobe's NZ/AU pages confirm `(E)`.                                                                                                                                                                                                           |
-| **Adjustment Brush**  | Painting — **Brush flyout sibling**; placement (standalone vs. flyout) is **unresolved** | none of its own                                                                                                                                      | not researched — third-party only; options bar contents from glensmith + creativepro, not Adobe-confirmed                                                                                                 | [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance: desktop Photoshop, Adobe-confirmed membership via the dedicated Adjustment Brush page. Toolbar placement is contradictory: `glensmith.co.uk` (2026-08-14) says standalone, `photoshopessentials.com` (2024-02-16) says Brush flyout. Options bar not researched against Adobe. |
+| Adobe tool             | Group                                                                 | Shortcut                                                                                                                                             | Headline options                                                                                                                                                                                          | Source                                                                                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Remove**             | Retouch — Spot Healing Brush group                                    | not researched — no Adobe shortcut page opened                                                                                                       | Size, Mode dropdown (Generative AI on / off / Auto), Sample All Layers, Remove after each stroke, Output to                                                                                               | Adobe's Remove tool page names all five controls; the shortcut is not confirmed on any Adobe page. The page groups Remove with Spot Healing Brush.                                   |
+| **Content-Aware Move** | Retouch — Spot Healing Brush group                                    | `J`, by holding the Spot Healing Brush — **Adobe-confirmed**                                                                                         | Move an existing selection and fill the source area with surrounding content                                                                                                                              | Adobe's _"Content-Aware Patch and Move"_ page: _"In the toolbar, hold down the Spot Healing Brush and select the Content-Aware Move tool."_                                          |
+| **Background Eraser**  | Retouch — **Eraser group**, beside the Eraser and Magic Eraser        | `E` — **Adobe-confirmed** (Adobe NZ/AU: _"Select the Background Eraser tool (E)"_); shared with Eraser and Magic Eraser; `Shift+E` cycles the family | Brush Preset (Size, Hardness, Spacing, Angle, Roundness), Sampling (Continuous / Once / Background Swatch), Limits (Discontiguous / Contiguous / Find Edges), Tolerance (0–100), Protect Foreground Color | Adobe's _"Change pixels to transparent with the Background Eraser tool"_ page names every control; Adobe's NZ/AU pages confirm `(E)`.                                                |
+| **Adjustment Brush**   | Toolbar tool; group and default visibility **not specified by Adobe** | none of its own                                                                                                                                      | not researched — the options bar and adjustment-layer/mask workflow need a separate feature audit                                                                                                         | Adobe's _"Apply Adjustments with Adjustment Brush tool"_ page says _"Select Adjustment Brush Tool from the toolbar"_ but does not name a group, shortcut, or default-visible status. |
 
 **The Ruler was on this table and is not any more**, which is recorded here rather than left as a
 quiet deletion for the same reason the Sponge is below. It was the only row in
@@ -177,11 +139,10 @@ three share `J` and ship in the app: `src/tools/spotHealing.ts`, `src/tools/heal
 `src/components/ToolbarsRight/HealingBrush/HealingBrush.tsx` and `src/components/ToolbarsRight/Patch/Patch.tsx`
 are their bars, and `docs/TOOLS.md` carries the generated per-tool census at **§Spot Healing Brush Tool**,
 **§Healing Brush Tool** and **§Patch Tool** with the sources behind them. Deleting the rows keeps this
-file's contract — every row here is absent from `src/contexts/tool-types.ts` — and the six
-Adobe-group tables below hold **27 rows** in total (Selection 3, Retouch 3, Painting 5,
-Type 3, Navigation and measuring 10, Path 3), which is neither the 30 this file
-attributes to `TOOLS-TOO-HARD.md` nor the 31 it carried before these three Retouch rows were
-removed: the two lists are counted separately and are not reconciled here.
+file's contract — every row in the default-mode tables is absent from `toolbarMap`. The old
+27-row table also contained Color Sampler, Hand, Rotate View, and Zoom, which are now mapped; after
+removing those and separating the default-off Content-Aware Tracing preview, the current tables
+contain 22 candidates plus one conditional entry.
 
 **Red Eye was on this table and is not any more, which is recorded here rather than left as a
 quiet deletion.** It was the fifth member of this table's `J` healing flyout row, and the app now
@@ -204,26 +165,19 @@ exists rather than a bare `git log` entry:
   against **Adobe's own pages** instead, which is where it belonged: Adobe lists the Dodge, the Burn
   and the Sponge as three rows carrying the same `O`, with `Shift+O` cycling the group.
 
-**Healing and Patch are one flyout, not three tools in a row.** All three share `J`, and
-`HANDOFF.md` §74 lists **Red Eye and the Sponge** among its cheapest real additions
-because they are geometry and pixel loops rather than new subsystems. **It does not list
-the Healing Brush** — `grep -n "Healing Brush" HANDOFF.md` returns nothing, and §74 puts
-**Spot Healing** in the opposite list, the one headed "Largest, and they need a primitive
-the app does not have". **All five are now implemented** — `src/tools/spotHealing.ts`,
-`src/tools/healingBrush.ts`, `src/tools/redEye.ts`, `src/tools/sponge.ts`, and
-`src/tools/patch.ts` each ship as a registered processor in `toolProcessors.ts` — none of
-them landed as the planned handoff items §74 named them, and none of them carried a
-handoff entry: they were implemented as undocumented gaps rather than as tracked additions.
+**Healing and Patch are one flyout family, not separate contiguous rail slots.** Adobe groups
+Spot Healing Brush, Healing Brush, Patch, Red Eye, Remove, and Content-Aware Move under `J`. The
+first four are implemented here; Remove and Content-Aware Move remain unimplemented candidates.
+Sponge is implemented in the separate `O` family with Dodge and Burn.
 
 ## Painting
 
-| Adobe tool            | Group                                                                                               | Shortcut                                                                                                           | Headline options                                                                                                                                                                                                                                    | Source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Mixer Brush**       | Painting — Brush flyout, fourth entry                                                               | none of its own; reached by cycling the Brush slot (`B`/`Shift+B`) — **third-party**                               | Wet, Load, Mix, Sample All Layers, Current Brush Load (Load / Clean), Load Brush after Each Stroke, Clean Brush after Each Stroke, Preset menu (Dry / Moist / Wet / Very Wet × Light / Heavy), plus Brush Preset / Mode / Opacity / Flow / Airbrush | Adobe's _"Paint with the Mixer Brush"_ page lists every control; numeric preset values are community reverse-engineered only. The `B`-family cycle is third-party.                                                                                                                                                                                                                                                                                                                                                     |
-| **History Brush**     | Painting                                                                                            | `Y` — **Adobe-confirmed** (Adobe: _"Select the History Brush tool (Y)"_); `Shift+Y` toggles with Art History Brush | Brush Preset (Size, Hardness), Mode, Opacity, Flow — **the source is set in the History panel**, not on the options bar                                                                                                                             | Adobe's History Brush page: _"Select the History Brush tool (Y)"_ and _"click the far-left column of the state that you want to use as the source"_. The previous "Source: the selected state or snapshot" headline was a documentation error — the source is set in the History panel, not via an options-bar dropdown.                                                                                                                                                                                               |
-| **Art History Brush** | Painting                                                                                            | `Shift+Y` toggles with History Brush; not printed on Adobe's own Art History Brush page — **CS2 sheet**            | Brush Preset picker, Mode, Style, Area, Tolerance, Opacity                                                                                                                                                                                          | Adobe's _"Paint stylized strokes with the Art History Brush"_ page names Brush Preset, Mode, Style, Area and Tolerance explicitly; Opacity is confirmed by third-party CS-era and CS6 guides; Style menu items are **not** enumerated on Adobe's page.                                                                                                                                                                                                                                                                 |
-| **Pattern Stamp**     | Painting                                                                                            | `S`, shared with the Clone Stamp; `Shift+S` toggles the pair — **CS2 sheet**                                       | brush preset, Mode, Opacity, **Aligned**, and a pattern picker                                                                                                                                                                                      | Adobe's _"Paint with a pattern"_ page: _"Select Aligned in the options bar to maintain the pattern's continuity with your original start point"_                                                                                                                                                                                                                                                                                                                                                                       |
-| **Color Sampler**     | Painting, in Adobe's own painting table — and the `I` family with Eyedropper, Ruler, Note and Count | `I`, cycled; `Shift+I` cycles the five                                                                             | a sample-size footprint and up to four samples                                                                                                                                                                                                      | Adobe's painting-tools overview: _"Displays color values for up to four areas"_. The `I`-family membership is quoted from Adobe in `src/tools/descriptions/eyedropper-draw.notes.md` — _"Eyedropper, Color Sampler, Ruler, Note, and Count Tool I"_ — and `docs/TOOLS.md` records that **three of the four tools Photoshop cycles to with `Shift+I` are still outside this app's registry** — the Ruler joined the Eyedropper on that tile, so only the Color Sampler, the Note tool and the Count tool remain absent. |
+| Adobe tool            | Group                                 | Shortcut                                                                                                           | Headline options                                                                                                                                                                                                                                    | Source                                                                                                                                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Mixer Brush**       | Painting — Brush flyout, fourth entry | none of its own; reached by cycling the Brush slot (`B`/`Shift+B`) — **third-party**                               | Wet, Load, Mix, Sample All Layers, Current Brush Load (Load / Clean), Load Brush after Each Stroke, Clean Brush after Each Stroke, Preset menu (Dry / Moist / Wet / Very Wet × Light / Heavy), plus Brush Preset / Mode / Opacity / Flow / Airbrush | Adobe's _"Paint with the Mixer Brush"_ page lists every control; numeric preset values are community reverse-engineered only. The `B`-family cycle is third-party.                                                                                                                                                       |
+| **History Brush**     | Painting                              | `Y` — **Adobe-confirmed** (Adobe: _"Select the History Brush tool (Y)"_); `Shift+Y` toggles with Art History Brush | Brush Preset (Size, Hardness), Mode, Opacity, Flow — **the source is set in the History panel**, not on the options bar                                                                                                                             | Adobe's History Brush page: _"Select the History Brush tool (Y)"_ and _"click the far-left column of the state that you want to use as the source"_. The previous "Source: the selected state or snapshot" headline was a documentation error — the source is set in the History panel, not via an options-bar dropdown. |
+| **Art History Brush** | Painting                              | `Shift+Y` toggles with History Brush; not printed on Adobe's own Art History Brush page — **CS2 sheet**            | Brush Preset picker, Mode, Style, Area, Tolerance, Opacity                                                                                                                                                                                          | Adobe's _"Paint stylized strokes with the Art History Brush"_ page names Brush Preset, Mode, Style, Area and Tolerance explicitly; Opacity is confirmed by third-party CS-era and CS6 guides; Style menu items are **not** enumerated on Adobe's page.                                                                   |
+| **Pattern Stamp**     | Painting                              | `S`, shared with the Clone Stamp; `Shift+S` toggles the pair — **CS2 sheet**                                       | brush preset, Mode, Opacity, **Aligned**, and a pattern picker                                                                                                                                                                                      | Adobe's _"Paint with a pattern"_ page: _"Select Aligned in the options bar to maintain the pattern's continuity with your original start point"_                                                                                                                                                                         |
 
 **History Brush and Art History Brush need the retained-raster history model** that
 [`TOOLS-TOO-HARD.md`](TOOLS-TOO-HARD.md) already records as too hard for Erase to History.
@@ -242,59 +196,59 @@ name and expensive to build.
 raster-at-birth: it is registered `commit: 'source'` (the `text` entry of `toolProcessors`, in
 `src/tools/toolProcessors.ts`), so a
 text layer is pixels from the moment it is created, and Photoshop type layers are live editable
-objects (`.kilo/plans/ps-research/00-tool-inventory.md` §Structural notes). Adding the three missing
-type tools without fixing that adds three ways to create pixels that Photoshop would have
-kept editable.
+objects (Adobe's ["Edit text in Photoshop"](https://helpx.adobe.com/photoshop/using/editing-text.html)
+guide; summarized in `docs/PHOTOSHOP-UX.md`). Adding the three missing type tools without fixing that
+adds three ways to create pixels that Photoshop would have kept editable.
 
 ## Navigation and measuring
 
-This is **Adobe's least complete overview table**. `docs/PHOTOSHOP-UX.md` records that only
-one line of it was retrievable (_"Ruler tool Measures distances, locations, and angles"_) — and
-that line was retrievable **because this app built the tool**, so it is no longer a row here.
-Hand, Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection and Direct
-Selection are **not Adobe-table-confirmed**: they come from the shortcut PDF and from individual tool
-pages. That boundary is preserved here row by row.
+This is **Adobe's least complete overview table**. The current rail maps Hand, Rotate View, Zoom,
+and Ruler. The remaining default-mode candidates in this category are Note, Count, Frame, Slice,
+Slice Select, Perspective Crop, and Artboard; Path Selection and Direct Selection are listed under
+Path. Membership and group evidence are recorded row by row because the overview alone is incomplete.
 
-| Adobe tool           | Group                                                                                                                                                                  | Shortcut                                                                                                                                                        | Headline options                                                                                                                | Source                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Note**             | Measurement — the `I` family                                                                                                                                           | `I`, cycled; a legacy `N` from the CS2 sheet                                                                                                                    | Author (text field), Color (color picker), Clear All                                                                            | Adobe's _"Metadata and notes"_ page names Author, Color and Clear All as the options-bar controls. `I`-family membership is Adobe-confirmed (quoted in `src/tools/descriptions/eyedropper-draw.notes.md`). The `N` is the CS2-era _"Notes / Audio Annotation Tool"_ and is **not** a current key. Whether Note is in the default panel at all is unresolved. |
-| **Count**            | Measurement — the `I` family                                                                                                                                           | `I`, cycled                                                                                                                                                     | Count Group (create folder / delete / eye / rename), Color picker, Marker Size (1–10), Label Size (8–72), Clear                 | Adobe's _"Count objects in an image"_ page confirms every control: the count-group folder/delete/eye/rename icons, the color picker, Marker Size range 1–10, and Label Size range 8–72. Whether Count is in the default panel at all is unresolved.                                                                                                          |
-| **Hand**             | Navigation — panning                                                                                                                                                   | `H`, printed on Adobe's own page                                                                                                                                | Fit On Screen; spacebar is a temporary switch to it                                                                             | Adobe's _"Pan across the canvas with the Hand tool"_ page: _"Select the Hand tool (H) from the toolbar or press and hold the spacebar key"_. Options not researched beyond the Fit On Screen control named on Adobe's viewing-images page.                                                                                                                   |
-| **Rotate View**      | Navigation — panning, beside the Hand                                                                                                                                  | `R`, printed on Adobe's own page; `Shift` snaps the drag to 15° steps                                                                                           | a numeric **Rotation Angle** field and **Reset View**; requires OpenGL                                                          | Adobe's _"Use the Rotate View tool"_ page: _"enter rotation numerically in the Rotation Angle field in the Options Bar. Select Reset View … to return to normal orientation"_, and _"Click and hold the Hand tool (H) and select the Rotate View tool (R)"_. The 15° snap is third-party.                                                                    |
-| **Zoom**             | Navigation                                                                                                                                                             | `Z` — third-party; **not confirmed against an Adobe shortcut page**                                                                                             | Scrubby Zoom; zoom presets; Fit On Screen; 100% / Actual Pixels                                                                 | Adobe's viewing-images page documents the Zoom tool's behaviour and the 100% / Actual Pixels controls. `.kilo/plans/ps-research/03-ui-chrome-spec.md` §4 has the Scrubby Zoom detail. **Not Adobe-table-confirmed.**                                                                                                                                         |
-| **Frame**            | Navigation — its **separator is unresolved**: its own tile, but whether it closes the Crop band or opens Measurement is one of `HANDOFF.md` §74's four open placements | `K` — **Adobe-confirmed** (Adobe: _"Select the Frame tool (K)"_)                                                                                                | Frame shape (Rectangular / Elliptical / Triangle / Polygonal / Custom), Stroke color, Stroke width, Stroke alignment            | Adobe's _"Draw frames"_ page confirms the shortcut `(K)` and every options-bar control. Its separator placement in the rail is still one of `HANDOFF.md` §74's four unresolved placements.                                                                                                                                                                   |
-| **Slice**            | Crop and slice                                                                                                                                                         | `C` — **Adobe-confirmed** (Adobe: _"Press the C key to cycle through tools grouped with the Crop tool"_); `Shift+K` toggles with Slice Select per the CS2 sheet | Style (Normal / Fixed Aspect Ratio / Fixed Size), Slices From Guides, Promote                                                   | Adobe's _"Slice web pages"_ page confirms the `C` cycle and the Style, Slices From Guides and Promote controls. The `Shift+K` toggle is CS2-sheet only — current Adobe pages do not reprint it.                                                                                                                                                              |
-| **Slice Select**     | Crop and slice                                                                                                                                                         | `Shift+K` toggles the pair with Slice — **CS2 sheet** (current Adobe pages do not reprint this shortcut)                                                        | Options (Slice Options dialog), Divide (H/V), Stacking order (4), Alignment (6), Distribute (6), Show/Hide Auto Slices, Promote | Adobe's _"Modify slice layout"_ page lists each control; the shortcut is CS2-sheet only. Not Adobe-table-confirmed.                                                                                                                                                                                                                                          |
-| **Perspective Crop** | Crop and slice                                                                                                                                                         | `C` — grouped with Crop, **Adobe-confirmed** (Adobe: _"Hold down the Crop tool … then select the Perspective Crop tool"_)                                       | not researched — no Adobe page enumerates a dedicated bar; likely shares the Crop tool's options bar                            | Adobe's _"Transform perspective while cropping"_ page places it in the Crop group. `TOOLS-TOO-HARD.md` §"Crop: Straighten, Content-Aware and Generative Expand" records it as _"the Crop entry's transform work"_. Options bar not researched.                                                                                                               |
-| **Artboard**         | Layout — placement in the rail is **unresolved**; Adobe treats artboards as a document feature, not a paint operation                                                  | `V` — **third-party, and the weakest letter in this file**: one diagram prints it, another numbers it differently                                               | not researched                                                                                                                  | `HANDOFF.md` §74 lists Artboard among the tools absent from the earlier list, present in Adobe's own shortcut PDF. `docs/LAYERS-PANEL.md` records the app side: _"The app has no artboards"_, so one of the Layers panel's nine filter kinds has nothing to filter. Options not researched.                                                                  |
+| Adobe tool           | Group                                                                                                                                                                  | Shortcut                                                                                                                                                        | Headline options                                                                                                                | Source                                                                                                                                                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Note**             | Eyedropper family                                                                                                                                                      | `I`, cycled; a legacy `N` from the CS2 sheet                                                                                                                    | Author (text field), Color (color picker), Clear All                                                                            | Adobe's _"Metadata and notes"_ page names Author, Color and Clear All and says to hold the Eyedropper if Note is not visible. That confirms the family; it does not enumerate complete default-panel visibility. The `N` is a CS2-era key, not current. |
+| **Count**            | Eyedropper family                                                                                                                                                      | `I`, cycled                                                                                                                                                     | Count Group (create folder / delete / eye / rename), Color picker, Marker Size (1–10), Label Size (8–72), Clear                 | Adobe's _"Count objects in an image"_ page calls Count a tool located beneath the Eyedropper and confirms the group, color, marker-size, label-size, and clear controls. It does not enumerate the complete default toolbar.                            |
+| **Frame**            | Navigation — its **separator is unresolved**: its own tile, but whether it closes the Crop band or opens Measurement is one of `HANDOFF.md` §74's four open placements | `K` — **Adobe-confirmed** (Adobe: _"Select the Frame tool (K)"_)                                                                                                | Frame shape (Rectangular / Elliptical / Triangle / Polygonal / Custom), Stroke color, Stroke width, Stroke alignment            | Adobe's _"Draw frames"_ page confirms the shortcut `(K)` and every options-bar control. Its separator placement in the rail is still one of `HANDOFF.md` §74's four unresolved placements.                                                              |
+| **Slice**            | Crop and slice                                                                                                                                                         | `C` — **Adobe-confirmed** (Adobe: _"Press the C key to cycle through tools grouped with the Crop tool"_); `Shift+K` toggles with Slice Select per the CS2 sheet | Style (Normal / Fixed Aspect Ratio / Fixed Size), Slices From Guides, Promote                                                   | Adobe's _"Slice web pages"_ page confirms the `C` cycle and the Style, Slices From Guides and Promote controls. The `Shift+K` toggle is CS2-sheet only — current Adobe pages do not reprint it.                                                         |
+| **Slice Select**     | Crop and slice                                                                                                                                                         | `Shift+K` toggles the pair with Slice — **CS2 sheet** (current Adobe pages do not reprint this shortcut)                                                        | Options (Slice Options dialog), Divide (H/V), Stacking order (4), Alignment (6), Distribute (6), Show/Hide Auto Slices, Promote | Adobe's _"Modify slice layout"_ page lists each control; the shortcut is CS2-sheet only. Not Adobe-table-confirmed.                                                                                                                                     |
+| **Perspective Crop** | Crop and slice                                                                                                                                                         | `C` — grouped with Crop, **Adobe-confirmed** (Adobe: _"Hold down the Crop tool … then select the Perspective Crop tool"_)                                       | not researched — no Adobe page enumerates a dedicated bar; likely shares the Crop tool's options bar                            | Adobe's _"Transform perspective while cropping"_ page places it in the Crop group. `TOOLS-TOO-HARD.md` §"Crop: Straighten, Content-Aware and Generative Expand" records it as _"the Crop entry's transform work"_. Options bar not researched.          |
+| **Artboard**         | Move tool group                                                                                                                                                        | `V` — **Adobe-confirmed**                                                                                                                                       | not researched                                                                                                                  | Adobe's _"Work with the Artboard tool"_ page says to select it from the toolbar and, if it is not visible, hold the Move tool to reveal related tools. `docs/LAYERS-PANEL.md` records that the app has no artboards. Options not researched.            |
 
-**Zoom deserves one note of accuracy, because it is the entry most likely to be
-mis-catalogued.** The app has a zoom **interaction mode** on the canvas and **no Zoom tool**:
-the registry — the `ToolArgsByName` block in `src/contexts/tool-types.ts` — has no entry for it
-and the rail has none
-either. A zoom mode is not a tool.
+**Zoom is implemented as a dedicated toolbar tool**, not merely as a canvas interaction mode. Its
+presentation state and gesture limits are documented with the Zoom tool in `docs/TOOLS.md`.
 
 ## Path
 
-| Adobe tool                | Group                                                                                          | Shortcut                                      | Headline options                                                                                                                                                         | Source                                                                                                                                                                                                                                                                                                                         |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Path Selection**        | Path                                                                                           | `A`, shared with Direct Selection             | Combine Shapes, Subtract From Shape Area, Intersect Shape Areas, Exclude Overlapping Shape Areas, **Merge Shape Components**; plus path alignment and arrangement        | The five operation names are recorded in `docs/TOOLS.md` §Pen as _"The Path Selection tool's drop-down"_, which marks them `missing` in this app. The `A` is the CS2 sheet and an older Adobe reference card. Not Adobe-table-confirmed.                                                                                       |
-| **Direct Selection**      | Path                                                                                           | `A`, shared; the CS2-era toggle is `Shift+A`  | as above — it acts on individual anchor points and segments rather than whole components                                                                                 | `docs/TOOLS.md` §Pen records that `Ctrl+Alt` activates the Convert Point tool _"while the Direct Selection tool is selected"_, which is evidence the tool is absent from this app. Not Adobe-table-confirmed.                                                                                                                  |
-| **Content-Aware Tracing** | **Pen tool group** — its page names the group, which is why it is here and not under Selection | not researched — no Adobe shortcut page opens | Detail slider; Create paths from detected edges; Extend currently selected path with detected edges; Trim traced paths; gated behind `Preferences > Technology Previews` | Adobe's _"Trace images with Content-Aware Tracing"_ page names the Pen tool group, the Detail slider, and the three path-generation buttons, and _"To enable it, select Preferences > Technology Previews and restart Photoshop"_. Its **slot inside the Pen flyout** is one of `HANDOFF.md` §74's four unresolved placements. |
+| Adobe tool           | Group | Shortcut                                     | Headline options                                                                                                                                                  | Source                                                                                                                                                                                                                                   |
+| -------------------- | ----- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Path Selection**   | Path  | `A`, shared with Direct Selection            | Combine Shapes, Subtract From Shape Area, Intersect Shape Areas, Exclude Overlapping Shape Areas, **Merge Shape Components**; plus path alignment and arrangement | The five operation names are recorded in `docs/TOOLS.md` §Pen as _"The Path Selection tool's drop-down"_, which marks them `missing` in this app. The `A` is the CS2 sheet and an older Adobe reference card. Not Adobe-table-confirmed. |
+| **Direct Selection** | Path  | `A`, shared; the CS2-era toggle is `Shift+A` | as above — it acts on individual anchor points and segments rather than whole components                                                                          | `docs/TOOLS.md` §Pen records that `Ctrl+Alt` activates the Convert Point tool _"while the Direct Selection tool is selected"_, which is evidence the tool is absent from this app. Not Adobe-table-confirmed.                            |
 
 **Path Selection and Direct Selection are the work-path object the Pen family would edit.**
 `docs/TOOLS.md` §Pen documents that this app's Pen draws no pixels and has no anchor points to
 select — all six Pen-family tools mount a dummy tool area — so these two are not two tools
 added to a working foundation. They are the editing half of a family that is currently a stub.
 
+## Conditional: Content-Aware Tracing
+
+This Technology Preview is not part of the default-mode candidate count above: Adobe documents its
+default state as off and requires enabling it in Preferences. When enabled, Adobe places it in the
+Pen group; its exact slot in that flyout is not published.
+
+| Adobe tool                | Group                        | Default state           | Headline options                                                                                                       | Source                                                                                                                                                                                                                                                                         |
+| ------------------------- | ---------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Content-Aware Tracing** | Pen tool group, when enabled | Technology Preview, off | Detail slider; Create paths from detected edges; Extend currently selected path with detected edges; Trim traced paths | Adobe's _"Trace images with Content-Aware Tracing"_ page names the Pen group, Detail slider, and three path-generation buttons; the Technology Preview page says the default state is off and requires Preferences to enable it. The slot within the Pen flyout is unresolved. |
+
 ---
 
 ## Sources
 
 Everything in this file is attributable to one of the following. Adobe pages were reached
-through the web search live crawler, not `webfetch` — `webfetch` returns HTTP 403 on
-essentially every `helpx.adobe.com` path, which is recorded as a research-method fact in
-`.kilo/plans/ps-research/00-tool-inventory.md` §Research method note and in
+through the web search live crawler, not `webfetch` — the latter returns HTTP 403 on many
+`helpx.adobe.com` paths. The tracked research protocol and source links are in
 `docs/TOOLS-RESEARCH-BRIEF.md`.
 
 **Adobe pages cited above**
@@ -307,6 +261,7 @@ essentially every `helpx.adobe.com` path, which is recorded as a research-method
   <https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html>
 - Remove tool —
   <https://helpx.adobe.com/photoshop/using/tool-techniques/remove-tool.html>
+- Content-Aware Move — <https://helpx.adobe.com/photoshop/using/content-aware-patch-move.html>
 - Painting tools overview —
   <https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/fill-objects-selections-layers/painting-tools-overview.html>
 - Drawing tools overview —
@@ -336,6 +291,7 @@ essentially every `helpx.adobe.com` path, which is recorded as a research-method
 - Painting tools (the Smoothing membership) — <https://helpx.adobe.com/photoshop/using/painting-tools.html>
 - Frame tool — <https://helpx.adobe.com/photoshop/using/tool-techniques/frame-tool.html>
   and <https://helpx.adobe.com/photoshop/desktop/create-manage-layers/layout-design-tools/draw-frames.html>
+- Artboard tool — <https://helpx.adobe.com/photoshop/using/tool-techniques/artboard-tool.html>
 - Slice web pages — <https://helpx.adobe.com/photoshop/using/slicing-web-pages.html>
 - Modify slice layout — <https://helpx.adobe.com/photoshop/using/modifying-slice-layout.html>
 - Transform perspective while cropping —
@@ -349,11 +305,10 @@ essentially every `helpx.adobe.com` path, which is recorded as a research-method
   <https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/create-text-selection-borders.html>
 - Content-Aware Tracing —
   <https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/trace-images-easily-with-the-content-aware-tracing-tool.html>
+- Technology Previews — <https://helpx.adobe.com/photoshop/using/technology-previews.html>
 - Customize the toolbar — <https://helpx.adobe.com/photoshop/using/tools.html>
 
-**Adobe tools named on the pages above but not separately opened:** Artboard. Its
-membership is established by `HANDOFF.md` §74 quoting Adobe's own pages; this file did not
-open it. All other tools in this file now have a dedicated Adobe page cited above.
+All currently listed Adobe tool-panel candidates have a dedicated Adobe page or overview cited above.
 
 **Adobe shortcuts confirmed via web search snippets** (not `webfetch`, which returns 403 on
 `helpx.adobe.com`): Object Selection `(W)`, Spot Healing Brush `(J)`, History Brush `(Y)`,
@@ -366,7 +321,7 @@ versions of this file.
 - 2026 toolbar diagrams used for group order: `glensmith.co.uk` and `panosfx.com`, per
   [`PHOTOSHOP-UX.md`](PHOTOSHOP-UX.md) §Confidence and provenance. These diagrams are the
   source for the group **order** and **separator** placement, and for the letters this file
-  does not otherwise attribute to Adobe: `V` for Artboard and `Z` for Zoom still come from
+  does not otherwise attribute to Adobe: `Z` for Zoom still comes from
   this class of source. `K` (Frame), `C` (Slice, Perspective Crop), `W` (Object Selection)
   and `E` (Background Eraser) **were** listed here in prior versions but are now
   Adobe-confirmed — see the note above.
@@ -379,25 +334,21 @@ versions of this file.
 
 **This repository**
 
-- `.kilo/plans/ps-research/00-tool-inventory.md` — the registered-tool audit. **Its line 15
-  reads "all 29 in `availableTools`" and that is stale: the registry now carries 53**
-  (`src/contexts/tool-types.ts`, counted at the `ToolArgsByName` block). Its **Note A**
-  (`color` has no determinate Photoshop identity) and **Note B** (`levels` is actually
-  Brightness/Contrast) describe tools this app _has_, so they do not bear on this roster, and
-  neither do they change the count.
-- `.kilo/plans/ps-research/01-photoshop-reference.md` — the behaviour reference. **§10
-  is a corrections log of 17 disproved premises and 18 unresolved items and must
-  be read before trusting any Photoshop claim in the document.** Nothing in this file rests on
-  a premise §10 lists as disproved.
-- `.kilo/plans/ps-research/03-ui-chrome-spec.md` — options-bar contents per tool (§5),
-  and an explicit _"Unverified — do not present as fact"_ section (§10) which this file
-  respects.
+- `toolbar-mapping.ts` and `src/contexts/tool-types.ts` — the current rail map and registry IDs;
+  these are the source of the implementation counts above.
+- `src/components/SidebarLeft/types.ts` and `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`
+  — the `ToolIconName` union and its exact 59-name assertion.
+- `docs/PHOTOSHOP-UX.md` — current Adobe-backed behavior claims and explicitly unverified
+  placements.
+- Local `.kilo/plans/ps-research/` notes — historical research only. In particular,
+  `00-tool-inventory.md` still says `availableTools` has 29 entries and cites source paths that have
+  moved; do not use it for current counts or file locations.
 - `docs/PHOTOSHOP-UX.md` — which tools are Adobe-table-confirmed and which are not
   (§"Open violations"); the trap list and the naming quirks.
-- `HANDOFF.md` §74 — the 41 → 70 target, the four inventory corrections, the four
-  unresolved placements, and the excluded candidates.
-- `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits" — the 30-entry roster this file
-  takes over, and the dependencies the absent tools follow from.
+- `HANDOFF.md` §74 — the current rail requirement, rederived implementation counts, remaining
+  source gaps, and unresolved default-roster facts.
+- `docs/TOOLS-TOO-HARD.md` §"The Adobe tools the rail omits" — the historical 30-entry roster this
+  file took over, and the dependencies the absent tools follow from.
 - `docs/TOOLS.md` and `src/tools/descriptions/*.notes.md` — per-tool option censuses and the
   shortcut citations for the families that overlap this roster (Star, Path Selection,
   Direct Selection, Color Sampler). **`docs/TOOLS.md` only carries a tool that is implemented**,
@@ -414,12 +365,12 @@ versions of this file.
 research rather than about Photoshop.** Per-tool option bars were not audited for any tool in
 this file; the "not researched" cells in the tables above are the same fact at row level.
 
-### Still not researched at all — no options bar, no source opened
+### Still not fully audited
 
-- **Adjustment Brush** options (third-party only; toolbar placement is contradictory)
-- **Artboard** options
-- **Adjustment Brush**, **Artboard** placements in the rail
-- **Content-Aware Tracing** shortcut (options bar now researched)
+- **Adjustment Brush** group/default visibility and complete options; Adobe confirms toolbar
+  membership but does not name its group or restored-default status.
+- **Artboard** options and default visibility; Adobe places it in the Move group.
+- **Content-Aware Tracing** shortcut and exact Pen-flyout slot if the default-off preview is enabled.
 - **Remove** shortcut (options bar now researched)
 - **History Brush** numeric defaults (Mode, Opacity, Flow ranges — options bar names confirmed, ranges not audited against Adobe)
 
@@ -459,7 +410,8 @@ parameter where `selectRectangle` takes both. Their cycling key is still unverif
 
 **Third-party only — membership may be confirmed, the shortcut is not or is CS2-sheet**
 
-- `Z` (Zoom), `V` (Artboard). Adobe's own pages were not opened for these letters.
+- `Z` (Zoom) remains third-party; Adobe's current Zoom pages do not print a shortcut. `V` for
+  Artboard is Adobe-confirmed by its tool page.
 - `W` for Object Selection, `E` for Background Eraser, `K` for Frame, `C` for Slice and Perspective Crop — **upgraded from third-party to Adobe-confirmed**: Adobe's own tool pages now print these letters. See the Adobe shortcuts confirmed via web search snippets note above.
 - `Shift+Y`, `Shift+S`, `Shift+K`, `Shift+T`, `Shift+A`, `N` are from a **CS2** sheet. They
   are recorded because they are the best available evidence, not because a 2026 Adobe page
@@ -470,16 +422,19 @@ parameter where `selectRectangle` takes both. Their cycling key is still unverif
 
 - The whole ordering of every table above, and where each tool sits relative to its
   neighbours. Membership is Adobe-confirmed; order is not.
-- The **Frame** separator, **Content-Aware Tracing**'s slot, **Line vs Star** in the Shape
-  flyout, and **Note**/**Count** in the default panel vs Extra Tools.
+- The **Frame** separator, **Line vs Star** order in the Shape flyout, and **Adjustment Brush**
+  default group. Content-Aware Tracing's Pen-flyout slot matters only when the default-off preview
+  is enabled.
 
 **Open questions this file deliberately did not answer**
 
-- **The 30-vs-34 roster discrepancy.** Which two entries are spurious, or whether the 70-tool
-  target should be 72. An operator's call.
-- **Note** and **Count** are the two entries most likely to be spurious: `HANDOFF.md` §74
-  records their default-panel placement as unresolved.
-- Whether **Content-Aware Tracing** counts toward a Tools-panel roster at all, given that
-  Adobe gates it behind `Preferences > Technology Previews`.
+- **The exact default roster and its total.** Adobe publishes no complete enumeration, so the
+  historical 70/72 alternatives are not an Adobe-verified target. Keep the current code/inventory
+  counts explicit, but do not resolve the default list by arithmetic.
+- **Adjustment Brush default visibility and grouping.** Adobe confirms a toolbar tool but does not
+  name its group or whether it appears in the restored default toolbar.
+- **Note and Count visibility in a restored default toolbar.** Adobe places both in the Eyedropper
+  family; the docs do not establish whether every family member is visible in the default layout.
+- **Content-Aware Tracing** is default-off; it is not included in the default-mode candidate count.
 - **Star's** `Ratio` → inner-radius mapping, which `01-photoshop-reference.md` §10 records as
   undocumented, and which this file does not restate as fact.

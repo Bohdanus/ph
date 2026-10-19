@@ -1489,7 +1489,8 @@ test.describe('Text tool', () => {
     );
 
     const resizedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-resized');
-    const resizedInk = await scanPixelsForBounds(await loadImageData(resizedCapture), isRedInk);
+    const resizedImage = await loadImageData(resizedCapture);
+    const resizedInk = await scanPixelsForBounds(resizedImage, isRedInk);
     expect(resizedInk.found, 'committed text disappeared while its layer was resized').toBe(true);
     const beforeWidth = beforeInk.right - beforeInk.left + 1;
     const beforeHeight = beforeInk.bottom - beforeInk.top + 1;
@@ -1497,6 +1498,124 @@ test.describe('Text tool', () => {
     const resizedHeight = resizedInk.bottom - resizedInk.top + 1;
     expect(resizedWidth, 'text width did not track the transformed layer').toBeGreaterThan(beforeWidth);
     expect(resizedHeight, 'text height did not track the transformed layer').toBeGreaterThan(beforeHeight);
+  });
+
+  test('a Free Transform-rotated Type layer can re-enter editing without rasterizing its source', async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(TEXT_TOOL_TIMEOUT_MS);
+    const box = await canvasBox(page);
+    const canvasClip = toClip({ left: box.x, top: box.y, right: box.x + box.width, bottom: box.y + box.height });
+
+    await setTextToolColor(page, TEXT_COLOR);
+    await dragDraftRect(page, box);
+    await replaceDraftText(page, 'MMMM');
+    await commitButton(page).click();
+    await expect(draftOverlay(page)).toHaveCount(0);
+    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'committed Type before Free Transform' });
+    const layerRows = page.getByTitle('Drag to reorder');
+    const layerCountBeforeEdit = await layerRows.count();
+
+    await page.getByTestId('header-edit-menu-button').click();
+    await page.getByTestId('edit-menu-free-transform-button').click();
+    await expect(page.locator('#rotate-slider')).toBeVisible();
+    await page.getByTitle('Rotate 90° Right').click();
+    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'Free Transform-rotated Type' });
+
+    // The Type editor is a DOM overlay, so it must inherit the same transient view transform as the
+    // document canvas and all three canvas overlays. Exercise pan, zoom and view rotation before
+    // re-entering the retained Type source.
+    const workspace = page.getByTestId('workspace-container');
+    const workspaceBox = await workspace.boundingBox();
+    if (!workspaceBox) throw new Error('workspace-container has no bounding box');
+    const viewCenter = { x: workspaceBox.x + workspaceBox.width / 2, y: workspaceBox.y + workspaceBox.height / 2 };
+
+    await clickToolButton(page, 'hand');
+    await page.mouse.move(viewCenter.x - 30, viewCenter.y - 15);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 30, viewCenter.y + 15, { steps: 4 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-pan-x', '0');
+
+    await clickToolButton(page, 'zoom');
+    await page.mouse.click(viewCenter.x, viewCenter.y);
+    await expect(workspace).not.toHaveAttribute('data-view-zoom', '1');
+
+    await page.keyboard.press('r');
+    await expect(page.getByRole('button', { name: 'Reset View', exact: true })).toBeVisible();
+    await page.mouse.move(viewCenter.x - 15, viewCenter.y);
+    await page.mouse.down();
+    await page.mouse.move(viewCenter.x + 15, viewCenter.y, { steps: 4 });
+    await page.mouse.up();
+    await expect(workspace).not.toHaveAttribute('data-view-rotation', '0');
+
+    const transformedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-free-transformed');
+    const transformedImage = await loadImageData(transformedCapture);
+    const transformedInk = await scanPixelsForBounds(transformedImage, isRedInk);
+    expect(transformedInk.found, 'Free Transform removed the committed Type pixels').toBe(true);
+    let redPixel: { x: number; y: number } | null = null;
+    for (let y = transformedInk.top; y <= transformedInk.bottom && redPixel === null; y += 1) {
+      for (let x = transformedInk.left; x <= transformedInk.right; x += 1) {
+        const offset = (y * transformedImage.width + x) * 4;
+        const alpha = transformedImage.data[offset + 3] ?? 0;
+        if (
+          alpha > 128 &&
+          isRedInk(
+            transformedImage.data[offset] ?? 0,
+            transformedImage.data[offset + 1] ?? 0,
+            transformedImage.data[offset + 2] ?? 0,
+            alpha
+          )
+        ) {
+          redPixel = { x: x + 0.5, y: y + 0.5 };
+          break;
+        }
+      }
+    }
+    if (!redPixel) throw new Error('text-tool: rotated Type has no opaque red pixel to select');
+    const clickPoint = imagePointToCss(
+      { width: transformedImage.width, height: transformedImage.height },
+      box,
+      redPixel
+    );
+
+    await clickToolButton(page, 'text');
+    const documentViewStyle = await page.locator('.zoom-container').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    const editorViewStyle = await page.getByTestId('text-edit-view-transform').evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return { transform: computed.transform, transformOrigin: computed.transformOrigin };
+    });
+    expect(editorViewStyle).toEqual(documentViewStyle);
+
+    await page.mouse.click(clickPoint.x, clickPoint.y);
+    await expect(draftOverlay(page), 'clicking transformed Type did not re-enter edit mode').toBeVisible();
+    await expect(draftOverlay(page)).toHaveText('MMMM');
+    await expect(draftOverlay(page)).toHaveCSS('transform', /^matrix\(/);
+    const overlayBox = await draftOverlay(page).boundingBox();
+    expect(overlayBox, 'the text overlay has no screen-space box').not.toBeNull();
+    expect(clickPoint.x).toBeGreaterThanOrEqual(overlayBox!.x - 2);
+    expect(clickPoint.x).toBeLessThanOrEqual(overlayBox!.x + overlayBox!.width + 2);
+    expect(clickPoint.y).toBeGreaterThanOrEqual(overlayBox!.y - 2);
+    expect(clickPoint.y).toBeLessThanOrEqual(overlayBox!.y + overlayBox!.height + 2);
+
+    await replaceDraftText(page, 'I');
+    await expect(commitButton(page)).toBeEnabled();
+    await commitButton(page).click();
+    await expect(draftOverlay(page), 'the committed re-entry left a second draft overlay').toHaveCount(0);
+    await expect(layerRows, 'editing transformed Type created a duplicate layer').toHaveCount(layerCountBeforeEdit);
+    await waitForCanvasPixels(page, canvasClip, hasRedPixels, { description: 'edited Type after affine re-entry' });
+
+    const editedCapture = await captureCanvasScreenshot(page, box, testInfo, 'text-layer-reentered-and-edited');
+    const editedInk = await scanPixelsForBounds(await loadImageData(editedCapture), isRedInk);
+    expect(editedInk.found, 'the transformed Type source disappeared after re-entry').toBe(true);
+    const transformedHeight = transformedInk.bottom - transformedInk.top + 1;
+    const editedHeight = editedInk.bottom - editedInk.top + 1;
+    expect(editedHeight, 'the replacement text did not update the retained source').toBeLessThan(
+      transformedHeight * 0.6
+    );
   });
 
   test('Cancel discards the draft without committing a layer', async ({ page }) => {

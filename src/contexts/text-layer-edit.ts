@@ -1,5 +1,6 @@
 import { documentToCanvasPos, type DocumentFrame } from './document-frame.ts';
-import type { Layer, LayerId, ToolLayerSource } from './layer-types.ts';
+import { getLayerAffineTransform, type AffineTransform } from './affine-transform.ts';
+import type { Layer, LayerId, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { Pos } from './general-types.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 
@@ -7,26 +8,53 @@ export type TextLayerEditTarget = {
   layerId: LayerId;
   args: TextToolArgs;
   pos: Pos;
+  /**
+   * The layer's composed affine transform, for the DOM overlay to mirror at draw time.
+   * Identity when the layer has no affine operations. Never includes filter operations
+   * (those are refused by the gate above).
+   */
+  affine: AffineTransform;
 };
 
-/** Hydrate the layer-local source rect into the canvas space used by the live editor. */
+/**
+ * Whether a layer's operations include a filter (non-affine) operation.
+ *
+ * Only pure affine transforms (scale/rotate/skew/mirror) are allowed — they are
+ * composable matrices applied at draw time, never baked. Any filter operation
+ * makes the draft uneditable in-place, because those alter geometry or pixels
+ * in ways that cannot be round-tripped through the DOM overlay.
+ */
+function hasFilterOperation(operations: readonly LayerOperation[]): boolean {
+  return operations.some((op) => op.kind !== 'affine-transform');
+}
+
+/**
+ * Hydrate the layer-local source rect into the canvas space used by the live editor.
+ *
+ * The returned `args.rect` stays in the layer's ORIGINAL local coordinate frame
+ * (offset by the canvas position), so `calculateNewRect` measures text against the
+ * un-transformed box. The `affine` field carries the layer's composed transform so
+ * `TextEditOverlay` can apply a matching CSS matrix on top.
+ */
 export function textLayerEditTarget(layer: Layer, frame: DocumentFrame): TextLayerEditTarget | null {
+  if (layer.locked) return null;
+
   const source = layer.source;
-  if (
-    !source ||
-    source.kind !== 'tool' ||
-    source.args.toolName !== 'text' ||
-    !source.args.rect ||
-    layer.operations.length > 0
-  ) {
+  if (!source || source.kind !== 'tool' || source.args.toolName !== 'text' || !source.args.rect) {
     return null;
   }
 
+  const operations = layer.operations ?? [];
+  if (hasFilterOperation(operations)) return null;
+
   const rect = source.args.rect;
+  const affine = getLayerAffineTransform(layer);
   const canvasPos = documentToCanvasPos(layer.pos, frame);
+
   return {
     layerId: layer.id,
     pos: layer.pos,
+    affine,
     args: {
       ...source.args,
       editingLayerId: layer.id,

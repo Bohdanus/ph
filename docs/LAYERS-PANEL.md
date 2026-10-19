@@ -206,9 +206,16 @@ order:
 | 3   | Lock Position           | "Prevents the layer's pixels from being moved."                                                                                                         | crossed arrows    |
 | 4   | Lock All                | "Click the Lock All option in the Layers panel."                                                                                                        | padlock           |
 
-Lock All is the sum of the other three: it is the one lock that maps onto Photoshop's "prevent
-everything", and on this model it is equivalent to the single `locked` boolean `Layer` has today.
-That is why the import collapse in `psd-utils.ts` — `loadPsd()` — is lossy in only one direction —
+Lock All is the full-layer lock represented by the single `locked` boolean `Layer` has today.
+`loadPsd()` treats `transparencyProtected` or any truthy member of ag-psd's `protected` object as
+that full lock and emits a warning, so it cannot preserve which protection scope was originally
+set. This also includes ag-psd's `protected.artboards` field, which is not one of Photoshop's four
+visible lock-row controls. `savePsd()` writes the boolean as `transparencyProtected: locked` and
+`protected: { transparency: false, composite: locked, position: locked }`. The pinned
+[`ag-psd@31.0.2` format guide](https://app.unpkg.com/ag-psd@31.0.2/files/README_PSD.md#layer)
+defines `transparencyProtected: true` with `protected.transparency: false` as the canonical
+"Lock All" representation. Therefore an app full lock round-trips, while a partial PSD lock
+becomes full-layer-locked and its original scope cannot be recovered.
 four flags in, one out, never the reverse.
 
 The three partial locks are primary-sourced twice each (the `moving-stacking-locking-layers` help page
@@ -220,7 +227,7 @@ Note that four visible controls do not imply four model fields: Adobe's UXP `Lay
 - `PARTIAL` — the panel can apply and remove Photoshop's full lock through distinct
   `LOCK_LAYER_ACTION` and `UNLOCK_LAYER_ACTION` history entries. The locked state is shown beside the
   layer name, and tablet rows expose a 44px lock control. The model still cannot represent the three
-  partial lock flags independently; PSD import continues to collapse protection to one boolean.
+  partial lock flags independently; PSD import collapses any such flag to full-layer-locked.
 - `GAP` — no Fill control. `Fill:` is not a synonym for Opacity; see [§9.1](#91-opacity-and-fill-are-not-the-same-field).
 - The panel lock state renders **on the row** as a solid padlock when fully locked. Partial-lock and
   locked-group rendering remain unavailable because neither state exists in the flat layer model.

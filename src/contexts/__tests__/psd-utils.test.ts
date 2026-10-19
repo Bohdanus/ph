@@ -4,6 +4,7 @@ import { initializeCanvas, readPsd, writePsd, type Layer as PsdLayer, type Pixel
 import { loadPsd, savePsd } from '../psd-utils.ts';
 import { loadDocumentFile } from '../image-load-save-utils.ts';
 import type { Layer } from '../layer-types.ts';
+import type { ToolArgs } from '../tool-types.ts';
 
 const pixel = (r = 0, g = 0, b = 0, a = 255): PixelData => ({
   width: 1,
@@ -15,6 +16,7 @@ const pixel = (r = 0, g = 0, b = 0, a = 255): PixelData => ({
 // Only source-over composition is simulated; other modes are checked as metadata/canvas calls.
 let contexts: WeakMap<HTMLCanvasElement, CanvasRenderingContext2D>;
 let drawCalls: { mode: string; alpha: number }[];
+type CanvasMatrix = { a: number; b: number; c: number; d: number; e: number; f: number };
 beforeEach(() => {
   contexts = new WeakMap();
   drawCalls = [];
@@ -23,14 +25,25 @@ beforeEach(() => {
     if (context) return context;
     const canvas = this;
     const bytes = new Uint8ClampedArray(canvas.width * canvas.height * 4);
-    const stateStack: Array<{ alpha: number; mode: GlobalCompositeOperation; filter: string }> = [];
+    const stateStack: Array<{
+      alpha: number;
+      mode: GlobalCompositeOperation;
+      filter: string;
+      matrix: CanvasMatrix;
+    }> = [];
+    let matrix: CanvasMatrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
     context = {
       canvas,
       globalAlpha: 1,
       globalCompositeOperation: 'source-over',
       filter: 'none',
       save(this: CanvasRenderingContext2D) {
-        stateStack.push({ alpha: this.globalAlpha, mode: this.globalCompositeOperation, filter: this.filter });
+        stateStack.push({
+          alpha: this.globalAlpha,
+          mode: this.globalCompositeOperation,
+          filter: this.filter,
+          matrix: { ...matrix },
+        });
       },
       restore(this: CanvasRenderingContext2D) {
         const state = stateStack.pop();
@@ -38,6 +51,25 @@ beforeEach(() => {
         this.globalAlpha = state.alpha;
         this.globalCompositeOperation = state.mode;
         this.filter = state.filter;
+        matrix = state.matrix;
+      },
+      translate(this: CanvasRenderingContext2D, x: number, y: number) {
+        matrix = {
+          ...matrix,
+          e: matrix.a * x + matrix.c * y + matrix.e,
+          f: matrix.b * x + matrix.d * y + matrix.f,
+        };
+      },
+      transform(this: CanvasRenderingContext2D, a: number, b: number, c: number, d: number, e: number, f: number) {
+        const current = matrix;
+        matrix = {
+          a: current.a * a + current.c * b,
+          b: current.b * a + current.d * b,
+          c: current.a * c + current.c * d,
+          d: current.b * c + current.d * d,
+          e: current.a * e + current.c * f + current.e,
+          f: current.b * e + current.d * f + current.f,
+        };
       },
       createImageData: (width: number, height: number) => ({
         width,
@@ -56,21 +88,60 @@ beforeEach(() => {
       ) {
         const input = source.getContext('2d')!.getImageData(0, 0, source.width, source.height).data;
         drawCalls.push({ mode: this.globalCompositeOperation, alpha: this.globalAlpha });
-        for (let dy = 0; dy < height; dy++)
-          for (let dx = 0; dx < width; dx++) {
-            if (x + dx < 0 || y + dy < 0 || x + dx >= canvas.width || y + dy >= canvas.height) continue;
-            const from =
-              (Math.floor((dy * source.height) / height) * source.width + Math.floor((dx * source.width) / width)) * 4;
-            const to = ((y + dy) * canvas.width + x + dx) * 4;
-            const alpha = (input[from + 3] / 255) * this.globalAlpha;
-            const oldAlpha = bytes[to + 3] / 255;
-            const outAlpha = alpha + oldAlpha * (1 - alpha);
-            for (let c = 0; c < 3; c++)
-              bytes[to + c] = outAlpha
-                ? (input[from + c] * alpha + bytes[to + c] * oldAlpha * (1 - alpha)) / outAlpha
-                : 0;
-            bytes[to + 3] = outAlpha * 255;
+        const composite = (from: number, to: number) => {
+          const alpha = (input[from + 3] / 255) * this.globalAlpha;
+          const oldAlpha = bytes[to + 3] / 255;
+          const outAlpha = alpha + oldAlpha * (1 - alpha);
+          for (let c = 0; c < 3; c++)
+            bytes[to + c] = outAlpha
+              ? (input[from + c] * alpha + bytes[to + c] * oldAlpha * (1 - alpha)) / outAlpha
+              : 0;
+          bytes[to + 3] = outAlpha * 255;
+        };
+
+        if (matrix.a === 1 && matrix.b === 0 && matrix.c === 0 && matrix.d === 1 && matrix.e === 0 && matrix.f === 0) {
+          for (let dy = 0; dy < height; dy++)
+            for (let dx = 0; dx < width; dx++) {
+              if (x + dx < 0 || y + dy < 0 || x + dx >= canvas.width || y + dy >= canvas.height) continue;
+              const from =
+                (Math.floor((dy * source.height) / height) * source.width + Math.floor((dx * source.width) / width)) *
+                4;
+              const to = ((y + dy) * canvas.width + x + dx) * 4;
+              composite(from, to);
+            }
+          return;
+        }
+
+        const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+        if (determinant === 0) return;
+        const corners = [
+          [x, y],
+          [x + width, y],
+          [x, y + height],
+          [x + width, y + height],
+        ].map(([sourceX, sourceY]) => ({
+          x: matrix.a * sourceX + matrix.c * sourceY + matrix.e,
+          y: matrix.b * sourceX + matrix.d * sourceY + matrix.f,
+        }));
+        const minX = Math.max(0, Math.floor(Math.min(...corners.map((point) => point.x))));
+        const maxX = Math.min(canvas.width, Math.ceil(Math.max(...corners.map((point) => point.x))));
+        const minY = Math.max(0, Math.floor(Math.min(...corners.map((point) => point.y))));
+        const maxY = Math.min(canvas.height, Math.ceil(Math.max(...corners.map((point) => point.y))));
+
+        for (let destinationY = minY; destinationY < maxY; destinationY++) {
+          for (let destinationX = minX; destinationX < maxX; destinationX++) {
+            const translatedX = destinationX + 0.5 - matrix.e;
+            const translatedY = destinationY + 0.5 - matrix.f;
+            const sourceX = (matrix.d * translatedX - matrix.c * translatedY) / determinant;
+            const sourceY = (-matrix.b * translatedX + matrix.a * translatedY) / determinant;
+            if (sourceX < x || sourceX >= x + width || sourceY < y || sourceY >= y + height) continue;
+            const sourcePixelX = Math.min(source.width - 1, Math.floor(((sourceX - x) / width) * source.width));
+            const sourcePixelY = Math.min(source.height - 1, Math.floor(((sourceY - y) / height) * source.height));
+            const from = (sourcePixelY * source.width + sourcePixelX) * 4;
+            const to = (destinationY * canvas.width + destinationX) * 4;
+            composite(from, to);
           }
+        }
       },
     } as unknown as CanvasRenderingContext2D;
     contexts.set(canvas, context);
@@ -254,7 +325,10 @@ describe('PSD codec binary roundtrip', () => {
     ]);
     expect(layers[0].pos).toEqual({ x: -1, y: 2, width: 1, height: 1 });
     expect(layers[1]).toMatchObject({ visible: false, locked: true, opacity: 128 / 255, blendMode: 'soft-light' });
-    const result = readPsd(await savePsd(imported.layers, imported.size), { useImageData: true });
+    expect(imported.warnings.join(' ')).toContain('Photoshop lock flags are represented by a single full-layer lock.');
+
+    const saved = await savePsd(imported.layers, imported.size);
+    const result = readPsd(saved, { useImageData: true });
     expect(result.children?.map((l) => l.name)).toEqual(['Bottom', 'Top ✓']);
     expect(result.children?.[1]).toMatchObject({
       hidden: true,
@@ -262,7 +336,15 @@ describe('PSD codec binary roundtrip', () => {
       blendMode: 'soft light',
       transparencyProtected: true,
     });
+    expect(result.children?.[1]?.protected).toMatchObject({
+      composite: true,
+      position: true,
+      transparency: false,
+    });
     expect(Array.from(result.children![1].imageData!.data)).toEqual([0, 255, 0, 255]);
+
+    const roundTripped = await loadPsd(saved);
+    expect(Object.values(roundTripped.layers).find(({ name }) => name === 'Top ✓')?.locked).toBe(true);
   });
 
   it('warns when a layer uses non-default Blend If ranges', async () => {
@@ -462,6 +544,61 @@ describe('PSD codec binary roundtrip', () => {
     expect(result.children![0]).toMatchObject({ left: 2, top: 2, right: 3, bottom: 3 });
     expect(Array.from(result.children![0].imageData!.data)).toEqual([0, 255, 0, 255]);
     expect(Array.from(result.imageData!.data.slice((2 * 4 + 2) * 4, (2 * 4 + 2) * 4 + 4))).toEqual([0, 255, 0, 255]);
+  });
+
+  it.each([
+    ['text', { toolName: 'text', text: 'PSD' } as unknown as ToolArgs],
+    ['vector', { toolName: 'shape', figure: 'rectangle' } as unknown as ToolArgs],
+  ] as const)('exports the rotated cache for a retained %s source at its PSD origin', async (_kind, args) => {
+    const sourcePos = { x: 2, y: 2, width: 4, height: 2 };
+    const presentationBounds = { x: 3, y: 1, width: 2, height: 4 };
+    const affineOperation = {
+      id: 'quarter-turn',
+      kind: 'affine-transform' as const,
+      transform: { a: 0, b: 1, c: -1, d: 0, e: 3, f: -1 },
+      enabled: true,
+    };
+    const sourcePixels = {
+      width: 4,
+      height: 2,
+      data: new Uint8ClampedArray([
+        255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255, 0, 255, 255, 255, 255, 0, 255, 255, 255, 255,
+        255, 255, 0, 0, 0, 255,
+      ]),
+    };
+    const transformedPixels = new Uint8ClampedArray([
+      0, 255, 255, 255, 255, 0, 0, 255, 255, 0, 255, 255, 0, 255, 0, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 0, 0,
+      255, 255, 255, 0, 255,
+    ]);
+    const source = { kind: 'tool' as const, args, pos: sourcePos };
+    const retained = layer({
+      id: 'retained',
+      name: 'Retained source',
+      source,
+      bitmap: null,
+      tmpCanvas: raster(sourcePixels),
+      pos: sourcePos,
+      operations: [affineOperation],
+    });
+
+    const result = readPsd(await savePsd({ retained }, { width: 8, height: 8 }), { useImageData: true });
+    const exportedLayer = result.children![0];
+
+    expect(exportedLayer).toMatchObject({ left: 3, top: 1, right: 5, bottom: 5 });
+    expect(exportedLayer.imageData).toMatchObject({ width: 2, height: 4 });
+    expect(Array.from(exportedLayer.imageData!.data)).toEqual(Array.from(transformedPixels));
+    expect(retained.source).toEqual(source);
+    expect(retained.operations).toEqual([affineOperation]);
+
+    const expectedComposite = new Uint8ClampedArray(8 * 8 * 4);
+    for (let y = 0; y < presentationBounds.height; y += 1) {
+      for (let x = 0; x < presentationBounds.width; x += 1) {
+        const inputOffset = (y * presentationBounds.width + x) * 4;
+        const outputOffset = ((presentationBounds.y + y) * 8 + presentationBounds.x + x) * 4;
+        expectedComposite.set(transformedPixels.subarray(inputOffset, inputOffset + 4), outputOffset);
+      }
+    }
+    expect(Array.from(result.imageData!.data)).toEqual(Array.from(expectedComposite));
   });
 
   it('uses smart object previews and warns when previews are absent', async () => {

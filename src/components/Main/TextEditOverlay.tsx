@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { domOverlayStyle, resolveTextKind, resolveTextStyle } from '../../tools/text.ts';
 import { calculateNewRect } from '../../util/rect.ts';
 import { containFit, type ContainDimensions } from '../../util/contain-fit.ts';
+import { documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
 import type { Ctx2D } from '../../contexts/general-types.ts';
 import { useResizeObserverRAF } from '../../hooks/useResizeObserver.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -10,6 +11,14 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { isTextToolArgs } from '../../util/typeGuards.ts';
 import { insertPlainTextAtCaret, selectAllIn } from '../../util/contenteditable-text.ts';
+import {
+  getLayerAffineTransform,
+  IDENTITY_AFFINE_TRANSFORM,
+  isIdentityAffineTransform,
+  multiplyAffineTransforms,
+  rotationAffineAroundPoint,
+  type AffineTransform,
+} from '../../contexts/affine-transform.ts';
 
 /**
  * Photoshop's in-place type editor: a transparent DOM element laid exactly over the type box.
@@ -45,7 +54,7 @@ import { insertPlainTextAtCaret, selectAllIn } from '../../util/contenteditable-
  * switch (through `commitDirtyTool`), and a click elsewhere on the canvas.
  */
 export const TextEditOverlay = () => {
-  const [{ containerRef, toolOverlayRef, totalSize, toolName }] = useStore();
+  const [{ containerRef, toolOverlayRef, totalSize, documentFrame, toolName, layers }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { commitDirtyTool } = useLayers();
 
@@ -388,6 +397,54 @@ export const TextEditOverlay = () => {
   const style = resolveTextStyle(args);
   const scale = fit?.scale ?? 1;
 
+  const editLayerId = args.editingLayerId;
+  const editLayer = editLayerId ? layers[editLayerId] : undefined;
+  const layerAffine = editLayer ? getLayerAffineTransform(editLayer) : IDENTITY_AFFINE_TRANSFORM;
+  const hasNonIdentityAffine = !isIdentityAffineTransform(layerAffine);
+  const hasAngle = args.angle !== undefined && args.angle !== 0;
+  const editLayerCanvasPos = editLayer
+    ? documentToCanvasPos(editLayer.pos, documentFrame ?? documentFrameFromSize(totalSize))
+    : null;
+  const localTextRect = editLayerCanvasPos
+    ? {
+        x1: rect.x1 - editLayerCanvasPos.x,
+        y1: rect.y1 - editLayerCanvasPos.y,
+        x2: rect.x2 - editLayerCanvasPos.x,
+        y2: rect.y2 - editLayerCanvasPos.y,
+      }
+    : rect;
+
+  // Compose the layer affine with the text's own angle into a single CSS matrix.
+  // On canvas, `renderText` applies the angle around the rect centre, then
+  // `drawEvaluatedPresentation` applies the layer affine on top. In CSS, the
+  // rightmost function runs first, so angle (inner) is composed under the affine.
+  // The affine acts in layer-local pixels; the element lives in CSS pixels scaled
+  // by `fit.scale`, so its translation is converted after adjusting for the
+  // element's current local origin.
+  // The linear part (a,b,c,d) is dimensionless and needs no scaling.
+  // `transformOrigin: '0 0'` keeps the matrix relative to the current text box.
+  let transformStr: string | undefined;
+  if (hasNonIdentityAffine) {
+    let matrix: AffineTransform = layerAffine;
+    if (hasAngle && args.angle !== undefined) {
+      const centerX = (localTextRect.x1 + localTextRect.x2) / 2;
+      const centerY = (localTextRect.y1 + localTextRect.y2) / 2;
+      const angleRad = (args.angle * Math.PI) / 180;
+      const angleMatrix = rotationAffineAroundPoint(angleRad, { x: centerX, y: centerY });
+      matrix = multiplyAffineTransforms(layerAffine, angleMatrix);
+    }
+    const originX = localTextRect.x1;
+    const originY = localTextRect.y1;
+    const textBoxMatrix = {
+      ...matrix,
+      e: matrix.a * originX + matrix.c * originY + matrix.e - originX,
+      f: matrix.b * originX + matrix.d * originY + matrix.f - originY,
+    };
+    transformStr = `matrix(${textBoxMatrix.a},${textBoxMatrix.b},${textBoxMatrix.c},${textBoxMatrix.d},${textBoxMatrix.e * scale},${textBoxMatrix.f * scale})`;
+  } else if (hasAngle && args.angle !== undefined) {
+    transformStr = `rotate(${args.angle}deg)`;
+  }
+
   return (
     <div
       ref={hostRef}
@@ -405,13 +462,14 @@ export const TextEditOverlay = () => {
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       style={{
+        pointerEvents: 'auto',
         position: 'absolute',
         left: `${(fit?.offsetX ?? 0) + rect.x1 * scale}px`,
         top: `${(fit?.offsetY ?? 0) + rect.y1 * scale}px`,
         width: `${(rect.x2 - rect.x1) * scale}px`,
         height: `${(rect.y2 - rect.y1) * scale}px`,
-        transform: args.angle ? `rotate(${args.angle}deg)` : undefined,
-        transformOrigin: 'center center',
+        transform: transformStr,
+        transformOrigin: hasNonIdentityAffine ? '0 0' : 'center center',
         boxSizing: 'border-box',
         margin: 0,
         border: 'none',
