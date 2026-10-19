@@ -453,6 +453,53 @@ describe('decideDurableAppend: a wrong retained tool operation is still refused'
     expect(reasonFor(args, rewriteNarrow<ProcessorOperation>(args, rewrite))).toBe(reason);
   });
 
+  it('refuses a supplied raster-processor plan with a sparse nested argument array', () => {
+    const args = { toolName: 'brush', color: '#123456', size: 4, lineDash: [4, 2] };
+    const planned = rewriteNarrow<ProcessorOperation>(args, (operation) => ({
+      ...operation,
+      args: { ...operation.args, lineDash: new Array(2) },
+    }));
+
+    expect(reasonFor(args, planned)).toBe('the durable processor arguments do not match the legacy entry');
+  });
+
+  it('refuses a sparse tool argument object shared by the legacy entry and supplied plan', () => {
+    const sparseArgs = { toolName: 'brush', color: '#123456', size: 4, lineDash: new Array(2) };
+    const sparseResult = planHistoryAppend({
+      item: { actionName: TOOL_ACTION, layerId: 'layer-1', args: sparseArgs },
+      timeline: { entries: [baseline], cursor: 0, branchRevision: 0 },
+      currentFrame: frame,
+      currentLayer: layer,
+      id: 'tool',
+    });
+    const densePlan = plan({ toolName: 'brush', color: '#123456', size: 4, lineDash: [4, 2] }).durableEntry;
+    if (!densePlan || densePlan.operation.kind !== 'apply-raster-processor') {
+      throw new Error('expected a dense raster-processor plan');
+    }
+    const sharedLegacyArgs = sparseResult.entry.args as ProcessorOperation['args'];
+    const planned: DurableHistoryEntry = {
+      ...densePlan,
+      operation: { ...densePlan.operation, args: sharedLegacyArgs },
+    };
+    if (planned.operation.kind !== 'apply-raster-processor') throw new Error('expected a processor operation');
+    expect(planned.operation.args).toBe(sparseResult.entry.args);
+
+    const decision = decideDurableAppend({
+      documentId: 'tool-append-doc',
+      base,
+      prior: { entries: [baseline], cursor: 0, branchRevision: 0 },
+      next: { entries: [baseline, sparseResult.entry], cursor: 1, branchRevision: 0 },
+      entry: sparseResult.entry,
+      planned,
+      documentRevision: 0,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable processor arguments do not match the legacy entry');
+    }
+  });
+
   it.each(REPOSITIONS)('refuses a reposition-layer %s', (_label, args, rewrite, reason) => {
     expect(reasonFor(args, rewriteNarrow<RepositionOperation>(args, rewrite))).toBe(reason);
   });

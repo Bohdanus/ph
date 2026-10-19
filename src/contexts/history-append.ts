@@ -173,6 +173,7 @@ function compareRuntimeLayerToSnapshot(runtime: Layer, snapshot: DurableLayerSna
   if (runtime.locked !== snapshot.locked) return 'the durable layer lock state does not match the legacy source';
   if (runtime.blendMode !== snapshot.blendMode) return 'the durable layer blend mode does not match the legacy source';
   if (!sameJsonValue(runtime.pos, snapshot.pos)) return 'the durable layer position does not match the legacy source';
+  if (runtime.order !== snapshot.order) return 'the durable layer order does not match the legacy source';
   return null;
 }
 
@@ -692,15 +693,35 @@ function sameFrame(left: unknown, right: unknown): boolean {
  * compares shape and values only, and never throws on an unexpected value: a
  * disagreement is reported, not raised.
  */
+function sameDenseArray(
+  left: readonly unknown[],
+  right: readonly unknown[],
+  sameItem: (left: unknown, right: unknown) => boolean
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (!Object.hasOwn(left, index) || !Object.hasOwn(right, index)) return false;
+    if (!sameItem(left[index], right[index])) return false;
+  }
+  return true;
+}
+
+function containsSparseArray(value: unknown, visited = new WeakSet<object>()): boolean {
+  if (!value || typeof value !== 'object' || visited.has(value)) return false;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index) || containsSparseArray(value[index], visited)) return true;
+    }
+    return false;
+  }
+  return Object.keys(value).some((key) => containsSparseArray((value as Record<string, unknown>)[key], visited));
+}
+
 function sameJsonValue(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
+  if (left === right) return !containsSparseArray(left);
   if (Array.isArray(left) || Array.isArray(right)) {
-    return (
-      Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((item, index) => sameJsonValue(item, right[index]))
-    );
+    return Array.isArray(left) && Array.isArray(right) && sameDenseArray(left, right, sameJsonValue);
   }
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
   const leftRecord = left as Record<string, unknown>;
@@ -713,7 +734,7 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
 }
 
 function sameSelection(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
+  if (left === right) return !containsSparseArray(left);
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
   const leftSelection = left as Record<string, unknown>;
   const rightSelection = right as Record<string, unknown>;
@@ -740,7 +761,7 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * and the normalized planned entry, degrading a correct append to reconversion.
  */
 function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
-  if (left === right) return true;
+  if (left === right) return !containsSparseArray(left);
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
   const leftSnapshot = left as { selections?: unknown; activeSelectionId?: unknown };
   const rightSnapshot = right as { selections?: unknown; activeSelectionId?: unknown };
@@ -748,8 +769,7 @@ function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
   if (!Array.isArray(leftSnapshot.selections) || !Array.isArray(rightSnapshot.selections)) return false;
   const leftSelections = leftSnapshot.selections;
   const rightSelections = rightSnapshot.selections;
-  if (leftSelections.length !== rightSelections.length) return false;
-  return leftSelections.every((selection, index) => sameSelection(selection, rightSelections[index]));
+  return sameDenseArray(leftSelections, rightSelections, sameSelection);
 }
 
 function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<Record<LayerId, number>>): boolean {
@@ -760,7 +780,7 @@ function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<R
 
 /** Two layer sequences are equal when they name the same ids in the same order. */
 function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]): boolean {
-  return left.length === right.length && left.every((id, index) => id === right[index]);
+  return sameDenseArray(left, right, (leftId, rightId) => leftId === rightId);
 }
 
 /**

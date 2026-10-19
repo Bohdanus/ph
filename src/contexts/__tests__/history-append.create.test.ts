@@ -22,8 +22,11 @@ import { NEW_LAYER_ACTION } from '../../util/constants.ts';
 const documentId = 'create-append-doc';
 const position = { x: 12, y: 18, width: 40, height: 30 };
 
-function context(registry: AssetRegistry): SourceBackedEntryContext {
-  return { documentId, registry, preLayers: new Map() };
+function context(
+  registry: AssetRegistry,
+  preLayers: SourceBackedEntryContext['preLayers'] = new Map()
+): SourceBackedEntryContext {
+  return { documentId, registry, preLayers };
 }
 
 function createItem(layerId: string, layerSource: LayerSource, id = `create-${layerId}`): HistoryItem {
@@ -82,6 +85,53 @@ describe('history append source-backed create planning', () => {
       expect(registry.getRecord(entry.operation.layer.source.assetId)).toBeDefined();
       expect([...collectDurableAssetIds(durableDocument(entry))]).toEqual([entry.operation.layer.source.assetId]);
       expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBeNull();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('refuses a create plan whose stacking order differs from the canonical pre-state order', () => {
+    const registry = new AssetRegistry();
+    try {
+      const existing = deriveCreateLayerEntry(
+        createItem('existing-layer', {
+          kind: 'blank',
+          color: '#ffffff',
+          opacity: 1,
+          isBedrock: false,
+          pos: position,
+        }),
+        context(registry)
+      );
+      if (!existing || existing.operation.kind !== 'create-layer') throw new Error('expected a canonical base layer');
+      const baseLayer = existing.operation.layer;
+      const preLayers = new Map([
+        ['existing-low', { ...baseLayer, id: 'existing-low', name: 'Existing low', order: -10 }],
+        ['existing-middle', { ...baseLayer, id: 'existing-middle', name: 'Existing middle', order: 5 }],
+        ['existing-high', { ...baseLayer, id: 'existing-high', name: 'Existing high', order: 900 }],
+      ]);
+      const item = createItem('next-layer', {
+        kind: 'blank',
+        color: '#ff0000',
+        opacity: 1,
+        isBedrock: false,
+        pos: position,
+      });
+      const planned = deriveCreateLayerEntry(item, context(registry, preLayers));
+      if (!planned || planned.operation.kind !== 'create-layer') throw new Error('expected a planned layer');
+      expect(planned.operation.layer.order).toBe(901);
+
+      const substitutedOrder: DurableHistoryEntry = {
+        ...planned,
+        operation: {
+          ...planned.operation,
+          layer: { ...planned.operation.layer, order: 77 },
+        },
+      };
+
+      expect(validatePlannedDurableEntry(item, substitutedOrder, null, preLayers, registry, documentId)).toBe(
+        'the durable layer order does not match the legacy source'
+      );
     } finally {
       registry.shutdown();
     }

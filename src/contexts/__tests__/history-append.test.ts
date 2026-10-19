@@ -944,6 +944,59 @@ describe('decideDurableAppend', () => {
     });
   });
 
+  it('refuses a sparse planned selection list against the dense legacy selection', () => {
+    if (plannedSelection.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
+    const candidate: DurableHistoryEntry = {
+      ...plannedSelection,
+      operation: {
+        ...plannedSelection.operation,
+        after: { ...nextSelectionState, selections: new Array<Selection>(1) },
+      },
+    };
+
+    const decision = decideSelection(candidate);
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable next selection state does not match the legacy entry');
+    }
+  });
+
+  it('refuses a sparse selection snapshot shared by the legacy entry and supplied plan', () => {
+    const sparseNext = { ...nextSelectionState, selections: new Array<Selection>(1) };
+    const sparsePlan = planHistoryAppend({
+      item: createSelectionHistoryItem(previousSelectionState, sparseNext),
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    const legacyArgs = sparsePlan.entry.args as { nextSelectionState?: SelectionSnapshot };
+    const sharedSnapshot = legacyArgs.nextSelectionState;
+    if (!sharedSnapshot) throw new Error('expected the legacy entry to retain its next selection snapshot');
+    const candidate: DurableHistoryEntry = {
+      ...plannedSelection,
+      id: sparsePlan.entry.id,
+      operation: {
+        kind: 'set-selection',
+        before: previousSelectionState,
+        after: sharedSnapshot,
+      },
+    };
+    if (candidate.operation.kind !== 'set-selection') throw new Error('expected a selection operation');
+    expect(candidate.operation.after).toBe(sharedSnapshot);
+
+    const decision = decide({
+      entry: sparsePlan.entry,
+      next: { entries: [...priorEntries, sparsePlan.entry], cursor: 1, branchRevision: 0 },
+      planned: candidate,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') {
+      expect(decision.reason).toBe('the durable next selection state does not match the legacy entry');
+    }
+  });
+
   it('accepts the defaulted before of a selection item that supplies no previous state', () => {
     const bare = planHistoryAppend({
       item: createSelectionHistoryItem(undefined, nextSelectionState),
