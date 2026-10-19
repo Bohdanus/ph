@@ -179,7 +179,7 @@ replay authority.
 
 ---
 
-## 45. The codecs' raster ceilings disagree, and two of seven have no budget at all
+## 45. The codecs' raster ceilings disagree, and 80 MP AVIF export is an explicit limit
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
 all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
@@ -221,21 +221,25 @@ as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** cons
 consolidation remains an open decision; the BMP encoder now uses the existing 100 MP document cap
 without changing any other codec ceiling.
 
-**The GIF loader and SVG encoder use the document ceiling; the SVG loader remains unbounded.**
+**The GIF and SVG loaders preflight intrinsic dimensions against the document ceiling.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds?     |
-| ----- | ------------- | -------------- | ------------------------------------------ |
-| avif  | yes           | yes            | yes                                        |
-| tiff  | yes           | yes            | yes                                        |
-| bmp   | 100 MP        | 100 MP         | yes — before pixel readback and allocation |
-| gif   | 100 MP        | 65535/axis     | yes — before data-URL encoding and decode  |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                               |
-| svg   | **none**      | 100 MP         | yes — before PNG readback                  |
-| psd   | yes           | yes            | yes — the reference implementation         |
+| codec | loader budget          | encoder budget | check before the allocation it bounds?        |
+| ----- | ---------------------- | -------------- | --------------------------------------------- |
+| avif  | yes                    | yes            | yes                                           |
+| tiff  | yes                    | yes            | yes                                           |
+| bmp   | 100 MP                 | 100 MP         | yes — before pixel readback and allocation    |
+| gif   | 100 MP                 | 65535/axis     | yes — before data-URL encoding and decode     |
+| ico   | 256/axis               | 1..256/axis    | yes, on both                                  |
+| svg   | 100 MP / 64 MiB source | 100 MP         | yes — before data URL and native image decode |
+| psd   | yes                    | yes            | yes — the reference implementation            |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
-`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `svg`.
+`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against,
+rather than an exception to it. SVG files are limited to 64 MiB before buffering, and intrinsic
+dimensions are checked against the document ceiling before data-URL creation and native image
+decoding. Unsupported relative units, sizing expressions, and stylesheets that could affect root
+dimensions are refused; decoded-image validation remains the final guard for auto/percentage
+dimensions resolved by the browser.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -255,9 +259,6 @@ previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from i
 output buffer. `encodeSvg()` applies the same cap before `canvas.toDataURL('image/png')` reads back
 and base64-encodes the raster embedded in the SVG. The GIF loader checks its 13-byte header and
 logical screen descriptor before wrapping the file in a data URL or invoking the browser decoder.
-
-**Still unbounded:** `image-load-save-utils.ts` — SVG files still pass through `loadImageFile()`
-without a pixel ceiling before the whole file is base64-encoded and handed to `new Image()`.
 
 **Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
 `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,

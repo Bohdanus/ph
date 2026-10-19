@@ -214,7 +214,7 @@ describe('format detection from byte signatures', () => {
 
   it('routes the image/svg+xml media type to the SVG decoder', async () => {
     const decoders = installBrowserDecoders();
-    const file = new File(['not markup'], 'no-extension', { type: 'image/svg+xml' });
+    const file = new File(['<svg/>'], 'no-extension', { type: 'image/svg+xml' });
 
     await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'no-extension' });
 
@@ -270,6 +270,468 @@ describe('loadImageFile rejection paths', () => {
   });
 
   it.each([
+    ['pixel dimensions', '<svg width="10001" height="10000"/>'],
+    ['physical dimensions', '<svg width="105in" height="10000px"/>'],
+    ['CSS dimensions', '<svg style="width:10001px;height:10000px"/>'],
+    [
+      'important CSS dimensions',
+      '<svg width="1" height="1" style="width:10001px !important;height:10000px !important"/>',
+    ],
+    ['escaped important priority', '<svg style="width:10001px !\\69mportant;width:1px;height:10000px"/>'],
+    [
+      'escaped important priority with CRLF terminator',
+      '<svg style="width:10001px !\\69&#13;&#10;mportant;width:1px;height:10000px"/>',
+    ],
+    ['last CSS declaration', '<svg style="width:1px;width:10001px;height:10000px"/>'],
+    ['quoted semicolons in later declarations', '<svg style="width:10001px;height:10000px;--x:\';width:1px\'"/>'],
+    ['comment-prefixed CSS dimensions', '<svg width="1" height="1" style="/*x*/width:10001px;height:10000px"/>'],
+    ['escaped CSS property names', '<svg style="w\\69 dth:10001px;height:10000px"/>'],
+    ['a parsererror child element', '<svg width="10001px" height="10000px"><parsererror/></svg>'],
+  ])('rejects SVGs with oversized %s before creating a FileReader', async (_label, svg) => {
+    const decoders = installBrowserDecoders();
+    const file = new File([svg], 'oversized.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('uses the viewBox aspect ratio when checking one specified SVG dimension', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg width="20001" viewBox="0 0 2 1"/>'], 'oversized.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('refuses SVG stylesheet dimensions the preflight cannot resolve', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg><style>svg { width: 10001px; height: 10000px }</style></svg>'], 'sized.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('detects root sizing after a quoted closing brace in stylesheet content', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg><style>svg { --x: "}"; width:10001px; height:10000px }</style></svg>'], 'quoted.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('does not close a root style rule on a brace inside an unquoted CSS URL', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style>svg { background-image:url(}); width:10001px; height:10000px }</style></svg>'],
+      'url-brace.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('does not treat an escaped brace as a stylesheet block boundary', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style>svg { --x: \\7d ; width:10001px; height:10000px }</style></svg>'],
+      'escaped-brace.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('does not let escaped quotes hide inline root dimensions', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="1" height="1" style="--x:prefix\\&quot;;width:10001px;height:10000px;--y:&quot;tail&quot;"/>'],
+      'escaped-quote.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('recovers from invalid CSS strings at newlines before reading dimensions', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="1" height="1" style="--x:&apos;open&#10;;width:10001px;height:10000px"/>'],
+      'newline.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('keeps escaped CRLF continuations inside CSS strings', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="1" height="1" style="--x:&quot;foo\\&#13;&#10;bar&quot;;width:10001px;height:10000px"/>'],
+      'continuation.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('strips stylesheet comments after escaped quotes in selectors', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      [
+        '<svg data-x="foo&quot;bar"><style>svg[data-x=foo\\"bar] { /*x*/ width:10001px; /*y*/ height:10000px }</style></svg>',
+      ],
+      'escaped-selector.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('does not let escaped quotes hide root stylesheet dimensions', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style>svg { --x:prefix\\"; /*x*/ width:10001px; /*y*/ height:10000px }</style></svg>'],
+      'escaped-quote.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('detects nested at-rule sizing on the SVG root', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style>svg { @supports (display:block) { width:10001px; height:10000px } }</style></svg>'],
+      'nested-rule.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('allows stylesheet dimensions scoped to non-root SVG elements', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg><style>rect { width: 100px; height: 50px }</style></svg>'], 'styled.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'styled.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('allows sizing rules inside an inactive stylesheet', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style media="not all">svg { width: 10001px; height: 10000px }</style></svg>'],
+      'inactive.svg',
+      {
+        type: 'image/svg+xml',
+      }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'inactive.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('ignores root sizing rules inside an always-inactive media group', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style>@media not all { svg { width:10001px; height:10000px } }</style></svg>'],
+      'inactive.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'inactive.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('refuses SVG imports of stylesheets with unresolved sizing rules', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg><style>@import url("external.css");</style></svg>'], 'sized.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('allows unrelated stylesheet properties without mistaking them for intrinsic sizing', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><style>rect { stroke-width: 2 } @media (min-width: 10px) { svg { fill: red } }</style></svg>'],
+      'styled.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'styled.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('allows import text that appears only in a stylesheet string', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="64" height="64"><style>svg { --label: "@import" }</style></svg>'],
+      'label.svg',
+      {
+        type: 'image/svg+xml',
+      }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'label.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('refuses unrecognized explicit dimensions instead of substituting the default size', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg width="100000em" height="100000em"/>'], 'sized.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('unsupported intrinsic dimension');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('refuses root minimum-size constraints before native decode', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="1px" height="1px" style="min-width:10001px;min-height:10000px"/>'],
+      'sized.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('unsupported CSS sizing');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('does not strip comment-like text in inline CSS strings', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="1px" height="1px" style="--x:&quot;/*&quot;;min-width:10001px;min-height:10000px"/>'],
+      'sized.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('unsupported CSS sizing');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('refuses stylesheet minimum-size constraints on the SVG root', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg width="1px" height="1px"><style>svg { min-width: 10001px; min-height: 10000px }</style></svg>'],
+      'sized.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('recognizes oversized dimensions in a UTF-16LE SVG', async () => {
+    const decoders = installBrowserDecoders();
+    const markup = '<svg width="10001px" height="10000px"/>';
+    const utf16Bytes = new Uint8Array(2 + markup.length * 2);
+    utf16Bytes.set([0xff, 0xfe]);
+    for (let index = 0; index < markup.length; index += 1) {
+      utf16Bytes[2 + index * 2] = markup.charCodeAt(index);
+    }
+    const file = new File([utf16Bytes], 'oversized.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('preserves a MIME charset through the document loader', async () => {
+    const decoders = installBrowserDecoders();
+    const markup = '<svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>';
+    const bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
+    const file = new File([bytes], 'encoded.svg', { type: 'image/svg+xml;charset=windows-1252' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('gives a UTF-8 BOM precedence over a conflicting MIME charset', async () => {
+    const decoders = installBrowserDecoders();
+    const markup = '<svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>';
+    const content = new TextEncoder().encode(markup);
+    const bytes = new Uint8Array(content.length + 3);
+    bytes.set([0xef, 0xbb, 0xbf]);
+    bytes.set(content, 3);
+    const file = new File([bytes], 'bom.svg', { type: 'image/svg+xml;charset=windows-1252' });
+
+    await expect(loadImageFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('uses the XML-declared encoding when matching root stylesheet selectors', async () => {
+    const decoders = installBrowserDecoders();
+    const markup =
+      '<?xml version="1.0" encoding="windows-1252"?><svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>';
+    const bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
+    const file = new File([bytes], 'encoded.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('finds XML-declared encodings after long legal declaration whitespace', async () => {
+    const decoders = installBrowserDecoders();
+    const markup = `<?xml version="1.0"${' '.repeat(2048)}encoding="windows-1252"?><svg id="é"><style>#é { width:10001px; height:10000px }</style></svg>`;
+    const bytes = Uint8Array.from([...markup].map((character) => character.charCodeAt(0)));
+    const file = new File([bytes], 'encoded.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('stylesheet sizing that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('detects a UTF-16BE SVG without a file type or extension', async () => {
+    const decoders = installBrowserDecoders();
+    const markup = '<svg width="10001px" height="10000px"/>';
+    const utf16Bytes = new Uint8Array(markup.length * 2);
+    for (let index = 0; index < markup.length; index += 1) {
+      utf16Bytes[index * 2 + 1] = markup.charCodeAt(index);
+    }
+    const file = new File([utf16Bytes], 'oversized.bin', { type: '' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('preflights parameterized SVG MIME types, including after a long XML prologue', async () => {
+    const decoders = installBrowserDecoders();
+    const prologue = `<?xml version="1.0"?>\n<!--${'x'.repeat(128)}-->`;
+    const file = new File([`${prologue}<svg width="10001px" height="10000px"/>`], 'oversized.bin', {
+      type: 'image/svg+xml;charset=utf-8',
+    });
+
+    await expect(loadImageFile(file)).rejects.toThrow('SVG image is too large to open');
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('detects an SVG with a long XML prologue even when the file type is misleading', async () => {
+    const decoders = installBrowserDecoders();
+    const prologue = `<?xml version="1.0"?>\n<!--${'x'.repeat(128)}-->`;
+    const file = new File([`${prologue}<svg width="10001px" height="10000px"/>`], 'oversized.png', {
+      type: 'image/png',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('allows root max-size constraints that can only shrink the decoded dimensions', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg width="64px" height="64px" style="max-width:64px;max-height:64px"/>'], 'small.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'small.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('refuses non-finite explicit dimensions before the native image decoder', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg width="1e999" height="10000px"/>'], 'overflow.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('invalid intrinsic dimension');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('refuses oversized SVG source files before buffering or creating a FileReader', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg/>'], 'large.svg', { type: 'image/svg+xml' });
+    Object.defineProperty(file, 'size', { value: 64 * 1024 * 1024 + 1 });
+    const arrayBuffer = vi.spyOn(file, 'arrayBuffer');
+
+    await expect(loadImageFile(file)).rejects.toThrow('SVG source exceeds the 67108864 byte import limit');
+
+    expect(decoders.reader).toBeUndefined();
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it('allows the exact SVG source-byte ceiling', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg/>'], 'at-limit.svg', { type: 'image/svg+xml' });
+    Object.defineProperty(file, 'size', { value: 64 * 1024 * 1024 });
+
+    const image = await loadImageFile(file);
+
+    expect(image).toBe(decoders.image);
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('allows an SVG at the shared document pixel ceiling', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg width="10000px" height="10000px"/>'], 'maximum.svg', {
+      type: 'image/svg+xml',
+    });
+
+    const result = await loadDocumentFile(file);
+
+    expect(result).toMatchObject({ fileName: 'maximum.svg', image: decoders.image });
+    expect(decoders.readerInput?.type).toBe('image/svg+xml');
+  });
+
+  it('converts quarter-millimeter SVG dimensions', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(['<svg width="40Q" height="40q"/>'], 'q-unit.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'q-unit.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it.each([
     ['an untyped file with an unknown extension', new File(['data'], 'notes.bin', { type: '' })],
     ['a missing file', null as unknown as File],
   ])('rejects %s before touching FileReader', async (_label, file) => {
@@ -300,13 +762,16 @@ describe('loadImageFile rejection paths', () => {
 
   it('rejects a native-decoded image above the shared document pixel budget', async () => {
     const decoders = installBrowserDecoders({ width: 10_001, height: 10_000 });
-    const file = new File(['data'], 'photo.svg', { type: 'image/svg+xml' });
+    const file = new File(['<svg/>'], 'photo.svg', { type: 'image/svg+xml' });
     const pending = loadImageFile(file, 'image/svg+xml');
+    const rejection = pending.catch((error: unknown) => error);
 
     await vi.waitFor(() => expect(decoders.image).not.toBeUndefined());
     decoders.image!.onload!.call(decoders.image!, new Event('load'));
 
-    await expect(pending).rejects.toThrow('Image is too large to open (10001×10000). Maximum is 100000000 pixels.');
+    await expect(rejection).resolves.toMatchObject({
+      message: 'Image is too large to open (10001×10000). Maximum is 100000000 pixels.',
+    });
   });
 
   it('rejects a native-decoded image whose dimensions are unavailable', async () => {
@@ -331,7 +796,7 @@ describe('loadImageFile rejection paths', () => {
     'accepts %s on its extension alone, with no media type',
     async (name) => {
       const decoders = installBrowserDecoders();
-      const file = new File(['data'], name, { type: '' });
+      const file = new File([name.endsWith('.svg') ? '<svg/>' : 'data'], name, { type: '' });
 
       const image = await loadImageFile(file);
 
