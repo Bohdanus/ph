@@ -96,7 +96,7 @@ describe('replayHistory document source and frame branches', () => {
     const result = replayHistory(history, 1, initialSize, dependencies);
 
     // A document replacement means to be a WHOLE new document, so it is honoured only
-    // as the FIRST entry (`history-replay.ts:89`). Carried mid-history it would swap
+    // as the FIRST entry. Carried mid-history it would swap
     // the layer record and resize the canvas from anywhere in the timeline, which is
     // the same shape the durable converter already refuses as an error
     // (`history-adapter.ts:640`) — so honouring it here is exactly the

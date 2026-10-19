@@ -494,7 +494,7 @@ describe('useHistory undo replay', () => {
       // The DOCUMENT keeps the frame the initial entry established — 128x64, from
       // `resetStoreState`'s `totalSize` and `createHistory('layerSource')[0]`'s own
       // bedrock source. An imported image appended at cursor 1 is a layer commit, not
-      // a document-size authority (`history-replay.ts:85-97`), so replaying past it
+      // a document-size authority: only the initial entry's bedrock source can set the frame, so replaying past it
       // must not resize the canvas to the bitmap's 40x20. Only `documentSource` and an
       // explicit `SET_DOCUMENT_FRAME` may do that, and a replace-document import is
       // already a single-entry history whose bedrock sits at index 0.

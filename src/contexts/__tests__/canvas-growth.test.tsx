@@ -310,7 +310,7 @@ describe('canvas growth on ordinary tool commits', () => {
  * the box reaches before the canvas origin. `isValidDocumentFrame` deliberately puts no
  * sign constraint on `x`/`y` (`document-frame.ts:16-26`), so a negative origin is legal and
  * both replay paths hand back whatever valid frame they are given
- * (`history-replay.ts:135-141`, `durable-replay.ts:122-124`) — correct by inspection, and
+ * (`replayHistory` and `replayDurableDocument`) — correct by inspection, and
  * inspection is what the three cases below replace.
  *
  * The header comment of this file still asserts that a crop leaves `totalSize` and the

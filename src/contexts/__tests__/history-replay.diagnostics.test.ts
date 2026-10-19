@@ -117,7 +117,7 @@ const transformEntry = (id: string): HistoryItem => toolEntry(id, retainedTransf
 /**
  * A `resize` to zero extent, which is the reachable way a layer's `pos` becomes a
  * size `getAffineBounds` rejects. The affine entry is validated against the pos as
- * it is AT REPLAY TIME (`history-replay.ts:238`), while it was validated at commit
+ * it is AT REPLAY TIME in `replayHistory`'s affine-operation branch, while it was validated at commit
  * time against the pos the layer had then, so a timeline whose layer was collapsed
  * afterwards fails the bounds check — and loses the transform — on replay.
  */

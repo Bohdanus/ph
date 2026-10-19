@@ -247,7 +247,7 @@ describe('deriveSelectionBaseline', () => {
     //   signatures, and these two assertions are tripwires on the signatures,
     //   not on cursor behaviour.
     // - `replayHistory(history, 1, …)` is the only cursor-sensitive call here. It
-    //   seeds from the FULL timeline (`history-replay.ts:68`) and then replays
+    //   seeds from the FULL timeline via `deriveSelectionBaseline(history)` and then replays
     //   entries 0 and 1, so a lookup bounded at the target would seed an empty
     //   baseline and `replayed.selections` below would fail. That pair of
     //   assertions is the only part of this test a bound can break.

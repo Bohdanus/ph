@@ -432,8 +432,9 @@ export function deriveSetDocumentFrameEntry(
  * Structural guard for a durable selection snapshot.
  *
  * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
- * as `next?.activeSelectionId ?? null` (`history-replay.ts:122`): a snapshot that
- * omits the id still retains its selections and only loses the active id.
+ * as `next?.activeSelectionId ?? null` in `replayHistory`'s `SELECTION_ACTION`
+ * arm: a snapshot that omits the id still retains its selections and only loses
+ * the active id.
  * Rejecting that shape here would make the shadow clear selections that legacy
  * replay keeps. The guard only asks whether the value can be read as a snapshot
  * at all; normalizing the id to `null` is `deriveSetSelectionEntry`'s job.
@@ -911,7 +912,7 @@ export function legacyHistoryToDurable(
   // the two lists different first matches for one key, so a History-panel toggle
   // would disable a different edit in each model. Skipping the repeat keeps them
   // aligned. Replay is not part of this: `replayDurableDocument` addresses
-  // history by ARRAY INDEX (`durable-replay.ts:56-59`), so no replay is misresolved
+  // history by ARRAY INDEX in `replayDurableDocument`, so no replay is misresolved
   // either way. Disabled repeats are resolver-only warnings because legacy replay
   // skips them. An enabled repeat is different: legacy applies an edit that the
   // durable history cannot publish, so the safe wrapper must withhold the exact
@@ -1003,8 +1004,8 @@ export function legacyHistoryToDurable(
         const layerToMoveId = args?.layerToMoveId;
         const afterWhichLayerId = args?.afterWhichLayerId;
         // `replayHistory` skips the move entirely when either id is absent
-        // (`history-replay.ts:148`), leaving the order untouched, so conversion
-        // records nothing and leaves `currentLayers` alone. A named but missing
+        // in `replayHistory`'s `REORDER_ACTION` arm, leaving the order untouched,
+        // so conversion records nothing and leaves `currentLayers` alone. A named but missing
         // anchor is not a placement at the bottom: `remaining.indexOf` would be
         // -1, and `+ 1` would record a move to index 0 that the document never
         // performs. The cursor map below already treats a null operation as
@@ -1044,17 +1045,13 @@ export function legacyHistoryToDurable(
           operation = frameEntry.operation;
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         } else {
-          // `replayHistory` drops a frame action whose `nextFrame` is not a valid
-          // frame too (`history-replay.ts:112-117` guards the assignment on
-          // `isValidDocumentFrame`), so for an enabled entry the shadow stays in
-          // PARITY with legacy replay and there is no disagreement to fail closed
-          // over. (One shape is not parity and is not claimed to be: a DISABLED
-          // entry, which legacy replay skips without an opinion
-          // (`history-replay.ts:75`). A bedrock source is parity at every index —
-          // legacy replay honours it only for the initial document entry
-          // (`history-replay.ts:104-109`) and `frameFromFirstEntryBedrock` reads the
-          // same entry for the baseline, so a bedrock commit at any LATER index
-          // moves neither side.)
+          // `replayHistory` drops a frame action whose `nextFrame` is not valid:
+          // its `SET_DOCUMENT_FRAME_ACTION` arm guards the assignment with
+          // `isValidDocumentFrame`, so the shadow stays in PARITY for enabled
+          // entries. A disabled entry is not parity: legacy replay skips it
+          // before dispatch. Bedrock is parity at every index because legacy
+          // replay and `frameFromFirstEntryBedrock` both use only the initial
+          // entry to establish the frame.
           // But parity alone is not observability: this branch cannot throw, so
           // without a diagnostic the conversion reports `status: 'current'`
           // while silently losing a document-frame change, and the only other
