@@ -381,6 +381,8 @@ describe('useLayers drawAllLayers', () => {
     expect(phase2Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
     expect(phase2Rendered[0].operations).toEqual([]);
     expect(phase2Rendered[0].tmpCanvas).toBeNull();
+    expect(phase2Rendered[0].source).toBeUndefined();
+    expect(phase2Rendered[1].source).toBeUndefined();
 
     act(() => {
       result.current.store.previewLayers.current = {
