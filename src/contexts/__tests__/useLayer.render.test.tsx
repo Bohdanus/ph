@@ -281,15 +281,22 @@ describe('useLayers drawAllLayers', () => {
     consoleError.mockRestore();
   });
 
-  it('renders legacy layers with preview overlays, then switches to the durable projection after the preview clears and a durable render is selected', async () => {
+  it('keeps live previews on complete legacy layers after durable selection, then returns to the durable projection once they clear', async () => {
     const layerId = 'layer-1';
     const layerPos = { x: 0, y: 0, width: 40, height: 20 };
+    const secondLayerId = 'layer-2';
+    const secondLayerPos = { x: 40, y: 0, width: 40, height: 20 };
     const docSize = { width: 800, height: 600 };
     const docFrame = documentFrameFromSize(docSize);
 
     const blankSource = createBlankLayerSource(layerPos);
     const committedLayer = makeLayer(layerId, 1, { source: blankSource });
-    const layerWithSource: LayersRecord = { [layerId]: committedLayer };
+    const secondCommittedLayer = makeLayer(secondLayerId, 2, {
+      source: createBlankLayerSource(secondLayerPos),
+      pos: secondLayerPos,
+      visible: false,
+    });
+    const layerWithSource: LayersRecord = { [layerId]: committedLayer, [secondLayerId]: secondCommittedLayer };
 
     const baseline: HistoryItem = {
       id: 'baseline',
@@ -336,8 +343,9 @@ describe('useLayers drawAllLayers', () => {
 
     expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
     const phase1Rendered = drawnLayers(0);
-    expect(phase1Rendered.map((layer) => layer.id)).toEqual([layerId]);
+    expect(phase1Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
     expect(phase1Rendered[0]).toBe(previewLayer);
+    expect(phase1Rendered[1]).toBe(secondCommittedLayer);
 
     act(() => {
       result.current.store.previewLayers.current = {};
@@ -351,6 +359,14 @@ describe('useLayers drawAllLayers', () => {
     });
 
     expect(result.current.store.renderSelector.source).toBe('pending');
+
+    act(() => {
+      result.current.layers.drawAllLayers();
+    });
+
+    // The logical replay is staged, but no presentation authority has been
+    // accepted yet, so repainting would replace the last visible document.
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(1);
 
     const composite = makeComposite(layerPos, layerId, docFrame);
     vi.spyOn(durableCompositor, 'composeDurableDocument').mockResolvedValue(composite);
@@ -370,8 +386,38 @@ describe('useLayers drawAllLayers', () => {
 
     expect(drawLayersToCanvas).toHaveBeenCalledTimes(2);
     const phase2Rendered = drawnLayers(1);
-    expect(phase2Rendered.map((layer) => layer.id)).toEqual([layerId]);
+    expect(phase2Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
     expect(phase2Rendered[0].operations).toEqual([]);
     expect(phase2Rendered[0].tmpCanvas).toBeNull();
+    expect(phase2Rendered[0].source).toBeUndefined();
+    expect(phase2Rendered[1].source).toBeUndefined();
+
+    act(() => {
+      result.current.store.previewLayers.current = {
+        [layerId]: { layer: previewLayer },
+      };
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(3);
+    const phase3Rendered = drawnLayers(2);
+    expect(phase3Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase3Rendered[0]).toBe(previewLayer);
+    // A publication can promote disposable pixels into the legacy record, but a
+    // preview must retain that record's editable source instead of mixing with
+    // the durable projection selected just beforehand.
+    expect(phase3Rendered[1].source).toBe(secondCommittedLayer.source);
+
+    act(() => {
+      result.current.store.previewLayers.current = {};
+      result.current.layers.drawAllLayers();
+    });
+
+    expect(drawLayersToCanvas).toHaveBeenCalledTimes(4);
+    const phase4Rendered = drawnLayers(3);
+    expect(phase4Rendered.map((layer) => layer.id)).toEqual([layerId, secondLayerId]);
+    expect(phase4Rendered[0].tmpCanvas).toBeNull();
+    expect(phase4Rendered[0].source).toBeUndefined();
+    expect(phase4Rendered[1].source).toBeUndefined();
   });
 });
