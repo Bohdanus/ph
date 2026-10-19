@@ -2946,17 +2946,19 @@ gate either way; it prevents a filled figure without a colour from painting with
 **Problem.** The `Magnetic Lasso › Alt suppresses the magnet, and releasing it restores it` case in
 `e2e/feather-magnetic-lasso.spec.ts` fails on a detached checkout of committed `main`. Before Alt
 is pressed, `waitForCanvasPixels` times out waiting for the outer hover to become magnetic. The
-same targeted run passes the Transform rotation-undo case that also failed during the full suite,
-so only the Magnetic Lasso failure is currently reproducible.
+likely path is an automatic anchor: the snapped path exceeds the anchor span, commits the segment,
+and clears the preview before it can paint. The same targeted run passes the Transform rotation-undo
+case that also failed during the full suite, so only the Magnetic Lasso failure is currently
+reproducible.
 
 **Why it matters.** Alt suppression and restoration are a visible magnetic-lasso interaction. The
 failure can mask regressions in the selection tool and leaves the full E2E gate red independently
 of the history migration test branch.
 
-**Fix.** Diagnose whether the outer hover is not rendered, misses the magnetic hit target, or is
-only late under the E2E runner. Preserve the Alt-suppression behavior and make the targeted case
-reliably pass without weakening its pixel assertion.
+**Fix.** Make the pre-Alt route stay below the actual snapped-path automatic-anchor threshold, or
+make the tool expose one observable preview frame before auto-anchoring. Preserve Alt-suppression
+behavior and make the targeted case reliably pass without weakening its pixel assertion.
 
-**Reproduction.** `npm run test:e2e -- e2e/feather-magnetic-lasso.spec.ts:268`
+**Reproduction.** `npm run test:e2e -- e2e/feather-magnetic-lasso.spec.ts --grep "Alt suppresses the magnet, and releasing it restores it"`
 
 **Files.** `e2e/feather-magnetic-lasso.spec.ts`, `src/components/Canvas/FeatherMagneticLassoToolArea.tsx`
