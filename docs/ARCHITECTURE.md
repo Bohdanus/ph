@@ -340,11 +340,14 @@ shadow can never close a bitmap the legacy path still owns.
 **Production callers, exhaustively:** `convertLegacyHistorySafely` from
 `StoreContext.tsx`'s `buildDurableDocument()`; `decideDurableAppend` from
 `dispatchAction()`'s `REORDER_LAYERS` and `COMMIT_DOCUMENT_EDIT` branches;
-`replayDurableDocument` from **two** sites, not one — `durableLayersAtCursor()`,
-which feeds `sourceBackedEntryContext()` the shadow's own layer order, and that
-same `REORDER_LAYERS` branch, where the order is read a second time and compared
-as a sequence against the reorder being planned. `publishDurableNavigationPresentation()`
-adds a third durable read, through `replayDurableAtCursor()`. `materializeDocument` has one
+`replayDurableDocument` directly from **four** production sites — internally from
+`replayDurableAtCursor()`; from `durableLayersAtCursor()`, which feeds
+`sourceBackedEntryContext()` the shadow's own layer order; from the `REORDER_LAYERS`
+branch, where the order is read a second time and compared as a sequence against the
+reorder being planned; and from `durableToolArgsForNavigation()` in `useCurrentTool.tsx`,
+which reads the active durable text or vector source. Other consumers, including
+`publishDurableNavigationPresentation()`, use `replayDurableAtCursor()` instead.
+`materializeDocument` has one
 production caller, `composeDurableDocument()` in `durable-compositor.ts`;
 `materializeLayer` is reached only from inside `materializeDocument()` and has no
 importer of its own.
@@ -453,16 +456,16 @@ dynamically, and its types come from that module's
 branch, and decoded
 `ImageData` → canvas by `psd-utils.ts`'s recursive `visit()` layer reader.
 
-`createImageBitmap` appears in **seven** production call sites. Four are the
+Production reaches `createImageBitmap` through **seven** paths. Four are the
 **immutability boundary** rather than the decode path — `immutableRaster()` in `useLayer.ts`,
 `immutableRaster()` in `useApp.ts`,
 `materializePresentationBitmap()` in `layer-presentation.ts`,
-`AssetRegistry.registerBaselineAsync()` in `asset-registry.ts` — and three are
-materializations: `mergeAllLayers()` in `useLayer.ts` (through its `mergeLayers()`
-helper), and a `toOwnedBitmap()` in **each** of `materialization.ts` and
-`durable-compositor.ts`. That pair is a verbatim private duplicate — the same
-signature and the same `globalThis.createImageBitmap(canvas)` body — and neither is
-exported. Synchronous paths use
+`AssetRegistry.registerBaselineAsync()` in `asset-registry.ts` — and one is
+`mergeAllLayers()` in `useLayer.ts` (through its `mergeLayers()` helper). The
+`toOwnedBitmap()` path is implemented once in `materialization-bitmap.ts` and
+shared by `materialization.ts` and `durable-compositor.ts`. Clipboard image decoding
+is the seventh path: `readImageFromClipboard()` in `util/clipboard.ts` defaults its
+decoder to `globalThis.createImageBitmap`. Synchronous paths use
 `OffscreenCanvas.transferToImageBitmap()` instead —
 `immutableRasterCopy()`, in `asset-registry.ts`.
 

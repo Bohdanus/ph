@@ -374,8 +374,16 @@ async function runAsyncMain(opts) {
   }
   opts.base = base;
 
-  // Use async collectWorktrees for parallel execution
-  const worktrees = await collectWorktrees(root, { base: opts.base });
+  // Pin every ancestry and merge-tree calculation to the exact commit recorded
+  // below. If the branch ref moved during collection, the disposer will compare
+  // this snapshot with current main and refuse the no-op proof.
+  const mainHead = execFileSync('git', ['rev-parse', '--verify', `${opts.base}^{commit}`], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim();
+
+  // Use async collectWorktrees for parallel execution against the pinned base.
+  const worktrees = await collectWorktrees(root, { base: mainHead, baseName: opts.base });
   const missing = findMissingWorktrees(root);
   // Compare PATHS, not records. `collectWorktrees` and `findMissingWorktrees`
   // each build their own objects, so `missing.includes(w)` is reference
@@ -383,11 +391,6 @@ async function runAsyncMain(opts) {
   // stayed in `existingPaths` and their sessions could never be `orphaned`.
   const missingPaths = new Set(missing.map((w) => w.path));
   const existingPaths = new Set(worktrees.map((w) => w.path).filter((p) => !missingPaths.has(p)));
-
-  const mainHead = execFileSync('git', ['rev-parse', opts.base], {
-    cwd: root,
-    encoding: 'utf8',
-  }).trim();
 
   // Never run the expensive JSON audits against the live Kilo database. The
   // snapshot helper copies only the bounded recent session/part projection and
@@ -580,6 +583,7 @@ function describeDrift(currentText, nextText) {
     'untracked',
     'mergeConflict',
     'mergeConflictFiles',
+    'mergeResultMatchesBase',
     'mergeChecked',
     'patchEquivalence',
     'patchEquivalenceReason',

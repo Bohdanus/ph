@@ -1075,4 +1075,146 @@ describe('useRect', () => {
       expect(height(committed)).toBe(350);
     });
   });
+
+  describe('edge cases: non-finite coordinates and zero-area drags', () => {
+    it('reports a NaN-coordinate hover as a miss without throwing', () => {
+      const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: Number.NaN, clientY: Number.NaN, target })
+          )
+        ).toBe(false);
+      });
+    });
+
+    it('reports an Infinity-coordinate hover as a miss without throwing', () => {
+      const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.pointerHandlers.onPointerMove(
+            createPointerEvent({ clientX: Infinity, clientY: Infinity, target })
+          )
+        ).toBe(false);
+      });
+    });
+
+    it('survives a fresh drag driven through NaN coordinates', () => {
+      const { result } = renderUseRect();
+      const target = createMockTarget();
+
+      expect(() => {
+        act(() => {
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: Number.NaN, clientY: Number.NaN, target })
+          );
+        });
+        act(() => {
+          result.current.pointerHandlers.onPointerUp(
+            createPointerEvent({ button: 0, clientX: Number.NaN, clientY: Number.NaN, target })
+          );
+        });
+      }).not.toThrow();
+
+      expect(result.current.pointerState.currentEdgeRef.current).toBeNull();
+    });
+
+    it('survives a zero-area drag (pointer down and up at the same point)', () => {
+      const { result } = renderUseRect();
+      const target = createMockTarget();
+
+      expect(() => {
+        act(() => {
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+        act(() => {
+          result.current.pointerHandlers.onPointerUp(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+      }).not.toThrow();
+    });
+
+    it('survives a zero-area drag under a 1:1 aspect ratio', () => {
+      const { result } = renderUseRect({ aspectRatio: 1 });
+      const target = createMockTarget();
+
+      expect(() => {
+        act(() => {
+          result.current.pointerHandlers.onPointerDown(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+        act(() => {
+          result.current.pointerHandlers.onPointerUp(
+            createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+          );
+        });
+      }).not.toThrow();
+    });
+  });
+
+  describe('tripwires (it.fails: desired guards not yet implemented)', () => {
+    /**
+     * `getLocalCoords` is a passthrough of `clientX`/`clientY`, so a drag driven
+     * through `Infinity` commits an `Infinity` rect. The reported `onChangeEnd`
+     * rect is never clamped: `trimRect` only sanitises the PAINT. It should clamp
+     * non-finite input to the frame bounds instead.
+     */
+    it.fails('clamps non-finite (Infinity) pointer coordinates to the frame', () => {
+      const onChangeEnd = vi.fn();
+      const { result } = renderUseRect({ onChangeEnd });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: Infinity, clientY: Infinity, target })
+        );
+      });
+      act(() => {
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: Infinity, clientY: Infinity, target })
+        );
+      });
+
+      const committed = onChangeEnd.mock.lastCall?.[0];
+      expect(committed).toBeDefined();
+      expect(Number.isFinite(committed!.x1)).toBe(true);
+      expect(Number.isFinite(committed!.y1)).toBe(true);
+      expect(Number.isFinite(committed!.x2)).toBe(true);
+      expect(Number.isFinite(committed!.y2)).toBe(true);
+    });
+
+    /**
+     * A click with zero pointer travel still commits a zero-extent rect: the hook
+     * never bails on a degenerate drag, so `onChangeEnd` fires with `width === 0`
+     * and `height === 0` — which is what later throws in `layer-utils` for the
+     * marquee/text tools ("width and height must be greater than 0"). It should
+     * either not commit or collapse the gesture when the drag delta is empty.
+     */
+    it.fails('does not commit a zero-extent rect for a click with no pointer travel', () => {
+      const onChangeEnd = vi.fn();
+      const { result } = renderUseRect({ onChangeEnd });
+      const target = createMockTarget();
+
+      act(() => {
+        result.current.pointerHandlers.onPointerDown(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        );
+      });
+      act(() => {
+        result.current.pointerHandlers.onPointerUp(
+          createPointerEvent({ button: 0, clientX: 100, clientY: 100, target })
+        );
+      });
+
+      expect(onChangeEnd).not.toHaveBeenCalled();
+    });
+  });
 });

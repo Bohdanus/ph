@@ -445,3 +445,209 @@ describe('drawLine', () => {
     expect(strokeSpy).toHaveBeenCalled();
   });
 });
+
+describe('pointsBoundingPos edge cases', () => {
+  // `getPointExtents` reads `points[0]` unconditionally, so a bounds helper handed an empty
+  // sample throws before the renderer's `points.length === 0` guard can save it. The renderer
+  // guards, the geometry helper does not — which is the fragility these cases pin down.
+
+  it('propagates NaN coordinates through the box as NaN (known behaviour)', () => {
+    const result = pointsBoundingPos({
+      points: [
+        { x: Number.NaN, y: Number.NaN },
+        { x: 4, y: 4 },
+      ],
+    });
+
+    expect(Number.isNaN(result.x)).toBe(true);
+    expect(Number.isNaN(result.y)).toBe(true);
+    expect(Number.isNaN(result.width)).toBe(true);
+    expect(Number.isNaN(result.height)).toBe(true);
+  });
+
+  it('propagates +Infinity coordinates into an unbounded width (known behaviour)', () => {
+    const result = pointsBoundingPos({
+      points: [
+        { x: Number.POSITIVE_INFINITY, y: 0 },
+        { x: 4, y: 4 },
+      ],
+    });
+
+    expect(result.width).toBe(Infinity);
+    expect(result.height).toBe(6);
+  });
+
+  it.fails('does not throw on empty points and returns a zero-sized box (draw.ts:7)', () => {
+    expect(() => pointsBoundingPos({ points: [] })).not.toThrow();
+  });
+
+  it.fails('clamps a non-finite lineWidth rather than letting it poison the box (draw.ts:25)', () => {
+    for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const result = pointsBoundingPos({
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+        lineWidth,
+      });
+
+      expect(Number.isFinite(result.width), `lw=${lineWidth}`).toBe(true);
+    }
+  });
+});
+
+describe('pointsBoundingPosOutward edge cases', () => {
+  it.fails('does not throw on empty points and returns a zero-sized box (draw.ts:37)', () => {
+    expect(() => pointsBoundingPosOutward({ points: [] })).not.toThrow();
+  });
+
+  it.fails('clamps a non-finite lineWidth rather than emitting NaN or infinite raster dimensions (draw.ts:37)', () => {
+    for (const lineWidth of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const result = pointsBoundingPosOutward({
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 4 },
+        ],
+        lineWidth,
+      });
+
+      expect(Number.isFinite(result.width), `lw=${lineWidth}`).toBe(true);
+      expect(Number.isInteger(result.width), `lw=${lineWidth}`).toBe(true);
+    }
+  });
+
+  it.fails('sanitizes non-finite coordinates instead of emitting a NaN box (draw.ts:37)', () => {
+    const result = pointsBoundingPosOutward({
+      points: [
+        { x: Number.NaN, y: Number.NaN },
+        { x: 4, y: 4 },
+      ],
+    });
+
+    expect(Number.isFinite(result.width)).toBe(true);
+  });
+});
+
+describe('degenerate stroke rendering', () => {
+  // A click with the Draw tool is the only committed single-point gesture (pointerdown pushes
+  // exactly one point, `DrawToolArea.tsx:129`), so the single-point branch of every renderer must
+  // be exercised, not only the empty short-circuit.
+
+  it('drawPen is a no-op on an empty point set', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [],
+        alpha: 1,
+        color: '#000000',
+        penType: 'pen',
+        lineWidth: 5,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+  });
+
+  it('drawSpray is a no-op on an empty point set', () => {
+    const ctx = makeMockCtx();
+    drawSpray({
+      args: {
+        points: [],
+        alpha: 0.8,
+        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: 10,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    expect(ctx.createRadialGradient).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
+    expect(ctx.fill).not.toHaveBeenCalled();
+  });
+
+  it('bezierSmoothedLine draws one lineTo and no curve for a single point', () => {
+    const ctx = makeMockCtx();
+    bezierSmoothedLine(ctx, [{ x: 5, y: 10 }]);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(1);
+    expect(ctx.lineTo).toHaveBeenCalledWith(5, 10);
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+  });
+
+  it('catmullRomToBezier issues no curve for a single point', () => {
+    const ctx = makeMockCtx();
+    catmullRomToBezier(ctx, [{ x: 5, y: 10 }]);
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+  });
+
+  it('passes NaN coordinates straight through to the path command (known behaviour)', () => {
+    const ctx = makeMockCtx();
+    drawSmoothLine(ctx, [{ x: Number.NaN, y: Number.NaN }]);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(1);
+    expect(ctx.lineTo).toHaveBeenCalledWith(Number.NaN, Number.NaN);
+  });
+});
+
+describe('non-finite lineWidth in renderers', () => {
+  it('passes a NaN lineWidth straight through to the block stamp size (known behaviour)', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [{ x: 0, y: 0 }],
+        alpha: 1,
+        color: '#000000',
+        penType: 'pen',
+        lineWidth: Number.NaN,
+        toolName: 'draw',
+        blockStamp: true,
+      },
+      ctx,
+    });
+
+    const stampWidth = vi.mocked(ctx.fillRect).mock.calls[0][2];
+    expect(Number.isNaN(stampWidth)).toBe(true);
+  });
+
+  it.fails('clamps a non-finite lineWidth for block stamps instead of stamping a NaN-sized tile (draw.ts:138)', () => {
+    const ctx = makeMockCtx();
+    drawPen({
+      args: {
+        points: [{ x: 0, y: 0 }],
+        alpha: 1,
+        color: '#000000',
+        penType: 'pen',
+        lineWidth: Number.NaN,
+        toolName: 'draw',
+        blockStamp: true,
+      },
+      ctx,
+    });
+
+    const stampWidth = vi.mocked(ctx.fillRect).mock.calls[0][2];
+    expect(Number.isFinite(stampWidth)).toBe(true);
+  });
+
+  it.fails('clamps a non-finite lineWidth to a finite spray radius (draw.ts:221)', () => {
+    const ctx = makeMockCtx();
+    drawSpray({
+      args: {
+        points: [{ x: 5, y: 5 }],
+        alpha: 0.8,
+        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: Number.NaN,
+        toolName: 'draw',
+      },
+      ctx,
+    });
+
+    const radius = vi.mocked(ctx.arc).mock.calls[0][2];
+    expect(Number.isFinite(radius)).toBe(true);
+  });
+});

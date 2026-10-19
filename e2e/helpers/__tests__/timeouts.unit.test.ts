@@ -145,6 +145,7 @@ describe('per-test timeouts are named, not inlined', () => {
     expect(scanned).toContain('paint-tools.spec.ts');
     expect(scanned).toContain(RECORDED_30S_TIMEOUT_OFFENDER);
     expect(scanned.length).toBeGreaterThan(UNBUDGETED_NAVIGATORS.length);
+    expect(UNBUDGETED_NAVIGATORS).not.toContain('levels.spec.ts');
   });
 
   it('still exports the budgets the specs import', () => {

@@ -322,4 +322,80 @@ describe('useDockDrag', () => {
       expect(ends).toEqual([false]);
     });
   });
+
+  describe('edge cases', () => {
+    it('starts the drag from a null target via the degraded capture path', () => {
+      const onMove = vi.fn();
+      const { result } = setup({ onMove });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({ currentTarget: null })));
+
+      // `setPointerCapture` throws on a null target, but the hook swallows that: the document
+      // listeners still deliver the gesture, so the drag is live even without capture.
+      expect(result.current.isDragging).toBe(true);
+      dispatch('pointermove', { clientX: 10, clientY: 10 });
+      expect(onMove).toHaveBeenCalledWith({ dx: 10, dy: 10 });
+    });
+
+    it('reports NaN deltas when the start coordinate is non-finite', () => {
+      const onMove = (delta: DragDelta) => results.push(delta);
+      const { result } = setup({ onMove });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({ clientX: NaN, clientY: NaN })));
+      dispatch('pointermove', { clientX: 10, clientY: 20 });
+
+      expect(results).toEqual([{ dx: NaN, dy: NaN }]);
+    });
+
+    it('reports an Infinity delta when the pointer moves to an Infinity coordinate', () => {
+      const onMove = (delta: DragDelta) => results.push(delta);
+      const { result } = setup({ onMove });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({ clientX: 0, clientY: 0 })));
+      dispatch('pointermove', { clientX: Infinity, clientY: 50 });
+
+      expect(results).toEqual([{ dx: Infinity, dy: 50 }]);
+    });
+
+    it('reports a zero delta when the pointer has not moved', () => {
+      const onMove = (delta: DragDelta) => results.push(delta);
+      const { result } = setup({ onMove });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({ clientX: 5, clientY: 5 })));
+      dispatch('pointermove', { clientX: 5, clientY: 5 });
+
+      expect(results).toEqual([{ dx: 0, dy: 0 }]);
+    });
+  });
+
+  // `it.fails` marks each test as expected to fail: the assertion below is the DESIRED behavior the
+  // hook does not yet harden, so a green assertion would turn the suite red. That is the point —
+  // when someone adds non-finite-coord guards, these stop failing and demand a review.
+  describe('tripwires', () => {
+    it.fails('never emits a non-finite delta from a NaN start', () => {
+      const onMove = vi.fn();
+      const { result } = setup({ onMove });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({ clientX: NaN, clientY: NaN })));
+      dispatch('pointermove', { clientX: 10, clientY: 20 });
+
+      expect(onMove).toHaveBeenCalled();
+      const [delta] = onMove.mock.calls[0]!;
+      expect(Number.isFinite(delta.dx)).toBe(true);
+      expect(Number.isFinite(delta.dy)).toBe(true);
+    });
+
+    it.fails('never emits a non-finite delta from an Infinity coordinate', () => {
+      const onMove = vi.fn();
+      const { result } = setup({ onMove });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({ clientX: 0, clientY: 0 })));
+      dispatch('pointermove', { clientX: Infinity, clientY: 50 });
+
+      expect(onMove).toHaveBeenCalled();
+      const [delta] = onMove.mock.calls[0]!;
+      expect(Number.isFinite(delta.dx)).toBe(true);
+      expect(Number.isFinite(delta.dy)).toBe(true);
+    });
+  });
 });

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildStrokeCoverage } from '../stroke-coverage.ts';
-import { BRUSH_HARDNESS_MAX, BRUSH_HARDNESS_MIN, tipAlphaAt, type BrushTipSettings } from '../brush-engine.ts';
+import {
+  BRUSH_HARDNESS_MAX,
+  BRUSH_HARDNESS_MIN,
+  BRUSH_SIZE_DEFAULT,
+  tipAlphaAt,
+  type BrushTipSettings,
+} from '../brush-engine.ts';
 import type { Point, Size } from '../../contexts/general-types.ts';
 
 /**
@@ -221,5 +227,97 @@ describe('buildStrokeCoverage', () => {
       for (let x = 0; x < size.width; x++) if (coverage[y * size.width + x] > 0) covered.push(`${x},${y}`);
     }
     expect(covered).toEqual(['2,2', '3,2', '4,2', '5,2', '6,2']);
+  });
+
+  /**
+   * A click is one point and therefore one dab: `brushDabCenters` returns a single point
+   * verbatim (its spacing arithmetic is skipped entirely for a one-point stroke), so the
+   * field a click produces is the tip's own disc and nothing more — not two dabs, not an
+   * empty field, and the centre pixel carries the full falloff.
+   */
+  it('a single-point stroke (a click) leaves exactly one dab centred on that point', () => {
+    // A 1px tip (radius 0.5) is the sharpest click available: the half-open disc the tip
+    // describes collapses to the single centre pixel, so exactly one pixel is saturated and
+    // every neighbour is provably untouched.
+    const size: Size = { width: 16, height: 16 };
+    const coverage = cover(size, [point(8, 8)], tip(1, BRUSH_HARDNESS_MAX));
+
+    expect(coverage[8 * 16 + 8]).toBe(1);
+    expect(coverage.filter((value) => value === 1).length).toBe(1);
+    expect(coverage[7 * 16 + 7]).toBe(0);
+    expect(coverage[9 * 16 + 9]).toBe(0);
+  });
+
+  /**
+   * The coverage field is GEOMETRY, not paint: `BrushTipSettings.opacity` is Photoshop's
+   * "Flow" and is a per-dab multiplier the consumer applies to this field, never a value
+   * stored here. A non-finite opacity therefore must not corrupt the field the way a NaN
+   * reaching `ctx.globalAlpha` makes a whole stroke vanish — the field has to come out
+   * byte-for-byte identical for every opacity, finite or not, because opacity is not
+   * consulted at all.
+   */
+  it('ignores opacity — including non-finite or out-of-range values — since the field is geometry', () => {
+    const size: Size = { width: 16, height: 16 };
+    const points = [point(8, 8)];
+    const finite = cover(size, points, tip(16, BRUSH_HARDNESS_MAX));
+
+    // 0 and 2 sit outside Photoshop's 0-1 Flow range; they are ignored too, which is the
+    // only way a future refactor that multiplies coverage by opacity would be caught here.
+    for (const opacity of [Number.NaN, Infinity, -Infinity, 0, 2, 1]) {
+      const field = buildStrokeCoverage(size, points, { ...tip(16, BRUSH_HARDNESS_MAX), opacity });
+      expect(field, `opacity=${opacity}`).toEqual(finite);
+    }
+  });
+
+  /**
+   * `buildStrokeCoverage` does not sanitise its own `size` (the brush "lineWidth"): it takes
+   * `settings.size / 2` as the radius straight into the bounding box, where the rest of the
+   * engine sanitises through `clampBrushTipSettings` — which is exactly what `dodgeBurn.ts`
+   * and `sponge.ts` do before they reach this function. A non-finite radius is the hazard
+   * those callers exist to dodge: a NaN makes every bounding-box bound NaN and the loop
+   * silently stamps nothing, and an Infinity puts the whole canvas inside the hard core — so
+   * the field this function produces for a bad `size` is either `null` or an all-ones
+   * buffer, never the finite tip the engine intends.
+   *
+   * The `it.fails` tripwire pins the desired behaviour: a non-finite `size` should sanitise
+   * to the engine default the way `clampBrushTipSettings` does for every other stamp. It is
+   * red only while that sanitisation is missing, at which point it flips to a passing `it`.
+   */
+  it.fails('sanitises a non-finite tip size to the engine default, as clampBrushTipSettings does', () => {
+    const size: Size = { width: 16, height: 16 };
+    const points = [point(8, 8)];
+    const fallback = cover(size, points, tip(BRUSH_SIZE_DEFAULT, BRUSH_HARDNESS_MAX));
+
+    // NaN and -Infinity currently collapse to null (no pixel is ever visited); Infinity
+    // currently fills the whole canvas at full coverage. Neither equals the finite default.
+    for (const bad of [Number.NaN, Infinity, -Infinity]) {
+      expect(buildStrokeCoverage(size, points, tip(bad, BRUSH_HARDNESS_MAX)), `size=${bad}`).toEqual(fallback);
+    }
+  });
+
+  /**
+   * Non-finite coordinates are geometry the canvas has no place for, and `buildStrokeCoverage`
+   * does not clamp points — clamping a drag is the consumer's job, via `clampPointToSize`.
+   * A non-finite centre makes the dab's bounding box non-finite too: a NaN bounds box visits
+   * no pixel (the `NaN <= NaN` guard in the inner loop is never satisfied), and an Infinity
+   * bounds box sits entirely outside the canvas — so both collapse to the same "touched
+   * stays false" outcome as a finite point that is simply off-canvas, rather than poisoning a
+   * pixel index or throwing.
+   */
+  it('treats a non-finite coordinate as a point that lands nowhere', () => {
+    const size: Size = { width: 16, height: 16 };
+    for (const p of [
+      point(Number.NaN, 0),
+      point(0, Number.NaN),
+      point(Number.NaN, Number.NaN),
+      point(Infinity, 8),
+      point(8, Infinity),
+      point(-Infinity, 8),
+      point(8, -Infinity),
+      point(Infinity, Infinity),
+      point(-Infinity, -Infinity),
+    ]) {
+      expect(buildStrokeCoverage(size, [p], tip(8, BRUSH_HARDNESS_MAX)), `${p.x},${p.y}`).toBeNull();
+    }
   });
 });

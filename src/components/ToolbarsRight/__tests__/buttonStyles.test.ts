@@ -23,6 +23,7 @@ const STYLE_NAMES = [
 ] as const;
 
 type StyleName = (typeof STYLE_NAMES)[number];
+const exportedStyles = buttonStyles as Record<string, unknown>;
 
 const ENTRIES = STYLE_NAMES.map((name) => [name, buttonStyles[name] as string] as const);
 
@@ -169,5 +170,56 @@ describe('buttonStyles keyboard focus affordance', () => {
     expect(tokens).toContain('focus-visible:ring-blue-500');
     expect(tokens).toContain('focus-visible:ring-offset-2');
     expect(tokens).not.toContain('focus:ring-2');
+  });
+});
+
+describe('buttonStyles edge-case inputs', () => {
+  it('returns undefined for an empty-string style key', () => {
+    expect(exportedStyles['']).toBeUndefined();
+  });
+
+  it('returns undefined for a whitespace-only style key', () => {
+    expect(exportedStyles['   ']).toBeUndefined();
+    expect(exportedStyles['\t\n']).toBeUndefined();
+  });
+
+  it('does not match case-insensitive or hyphenated near-miss variant names', () => {
+    expect(buttonStyles['primary_button' as StyleName]).toBeUndefined();
+    expect(buttonStyles['PRIMARY-BUTTON' as StyleName]).toBeUndefined();
+    expect(buttonStyles['primary-button' as StyleName]).toBeUndefined();
+  });
+
+  it('does not resolve suffixed typo variants of real styles', () => {
+    expect(buttonStyles['PRIMARY_BUTTON_LARGE_EXTRA' as StyleName]).toBeUndefined();
+    expect(buttonStyles['SECONDARY_BUTTON_XL' as StyleName]).toBeUndefined();
+    expect(buttonStyles['TOGGLE_BUTTON_ACTIVE_FILLED' as StyleName]).toBeUndefined();
+  });
+
+  it('returns undefined for arbitrary unknown property names without throwing', () => {
+    const unknowns = ['FAKE_STYLE', 'ICON_BUTTON_ROUND', 'DELETE_BUTTON', 'TOOLBAR_SECONDARY'];
+    for (const key of unknowns) {
+      expect(() => exportedStyles[key]).not.toThrow();
+      expect(exportedStyles[key]).toBeUndefined();
+    }
+  });
+
+  it('keeps the export surface unchanged by unknown lookups (no accidental key creation)', () => {
+    const before = Object.keys(buttonStyles);
+    void exportedStyles['DEFINITELY_NOT_A_STYLE'];
+    void exportedStyles['123'];
+    void exportedStyles['constructor'];
+    expect(Object.keys(buttonStyles)).toEqual(before);
+  });
+});
+
+describe('buttonStyles regression tripwires', () => {
+  // `it.fails` passes while the assertion fails (the healthy state) and turns red
+  // the moment the asserted bad state becomes true — that is the tripwire firing.
+  it.fails('tripwire: an empty-string key is never exported as a style constant', () => {
+    expect(exportedStyles['']).toBeTypeOf('string');
+  });
+
+  it.fails('tripwire: an invalid variant name never resolves to a usable string token', () => {
+    expect(buttonStyles['NOT_A_REAL_STYLE' as StyleName]).toBeTypeOf('string');
   });
 });
