@@ -510,10 +510,12 @@ describe('imagePointToCss and cssPointToImage are inverses', () => {
 });
 
 /**
- * The translation `captureCanvasScreenshot` needs, in the app's own numbers: the page is
- * 1177px tall in a 720px window, `clickToolButton` scrolls it 440px, and the workspace
- * canvas goes from `y: 100` to `y: -340`. Raw, that clip reaches a capture 440px away from
- * the region the caller measured — a wrong answer, not an error.
+ * The translation `viewportRectToPageRect` performs, in the suite's own numbers: the test
+ * passes a literal scroll of {x: 0, y: 440} (a fixture value tied to the legacy-rail
+ * guard, not app geometry — the app no longer scrolls per `e2e/OPEN_PROBLEMS.md`), so a
+ * rect measured at viewport `y: -340` maps to document `y: 100`. Raw, a viewport-relative
+ * clip reaches a capture 440px away from the region the caller measured — a wrong answer,
+ * not an error.
  */
 describe('viewportRectToPageRect', () => {
   const RECT: CssBox = { x: 56, y: -340, width: 320, height: 120 };

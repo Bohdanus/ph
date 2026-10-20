@@ -586,9 +586,11 @@ describe('drawLine', () => {
  * second case below is what distinguishes the two.
  *
  * Why it is read at the call site at all is the reason `clickToolButton` exists in the
- * production path: it scrolls the window by 440px in this build, so an offset read once is wrong
- * by a different amount before and after any tool click. `toolbar-helpers.ts:127`,
- * `cdp-helpers.ts:60` and `flyout-longpress-race.spec.ts:342,347` are the callers.
+ * production path: it wraps tool clicks with `preservingScroll` to hold scroll steady
+ * against the shifts that would otherwise come from test-fixture scrolls, so a one-time
+ * offset is wrong before and after any scroll-changing interaction and must be read
+ * live via `getPageScroll`. `toolbar-helpers.ts:127`, `cdp-helpers.ts:88` and
+ * `flyout-longpress-race.spec.ts:342,347` are the callers.
  */
 describe('getPageScroll', () => {
   it('reports the window scroll its own page function reads', async () => {

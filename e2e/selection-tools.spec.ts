@@ -96,13 +96,17 @@ async function scrollToTop(page: Page): Promise<void> {
 /**
  * The workspace canvas box, measured at a known scroll position.
  *
- * The app is taller than Playwright's 720px default window, so the WINDOW scrolls, and
- * `boundingBox()` is viewport-relative: every `fill()` on a colour or slider input scrolls
- * its element into view first, and the sidebar's colour pickers sit near the bottom of a
- * tall page. A box measured before such an interaction describes a point 440px above where
- * the canvas actually is, and a drag built from it lands on the header — silently, with no
- * error anywhere. Scrolling to a fixed position first makes the box a function of the layout
- * rather than of the interaction history, and every other measurement here assumes scroll 0.
+ * `boundingBox()` is viewport-relative, so scroll state at measurement matters. The app
+ * no longer scrolls at document level (see `e2e/OPEN_PROBLEMS.md`); non-zero offsets in
+ * this file come from explicit test scrolls. `clickToolButton`, `openToolFlyout`,
+ * `selectFromFlyout`, and `openFlyoutFromTile` wrap their tool clicks in
+ * `preservingScroll` (`toolbar-helpers.ts:126`), so those do not change scroll, but `fill()`
+ * calls on colour/slider inputs scroll their element into view via the scroll container.
+ * A box measured after an un-preserved scroll (e.g. a `fill()`) describes a point 440px
+ * away from the canvas's true position — a drag from it lands on the header, silently, with
+ * no error anywhere. Scrolling to a known position first makes the box a function of the
+ * layout rather than interaction history, after which every measurement here assumes scroll 0
+ * (re-established by `scrollToTop` in `measureCanvas`, not assumed).
  *
  * This is also the OPEN_PROBLEMS re-measure rule, for the same reason: the options panel
  * lands in the toolbar row and the canvas box is only valid after it has settled.

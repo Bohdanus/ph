@@ -57,10 +57,9 @@ interface CdpHarness {
   newCDPSession: NewSessionSpy;
   /**
    * Whether the output directory already existed at the moment the CDP session was
-   * opened. `fs` is reached through a dynamic import inside the helper (see
-   * e2e/OPEN_PROBLEMS.md, "the per-call dynamic import makes the fs surface
-   * unspyable"), so ordering against `mkdir` is asserted from this side of the call
-   * rather than by spying on `fs`.
+   * opened. The ordering of `mkdir` against the helper's `fs.writeFile` is asserted
+   * from this side of the call rather than by spying on `fs`, because the helper
+   * imports `node:fs/promises` statically.
    */
   outputDirExistedAtSession: () => boolean;
 }
@@ -372,11 +371,11 @@ describe('CDP Helpers', () => {
 
     // The regression this translation exists for. `Page.captureScreenshot` is called
     // directly here, so Playwright never gets to apply the window offset that
-    // `page.screenshot({ clip })` applies on the caller's behalf: measured on a marker at
-    // document y=600 with the window scrolled to 440, a viewport-relative clip captures
-    // nothing and the page-relative one captures the marker. Sending `box`/`clip` raw
-    // therefore put every CDP read 440px from the region the caller measured, which reads
-    // as a wrong answer rather than an error.
+    // `page.screenshot({ clip })` applies on the caller's behalf: with the test fixture
+    // window scrolled to y=440 (an explicit unit-test fixture value, not app geometry),
+    // a viewport-relative clip captures nothing and the page-relative one captures the
+    // pinned marker. Sending `box`/`clip` raw therefore puts every CDP read 440px from the
+    // region the caller measured — a wrong answer, not an error.
     it('translates a viewport-relative clip into the page coordinates CDP wants', async () => {
       const outputDir = await makeOutputDir('scrolled-clip');
       const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
@@ -518,7 +517,7 @@ describe('CDP Helpers', () => {
       // The subject asserted here is therefore the DECODED LENGTH, so this case fails
       // against a type-only guard and against one that checks the string's length rather
       // than the payload's. The fault it used to produce surfaced far from its cause, in
-      // `loadImageData` (canvas-helpers.ts:541), naming the consumer instead.
+      // `loadImageData` (canvas-helpers.ts:606), naming the consumer instead.
       const outputDir = await makeOutputDir('empty-data');
       const { page, detach } = createCdpHarness(outputDir, { response: { data: '' } });
       const { testInfo, attach } = createTestInfoMock(outputDir);
