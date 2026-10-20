@@ -938,6 +938,18 @@ describe('loadImageFile rejection paths', () => {
     ['a CSS background fragment image resource', '<svg><rect style="background-image:url(#self)"/></svg>'],
     ['a CSS image-set fragment resource', '<svg><rect style="background-image:image-set(\'#self\' 1x)"/></svg>'],
     ['a CSS image() data resource', '<svg><rect style="mask-image:image(\'data:image/png;base64,AA==\')"/></svg>'],
+    [
+      'a CSS url() with an escaped LF data scheme',
+      '<svg style="filter:url(\'da\\&#10;ta:image/svg+xml,%3Csvg/%3E\')"/>',
+    ],
+    [
+      'a CSS url() with an escaped CRLF data scheme',
+      '<svg style="filter:url(\'da\\&#13;&#10;ta:image/svg+xml,%3Csvg/%3E\')"/>',
+    ],
+    [
+      'an image-set string with an escaped LF data scheme',
+      '<svg><rect style="background-image:image-set(\'da\\&#10;ta:image/png;base64,AA==\' 1x)"/></svg>',
+    ],
     ['an escaped CSS data resource', '<svg style="filter:url(\\64 ata:image/svg+xml,%3Csvg/%3E)"/>'],
     ['a CSS-comment-obfuscated data resource', '<svg style="filter:url(data/**/:image/svg+xml,%3Csvg/%3E)"/>'],
     ['a six-digit escaped CSS data resource', '<svg style="filter:\\75\\000072l(data:image/svg+xml,%3Csvg/%3E)"/>'],

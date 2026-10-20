@@ -257,8 +257,9 @@ JPEG/other raster formats and foreign HTML content are not imported through this
 resource scan does not evaluate custom-property expansion or inactive media queries, so it may refuse
 a data URL declaration even when the current rule would not fetch it.
 Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
-the flattened-SVG path also rejects APNG frame chunks before decoding. Standalone JPEG and WebP still
-rely on post-decode dimension validation and need separate format-specific preflight work.
+APNG frame chunks are rejected before decode in both the standalone PNG and flattened-SVG paths.
+Standalone JPEG and WebP still rely on post-decode dimension validation and need separate
+format-specific preflight work.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so

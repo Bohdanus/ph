@@ -116,11 +116,14 @@ function cssDimension(style: string, property: 'width' | 'height'): string | nul
 }
 
 function decodeCssEscapes(value: string): string {
-  return value.replace(/\\([\da-f]{1,6})(?:\r\n|\s)?|\\([^\r\n])/gi, (_match, hex: string, escaped: string) => {
-    if (!hex) return escaped;
-    const codePoint = Number.parseInt(hex, 16);
-    return codePoint === 0 || codePoint > 0x10ffff ? '\uFFFD' : String.fromCodePoint(codePoint);
-  });
+  return value.replace(
+    /\\(?:\r\n|[\n\r\f])|\\([\da-f]{1,6})(?:\r\n|\s)?|\\([^\r\n\f])/gi,
+    (_match, hex: string, escaped: string) => {
+      if (!hex) return escaped ?? '';
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint === 0 || codePoint > 0x10ffff ? '\uFFFD' : String.fromCodePoint(codePoint);
+    }
+  );
 }
 
 function cssEscapeEnd(source: string, backslashIndex: number): number {
