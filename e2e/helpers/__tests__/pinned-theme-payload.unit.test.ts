@@ -46,6 +46,15 @@ const FIXTURE_URL = new URL('../../fixtures/extended-test.ts', import.meta.url);
 const SOURCE = readFileSync(FIXTURE_URL, 'utf8');
 const FIXTURE = ts.createSourceFile('extended-test.ts', SOURCE, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
+const THEME_CONTEXT_URL = new URL('../../../src/contexts/ThemeContext.tsx', import.meta.url);
+const THEME_CONTEXT = ts.createSourceFile(
+  'ThemeContext.tsx',
+  readFileSync(THEME_CONTEXT_URL, 'utf8'),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX
+);
+
 /** The three keys the init script is handed, which are exactly the three the fixture declares. */
 interface ThemeConstants {
   readonly storageKey: string;
@@ -303,6 +312,50 @@ function runInPage(
   script(constants);
 }
 
+/**
+ * The storage key `ThemeProvider` reads and writes, extracted from
+ * `src/contexts/ThemeContext.tsx` so the pin cannot drift from the app's own contract.
+ */
+function appThemeStorageKey(): string {
+  const calls = nodes(THEME_CONTEXT, ts.isCallExpression).filter(
+    (call) =>
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.expression.getText(THEME_CONTEXT) === 'localStorage' &&
+      (call.expression.name.text === 'getItem' || call.expression.name.text === 'setItem')
+  );
+  expect(
+    calls.length,
+    'ThemeContext.tsx reads and writes localStorage through getItem/setItem — if it switches to a different mechanism the pin key is a guess'
+  ).toBeGreaterThan(0);
+  const arg = calls[0].arguments[0];
+  return required(
+    arg !== undefined && ts.isStringLiteral(arg) ? arg.text : undefined,
+    'the first argument to the first localStorage.getItem/setItem call in ThemeContext.tsx is a string literal — the key ThemeProvider and the pin must agree on'
+  );
+}
+
+/**
+ * The literal string members of the `Theme` type, extracted from
+ * `src/contexts/ThemeContext.tsx`. Guards `PINNED_THEME` against a value that
+ * happens to match but is no longer a declared theme.
+ */
+function appThemeTypeLiterals(): string[] {
+  const aliases = nodes(THEME_CONTEXT, ts.isTypeAliasDeclaration).filter(
+    (candidate) => candidate.name?.text === 'Theme'
+  );
+  expect(aliases, 'ThemeContext.tsx declares a `Theme` type alias').toHaveLength(1);
+  const union = required(
+    ts.isUnionTypeNode(aliases[0].type) ? aliases[0].type : undefined,
+    'Theme is a union of string literals, not a computed or imported type'
+  );
+  return union.types.map((member) =>
+    required(
+      ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal) ? member.literal.text : undefined,
+      'each Theme member is a string literal'
+    )
+  );
+}
+
 describe('the pinnedTheme init-script payload', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -432,5 +485,21 @@ describe('the pinnedTheme init-script payload', () => {
       [...local.written],
       'a reload with the flag set writes nothing, so the app resolves its own default'
     ).toEqual(afterRelease);
+  });
+
+  it('names the same storage key ThemeContext.tsx reads, so neither side can drift from the other', () => {
+    const { storageKey } = themeConstants();
+    expect(
+      storageKey,
+      'the pin must write the key ThemeProvider actually reads, or it writes a key the app never looks at — hasDarkPixels would then pass on a dark backdrop with a green run'
+    ).toBe(appThemeStorageKey());
+  });
+
+  it('pins a Theme value ThemeContext.tsx actually declares, so the theme type cannot drift from the constant', () => {
+    const { theme } = themeConstants();
+    expect(
+      appThemeTypeLiterals(),
+      'PINNED_THEME must be one of the values in ThemeContext.tsx Theme type, so a type drift in either direction is caught here'
+    ).toContain(theme);
   });
 });

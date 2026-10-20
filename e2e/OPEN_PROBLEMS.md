@@ -710,8 +710,8 @@ not a one-line change to `playwright.config.ts`.
 
 `e2e/check-dpr.spec.ts` also asserts that the four presentation canvases' backing-store
 width and height equal the document dimensions multiplied by the expected device scale
-factor, at both 1x and 2x. Its `CSS_POSITION_TOLERANCE` assertion checks that a drawn line
-lands near the cursor using `imageBoundsToCss`, which is scale-agnostic by construction;
+factor, at both 1x and 2x. Its `toleranceFor` assertion checks that a drawn line lands near
+the cursor using `imageBoundsToCss`, which is scale-agnostic by construction;
 the backing-store assertions, not the screenshot mapping, detect a mismatch at those two
 tested scale factors. The two export checks that read the store — `the export is independent
 of the shell layout` in

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CANVAS_REDRAW_POLL_INTERVAL_MS, CANVAS_REDRAW_TIMEOUT_MS } from '../canvas-helpers';
-import { committedAntsOutline, hasNoCommittedAnts, waitForCommittedAnts } from '../selection-ants';
+import { committedAntsOutline, hasNoCommittedAnts, readAntRuns, waitForCommittedAnts } from '../selection-ants';
 import type { Page } from '@playwright/test';
 
 /**
@@ -82,7 +82,16 @@ class FakeAntsCanvas {
   ): { getImageData: (x: number, y: number, width: number, height: number) => { data: Uint8ClampedArray } } | null {
     if (kind !== '2d') return null;
     return {
-      getImageData: (_x, _y, width, height) => ({ data: this.pixels.subarray(0, width * height * 4) }),
+      getImageData: (x: number, y: number, width: number, height: number) => {
+        const data: number[] = [];
+        for (let row = y; row < y + height; row++) {
+          for (let col = x; col < x + width; col++) {
+            const at = (row * this.width + col) * 4;
+            data.push(this.pixels[at], this.pixels[at + 1], this.pixels[at + 2], this.pixels[at + 3]);
+          }
+        }
+        return { data: new Uint8ClampedArray(data) };
+      },
     };
   }
 
@@ -99,7 +108,7 @@ class ContextlessAntsCanvas extends FakeAntsCanvas {
 }
 
 /** The `window` the page callback resolves `window.HTMLCanvasElement` against. */
-const BROWSER_GLOBALS = globalThis as unknown as { window?: unknown };
+const BROWSER_GLOBALS = globalThis as unknown as { window?: unknown; document?: unknown };
 
 /** Virtual milliseconds. `waitForCommittedAnts` compares `Date.now()` against a deadline. */
 let now = 0;
@@ -129,6 +138,33 @@ function antsPage(read: () => unknown): Page {
 /** Reads the same element forever, which is what a settled selection looks like. */
 function antsReading(canvas: FakeAntsCanvas | null): Page {
   return antsPage(() => canvas);
+}
+
+/**
+ * A `Page` whose `evaluate` runs the callback in-process, with `document` standing in
+ * for the page's global so the callback's `document.querySelector` resolves it.
+ * Set only for the duration of the call; cleaned up so a later test does not see it.
+ */
+function evaluatePage(canvas: FakeAntsCanvas | null): Page {
+  const document = {
+    querySelector: (selector: string): FakeAntsCanvas | null => {
+      if (selector !== '[data-testid="selection-ants-canvas"]') {
+        throw new Error(`unexpected selector: ${selector}`);
+      }
+      return canvas;
+    },
+  };
+  const page = {
+    evaluate: (fn: (arg: unknown) => unknown, arg: unknown) => {
+      BROWSER_GLOBALS.document = document;
+      try {
+        return Promise.resolve(fn(arg));
+      } finally {
+        delete BROWSER_GLOBALS.document;
+      }
+    },
+  };
+  return page as unknown as Page;
 }
 
 beforeEach(() => {
@@ -550,5 +586,176 @@ describe('committedAntsOutline ant pixel placement at corners', () => {
       right: 99.5,
       bottom: 99.5,
     });
+  });
+});
+
+describe('readAntRuns', () => {
+  it('returns the painted run in one row, scanning the row axis', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 2, y: 3, rgba: BLACK },
+      { x: 3, y: 3, rgba: BLACK },
+      { x: 4, y: 3, rgba: BLACK },
+      { x: 5, y: 3, rgba: BLACK },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 10, height: 10 }, 'row');
+
+    expect(runs).toHaveLength(10);
+    expect(runs[3]).toEqual([[2, 5]]);
+    for (let y = 0; y < 10; y++) {
+      if (y !== 3) expect(runs[y]).toEqual([]);
+    }
+  });
+
+  it('accepts the white half of the dash as an ant on the column axis', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 4, y: 1, rgba: WHITE },
+      { x: 4, y: 2, rgba: WHITE },
+      { x: 4, y: 3, rgba: WHITE },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 10, height: 10 }, 'column');
+
+    expect(runs).toHaveLength(10);
+    expect(runs[4]).toEqual([[1, 3]]);
+    for (let x = 0; x < 10; x++) {
+      if (x !== 4) expect(runs[x]).toEqual([]);
+    }
+  });
+
+  it('returns multiple separate runs on one scan line', async () => {
+    const canvas = new FakeAntsCanvas(20, 5, [
+      { x: 1, y: 2, rgba: BLACK },
+      { x: 2, y: 2, rgba: BLACK },
+      { x: 3, y: 2, rgba: BLACK },
+      { x: 10, y: 2, rgba: WHITE },
+      { x: 11, y: 2, rgba: WHITE },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 20, height: 5 }, 'row');
+
+    expect(runs[2]).toEqual([
+      [1, 3],
+      [10, 11],
+    ]);
+  });
+
+  it('expresses each run as a single pixel', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 5, y: 5, rgba: BLACK }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'row');
+
+    expect(runs[5]).toEqual([[5, 5]]);
+    for (let y = 0; y < 8; y++) {
+      if (y !== 5) expect(runs[y]).toEqual([]);
+    }
+  });
+
+  it('rejects a mid-grey pixel, because alpha alone would accept it', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 4, y: 4, rgba: MID_GREY }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'column');
+
+    for (let x = 0; x < 8; x++) {
+      expect(runs[x]).toEqual([]);
+    }
+  });
+
+  it('rejects a saturated red pixel, because alpha alone would accept it', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 3, y: 6, rgba: RED }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'row');
+
+    expect(runs[6]).toEqual([]);
+  });
+
+  it('skips a transparent pixel whatever colour its bytes carry', async () => {
+    const canvas = new FakeAntsCanvas(8, 8, [{ x: 2, y: 7, rgba: CLEAR_WHITE }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 0, y: 0, width: 8, height: 8 }, 'column');
+
+    expect(runs[2]).toEqual([]);
+  });
+
+  it('clamps a window that runs past the right and bottom edges to the backing store', async () => {
+    const canvas = new FakeAntsCanvas(5, 5, [{ x: 4, y: 4, rgba: BLACK }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 2, y: 2, width: 20, height: 20 }, 'row');
+
+    // Clamped to 5x5 starting at (2,2): rows 2..4, width 3 (cols 2..4).
+    expect(runs).toHaveLength(3);
+    expect(runs[2]).toEqual([[4, 4]]);
+    expect(runs[0]).toEqual([]);
+    expect(runs[1]).toEqual([]);
+    // The clamped readHeight is 3, so row 5 does not exist in the result.
+    expect(runs[3]).toBeUndefined();
+  });
+
+  it('clamps a window with a negative origin to the backing store', async () => {
+    const canvas = new FakeAntsCanvas(5, 5, [{ x: 1, y: 1, rgba: WHITE }]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: -3, y: -3, width: 10, height: 10 }, 'row');
+
+    // x0=0, y0=0, x1=5, y1=5: full canvas read.
+    expect(runs).toHaveLength(5);
+    expect(runs[1]).toEqual([[1, 1]]);
+    for (let y = 0; y < 5; y++) {
+      if (y !== 1) expect(runs[y]).toEqual([]);
+    }
+  });
+
+  it('reports runs in document pixels, offset by the read origin', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 3, y: 7, rgba: BLACK },
+      { x: 4, y: 7, rgba: BLACK },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 2, y: 5, width: 6, height: 3 }, 'row');
+
+    // Read window is rows 5..7, cols 2..7 (clamped to 8x8 backing store at (2,5) to (8,8)).
+    // On row 7 (index 2 in the result), the ant pixels are at x=3 and x=4 in document space.
+    expect(runs).toHaveLength(3);
+    expect(runs[2]).toEqual([[3, 4]]);
+  });
+
+  it('reports column scans in document y pixels', async () => {
+    const canvas = new FakeAntsCanvas(10, 10, [
+      { x: 5, y: 2, rgba: BLACK },
+      { x: 5, y: 3, rgba: BLACK },
+      { x: 5, y: 4, rgba: BLACK },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 3, y: 1, width: 5, height: 8 }, 'column');
+
+    // Read window is cols 3..7, rows 1..9 (clamped to canvas bounds).
+    // Column 5 (index 2 in the result), ants at y=2,3,4 in document space.
+    expect(runs).toHaveLength(5);
+    expect(runs[2]).toEqual([[2, 4]]);
+  });
+
+  it('scans a sub-window rather than the whole backing store', async () => {
+    const canvas = new FakeAntsCanvas(20, 20, [
+      { x: 0, y: 0, rgba: BLACK },
+      { x: 19, y: 19, rgba: WHITE },
+    ]);
+
+    const runs = await readAntRuns(evaluatePage(canvas), { x: 5, y: 5, width: 5, height: 5 }, 'row');
+
+    // Window is the inner 5x5: nothing is painted in cols 5..9, rows 5..9.
+    for (const line of runs) {
+      expect(line).toEqual([]);
+    }
+  });
+
+  it('throws when the page has no ants canvas', async () => {
+    const page = evaluatePage(null);
+    await expect(readAntRuns(page, { x: 0, y: 0, width: 8, height: 8 }, 'row')).rejects.toThrow(
+      /readAntRuns: no \[data-testid="selection-ants-canvas"\] on the page/
+    );
+  });
+
+  it('throws when the canvas has no 2d context rather than reporting empty runs', async () => {
+    const page = evaluatePage(new ContextlessAntsCanvas(8, 8, []));
+    await expect(readAntRuns(page, { x: 0, y: 0, width: 8, height: 8 }, 'column')).rejects.toThrow(/no 2d context/);
   });
 });

@@ -1,10 +1,12 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type ClipOptions,
+  documentToCanvasOffset,
   drawLine,
   getStrokeAnalysis,
   getWorkspaceCanvas,
   hasDarkPixels,
+  loadImageData,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
@@ -13,11 +15,6 @@ import { clickToolButton } from './helpers/toolbar-helpers';
 const STROKE_START_X = 150;
 const STROKE_END_X = 400;
 const STROKE_STEPS = 20;
-
-const CLIP_X = 100;
-const CLIP_Y_OFFSET = -50;
-const CLIP_WIDTH = 320;
-const CLIP_HEIGHT = 120;
 
 /** Synchronizes with the backing store before the one-shot capture that is analyzed below. */
 type PenWait = (page: Page, clip: Required<ClipOptions>) => Promise<void>;
@@ -93,14 +90,16 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
       await expect(penTypeSelect).toBeVisible();
       await penTypeSelect.selectOption(value);
 
-      await drawLine(page, box, STROKE_START_X, y, STROKE_END_X, y, { steps: STROKE_STEPS });
+      const start = documentToCanvasOffset(box, STROKE_START_X, y);
+      const end = documentToCanvasOffset(box, STROKE_END_X, y);
 
-      // Clip around the drawn stroke (y-50 to y+50 to capture full spray radius)
+      await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: STROKE_STEPS });
+
       const clip = {
-        x: box.x + CLIP_X,
-        y: box.y + y + CLIP_Y_OFFSET,
-        width: CLIP_WIDTH,
-        height: CLIP_HEIGHT,
+        x: box.x + Math.min(start.x, end.x) - 50,
+        y: box.y + Math.min(start.y, end.y) - 50,
+        width: Math.abs(end.x - start.x) + 70,
+        height: Math.abs(end.y - start.y) + 120,
       };
       // The screenshot below is a one-shot read, so synchronize with the
       // backing store first or a slow frame silently weakens the assertions.
@@ -113,13 +112,15 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
       expect(analysis, 'Stroke analysis should not be null').not.toBeNull();
       if ('segments' in exp) expect.soft(analysis!.segments).toBe(exp.segments);
       if ('segmentsMin' in exp) expect.soft(analysis!.segments).toBeGreaterThanOrEqual(exp.segmentsMin);
-      if ('verticalSpreadMin' in exp)
-        // `verticalSpread` is the one field `getStrokeAnalysis` returns RAW rather than
-        // scale-corrected, so this is a floor on a capture-pixel count and a 2x capture
-        // can only raise it. It cannot false-pass; it can only be looser than intended
-        // on a HiDPI host. `segments` and `type` beside it ARE corrected, which is why
-        // they are the load-bearing assertions here and this is a floor.
-        expect.soft(analysis!.verticalSpread).toBeGreaterThanOrEqual(exp.verticalSpreadMin);
+      if ('verticalSpreadMin' in exp) {
+        // `verticalSpread` is returned in capture (image) pixels, not CSS pixels,
+        // so it doubles at 2x. Divide it by the capture's own Y scale — measured
+        // from the decoded image, never assumed — to get a CSS-pixel figure that
+        // holds across DPIs. The threshold below is expressed in CSS pixels.
+        const image = await loadImageData(screenshot);
+        const scale = image.height / clip.height;
+        expect.soft(analysis!.verticalSpread / scale).toBeGreaterThanOrEqual(exp.verticalSpreadMin);
+      }
       expect.soft(analysis!.type).toBe(exp.type);
     });
   });

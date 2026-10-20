@@ -449,7 +449,7 @@ test.describe('Keyboard shortcuts', () => {
       // flips it, and that flip does not focus: the first click enters edit mode and the
       // second is what the browser focuses.
       const row = page.getByTitle('Drag to reorder').first();
-      const name = row.locator('div.flex-1 > span');
+      const name = row.getByTestId('layer-name');
       await name.click();
       await name.click();
       await page.keyboard.type('v');

@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-230 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-231 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -2956,25 +2956,3 @@ gate either way; it prevents a filled figure without a colour from painting with
 `fillStyle` the shared overlay last carried.
 
 ---
-
-## 231. Magnetic Lasso Alt-suppression E2E fails on committed main
-
-**Problem.** The `Magnetic Lasso › Alt suppresses the magnet, and releasing it restores it` case in
-`e2e/feather-magnetic-lasso.spec.ts` fails on a detached checkout of committed `main`. Before Alt
-is pressed, `waitForCanvasPixels` times out waiting for the outer hover to become magnetic. The
-likely path is an automatic anchor: the snapped path exceeds the anchor span, commits the segment,
-and clears the preview before it can paint. The same targeted run passes the Transform rotation-undo
-case that also failed during the full suite, so only the Magnetic Lasso failure is currently
-reproducible.
-
-**Why it matters.** Alt suppression and restoration are a visible magnetic-lasso interaction. The
-failure can mask regressions in the selection tool and leaves the full E2E gate red independently
-of the history migration test branch.
-
-**Fix.** Make the pre-Alt route stay below the actual snapped-path automatic-anchor threshold, or
-make the tool expose one observable preview frame before auto-anchoring. Preserve Alt-suppression
-behavior and make the targeted case reliably pass without weakening its pixel assertion.
-
-**Reproduction.** `npm run test:e2e -- e2e/feather-magnetic-lasso.spec.ts --grep "Alt suppresses the magnet, and releasing it restores it"`
-
-**Files.** `e2e/feather-magnetic-lasso.spec.ts`, `src/components/Canvas/FeatherMagneticLassoToolArea.tsx`

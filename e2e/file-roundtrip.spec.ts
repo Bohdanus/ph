@@ -348,6 +348,7 @@ test.describe('File round trip', () => {
     const savedPath = path.join(testInfo.outputDir, path.basename(download.suggestedFilename()));
     await download.saveAs(savedPath);
     await expect(saveDialogTitle, 'the Save dialog unmounted once the download completed').toHaveCount(0);
+    await expect(saveDialogTitle, 'and that heading is no longer on screen, the dialog fully gone').toBeHidden();
     const savedBytes = await readFile(savedPath);
     expect(savedBytes.byteLength, 'the saved PNG should not be empty').toBeGreaterThan(100);
 
