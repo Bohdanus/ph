@@ -58,7 +58,7 @@ const SENTINEL_FOREGROUND = '#00ff00';
 const COLOR_CHANNEL_TOLERANCE = 6;
 /** How long a negative assertion samples before concluding "never". Every "must not happen" claim in this file is a poll window, not an instant: a commit that is about to be dispatched has not been at the instant after the gesture. */
 const NEGATIVE_WINDOW_MS = 1_200;
-const NEGATIVE_POLL_MS = 120;
+const NEGATIVE_POLL_MS = 50;
 /** Client-side margin added around a small capture so a sample at its exact centre is never on the clip edge, and a 1px capture rounding cannot reach it. */
 const PROBE_CLIP_PX = 16;
 /** Draw-tool brush width for the specs that need a fat, flat interior to sample and to grow a region from. */
@@ -757,11 +757,18 @@ test.describe('Elliptical marquee', () => {
     expect.soft(dragAspect, 'the drag is deliberately not square').not.toBeCloseTo(1, 1);
     // The circle constraint grows the SHORT side and leaves the long one alone, so the width
     // is the only part of the committed geometry that still matches the drag.
-    expect.soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'Shift constraint should leave the width unchanged, matching the drag'
+      )
+      .toBe(true);
     expect
       .soft(outlineAspect(outline!), 'Shift should have squared the committed ellipse off a 2:1 drag')
       .toBeCloseTo(1, 1);
-    expect.soft(outlineHeight(outline!)).toBeGreaterThan(rect.height);
+    expect
+      .soft(outlineHeight(outline!), 'Shift should have grown the committed height, squaring the ellipse')
+      .toBeGreaterThan(rect.height);
   });
 
   test('holding Alt draws an elliptical marquee from its press point outwards', async ({ page }) => {
@@ -779,8 +786,18 @@ test.describe('Elliptical marquee', () => {
     // but centred on the press point rather than laid out from it towards the pointer.
     const centre = outlineCenter(outline!);
     const absolutePress = inCanvas(box, rect);
-    expect.soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
-    expect.soft(Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'Alt constraint should preserve the drag width'
+      )
+      .toBe(true);
+    expect
+      .soft(
+        Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        'Alt constraint should preserve the drag height'
+      )
+      .toBe(true);
     expect.soft(Math.abs(centre.x - absolutePress.left) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre x').toBe(true);
     expect.soft(Math.abs(centre.y - absolutePress.top) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre y').toBe(true);
   });

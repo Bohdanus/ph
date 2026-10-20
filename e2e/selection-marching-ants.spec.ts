@@ -84,6 +84,9 @@ const BORDER_BAND = { x: 280, y: 179, width: BAND_WIDTH_PX, height: BAND_HEIGHT_
 const SAMPLE_COUNT = 6;
 const SAMPLE_INTERVAL_MS = 110;
 
+/** The one distinct frame a static band must produce across every sample. */
+const STATIC_FRAME_COUNT = 1;
+
 type Band = { x: number; y: number; width: number; height: number };
 
 interface BandSample {
@@ -333,7 +336,9 @@ test.describe('Selection Marching Ants', () => {
     for (const sample of samples) {
       expect(sample.opaqueCount, 'Nothing is committed, so the ants canvas should be empty').toBe(0);
     }
-    expect(new Set(samples.map(fingerprint)).size, 'Reading the same band twice should not change it').toBe(1);
+    expect(new Set(samples.map(fingerprint)).size, 'Reading the same band twice should not change it').toBe(
+      STATIC_FRAME_COUNT
+    );
   });
 
   // the marquee only recently got ants, and it is the sharpest case for it
@@ -414,7 +419,7 @@ test.describe('Selection Marching Ants', () => {
     expect(
       new Set(heldSamples.map(fingerprint)).size,
       'The dashes crawled while the drag was held (first sample: ' + fingerprintHead(heldSamples[0]) + ')'
-    ).toBe(1);
+    ).toBe(STATIC_FRAME_COUNT);
 
     // CLAIM TWO, a separate one: the border MOVED with the pointer. Read in page coordinates,
     // which is what `committedAntsOutline` reports, and compared against the pointer's own page
@@ -478,6 +483,6 @@ test.describe('Selection Marching Ants', () => {
       .toBe(0);
 
     const samples = await sampleAntsBandOverTime(page, BORDER_BAND);
-    expect(new Set(samples.map(fingerprint)).size, 'The ants canvas should stop repainting').toBe(1);
+    expect(new Set(samples.map(fingerprint)).size, 'The ants canvas should stop repainting').toBe(STATIC_FRAME_COUNT);
   });
 });

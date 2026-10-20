@@ -353,7 +353,8 @@ const CHANNELS: ReadonlyArray<keyof Rgb> = ['red', 'green', 'blue'];
 async function documentSize(page: Page): Promise<DocumentSize> {
   return await getWorkspaceCanvas(page).evaluate((node) => {
     const canvas = node as HTMLCanvasElement;
-    return { width: canvas.width, height: canvas.height };
+    const dpr = window.devicePixelRatio;
+    return { width: canvas.width / dpr, height: canvas.height / dpr };
   });
 }
 
