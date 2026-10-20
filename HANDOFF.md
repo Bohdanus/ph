@@ -183,7 +183,7 @@ replay authority.
 
 ---
 
-## 45. The codecs' raster ceilings disagree, and two of seven have no budget at all
+## 45. The codecs' raster ceilings disagree, and 80 MP AVIF export is an explicit limit
 
 **What this entry is about.** A document between 80 MP and 100 MP **cannot be saved as AVIF at
 all** — `saveImageToDisk` throws with the budget message and `useFile.tsx` — `handleImageSave()` logs
@@ -211,13 +211,13 @@ and a page nowhere near this figure can still exceed it.
 
 **Five ceilings exist and three are below what the dialog can create:**
 
-| ceiling                             | value       | where                                              |
-| ----------------------------------- | ----------- | -------------------------------------------------- |
-| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `tiff-utils.ts` |
-| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`       |
-| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                      |
-| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`               |
-| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`               |
+| ceiling                             | value       | where                                                |
+| ----------------------------------- | ----------- | ---------------------------------------------------- |
+| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `raster-utils.ts` |
+| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`         |
+| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                        |
+| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`                 |
+| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`                 |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
@@ -225,21 +225,43 @@ as PSD. "One exported `MAX_RASTER_PIXELS`" would have to reconcile **five** cons
 consolidation remains an open decision; the BMP encoder now uses the existing 100 MP document cap
 without changing any other codec ceiling.
 
-**The GIF loader and SVG encoder use the document ceiling; the SVG loader remains unbounded.**
+**The GIF and SVG loaders preflight intrinsic dimensions against the document ceiling.**
 
-| codec | loader budget | encoder budget | check before the allocation it bounds?     |
-| ----- | ------------- | -------------- | ------------------------------------------ |
-| avif  | yes           | yes            | yes                                        |
-| tiff  | yes           | yes            | yes                                        |
-| bmp   | 100 MP        | 100 MP         | yes — before pixel readback and allocation |
-| gif   | 100 MP        | 65535/axis     | yes — before data-URL encoding and decode  |
-| ico   | 256/axis      | 1..256/axis    | yes, on both                               |
-| svg   | **none**      | 100 MP         | yes — before PNG readback                  |
-| psd   | yes           | yes            | yes — the reference implementation         |
+| codec | loader budget          | encoder budget         | check before the allocation it bounds?        |
+| ----- | ---------------------- | ---------------------- | --------------------------------------------- |
+| avif  | yes                    | yes                    | yes                                           |
+| tiff  | yes                    | yes                    | yes                                           |
+| bmp   | 100 MP                 | 100 MP                 | yes — before pixel readback and allocation    |
+| gif   | 100 MP                 | 65535/axis             | yes — before data-URL encoding and decode     |
+| ico   | 256/axis               | 1..256/axis            | yes, on both                                  |
+| svg   | 100 MP / 64 MiB source | 100 MP / 64 MiB source | yes — before data URL and native image decode |
+| psd   | yes                    | yes                    | yes — the reference implementation            |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
-`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against
-rather than an exception to it. What the table leaves open is the loader column for `svg`.
+`assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against,
+rather than an exception to it. SVG files are limited to 64 MiB before buffering, and intrinsic
+dimensions are checked against the document ceiling before data-URL creation and native image
+decoding. `encodeSvg()` also refuses the browser's `data:,` canvas failure sentinel and exported SVG
+source strings over 64 MiB, so every successful flattened export fits the import source limit. The
+importer has one bounded embedded-raster path matching this app's `encodeSvg()` output: a single
+direct PNG data image whose PNG signature, IHDR CRC, IHDR dimensions, root dimensions, and image
+viewport all agree. It extracts that PNG and loads it directly instead of asking the SVG renderer to
+decode a nested image. Before `FileReader`, the preflight refuses nested data-URL image/document
+references outside that wrapper, `<feImage>`, SVG `<foreignObject>`, resource references scoped by a
+`data:` `xml:base`, animated `href` changes on image-like elements, and data URLs in CSS
+`url()`/`image()`/`image-set()` resources. External non-data references are left to secure SVG
+image-mode rules, which treat them as network errors and prevent fetching. Image-element fragment
+references are refused because they can recurse through the complete SVG document; same-document
+`<use>` and paint-server references remain allowed. Unsupported relative units, sizing expressions,
+and stylesheets that could affect root dimensions are refused; decoded-image validation remains the
+final guard for auto/percentage dimensions resolved by the browser. This is intentionally narrower
+than the SVG format: embedded JPEG/other raster formats and foreign HTML content are not imported
+through this path. The CSS resource scan does not evaluate custom-property expansion or inactive media
+queries, so it may refuse a data URL declaration even when the current rule would not fetch it.
+Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
+APNG frame chunks are rejected before decode in both the standalone PNG and flattened-SVG paths.
+Standalone JPEG and WebP still rely on post-decode dimension validation and need separate
+format-specific preflight work.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
@@ -259,9 +281,6 @@ previously needed 100 MB on disk and allocated **3.2 GB** is now rejected from i
 output buffer. `encodeSvg()` applies the same cap before `canvas.toDataURL('image/png')` reads back
 and base64-encodes the raster embedded in the SVG. The GIF loader checks its 13-byte header and
 logical screen descriptor before wrapping the file in a data URL or invoking the browser decoder.
-
-**Still unbounded:** `image-load-save-utils.ts` — SVG files still pass through `loadImageFile()`
-without a pixel ceiling before the whole file is base64-encoded and handed to `new Image()`.
 
 **Files.** `src/contexts/bmp-utils.ts`, `src/contexts/image-load-save-utils.ts`,
 `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts`,

@@ -1,11 +1,14 @@
 import { expect, test, type Page } from './fixtures/extended-test';
-import { drawLine, getDarkPixelBounds, getWorkspaceCanvas, waitForCanvasRedraw } from './helpers/canvas-helpers';
+import {
+  drawLine,
+  getDarkPixelBounds,
+  getWorkspaceCanvas,
+  toleranceFor,
+  waitForCanvasRedraw,
+} from './helpers/canvas-helpers';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
-
-/** How far, in CSS pixels, the drawn stroke may sit from the point it was drawn at. */
-const CSS_POSITION_TOLERANCE = 25;
 
 const BACKING_STORE_TEST_IDS = [
   'workspace-canvas',
@@ -100,9 +103,9 @@ test.describe('Device pixel ratio', () => {
     if (!bounds) throw new Error('line not found on screenshot');
     const line = imageBoundsToCss({ width: bounds.imageWidth, height: bounds.imageHeight }, box, bounds);
 
-    expect(Math.abs(line.left - start.x), 'line start far from cursor').toBeLessThan(CSS_POSITION_TOLERANCE);
-    expect(Math.abs(line.right - end.x), 'line end far from cursor').toBeLessThan(CSS_POSITION_TOLERANCE);
-    expect(Math.abs((line.top + line.bottom) / 2 - start.y), 'line shifted in Y').toBeLessThan(CSS_POSITION_TOLERANCE);
+    expect(Math.abs(line.left - start.x), 'line start far from cursor').toBeLessThan(toleranceFor(box));
+    expect(Math.abs(line.right - end.x), 'line end far from cursor').toBeLessThan(toleranceFor(box));
+    expect(Math.abs((line.top + line.bottom) / 2 - start.y), 'line shifted in Y').toBeLessThan(toleranceFor(box));
   });
 });
 

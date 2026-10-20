@@ -1,13 +1,10 @@
 import { expect, type Page, test } from './fixtures/extended-test';
 import {
   type BoundingBox,
+  documentToCanvasOffset,
   drawLine,
   getWorkspaceCanvas,
   hasRedPixels,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
@@ -87,9 +84,18 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // verifySwatch also asserts the store kept the color, which the draw tool reads.
   await setForegroundColor(page, '#ff0000', true);
 
-  await drawLine(page, box!, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+  const start = documentToCanvasOffset(box!, 150, 150);
+  const end = documentToCanvasOffset(box!, 350, 150);
+  const lineClip = {
+    x: box!.x + Math.min(start.x, end.x) - 20,
+    y: box!.y + Math.min(start.y, end.y) - 20,
+    width: Math.abs(end.x - start.x) + 40,
+    height: Math.abs(end.y - start.y) + 40,
+  };
+
+  await drawLine(page, box!, start.x, start.y, end.x, end.y);
   await waitForRedStroke(page, box!);
 
-  const screenshot = await takeLineScreenshot(page, box!, 'red-line', testInfo);
+  const screenshot = await takeLineScreenshot(page, box!, 'red-line', testInfo, lineClip);
   await expect(hasRedPixels(screenshot)).resolves.toBe(true);
 });

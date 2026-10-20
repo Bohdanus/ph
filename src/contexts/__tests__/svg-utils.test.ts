@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MAX_CREATABLE_DOCUMENT_PIXELS } from '../raster-utils.ts';
-import { encodeSvg } from '../svg-utils.ts';
+import { encodeSvg, MAX_SVG_SOURCE_BYTES } from '../svg-utils.ts';
 
 function canvasOf(width: number, height: number, dataUrl = 'data:image/png;base64,pixels') {
   const canvas = document.createElement('canvas');
@@ -41,6 +41,20 @@ describe('SVG encoding', () => {
     encodeSvg(canvas);
 
     expect(toDataURL).toHaveBeenCalledExactlyOnceWith('image/png');
+  });
+
+  it('rejects canvases whose PNG encoder returns the browser failure sentinel', () => {
+    const { canvas, toDataURL } = canvasOf(8, 8, 'data:,');
+
+    expect(() => encodeSvg(canvas)).toThrow('SVG image could not encode the canvas as a PNG data URL');
+    expect(toDataURL).toHaveBeenCalledExactlyOnceWith('image/png');
+  });
+
+  it('rejects flattened exports larger than the import source-byte limit', () => {
+    const oversizedPngDataUrl = `data:image/png;base64,${'A'.repeat(MAX_SVG_SOURCE_BYTES)}`;
+    const { canvas } = canvasOf(1, 1, oversizedPngDataUrl);
+
+    expect(() => encodeSvg(canvas)).toThrow(`Maximum is ${MAX_SVG_SOURCE_BYTES} bytes`);
   });
 
   it('allows canvases at the 100 MP document ceiling', () => {
