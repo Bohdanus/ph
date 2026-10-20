@@ -105,6 +105,38 @@ describe('AssetRegistry ownership', () => {
     expect(registry.getDocumentGeneration('document-a')).toBe(1);
   });
 
+  it('keeps a disposed scope tombstoned when mutable baseline copying fails', () => {
+    const registry = new AssetRegistry();
+    registry.disposeDocument('document-a');
+    vi.stubGlobal('OffscreenCanvas', undefined);
+
+    expect(() => registry.registerBaseline('document-a', document.createElement('canvas'))).toThrow(
+      /OffscreenCanvas is required/
+    );
+    registry.disposeDocument('document-a');
+
+    expect(registry.getDocumentGeneration('document-a')).toBe(1);
+  });
+
+  it('closes a mutable baseline copy that completes after registry shutdown', async () => {
+    const registry = new AssetRegistry();
+    const source = document.createElement('canvas');
+    const pending = deferred<ImageBitmap>();
+    const { bitmap, close } = createOwnedBitmap(10, 10);
+    vi.stubGlobal('createImageBitmap', () => pending.promise);
+
+    const registration = registry.registerBaselineAsync('document-a', source);
+    registry.shutdown();
+    expect(() => registry.registerBaseline('document-b', bitmap, { ownership: 'adopt' })).toThrow(
+      /asset registry shutdown/
+    );
+    pending.resolve(bitmap);
+
+    await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
+    expect(close).toHaveBeenCalledOnce();
+    expect(registry.getDocumentGeneration('document-a')).toBe(0);
+  });
+
   it('invalidates an async reopening when an already-disposed document is disposed again', async () => {
     const registry = new AssetRegistry();
     const source = document.createElement('canvas');
@@ -797,9 +829,10 @@ describe('AssetRegistry document disposal tombstone', () => {
     expect(registry.getDocumentGeneration('document-a')).toBe(2);
   });
 
-  it('disposeDocument removes an unleased materialization owned by the document', async () => {
+  it('disposeDocument removes unleased materializations and only reopens for the current generation', async () => {
     const registry = new AssetRegistry();
     const stale = createOwnedBitmap();
+    const generationBeforeDispose = registry.getDocumentGeneration('document-a');
     const staleLease = await registry.materialize({
       key: 'doc-mat',
       documentId: 'document-a',
@@ -811,16 +844,165 @@ describe('AssetRegistry document disposal tombstone', () => {
     registry.disposeDocument('document-a');
 
     expect(stale.close).toHaveBeenCalledTimes(1);
-    // The entry is removed rather than tombstoned, so the key re-produces.
     const fresh = createOwnedBitmap();
+    const producer = vi.fn(() => fresh.bitmap);
+    await expect(
+      registry.materialize({
+        key: 'doc-mat',
+        documentId: 'document-a',
+        expectedDocumentGeneration: generationBeforeDispose,
+        producer,
+        byteSize: 4,
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(producer).not.toHaveBeenCalled();
+    expect(fresh.close).not.toHaveBeenCalled();
+
     const next = await registry.materialize({
       key: 'doc-mat',
       documentId: 'document-a',
-      producer: () => fresh.bitmap,
+      expectedDocumentGeneration: registry.getDocumentGeneration('document-a'),
+      producer,
       byteSize: 4,
     });
+    expect(producer).toHaveBeenCalledOnce();
     expect(next.bitmap).toBe(fresh.bitmap);
     next.release();
+    registry.disposeDocument('document-a');
+    expect(fresh.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not join a stale same-key producer after reopening at a new document generation', async () => {
+    const registry = new AssetRegistry();
+    const stale = createOwnedBitmap();
+    const staleProducer = deferred<BitmapSource>();
+    const initialGeneration = registry.getDocumentGeneration('document-a');
+    const staleRequest = registry.materialize({
+      key: 'shared-key',
+      documentId: 'document-a',
+      expectedDocumentGeneration: initialGeneration,
+      producer: () => staleProducer.promise,
+      byteSize: 4,
+    });
+
+    registry.disposeDocument('document-a');
+    const reopenedBaseline = createOwnedBitmap();
+    registry.registerBaseline('document-a', reopenedBaseline.bitmap, { ownership: 'adopt' });
+    const fresh = createOwnedBitmap();
+    const freshProducer = vi.fn(() => fresh.bitmap);
+    const freshLease = await registry.materialize({
+      key: 'shared-key',
+      documentId: 'document-a',
+      expectedDocumentGeneration: registry.getDocumentGeneration('document-a'),
+      producer: freshProducer,
+      byteSize: 4,
+    });
+
+    expect(freshProducer).toHaveBeenCalledOnce();
+    expect(freshLease.bitmap).toBe(fresh.bitmap);
+    staleProducer.resolve(stale.bitmap);
+    await expect(staleRequest).rejects.toMatchObject({ name: 'AbortError' });
+    expect(stale.close).toHaveBeenCalledOnce();
+
+    freshLease.release();
+    registry.disposeDocument('document-a');
+    expect(reopenedBaseline.close).toHaveBeenCalledOnce();
+    expect(fresh.close).toHaveBeenCalledOnce();
+  });
+
+  it('allows the same materialization key in a reopened generation while an old lease drains', async () => {
+    const registry = new AssetRegistry();
+    const first = createOwnedBitmap();
+    const firstLease = await registry.materialize({
+      key: 'shared-key',
+      documentId: 'document-a',
+      expectedDocumentGeneration: registry.getDocumentGeneration('document-a'),
+      producer: () => first.bitmap,
+      byteSize: 4,
+    });
+
+    registry.disposeDocument('document-a');
+    expect(first.close).not.toHaveBeenCalled();
+
+    const baseline = createOwnedBitmap();
+    registry.registerBaseline('document-a', baseline.bitmap, { ownership: 'adopt' });
+    const second = createOwnedBitmap();
+    const secondLease = await registry.materialize({
+      key: 'shared-key',
+      documentId: 'document-a',
+      expectedDocumentGeneration: registry.getDocumentGeneration('document-a'),
+      producer: () => second.bitmap,
+      byteSize: 4,
+    });
+    expect(secondLease.bitmap).toBe(second.bitmap);
+    expect(first.close).not.toHaveBeenCalled();
+
+    firstLease.release();
+    expect(first.close).toHaveBeenCalledOnce();
+    secondLease.release();
+    registry.disposeDocument('document-a');
+    expect(baseline.close).toHaveBeenCalledOnce();
+    expect(second.close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a caller key from colliding with a document-scoped cache key', async () => {
+    const registry = new AssetRegistry();
+    const unscoped = createOwnedBitmap();
+    const scoped = createOwnedBitmap();
+    const baseline = createOwnedBitmap();
+    const legacyScopedKey = JSON.stringify(['layer-key', 'document-a', 1]);
+
+    const globalLease = await registry.materialize({
+      key: legacyScopedKey,
+      producer: () => unscoped.bitmap,
+      byteSize: 4,
+    });
+    registry.registerBaseline('document-a', baseline.bitmap, { ownership: 'adopt' });
+    const scopedProducer = vi.fn(() => scoped.bitmap);
+    const scopedLease = await registry.materialize({
+      key: 'layer-key',
+      documentId: 'document-a',
+      expectedDocumentGeneration: registry.getDocumentGeneration('document-a'),
+      producer: scopedProducer,
+      byteSize: 4,
+    });
+
+    expect(scopedProducer).toHaveBeenCalledOnce();
+    expect(scopedLease.bitmap).toBe(scoped.bitmap);
+    expect(globalLease.bitmap).toBe(unscoped.bitmap);
+    globalLease.release();
+    scopedLease.release();
+    registry.shutdown();
+    expect(unscoped.close).toHaveBeenCalledOnce();
+    expect(scoped.close).toHaveBeenCalledOnce();
+    expect(baseline.close).toHaveBeenCalledOnce();
+  });
+
+  it('treats an empty document ID as a scoped cache owner', async () => {
+    const registry = new AssetRegistry();
+    const unscoped = createOwnedBitmap();
+    const scoped = createOwnedBitmap();
+    const baseline = createOwnedBitmap();
+    const unscopedLease = await registry.materialize({ key: 'same-key', producer: () => unscoped.bitmap });
+    registry.registerBaseline('', baseline.bitmap, { ownership: 'adopt' });
+    const scopedProducer = vi.fn(() => scoped.bitmap);
+
+    const scopedLease = await registry.materialize({
+      key: 'same-key',
+      documentId: '',
+      expectedDocumentGeneration: registry.getDocumentGeneration(''),
+      producer: scopedProducer,
+    });
+
+    expect(scopedProducer).toHaveBeenCalledOnce();
+    expect(scopedLease.bitmap).toBe(scoped.bitmap);
+    expect(unscopedLease.bitmap).toBe(unscoped.bitmap);
+    unscopedLease.release();
+    scopedLease.release();
+    registry.shutdown();
+    expect(unscoped.close).toHaveBeenCalledOnce();
+    expect(scoped.close).toHaveBeenCalledOnce();
+    expect(baseline.close).toHaveBeenCalledOnce();
   });
 
   it('shutdown disposes a document with baselines and materializations and stays safe to call twice', async () => {
@@ -848,7 +1030,7 @@ describe('AssetRegistry document disposal tombstone', () => {
         documentId: 'document-c',
         producer: () => createOwnedBitmap().bitmap,
       })
-    ).rejects.toThrow(/invalidated by document disposal/);
+    ).rejects.toThrow(/asset registry shutdown/);
 
     registry.shutdown();
     expect(registry.getDocumentGeneration('document-c')).toBe(2);
@@ -857,7 +1039,7 @@ describe('AssetRegistry document disposal tombstone', () => {
     expect(materialized.close).toHaveBeenCalledTimes(1);
   });
 
-  it('shutdown leaves a document that owns only materializations undisposed', async () => {
+  it('shutdown disposes a document that owns only materializations', async () => {
     const registry = new AssetRegistry();
     const materialized = createOwnedBitmap();
     const lease = await registry.materialize({
@@ -867,23 +1049,75 @@ describe('AssetRegistry document disposal tombstone', () => {
       byteSize: 4,
     });
 
-    // `shutdown` only walks documents that have a generation entry, and a
-    // materialization never creates one. Recorded here as the current boundary
-    // of the disposal sweep, not as intended behavior.
     registry.shutdown();
 
-    expect(registry.getDocumentGeneration('document-c')).toBe(0);
+    expect(registry.getDocumentGeneration('document-c')).toBe(1);
     expect(materialized.close).not.toHaveBeenCalled();
 
-    // The cache entry survives as a live, reusable result for that document id.
-    const reused = await registry.materialize({
-      key: 'doc-mat',
-      documentId: 'document-c',
-      producer: () => createOwnedBitmap().bitmap,
-    });
-    expect(reused.bitmap).toBe(materialized.bitmap);
+    await expect(
+      registry.materialize({
+        key: 'doc-mat',
+        documentId: 'document-c',
+        producer: () => createOwnedBitmap().bitmap,
+      })
+    ).rejects.toThrow(/asset registry shutdown/);
 
-    reused.release();
     lease.release();
+    expect(materialized.close).toHaveBeenCalledOnce();
+  });
+
+  it('shutdown invalidates active unscoped materializations and closes them on release', async () => {
+    const registry = new AssetRegistry();
+    const materialized = createOwnedBitmap();
+    const lease = await registry.materialize({ key: 'unscoped', producer: () => materialized.bitmap });
+
+    registry.shutdown();
+
+    expect(materialized.close).not.toHaveBeenCalled();
+    await expect(
+      registry.materialize({ key: 'after-shutdown', producer: () => createOwnedBitmap().bitmap })
+    ).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+
+    lease.release();
+    expect(materialized.close).toHaveBeenCalledOnce();
+  });
+
+  it('closes unscoped producer results that complete after registry shutdown', async () => {
+    const registry = new AssetRegistry();
+    const producer = deferred<BitmapSource>();
+    const pending = registry.materialize({ key: 'unscoped-pending', producer: () => producer.promise });
+    const materialized = createOwnedBitmap();
+
+    registry.shutdown();
+    producer.resolve(materialized.bitmap);
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(materialized.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not deliver a lease if shutdown invalidates the cache before the caller resumes', async () => {
+    const registry = new AssetRegistry();
+    const materialized = createOwnedBitmap();
+    const registryInternals = registry as unknown as { evictCache: () => void };
+    const evictCache = registryInternals.evictCache.bind(registry);
+    vi.spyOn(registryInternals, 'evictCache').mockImplementation(() => {
+      evictCache();
+      registry.shutdown();
+    });
+
+    const owner = registry.materialize({ key: 'shutdown-race', producer: () => materialized.bitmap, byteSize: 4 });
+    const waiterProducer = vi.fn(() => createOwnedBitmap().bitmap);
+    const waiter = registry.materialize({ key: 'shutdown-race', producer: waiterProducer, byteSize: 4 });
+    expect(waiterProducer).not.toHaveBeenCalled();
+
+    const results = await Promise.allSettled([owner, waiter]);
+
+    expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+    for (const result of results) {
+      if (result.status === 'rejected') expect(result.reason).toMatchObject({ name: 'AbortError' });
+    }
+    expect(materialized.close).toHaveBeenCalledOnce();
   });
 });

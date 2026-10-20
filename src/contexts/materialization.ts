@@ -97,6 +97,12 @@ function layerSize(layer: DurableReplayLayer): Size {
   };
 }
 
+function assertDocumentGeneration(request: MaterializationRequest): void {
+  if (request.assetRegistry.getDocumentGeneration(request.documentId) !== request.baselineAssetGeneration) {
+    throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+  }
+}
+
 function presentationOperations(operations: readonly DurableOperation[]): PresentationOperation[] {
   const normalized: PresentationOperation[] = [];
   for (const operation of operations) {
@@ -222,10 +228,12 @@ export async function materializeLayer(
   layer: DurableReplayLayer,
   request: MaterializationRequest
 ): Promise<MaterializedLayer> {
+  if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
   const key = createMaterializationKey(layer, request);
   const lease = await request.assetRegistry.materialize({
     key,
     documentId: request.documentId,
+    expectedDocumentGeneration: request.baselineAssetGeneration,
     producer: async () => {
       const source = await sourceBitmap(layer, request);
       let bitmap = source.bitmap;
@@ -377,6 +385,10 @@ export async function materializeLayer(
       }
     },
   });
+  if (request.signal?.aborted) {
+    lease.release();
+    throw new DOMException('Materialization aborted', 'AbortError');
+  }
   return {
     layerId: layer.snapshot.id,
     bitmap: lease.bitmap,
@@ -394,6 +406,8 @@ export async function materializeDocument(
 ): Promise<MaterializedDocument> {
   const materialized: Record<string, MaterializedLayer> = {};
   try {
+    if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+    assertDocumentGeneration(request);
     for (const layer of Object.values(replay.layers)) {
       if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
       if (!layer.snapshot.visible) continue;
@@ -411,6 +425,8 @@ export async function materializeDocument(
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0);
       });
+      if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+      assertDocumentGeneration(request);
     }
   } catch (error) {
     for (const layer of Object.values(materialized)) layer.lease.release();

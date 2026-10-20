@@ -47,6 +47,7 @@ type AssetEntry = {
 };
 
 type CacheEntry = {
+  cacheKey: string;
   key: string;
   documentId?: string;
   bitmap: BitmapSource;
@@ -123,6 +124,7 @@ export class AssetRegistry {
   private readonly disposedDocuments = new Set<string>();
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pendingMaterializations = new Map<string, Promise<CacheEntry>>();
+  private shutdownComplete = false;
   private cacheBytes = 0;
   private clock = 0;
   private readonly maxCacheBytes: number;
@@ -174,7 +176,8 @@ export class AssetRegistry {
     bitmap: BitmapSource,
     options: Readonly<{ ownership?: AssetOwnership }> = {}
   ): AssetId {
-    this.disposedDocuments.delete(documentId);
+    if (this.shutdownComplete)
+      throw new DOMException('Baseline registration refused after asset registry shutdown', 'AbortError');
     const originalSourceType = sourceType(bitmap);
     const requestedOwnership = options.ownership ?? (originalSourceType === 'image-bitmap' ? 'adopt' : 'borrow');
     const external = bitmap as unknown as object;
@@ -187,6 +190,7 @@ export class AssetRegistry {
           existing.retainCount += 1;
           this.nextGeneration(documentId);
         }
+        this.disposedDocuments.delete(documentId);
         return existingId;
       }
       this.externalIds.delete(external);
@@ -219,6 +223,7 @@ export class AssetRegistry {
       disposed: false,
     });
     this.externalIds.set(external, id);
+    this.disposedDocuments.delete(documentId);
     return id;
   }
 
@@ -231,6 +236,9 @@ export class AssetRegistry {
     bitmap: BitmapSource,
     options: Readonly<{ ownership?: AssetOwnership }> = {}
   ): Promise<AssetId> {
+    if (this.shutdownComplete) {
+      throw new DOMException('Baseline registration refused after asset registry shutdown', 'AbortError');
+    }
     // ImageBitmap is already immutable with explicit close semantics.
     if (sourceType(bitmap) === 'image-bitmap') {
       return this.registerBaseline(documentId, bitmap, options);
@@ -245,6 +253,10 @@ export class AssetRegistry {
     const create = globalThis.createImageBitmap;
     if (!create) throw new Error('createImageBitmap is required to adopt a mutable raster source');
     const immutable = await create(bitmap as never);
+    if (this.shutdownComplete) {
+      disposeOwnedBitmap(immutable);
+      throw new DOMException('Baseline registration invalidated by asset registry shutdown', 'AbortError');
+    }
     if (
       generation !== this.getDocumentGeneration(documentId) ||
       disposalEpoch !== (this.documentDisposalEpochs.get(documentId) ?? 0)
@@ -336,25 +348,49 @@ export class AssetRegistry {
     input: Readonly<{
       key: string;
       documentId?: string;
+      /** Generation captured when the async document work began. */
+      expectedDocumentGeneration?: number;
       producer: () =>
         Promise<BitmapSource | MaterializationResult<Metadata>> | BitmapSource | MaterializationResult<Metadata>;
       byteSize?: number;
     }>
   ): Promise<MaterializationLease<Metadata>> {
-    const cached = this.cache.get(input.key);
+    if (this.shutdownComplete) {
+      throw new DOMException('Materialization refused after asset registry shutdown', 'AbortError');
+    }
+    const documentId = input.documentId;
+    if (documentId !== undefined && !this.documentGenerations.has(documentId)) {
+      this.documentGenerations.set(documentId, 0);
+    }
+    const currentDocumentGeneration = documentId !== undefined ? this.getDocumentGeneration(documentId) : undefined;
+    if (
+      documentId !== undefined &&
+      input.expectedDocumentGeneration !== undefined &&
+      input.expectedDocumentGeneration !== currentDocumentGeneration
+    ) {
+      throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+    }
+    const documentGeneration =
+      documentId !== undefined ? (input.expectedDocumentGeneration ?? currentDocumentGeneration) : undefined;
+    const cacheKey =
+      documentId !== undefined && documentGeneration !== undefined
+        ? JSON.stringify(['document', input.key, documentId, documentGeneration])
+        : JSON.stringify(['global', input.key]);
+    const cached = this.cache.get(cacheKey);
+    if (cached?.invalidated) {
+      throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+    }
+    if (documentId !== undefined) this.disposedDocuments.delete(documentId);
+
     if (cached && !cached.invalidated) {
       cached.retainCount += 1;
       cached.lastUsed = ++this.clock;
       return this.cacheLease<Metadata>(cached);
     }
-    if (cached) {
-      throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
-    }
 
-    let pending = this.pendingMaterializations.get(input.key);
+    let pending = this.pendingMaterializations.get(cacheKey);
     const ownsRequest = !pending;
     if (!pending) {
-      const documentGeneration = input.documentId ? this.getDocumentGeneration(input.documentId) : undefined;
       pending = (async () => {
         const produced = await input.producer();
         const result =
@@ -362,14 +398,19 @@ export class AssetRegistry {
             ? (produced as MaterializationResult<Metadata>)
             : { bitmap: produced as BitmapSource, metadata: undefined as Metadata };
 
-        if (input.documentId && documentGeneration !== this.getDocumentGeneration(input.documentId)) {
+        if (this.shutdownComplete) {
+          disposeOwnedBitmap(result.bitmap);
+          throw new DOMException('Materialization invalidated by registry shutdown', 'AbortError');
+        }
+        if (documentId !== undefined && documentGeneration !== this.getDocumentGeneration(documentId)) {
           disposeOwnedBitmap(result.bitmap);
           throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
         }
 
         const entry: CacheEntry = {
+          cacheKey,
           key: input.key,
-          documentId: input.documentId,
+          documentId,
           bitmap: result.bitmap,
           byteSize:
             input.byteSize ?? bitmapDimension(result.bitmap, 'width') * bitmapDimension(result.bitmap, 'height') * 4,
@@ -380,18 +421,18 @@ export class AssetRegistry {
           lastUsed: ++this.clock,
           invalidated: false,
         };
-        this.cache.set(entry.key, entry);
+        this.cache.set(cacheKey, entry);
         this.cacheBytes += entry.byteSize;
         this.evictCache();
         return entry;
       })();
-      this.pendingMaterializations.set(input.key, pending);
+      this.pendingMaterializations.set(cacheKey, pending);
       void pending.then(
         () => {
-          if (this.pendingMaterializations.get(input.key) === pending) this.pendingMaterializations.delete(input.key);
+          if (this.pendingMaterializations.get(cacheKey) === pending) this.pendingMaterializations.delete(cacheKey);
         },
         () => {
-          if (this.pendingMaterializations.get(input.key) === pending) this.pendingMaterializations.delete(input.key);
+          if (this.pendingMaterializations.get(cacheKey) === pending) this.pendingMaterializations.delete(cacheKey);
         }
       );
     }
@@ -401,7 +442,15 @@ export class AssetRegistry {
       entry.retainCount += 1;
       entry.lastUsed = ++this.clock;
     }
-    return this.cacheLease<Metadata>(entry);
+    const lease = this.cacheLease<Metadata>(entry);
+    const documentWasInvalidated =
+      documentId !== undefined && documentGeneration !== this.getDocumentGeneration(documentId);
+    if (this.shutdownComplete || entry.invalidated || documentWasInvalidated) {
+      entry.invalidated = true;
+      lease.release();
+      throw new DOMException('Materialization invalidated before lease delivery', 'AbortError');
+    }
+    return lease;
   }
 
   disposeDocument(documentId: string): void {
@@ -441,7 +490,12 @@ export class AssetRegistry {
 
   /** Releases every document baseline while respecting active leases. */
   shutdown(): void {
+    if (this.shutdownComplete) return;
+    this.shutdownComplete = true;
     for (const documentId of this.documentGenerations.keys()) this.disposeDocument(documentId);
+    for (const entry of this.cache.values()) {
+      if (entry.retainCount > 0) entry.invalidated = true;
+    }
     this.clearMaterializations();
   }
 
@@ -464,7 +518,7 @@ export class AssetRegistry {
         entry.retainCount = Math.max(0, entry.retainCount - 1);
         entry.lastUsed = ++this.clock;
         if (entry.invalidated && entry.retainCount === 0) {
-          this.removeCacheEntry(entry.key, entry);
+          this.removeCacheEntry(entry.cacheKey, entry);
           return;
         }
         this.evictCache();
@@ -485,7 +539,7 @@ export class AssetRegistry {
         .filter((entry) => entry.retainCount === 0)
         .sort((left, right) => left.lastUsed - right.lastUsed)[0];
       if (!candidate) break;
-      this.removeCacheEntry(candidate.key, candidate);
+      this.removeCacheEntry(candidate.cacheKey, candidate);
     }
   }
 }

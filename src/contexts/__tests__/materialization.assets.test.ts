@@ -108,7 +108,7 @@ function rasterSource(assetId: AssetId, width: number, height: number): DurableL
 function makeRequest(registry: AssetRegistry, overrides: Partial<MaterializationRequest> = {}): MaterializationRequest {
   return {
     documentId: 'test-doc',
-    baselineAssetGeneration: 0,
+    baselineAssetGeneration: registry.getDocumentGeneration('test-doc'),
     operationSetRevision: 0,
     assetRegistry: registry,
     ...overrides,
@@ -1192,7 +1192,8 @@ describe('document asset scope disposal', () => {
   it('retains leases across an ordinary edit while a later document scope disposal wins', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-a', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
-    const first = await materializeLayer(layer, makeRequest(registry));
+    const request = makeRequest(registry);
+    const first = await materializeLayer(layer, request);
     const firstBitmap = { close: closeSpy(first.bitmap) };
 
     // Ordinary edit: a second materialization of the same layer reuses the cache.
@@ -1216,7 +1217,8 @@ describe('document asset scope disposal', () => {
   it('rejects a new materialization for a cached key whose document scope was disposed', async () => {
     const registry = new AssetRegistry();
     const layer = makeLayer('layer-a', blankSource(20, 20), { x: 0, y: 0, width: 20, height: 20 });
-    const first = await materializeLayer(layer, makeRequest(registry));
+    const request = makeRequest(registry);
+    const first = await materializeLayer(layer, request);
     const firstBitmap = { close: closeSpy(first.bitmap) };
 
     // The published lease keeps the cache entry alive, so the scope disposal
@@ -1224,7 +1226,7 @@ describe('document asset scope disposal', () => {
     registry.disposeDocument('test-doc');
     expect(firstBitmap.close).not.toHaveBeenCalled();
 
-    await expect(materializeLayer(layer, makeRequest(registry))).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(materializeLayer(layer, request)).rejects.toMatchObject({ name: 'AbortError' });
     expect(firstBitmap.close).not.toHaveBeenCalled();
 
     first.lease.release();
