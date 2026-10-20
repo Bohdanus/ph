@@ -409,15 +409,16 @@ describe('waitForCanvasPixels', () => {
  * throws `Clipped area is either empty or outside the resulting image`. These pin what the
  * wait does about that — and, just as load-bearing, what it does when nothing is wrong.
  *
- * The geometry is the test fixture's: 1177px of document height in a 720px viewport,
- * and `BELOW_THE_FOLD` (y=748, height=160) lands 28px below the fold — the window can
- * scroll to at most 457 (1177 - 720), which brings 748..908 into view as 291..451.
+ * These dimensions belong to this test's scrollable-page harness, not the app: its
+ * document is 1177px tall and viewport 720px. `BELOW_THE_FOLD` starts at y=748, 28px
+ * below the initial viewport; the harness scrolls by at most 457px, bringing the clip
+ * to viewport y=291..451.
  */
 describe('waitForCanvasPixels on a region that is not in view', () => {
   const VIEWPORT_HEIGHT = 720;
   const DOCUMENT_HEIGHT = 1177;
 
-  /** The wide stroke fixture: page y 748..908, inside a 720px viewport window. */
+  /** The clip fixture: page y 748..908, initially below the 720px viewport. */
   const BELOW_THE_FOLD: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
 
   function scrolledPage(overrides: Parameters<typeof createScrollablePage>[0] = {}) {
@@ -764,9 +765,9 @@ describe('canvasRedrawClip containment in the letterboxed document', () => {
     // `history-panel`, `paint-tool-pixels`, `layers-panel` — plus every caller of
     // `waitForCanvasRedraw(page, box)`, which reaches the same default through the wrapper.
     //
-    // The four that are NOT subject to it, and were wrongly named as its users, are
-    // `adjustments`, `levels`, `filter-tools` and `color`: each deliberately waits on its own
-    // contain-fit-derived `documentClipInBox(box)` instead. Derive the set with
+    // `adjustments`, `levels` and `filter-tools` also call `canvasRedrawClip`, so they are
+    // subject to this clamp. `color` is the exception: it waits on its own contain-fit-derived
+    // `documentClipInBox(box)` instead. Derive the set with
     //   grep -rn "canvasRedrawClip(" e2e/ --include="*.ts"
     //   grep -rn "waitForCanvasRedraw(page, box" e2e/ --include="*.ts"
     // and read it rather than trusting a list in a comment, which is the whole reason this

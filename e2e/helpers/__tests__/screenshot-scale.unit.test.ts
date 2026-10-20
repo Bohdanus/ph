@@ -510,12 +510,10 @@ describe('imagePointToCss and cssPointToImage are inverses', () => {
 });
 
 /**
- * The translation `viewportRectToPageRect` performs, in the suite's own numbers: the test
- * passes a literal scroll of {x: 0, y: 440} (a fixture value tied to the legacy-rail
- * guard, not app geometry — the app no longer scrolls per `e2e/OPEN_PROBLEMS.md`), so a
- * rect measured at viewport `y: -340` maps to document `y: 100`. Raw, a viewport-relative
- * clip reaches a capture 440px away from the region the caller measured — a wrong answer,
- * not an error.
+ * This test pins coordinate arithmetic with synthetic values: a scroll of {x: 0, y: 440}
+ * and a viewport rect at y=-340 map to document y=100. It does not assert app layout or
+ * screenshot pixels; using the viewport y unchanged for a page-relative capture would
+ * target a region 440px away.
  */
 describe('viewportRectToPageRect', () => {
   const RECT: CssBox = { x: 56, y: -340, width: 320, height: 120 };
