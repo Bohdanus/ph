@@ -17,7 +17,7 @@ const MagicWand: React.FC<{}> = () => {
   if (!args) return null;
 
   const hasActivePolygonSelection = !!activeSelection && activeSelection.geometry !== 'rectangle';
-  const selectedPixelCount = activeSelection?.metadata?.magicWand?.selectedPixelCount;
+  const matchingPixelCount = activeSelection?.metadata?.magicWand?.selectedPixelCount;
 
   const handleToleranceChange = (event: ChangeEvent<HTMLInputElement>) => {
     patchToolArgs('magic-wand', { tolerance: Number(event.target.value) });
@@ -120,8 +120,8 @@ const MagicWand: React.FC<{}> = () => {
           </div>
         )}
         <div className="mt-1 text-[9px] opacity-75">
-          {selectedPixelCount
-            ? `${selectedPixelCount.toLocaleString()} pixels selected`
+          {matchingPixelCount
+            ? `${matchingPixelCount.toLocaleString()} matching pixels`
             : 'Increase tolerance for broader regions.'}
         </div>
       </div>

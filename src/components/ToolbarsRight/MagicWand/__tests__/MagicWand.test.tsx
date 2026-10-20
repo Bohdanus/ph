@@ -421,11 +421,13 @@ describe('MagicWand toolbar', () => {
   });
 
   describe('selected pixel readout', () => {
-    it('reports the selected pixel count with locale grouping', () => {
+    it('reports matching pixels instead of implying every one was selected in non-contiguous mode', () => {
+      toolArgs.contiguous = false;
       withActivePolygonSelection();
       render(<MagicWand />);
 
-      expect(screen.getByText('321 pixels selected')).toBeInTheDocument();
+      expect(screen.getByText('321 matching pixels')).toBeInTheDocument();
+      expect(screen.queryByText('321 pixels selected')).not.toBeInTheDocument();
       expect(screen.queryByText(/Increase tolerance/)).toBeNull();
     });
 
