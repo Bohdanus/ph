@@ -246,16 +246,18 @@ source strings over 64 MiB, so every successful flattened export fits the import
 importer has one bounded embedded-raster path matching this app's `encodeSvg()` output: a single
 direct PNG data image whose PNG signature, IHDR CRC, IHDR dimensions, root dimensions, and image
 viewport all agree. It extracts that PNG and loads it directly instead of asking the SVG renderer to
-decode a nested image. Other embedded resources are refused before `FileReader`: nested
-images/documents, `<feImage>`, `<foreignObject>`, `xml:base`, animated resource hrefs, and data URLs
-in CSS `url()`/`image()`/`image-set()` values. Image-element fragment references are refused because
-they can recurse through the complete SVG document; same-document `<use>` and paint-server references
-remain allowed. Unsupported relative units, sizing expressions, and stylesheets that could affect
-root dimensions are refused; decoded-image validation remains the final guard for auto/percentage
-dimensions resolved by the browser. This is intentionally narrower than the SVG format: embedded
-JPEG/other raster formats and foreign HTML content are not imported through this path. The CSS
-resource scan does not evaluate custom-property expansion or inactive media queries, so it may refuse
-a data URL declaration even when the current rule would not fetch it.
+decode a nested image. Before `FileReader`, the preflight refuses nested data-URL image/document
+references outside that wrapper, `<feImage>`, SVG `<foreignObject>`, resource references scoped by a
+`data:` `xml:base`, animated `href` changes on image-like elements, and data URLs in CSS
+`url()`/`image()`/`image-set()` resources. External non-data references are left to secure SVG
+image-mode rules, which treat them as network errors and prevent fetching. Image-element fragment
+references are refused because they can recurse through the complete SVG document; same-document
+`<use>` and paint-server references remain allowed. Unsupported relative units, sizing expressions,
+and stylesheets that could affect root dimensions are refused; decoded-image validation remains the
+final guard for auto/percentage dimensions resolved by the browser. This is intentionally narrower
+than the SVG format: embedded JPEG/other raster formats and foreign HTML content are not imported
+through this path. The CSS resource scan does not evaluate custom-property expansion or inactive media
+queries, so it may refuse a data URL declaration even when the current rule would not fetch it.
 Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
 APNG frame chunks are rejected before decode in both the standalone PNG and flattened-SVG paths.
 Standalone JPEG and WebP still rely on post-decode dimension validation and need separate
