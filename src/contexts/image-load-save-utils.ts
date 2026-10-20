@@ -1,3 +1,6 @@
+import generateCss from 'css-tree/generator';
+import parseCss from 'css-tree/parser';
+import walkCss from 'css-tree/walker';
 import type { ImageUploadResponse } from './useFile.tsx';
 import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
 import { MAX_CREATABLE_DOCUMENT_PIXELS } from './raster-utils.ts';
@@ -16,6 +19,106 @@ const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 const XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace';
 const XLINK_NAMESPACE = 'http://www.w3.org/1999/xlink';
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const MAX_CSS_ANALYSIS_NODES = 20_000;
+const MAX_CSS_ANALYSIS_SOURCE_CHARACTERS = 4 * 1024 * 1024;
+const MAX_CSS_ANALYSIS_VALUE_CHARACTERS = 8 * 1024 * 1024;
+const MAX_CSS_VARIABLE_REFERENCES = 50_000;
+const CSS_URL_FUNCTIONS = new Set(['url']);
+const CSS_IMAGE_STRING_FUNCTIONS = new Set(['image-set', '-webkit-image-set', 'image']);
+const CSS_RESOURCE_PROPERTIES = new Set([
+  'background',
+  'background-image',
+  'border-image',
+  'border-image-source',
+  'clip-path',
+  'content',
+  'cursor',
+  'fill',
+  'filter',
+  'list-style',
+  'list-style-image',
+  'marker',
+  'marker-end',
+  'marker-mid',
+  'marker-start',
+  'mask',
+  'mask-border',
+  'mask-border-source',
+  'mask-image',
+  'offset',
+  'offset-path',
+  'shape-outside',
+  'src',
+  'stroke',
+  '-webkit-clip-path',
+  '-moz-mask',
+  '-moz-mask-image',
+  '-webkit-border-image',
+  '-webkit-border-image-source',
+  '-webkit-filter',
+  '-webkit-mask',
+  '-webkit-mask-box-image',
+  '-webkit-mask-box-image-source',
+  '-webkit-mask-image',
+]);
+const CSS_INERT_VARIABLE_PROPERTIES = new Set([
+  'background-color',
+  'block-size',
+  'color',
+  'color-interpolation',
+  'color-interpolation-filters',
+  'color-rendering',
+  'display',
+  'dominant-baseline',
+  'fill-opacity',
+  'fill-rule',
+  'flood-color',
+  'flood-opacity',
+  'font',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-weight',
+  'height',
+  'inline-size',
+  'margin',
+  'margin-block',
+  'margin-block-end',
+  'margin-block-start',
+  'margin-bottom',
+  'margin-inline',
+  'margin-inline-end',
+  'margin-inline-start',
+  'margin-left',
+  'margin-right',
+  'margin-top',
+  'max-block-size',
+  'max-height',
+  'max-inline-size',
+  'max-width',
+  'min-block-size',
+  'min-height',
+  'min-inline-size',
+  'min-width',
+  'opacity',
+  'paint-order',
+  'pointer-events',
+  'shape-rendering',
+  'stop-color',
+  'stop-opacity',
+  'stroke-opacity',
+  'stroke-dasharray',
+  'stroke-dashoffset',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'stroke-miterlimit',
+  'stroke-width',
+  'text-anchor',
+  'transform',
+  'vector-effect',
+  'visibility',
+  'width',
+]);
 const SVG_URL_PRESENTATION_ATTRIBUTES = new Set([
   'background-image',
   'clip-path',
@@ -40,6 +143,8 @@ const SVG_VECTOR_URL_PROPERTIES = new Set([
   'marker-start',
   'mask',
   'mask-image',
+  'offset',
+  'offset-path',
   'stroke',
 ]);
 const SVG_HREF_RESOURCE_ELEMENTS = new Set([
@@ -68,6 +173,27 @@ const HTML_RESOURCE_ATTRIBUTES = new Map([
   ['track', new Set(['src'])],
   ['video', new Set(['poster', 'src'])],
 ]);
+
+type CssCustomPropertyDefinition = {
+  value: string;
+  dataBaseInScope: boolean;
+  references: string[];
+};
+
+type CssVariableSink = {
+  property: string;
+  dataBaseInScope: boolean;
+  references: string[];
+};
+
+type CssResourceAnalysis = {
+  customProperties: Map<string, CssCustomPropertyDefinition[]>;
+  sinks: CssVariableSink[];
+  nodeCount: number;
+  sourceCharacters: number;
+  valueCharactersParsed: number;
+  variableReferenceCount: number;
+};
 
 function asciiAt(signature: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...signature.subarray(offset, offset + length));
@@ -189,7 +315,15 @@ function cssImportantStart(value: string): number | null {
 }
 
 function cssFunctionTokenStart(source: string, startAt: number, names: ReadonlySet<string>): number | null {
-  if (startAt > 0 && /[\w-]/.test(source[startAt - 1])) return null;
+  const previousCharacter = source[startAt - 1];
+  if (
+    startAt > 0 &&
+    (/[\w-]/.test(previousCharacter ?? '') ||
+      (previousCharacter?.charCodeAt(0) ?? 0) >= 0x80 ||
+      previousCharacter === '\\')
+  ) {
+    return null;
+  }
 
   let identifier = '';
   let index = startAt;
@@ -212,11 +346,11 @@ function cssFunctionTokenStart(source: string, startAt: number, names: ReadonlyS
 }
 
 function cssUrlTokenStart(source: string, startAt: number): number | null {
-  return cssFunctionTokenStart(source, startAt, new Set(['url']));
+  return cssFunctionTokenStart(source, startAt, CSS_URL_FUNCTIONS);
 }
 
 function cssFunctionEnd(source: string, opening: number): number | null {
-  let depth = 1;
+  const closers = [')'];
   let quote = '';
   let comment = false;
   for (let index = opening + 1; index < source.length; index += 1) {
@@ -235,10 +369,315 @@ function cssFunctionEnd(source: string, opening: number): number | null {
       index += 1;
     } else if (character === '"' || character === "'") quote = character;
     else if (character === '\\') index = cssEscapeEnd(source, index);
-    else if (character === '(') depth += 1;
-    else if (character === ')' && --depth === 0) return index;
+    else if (character === '(') closers.push(')');
+    else if (character === '[') closers.push(']');
+    else if (character === '{') closers.push('}');
+    else if (character === ')' || character === ']' || character === '}') {
+      if (closers.pop() !== character) return null;
+      if (closers.length === 0) return index;
+    }
   }
   return null;
+}
+
+function isDataUrl(value: string): boolean {
+  try {
+    return new URL(value, 'https://svg-resource.invalid/').protocol.toLowerCase() === 'data:';
+  } catch {
+    const normalized = removeAsciiUrlTabsAndNewlines(value);
+    let start = 0;
+    while (start < normalized.length && normalized.charCodeAt(start) <= 0x20) start += 1;
+    return normalized.slice(start, start + 5).toLowerCase() === 'data:';
+  }
+}
+
+function removeAsciiUrlTabsAndNewlines(value: string): string {
+  return value.replaceAll('\t', '').replaceAll('\n', '').replaceAll('\r', '');
+}
+
+function cssContainsDataUrlString(source: string): boolean {
+  let quote = '';
+  let start = -1;
+  let comment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (comment) {
+      if (character === '*' && next === '/') {
+        comment = false;
+        index += 1;
+      }
+    } else if (quote) {
+      if (character === '\\') index = cssEscapeEnd(source, index);
+      else if (character === quote) {
+        if (isDataUrl(decodeCssEscapes(source.slice(start, index)).trim())) return true;
+        quote = '';
+      } else if (/[\r\n\f]/.test(character ?? '')) {
+        return true;
+      }
+    } else if (character === '/' && next === '*') {
+      comment = true;
+      index += 1;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+      start = index + 1;
+    } else if (character === '\\') {
+      index = cssEscapeEnd(source, index);
+    }
+  }
+
+  return quote !== '';
+}
+
+function cssVariableReferences(source: string): { references: string[]; valid: boolean; parsedCharacters: number } {
+  const references: string[] = [];
+  const pendingValues = [source];
+  let parsedCharacters = 0;
+
+  while (pendingValues.length > 0) {
+    const value = pendingValues.pop()!;
+    parsedCharacters += value.length;
+    if (parsedCharacters > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) {
+      return { references, valid: false, parsedCharacters };
+    }
+    if (!value.toLowerCase().includes('var') && !value.includes('\\')) continue;
+
+    let parseError = false;
+    let valueAst;
+    try {
+      valueAst = parseCss(value, {
+        context: 'value',
+        onParseError: () => {
+          parseError = true;
+        },
+      });
+    } catch {
+      return { references, valid: false, parsedCharacters };
+    }
+    if (parseError) return { references, valid: false, parsedCharacters };
+
+    const fallbackValues: string[] = [];
+    let invalidVar = false;
+    try {
+      walkCss(valueAst, (node) => {
+        if (node.type !== 'Function' || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
+        const children = node.children.toArray();
+        let name: string | undefined;
+        let commaIndex = -1;
+        for (let index = 0; index < children.length; index += 1) {
+          const child = children[index];
+          if (child.type === 'Operator' && child.value === ',') {
+            commaIndex = index;
+            break;
+          }
+          if (child.type === 'WhiteSpace' || child.type === 'Comment') continue;
+          if (!name && child.type === 'Identifier') {
+            name = decodeCssEscapes(child.name);
+            continue;
+          }
+          invalidVar = true;
+          return walkCss.break;
+        }
+
+        if (!name?.startsWith('--') || name.length <= 2) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        references.push(name);
+        if (references.length > MAX_CSS_VARIABLE_REFERENCES) {
+          invalidVar = true;
+          return walkCss.break;
+        }
+        if (commaIndex >= 0) {
+          for (const child of children.slice(commaIndex + 1)) {
+            if (child.type === 'Raw') fallbackValues.push(child.value);
+          }
+        }
+        return undefined;
+      });
+    } catch {
+      return { references, valid: false, parsedCharacters };
+    }
+    if (invalidVar || pendingValues.length + fallbackValues.length > MAX_CSS_VARIABLE_REFERENCES) {
+      return { references, valid: false, parsedCharacters };
+    }
+    pendingValues.push(...fallbackValues);
+  }
+
+  return { references, valid: true, parsedCharacters };
+}
+
+function normalizeCssProperty(property: string): string {
+  const decoded = decodeCssEscapes(stripCssComments(property)).trim();
+  return decoded.startsWith('--') ? decoded : decoded.toLowerCase();
+}
+
+function isCssVariableResourceSink(property: string): boolean {
+  const normalized = property.toLowerCase();
+  return CSS_RESOURCE_PROPERTIES.has(normalized) || !CSS_INERT_VARIABLE_PROPERTIES.has(normalized);
+}
+
+function createCssResourceAnalysis(): CssResourceAnalysis {
+  return {
+    customProperties: new Map(),
+    sinks: [],
+    nodeCount: 0,
+    sourceCharacters: 0,
+    valueCharactersParsed: 0,
+    variableReferenceCount: 0,
+  };
+}
+
+function collectCssDeclaration(
+  analysis: CssResourceAnalysis,
+  rawProperty: string,
+  value: string,
+  dataBaseInScope: boolean
+): boolean {
+  const property = normalizeCssProperty(rawProperty);
+  if (!property) return true;
+
+  const parsedReferences = cssVariableReferences(value);
+  analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
+  if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
+  analysis.variableReferenceCount += parsedReferences.references.length;
+  if (analysis.variableReferenceCount > MAX_CSS_VARIABLE_REFERENCES) return true;
+
+  if (property.startsWith('--')) {
+    const definitions = analysis.customProperties.get(property) ?? [];
+    definitions.push({ value, dataBaseInScope, references: parsedReferences.references });
+    analysis.customProperties.set(property, definitions);
+    return false;
+  }
+
+  if (cssUrlReferencesData(value, property, dataBaseInScope)) return true;
+  if (parsedReferences.references.length > 0 && isCssVariableResourceSink(property)) {
+    analysis.sinks.push({ property, dataBaseInScope, references: parsedReferences.references });
+  }
+  return false;
+}
+
+function collectCssVariableSinkOnly(
+  analysis: CssResourceAnalysis,
+  property: string,
+  value: string,
+  dataBaseInScope: boolean
+): boolean {
+  const parsedReferences = cssVariableReferences(value);
+  analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
+  if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
+  analysis.variableReferenceCount += parsedReferences.references.length;
+  if (analysis.variableReferenceCount > MAX_CSS_VARIABLE_REFERENCES) return true;
+  if (parsedReferences.references.length > 0 && isCssVariableResourceSink(property)) {
+    analysis.sinks.push({ property, dataBaseInScope, references: parsedReferences.references });
+  }
+  return false;
+}
+
+function collectCssAtRule(
+  analysis: CssResourceAnalysis,
+  name: string,
+  params: string,
+  dataBaseInScope: boolean
+): boolean {
+  const normalizedName = decodeCssEscapes(name).toLowerCase();
+  if (normalizedName === 'namespace') return false;
+  if (cssUrlReferencesData(params, undefined, dataBaseInScope)) return true;
+  if (normalizedName === 'import' && cssContainsDataUrlString(params)) return true;
+
+  const parsedReferences = cssVariableReferences(params);
+  analysis.valueCharactersParsed += parsedReferences.parsedCharacters;
+  if (!parsedReferences.valid || analysis.valueCharactersParsed > MAX_CSS_ANALYSIS_VALUE_CHARACTERS) return true;
+  analysis.variableReferenceCount += parsedReferences.references.length;
+  if (analysis.variableReferenceCount > MAX_CSS_VARIABLE_REFERENCES) return true;
+  if (normalizedName === 'import' && parsedReferences.references.length > 0) {
+    analysis.sinks.push({ property: '@import', dataBaseInScope, references: parsedReferences.references });
+  }
+  return false;
+}
+
+function collectCssSource(
+  analysis: CssResourceAnalysis,
+  source: string,
+  dataBaseInScope: boolean,
+  isDeclarationList = false
+): boolean {
+  analysis.sourceCharacters += source.length;
+  if (analysis.sourceCharacters > MAX_CSS_ANALYSIS_SOURCE_CHARACTERS) return true;
+
+  let parseError = false;
+  let root;
+  try {
+    root = parseCss(isDeclarationList ? `svg { ${source} }` : source, {
+      onParseError: () => {
+        parseError = true;
+      },
+    });
+  } catch {
+    return true;
+  }
+  if (parseError) return true;
+
+  const stopWalk = Symbol('stop CSS resource walk');
+  try {
+    walkCss(root, (node) => {
+      analysis.nodeCount += 1;
+      if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) throw stopWalk;
+      if (node.type === 'Declaration') {
+        if (collectCssDeclaration(analysis, node.property, generateCss(node.value), dataBaseInScope)) {
+          throw stopWalk;
+        }
+      } else if (node.type === 'Atrule') {
+        if (collectCssAtRule(analysis, node.name, node.prelude ? generateCss(node.prelude) : '', dataBaseInScope)) {
+          throw stopWalk;
+        }
+      }
+    });
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+function hasUnsafeCssVariableFlow(analysis: CssResourceAnalysis): boolean {
+  let traversalSteps = 0;
+  for (const sink of analysis.sinks) {
+    const states = new Map<string, 'visiting' | 'visited'>();
+    for (const rootName of sink.references) {
+      const stack: Array<{ name: string; exiting: boolean }> = [{ name: rootName, exiting: false }];
+      while (stack.length > 0) {
+        traversalSteps += 1;
+        if (traversalSteps > MAX_CSS_VARIABLE_REFERENCES) return true;
+        const current = stack.pop();
+        if (!current) continue;
+        if (current.exiting) {
+          states.set(current.name, 'visited');
+          continue;
+        }
+
+        const state = states.get(current.name);
+        if (state === 'visiting') return true;
+        if (state === 'visited') continue;
+        states.set(current.name, 'visiting');
+        stack.push({ name: current.name, exiting: true });
+
+        const definitions = analysis.customProperties.get(current.name) ?? [];
+        for (const definition of definitions) {
+          if (
+            cssUrlReferencesData(definition.value, sink.property, sink.dataBaseInScope || definition.dataBaseInScope) ||
+            cssContainsDataUrlString(definition.value)
+          ) {
+            return true;
+          }
+          for (const reference of definition.references) {
+            stack.push({ name: reference, exiting: false });
+          }
+        }
+      }
+    }
+  }
+  return false;
 }
 
 function cssUrlTokenEnd(source: string, startAt: number): number | null {
@@ -256,7 +695,7 @@ function cssFunctionUnsafeImageString(source: string, opening: number, end: numb
       if (character === '\\') index = cssEscapeEnd(source, index);
       else if (character === quote || /[\r\n\f]/.test(character ?? '')) {
         const value = decodeCssEscapes(source.slice(start, index)).trim();
-        if (character === quote && (/^data:/i.test(value) || value.startsWith('#'))) return value;
+        if (character === quote && (isDataUrl(value) || value.startsWith('#'))) return value;
         quote = '';
       }
     } else if (character === '/' && next === '*') {
@@ -325,7 +764,6 @@ function cssUrlIsNamespaceDeclaration(source: string, targetIndex: number): bool
 }
 
 function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInScope = false): boolean {
-  const imageStringFunctions = new Set(['image-set', '-webkit-image-set', 'image']);
   let quote = '';
   let comment = false;
   for (let index = 0; index < source.length; index += 1) {
@@ -353,7 +791,7 @@ function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInS
       continue;
     }
 
-    const imageFunction = cssFunctionTokenStart(source, index, imageStringFunctions);
+    const imageFunction = cssFunctionTokenStart(source, index, CSS_IMAGE_STRING_FUNCTIONS);
     if (imageFunction !== null) {
       const end = cssFunctionEnd(source, imageFunction);
       if (end === null) return true;
@@ -386,13 +824,13 @@ function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInS
     }
     reference = decodeCssEscapes(stripCssComments(reference, '')).trim();
     const property = propertyHint ?? cssPropertyAt(source, index);
-    if (/^data:/i.test(reference) && cssUrlIsNamespaceDeclaration(source, index)) {
+    if (isDataUrl(reference) && cssUrlIsNamespaceDeclaration(source, index)) {
       index = end;
       continue;
     }
     if (
       !reference ||
-      /^data:/i.test(reference) ||
+      isDataUrl(reference) ||
       (dataBaseInScope && !/^[a-z][a-z0-9+.-]*:/i.test(reference) && !reference.startsWith('//'))
     ) {
       return true;
@@ -647,12 +1085,13 @@ function stylesheetSizesRoot(css: string, root: Element, inheritedRoot = false):
 function hasUnsafeSvgResources(document: Document): boolean {
   const unnamespacedSvg = !document.documentElement.namespaceURI;
   const dataBaseScopes = new WeakMap<Element, boolean>();
+  const cssAnalysis = createCssResourceAnalysis();
   const pending: Array<{ element: Element; inherited: boolean }> = [
     { element: document.documentElement, inherited: false },
   ];
   while (pending.length > 0) {
     const { element, inherited } = pending.pop()!;
-    const inDataBaseScope = inherited || /^data:/i.test((element.getAttributeNS(XML_NAMESPACE, 'base') ?? '').trim());
+    const inDataBaseScope = inherited || isDataUrl((element.getAttributeNS(XML_NAMESPACE, 'base') ?? '').trim());
     dataBaseScopes.set(element, inDataBaseScope);
     for (const child of element.children) pending.push({ element: child, inherited: inDataBaseScope });
   }
@@ -671,7 +1110,9 @@ function hasUnsafeSvgResources(document: Document): boolean {
           const name = attribute.localName.toLowerCase();
           if (!resourceAttributes.has(name)) return false;
           const value = attribute.value.trim();
-          return !value || /^data:/i.test(value) || (name === 'srcset' && /data:/i.test(value));
+          return (
+            !value || isDataUrl(value) || (name === 'srcset' && /data:/i.test(removeAsciiUrlTabsAndNewlines(value)))
+          );
         })
       ) {
         return true;
@@ -679,7 +1120,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
     }
 
     const inlineStyle = element.getAttribute('style');
-    if (inlineStyle && cssUrlReferencesData(inlineStyle, undefined, dataBaseInScope)) return true;
+    if (inlineStyle && collectCssSource(cssAnalysis, inlineStyle, dataBaseInScope, true)) return true;
 
     if (!isSvgElement) continue;
 
@@ -689,7 +1130,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
         const value = href.trim();
         if (
           !value ||
-          /^data:/i.test(value) ||
+          isDataUrl(value) ||
           (elementName === 'image' && value.startsWith('#')) ||
           (dataBaseInScope && !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//'))
         ) {
@@ -701,7 +1142,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
     for (const attribute of [...element.attributes]) {
       if (
         SVG_URL_PRESENTATION_ATTRIBUTES.has(attribute.localName.toLowerCase()) &&
-        cssUrlReferencesData(attribute.value, attribute.localName.toLowerCase(), dataBaseInScope)
+        collectCssDeclaration(cssAnalysis, attribute.localName, attribute.value, dataBaseInScope)
       ) {
         return true;
       }
@@ -711,14 +1152,20 @@ function hasUnsafeSvgResources(document: Document): boolean {
       const target = element.getAttribute('attributeName')?.trim();
       const separator = target?.indexOf(':') ?? -1;
       const targetLocalName = separator >= 0 ? target?.slice(separator + 1) : target;
-      const normalizedTargetLocalName = targetLocalName?.toLowerCase();
+      const normalizedTargetLocalName = targetLocalName?.startsWith('--')
+        ? targetLocalName
+        : targetLocalName?.toLowerCase();
       const targetPrefix = separator >= 0 ? target?.slice(0, separator) : undefined;
       const targetNamespace = targetPrefix ? element.lookupNamespaceURI(targetPrefix) : null;
       const targetsHref = targetLocalName === 'href' && (!targetPrefix || targetNamespace === XLINK_NAMESPACE);
-      const values = ['by', 'from', 'to', 'values'].map((name) => element.getAttribute(name) ?? '');
+      const rawValues = ['by', 'from', 'to', 'values'].map((name) => element.getAttribute(name) ?? '');
+      const values = [
+        ...rawValues.slice(0, 3),
+        ...(element.hasAttribute('values') ? (element.getAttribute('values') ?? '').split(';') : []),
+      ];
       let targetElement = element.parentElement;
       const targetReference = element.getAttribute('href') ?? element.getAttributeNS(XLINK_NAMESPACE, 'href');
-      if (targetReference && /^data:/i.test(targetReference.trim())) return true;
+      if (targetReference && isDataUrl(targetReference.trim())) return true;
       if (targetReference?.startsWith('#')) {
         try {
           targetElement = document.getElementById(decodeURIComponent(targetReference.slice(1))) ?? targetElement;
@@ -726,7 +1173,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
           return true;
         }
       }
-      if (targetsHref && values.some((value) => /^data:/i.test(value.trim()))) {
+      if (targetsHref && values.some((value) => isDataUrl(value.trim()))) {
         return true;
       }
       if (
@@ -740,18 +1187,37 @@ function hasUnsafeSvgResources(document: Document): boolean {
       }
       if (
         !targetPrefix &&
-        (normalizedTargetLocalName === 'style' ||
-          (normalizedTargetLocalName && SVG_URL_PRESENTATION_ATTRIBUTES.has(normalizedTargetLocalName))) &&
-        values.some((value) => cssUrlReferencesData(value, normalizedTargetLocalName, dataBaseInScope))
+        normalizedTargetLocalName === 'style' &&
+        rawValues.some((value) => value && collectCssSource(cssAnalysis, value, dataBaseInScope, true))
+      ) {
+        return true;
+      }
+      if (
+        !targetPrefix &&
+        normalizedTargetLocalName &&
+        normalizedTargetLocalName !== 'style' &&
+        (normalizedTargetLocalName.startsWith('--') ||
+          SVG_URL_PRESENTATION_ATTRIBUTES.has(normalizedTargetLocalName) ||
+          CSS_RESOURCE_PROPERTIES.has(normalizedTargetLocalName) ||
+          isCssVariableResourceSink(normalizedTargetLocalName)) &&
+        values.some((value) => {
+          const knownResourceProperty =
+            SVG_URL_PRESENTATION_ATTRIBUTES.has(normalizedTargetLocalName) ||
+            CSS_RESOURCE_PROPERTIES.has(normalizedTargetLocalName);
+          return normalizedTargetLocalName.startsWith('--') || knownResourceProperty
+            ? collectCssDeclaration(cssAnalysis, normalizedTargetLocalName, value, dataBaseInScope)
+            : collectCssVariableSinkOnly(cssAnalysis, normalizedTargetLocalName, value, dataBaseInScope);
+        })
       ) {
         return true;
       }
     }
   }
 
-  return [...document.querySelectorAll('style')].some((style) =>
-    cssUrlReferencesData(style.textContent ?? '', undefined, dataBaseScopes.get(style) ?? false)
-  );
+  for (const style of document.querySelectorAll('style')) {
+    if (collectCssSource(cssAnalysis, style.textContent ?? '', dataBaseScopes.get(style) ?? false)) return true;
+  }
+  return hasUnsafeCssVariableFlow(cssAnalysis);
 }
 
 function svgDimension(root: Element, property: 'width' | 'height'): number | undefined {
