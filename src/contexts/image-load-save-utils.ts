@@ -10,6 +10,64 @@ const GIF_HEADER_BYTES = 13;
 const SVG_DEFAULT_WIDTH = 300;
 const SVG_DEFAULT_HEIGHT = 150;
 const MAX_SVG_SOURCE_BYTES = 64 * 1024 * 1024;
+const MAX_PNG_CHUNKS = 65_536;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
+const XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace';
+const XLINK_NAMESPACE = 'http://www.w3.org/1999/xlink';
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const SVG_URL_PRESENTATION_ATTRIBUTES = new Set([
+  'background-image',
+  'clip-path',
+  'cursor',
+  'fill',
+  'filter',
+  'marker',
+  'marker-end',
+  'marker-mid',
+  'marker-start',
+  'mask',
+  'mask-image',
+  'stroke',
+]);
+const SVG_VECTOR_URL_PROPERTIES = new Set([
+  'clip-path',
+  'fill',
+  'filter',
+  'marker',
+  'marker-end',
+  'marker-mid',
+  'marker-start',
+  'mask',
+  'mask-image',
+  'stroke',
+]);
+const SVG_HREF_RESOURCE_ELEMENTS = new Set([
+  'filter',
+  'image',
+  'lineargradient',
+  'marker',
+  'mask',
+  'mpath',
+  'pattern',
+  'radialgradient',
+  'textpath',
+  'use',
+]);
+const HTML_RESOURCE_ATTRIBUTES = new Map([
+  ['audio', new Set(['src'])],
+  ['embed', new Set(['src'])],
+  ['frame', new Set(['src'])],
+  ['iframe', new Set(['src'])],
+  ['img', new Set(['src', 'srcset'])],
+  ['input', new Set(['src'])],
+  ['link', new Set(['href'])],
+  ['object', new Set(['data'])],
+  ['script', new Set(['src'])],
+  ['source', new Set(['src', 'srcset'])],
+  ['track', new Set(['src'])],
+  ['video', new Set(['poster', 'src'])],
+]);
 
 function asciiAt(signature: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...signature.subarray(offset, offset + length));
@@ -68,7 +126,7 @@ function decodeCssEscapes(value: string): string {
 function cssEscapeEnd(source: string, backslashIndex: number): number {
   let index = backslashIndex + 1;
   if (/[\da-f]/i.test(source[index] ?? '')) {
-    for (let count = 0; count < 5 && /[\da-f]/i.test(source[index] ?? ''); count += 1) index += 1;
+    for (let count = 0; count < 6 && /[\da-f]/i.test(source[index] ?? ''); count += 1) index += 1;
     if (source[index] === '\r' && source[index + 1] === '\n') index += 2;
     else if (/\s/.test(source[index] ?? '')) index += 1;
   } else if (source[index] === '\r' && source[index + 1] === '\n') {
@@ -127,25 +185,212 @@ function cssImportantStart(value: string): number | null {
   return null;
 }
 
-function cssUrlTokenEnd(source: string, startAt: number): number | null {
-  let quote = '';
-  for (let index = startAt + 4; index < source.length; index += 1) {
+function cssFunctionTokenStart(source: string, startAt: number, names: ReadonlySet<string>): number | null {
+  if (startAt > 0 && /[\w-]/.test(source[startAt - 1])) return null;
+
+  let identifier = '';
+  let index = startAt;
+  while (index < source.length) {
     const character = source[index];
-    if (quote) {
+    if (character === '\\') {
+      const end = cssEscapeEnd(source, index);
+      identifier += decodeCssEscapes(source.slice(index, end + 1));
+      index = end + 1;
+    } else if (/[a-z-]/i.test(character ?? '')) {
+      identifier += character;
+      index += 1;
+    } else {
+      break;
+    }
+    if (identifier.length > 32) return null;
+  }
+
+  return names.has(identifier.toLowerCase()) && source[index] === '(' ? index : null;
+}
+
+function cssUrlTokenStart(source: string, startAt: number): number | null {
+  return cssFunctionTokenStart(source, startAt, new Set(['url']));
+}
+
+function cssFunctionEnd(source: string, opening: number): number | null {
+  let depth = 1;
+  let quote = '';
+  let comment = false;
+  for (let index = opening + 1; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (comment) {
+      if (character === '*' && next === '/') {
+        comment = false;
+        index += 1;
+      }
+    } else if (quote) {
       if (character === '\\') index = cssEscapeEnd(source, index);
       else if (character === quote || /[\r\n\f]/.test(character ?? '')) quote = '';
+    } else if (character === '/' && next === '*') {
+      comment = true;
+      index += 1;
     } else if (character === '"' || character === "'") quote = character;
     else if (character === '\\') index = cssEscapeEnd(source, index);
-    else if (character === ')') return index;
+    else if (character === '(') depth += 1;
+    else if (character === ')' && --depth === 0) return index;
   }
   return null;
 }
 
-function isCssUrlToken(source: string, index: number): boolean {
-  return source.slice(index, index + 4).toLowerCase() === 'url(' && (index === 0 || !/[\w-]/.test(source[index - 1]));
+function cssUrlTokenEnd(source: string, startAt: number): number | null {
+  const opening = cssUrlTokenStart(source, startAt);
+  return opening === null ? null : cssFunctionEnd(source, opening);
 }
 
-function stripCssComments(source: string): string {
+function cssFunctionHasUnsafeImageString(source: string, opening: number, end: number): boolean {
+  let quote = '';
+  let start = 0;
+  for (let index = opening + 1; index < end; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (quote) {
+      if (character === '\\') index = cssEscapeEnd(source, index);
+      else if (character === quote || /[\r\n\f]/.test(character ?? '')) {
+        const value = decodeCssEscapes(source.slice(start, index)).trim();
+        if (character === quote && (/^data:/i.test(value) || value.startsWith('#'))) return true;
+        quote = '';
+      }
+    } else if (character === '/' && next === '*') {
+      const commentEnd = source.indexOf('*/', index + 2);
+      if (commentEnd < 0) return false;
+      index = commentEnd + 1;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+      start = index + 1;
+    } else if (character === '\\') index = cssEscapeEnd(source, index);
+  }
+  return false;
+}
+
+function cssPropertyAt(source: string, targetIndex: number): string | undefined {
+  let statementStart = 0;
+  let colon = -1;
+  let parentheses = 0;
+  let brackets = 0;
+  let quote = '';
+  let comment = false;
+
+  for (let index = 0; index < targetIndex; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (comment) {
+      if (character === '*' && next === '/') {
+        comment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (character === '\\') index = cssEscapeEnd(source, index);
+      else if (character === quote || /[\r\n\f]/.test(character ?? '')) quote = '';
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      comment = true;
+      index += 1;
+    } else if (character === '"' || character === "'") quote = character;
+    else if (character === '\\') index = cssEscapeEnd(source, index);
+    else if (character === '(') parentheses += 1;
+    else if (character === ')' && parentheses > 0) parentheses -= 1;
+    else if (character === '[') brackets += 1;
+    else if (character === ']' && brackets > 0) brackets -= 1;
+    else if (parentheses === 0 && brackets === 0 && (character === ';' || character === '{' || character === '}')) {
+      statementStart = index + 1;
+      colon = -1;
+    } else if (parentheses === 0 && brackets === 0 && character === ':' && colon < 0) colon = index;
+  }
+
+  if (colon < statementStart) return undefined;
+  return decodeCssEscapes(stripCssComments(source.slice(statementStart, colon)))
+    .trim()
+    .toLowerCase();
+}
+
+function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInScope = false): boolean {
+  const imageStringFunctions = new Set(['image-set', '-webkit-image-set', 'image']);
+  let quote = '';
+  let comment = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (comment) {
+      if (character === '*' && next === '/') {
+        comment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (character === '\\') index = cssEscapeEnd(source, index);
+      else if (character === quote || /[\r\n\f]/.test(character ?? '')) quote = '';
+      continue;
+    }
+    if (character === '/' && next === '*') {
+      comment = true;
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    const imageFunction = cssFunctionTokenStart(source, index, imageStringFunctions);
+    if (imageFunction !== null) {
+      const end = cssFunctionEnd(source, imageFunction);
+      if (
+        end === null ||
+        cssFunctionHasUnsafeImageString(source, imageFunction, end) ||
+        (dataBaseInScope && /^(?:image-set|-webkit-image-set|image)$/i.test(source.slice(index, imageFunction).trim()))
+      ) {
+        return true;
+      }
+    }
+
+    if (!isCssUrlToken(source, index)) {
+      if (character === '\\') index = cssEscapeEnd(source, index);
+      continue;
+    }
+
+    const opening = cssUrlTokenStart(source, index);
+    const end = cssUrlTokenEnd(source, index);
+    if (opening === null || end === null) return true;
+    let reference = source.slice(opening + 1, end).trim();
+    if (
+      reference.length >= 2 &&
+      ((reference.startsWith('"') && reference.endsWith('"')) || (reference.startsWith("'") && reference.endsWith("'")))
+    ) {
+      reference = reference.slice(1, -1);
+    }
+    reference = decodeCssEscapes(stripCssComments(reference, '')).trim();
+    if (
+      !reference ||
+      /^data:/i.test(reference) ||
+      (dataBaseInScope && !/^[a-z][a-z0-9+.-]*:/i.test(reference) && !reference.startsWith('//'))
+    ) {
+      return true;
+    }
+    if (reference.startsWith('#')) {
+      if (dataBaseInScope) return true;
+      const property = propertyHint ?? cssPropertyAt(source, index);
+      if (property && !SVG_VECTOR_URL_PROPERTIES.has(property)) return true;
+    }
+    index = end;
+  }
+  return false;
+}
+
+function isCssUrlToken(source: string, index: number): boolean {
+  return cssUrlTokenStart(source, index) !== null;
+}
+
+function stripCssComments(source: string, replacement = ' '): string {
   source = source.replace(/\r\n?/g, '\n').replace(/\f/g, '\n');
   let result = '';
   let quote = '';
@@ -165,7 +410,7 @@ function stripCssComments(source: string): string {
     } else if (character === '/' && next === '*') {
       const end = source.indexOf('*/', index + 2);
       if (end < 0) break;
-      result += ' ';
+      result += replacement;
       index = end + 1;
     } else if (character === '\\') {
       const escapeEnd = cssEscapeEnd(source, index);
@@ -379,6 +624,107 @@ function stylesheetSizesRoot(css: string, root: Element, inheritedRoot = false):
   return false;
 }
 
+function hasUnsafeSvgResources(document: Document): boolean {
+  const unnamespacedSvg = !document.documentElement.namespaceURI;
+  const hasDataBase = [...document.querySelectorAll('*')].some((element) =>
+    /^data:/i.test((element.getAttributeNS(XML_NAMESPACE, 'base') ?? '').trim())
+  );
+  for (const element of document.querySelectorAll('*')) {
+    const elementName = element.localName.toLowerCase();
+    const isSvgElement = element.namespaceURI === SVG_NAMESPACE || (unnamespacedSvg && element.namespaceURI === null);
+    if (isSvgElement && elementName === 'foreignobject') return true;
+    if (isSvgElement && elementName === 'feimage') return true;
+    if (element.namespaceURI === HTML_NAMESPACE) {
+      const resourceAttributes = HTML_RESOURCE_ATTRIBUTES.get(elementName);
+      if (
+        resourceAttributes &&
+        [...element.attributes].some((attribute) => {
+          const name = attribute.localName.toLowerCase();
+          if (!resourceAttributes.has(name)) return false;
+          const value = attribute.value.trim();
+          return !value || /^data:/i.test(value) || (name === 'srcset' && /data:/i.test(value));
+        })
+      ) {
+        return true;
+      }
+    }
+
+    const inlineStyle = element.getAttribute('style');
+    if (inlineStyle && cssUrlReferencesData(inlineStyle, undefined, hasDataBase)) return true;
+
+    if (!isSvgElement) continue;
+
+    if (SVG_HREF_RESOURCE_ELEMENTS.has(elementName)) {
+      const href = element.getAttribute('href') ?? element.getAttributeNS(XLINK_NAMESPACE, 'href');
+      if (href !== null) {
+        const value = href.trim();
+        if (
+          !value ||
+          /^data:/i.test(value) ||
+          (elementName === 'image' && value.startsWith('#')) ||
+          (hasDataBase && !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//'))
+        ) {
+          return true;
+        }
+      }
+    }
+
+    for (const attribute of [...element.attributes]) {
+      if (
+        SVG_URL_PRESENTATION_ATTRIBUTES.has(attribute.localName.toLowerCase()) &&
+        cssUrlReferencesData(attribute.value, attribute.localName.toLowerCase(), hasDataBase)
+      ) {
+        return true;
+      }
+    }
+
+    if (['animate', 'animatecolor', 'animatemotion', 'animatetransform', 'set'].includes(elementName)) {
+      const target = element.getAttribute('attributeName')?.trim();
+      const separator = target?.indexOf(':') ?? -1;
+      const targetLocalName = separator >= 0 ? target?.slice(separator + 1) : target;
+      const normalizedTargetLocalName = targetLocalName?.toLowerCase();
+      const targetPrefix = separator >= 0 ? target?.slice(0, separator) : undefined;
+      const targetNamespace = targetPrefix ? element.lookupNamespaceURI(targetPrefix) : null;
+      const targetsHref = targetLocalName === 'href' && (!targetPrefix || targetNamespace === XLINK_NAMESPACE);
+      const values = ['by', 'from', 'to', 'values'].map((name) => element.getAttribute(name) ?? '');
+      let targetElement = element.parentElement;
+      const targetReference = element.getAttribute('href') ?? element.getAttributeNS(XLINK_NAMESPACE, 'href');
+      if (targetReference && /^data:/i.test(targetReference.trim())) return true;
+      if (targetReference?.startsWith('#')) {
+        try {
+          targetElement = document.getElementById(decodeURIComponent(targetReference.slice(1))) ?? targetElement;
+        } catch {
+          return true;
+        }
+      }
+      if (targetsHref && values.some((value) => /^data:/i.test(value.trim()))) {
+        return true;
+      }
+      if (
+        targetsHref &&
+        targetElement &&
+        (targetElement.namespaceURI === SVG_NAMESPACE || (unnamespacedSvg && targetElement.namespaceURI === null)) &&
+        ['image', 'feimage', 'use'].includes(targetElement.localName.toLowerCase()) &&
+        values.some((value) => value.trim())
+      ) {
+        return true;
+      }
+      if (
+        !targetPrefix &&
+        (normalizedTargetLocalName === 'style' ||
+          (normalizedTargetLocalName && SVG_URL_PRESENTATION_ATTRIBUTES.has(normalizedTargetLocalName))) &&
+        values.some((value) => cssUrlReferencesData(value, normalizedTargetLocalName, hasDataBase))
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return [...document.querySelectorAll('style')].some((style) =>
+    cssUrlReferencesData(style.textContent ?? '', undefined, hasDataBase)
+  );
+}
+
 function svgDimension(root: Element, property: 'width' | 'height'): number | undefined {
   const style = root.getAttribute('style') ?? '';
   const styled = cssDimension(style, property);
@@ -411,7 +757,186 @@ function svgRootSizing(root: Element): { width: number; height: number } {
   return { width: SVG_DEFAULT_WIDTH, height: SVG_DEFAULT_HEIGHT };
 }
 
-async function rejectOversizedSvg(file: File, mimeType: string): Promise<void> {
+function pngCrc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) === 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngHeaderDimensions(header: Uint8Array): { width: number; height: number } | undefined {
+  if (header.byteLength < 33 || !PNG_SIGNATURE.every((byte, index) => header[index] === byte)) return undefined;
+
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  if (view.getUint32(8, false) !== 13 || asciiAt(header, 12, 4) !== 'IHDR') return undefined;
+  if (pngCrc32(header.subarray(12, 29)) !== view.getUint32(29, false)) return undefined;
+  const bitDepth = header[24];
+  const colorType = header[25];
+  const validBitDepth =
+    (colorType === 0 && [1, 2, 4, 8, 16].includes(bitDepth)) ||
+    (colorType === 2 && [8, 16].includes(bitDepth)) ||
+    (colorType === 3 && [1, 2, 4, 8].includes(bitDepth)) ||
+    ((colorType === 4 || colorType === 6) && [8, 16].includes(bitDepth));
+  if (!validBitDepth || header[26] !== 0 || header[27] !== 0 || header[28] > 1) return undefined;
+
+  const width = view.getUint32(16, false);
+  const height = view.getUint32(20, false);
+  return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+function isCompleteStaticPng(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 8 || !PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)) return false;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 8;
+  let chunkCount = 0;
+  let hasImageData = false;
+
+  while (offset + 12 <= bytes.byteLength && chunkCount < MAX_PNG_CHUNKS) {
+    const length = view.getUint32(offset, false);
+    const chunkEnd = offset + 12 + length;
+    if (chunkEnd > bytes.byteLength) return false;
+    const type = asciiAt(bytes, offset + 4, 4);
+    if (type === 'acTL' || type === 'fcTL' || type === 'fdAT') return false;
+    if (type === 'IDAT') hasImageData = true;
+    if (type === 'IEND') return length === 0 && hasImageData && chunkEnd === bytes.byteLength;
+    offset = chunkEnd;
+    chunkCount += 1;
+  }
+
+  return false;
+}
+
+function flattenedPngFromSvg(root: Element, width: number, height: number, sourceText: string): Blob | undefined {
+  const rootAttributes = [...root.attributes].map((attribute) => attribute.name).sort();
+  if (
+    root.namespaceURI !== SVG_NAMESPACE ||
+    root.localName !== 'svg' ||
+    rootAttributes.join(',') !== 'height,viewBox,width,xmlns' ||
+    root.getAttribute('xmlns') !== SVG_NAMESPACE
+  ) {
+    return undefined;
+  }
+
+  const rootWidth = root.getAttribute('width') ?? '';
+  const rootHeight = root.getAttribute('height') ?? '';
+  const parsedWidth = /^(?:[1-9]\d*)$/.test(rootWidth) ? Number(rootWidth) : undefined;
+  const parsedHeight = /^(?:[1-9]\d*)$/.test(rootHeight) ? Number(rootHeight) : undefined;
+  if (
+    !Number.isSafeInteger(parsedWidth) ||
+    !Number.isSafeInteger(parsedHeight) ||
+    parsedWidth !== width ||
+    parsedHeight !== height
+  ) {
+    return undefined;
+  }
+
+  const viewBox = (root.getAttribute('viewBox') ?? '')
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  if (viewBox.length !== 4 || viewBox[0] !== 0 || viewBox[1] !== 0 || viewBox[2] !== width || viewBox[3] !== height) {
+    return undefined;
+  }
+
+  if (root.childNodes.length !== 1 || root.firstChild?.nodeType !== 1) return undefined;
+  const image = root.firstElementChild;
+  if (!image || image.namespaceURI !== SVG_NAMESPACE || image.localName !== 'image' || image.childNodes.length !== 0) {
+    return undefined;
+  }
+  const imageAttributes = [...image.attributes].map((attribute) => attribute.name).sort();
+  if (
+    imageAttributes.join(',') !== 'height,href,width' ||
+    image.getAttribute('width') !== rootWidth ||
+    image.getAttribute('height') !== rootHeight
+  ) {
+    return undefined;
+  }
+
+  const href = image.getAttribute('href') ?? '';
+  const base64 = /^data:image\/png;base64,((?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/i.exec(
+    href
+  )?.[1];
+  if (!base64) return undefined;
+  const canonicalSource = `<svg xmlns="${SVG_NAMESPACE}" width="${rootWidth}" height="${rootHeight}" viewBox="0 0 ${width} ${height}"><image href="${href}" width="${rootWidth}" height="${rootHeight}" /></svg>`;
+  if (sourceText !== canonicalSource) return undefined;
+
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  const decodedLength = (base64.length / 4) * 3 - padding;
+  if (!Number.isSafeInteger(decodedLength) || decodedLength < 33 || decodedLength > MAX_SVG_SOURCE_BYTES) {
+    return undefined;
+  }
+
+  let headerBinary: string;
+  try {
+    headerBinary = atob(base64.slice(0, 44));
+  } catch {
+    return undefined;
+  }
+  if (headerBinary.length !== 33) return undefined;
+  const header = Uint8Array.from(headerBinary, (character) => character.charCodeAt(0));
+  const pngDimensions = pngHeaderDimensions(header);
+  if (!pngDimensions) return undefined;
+  const { width: pngWidth, height: pngHeight } = pngDimensions;
+  if (pngWidth * pngHeight > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `SVG embedded PNG is too large to open (${pngWidth}×${pngHeight}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
+  if (pngWidth !== width || pngHeight !== height) {
+    throw new Error('SVG flattened PNG dimensions do not match the SVG canvas');
+  }
+
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    return undefined;
+  }
+  if (binary.length !== decodedLength) return undefined;
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  if (!isCompleteStaticPng(bytes)) throw new Error('SVG flattened PNG must be a complete, non-animated PNG');
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return new Blob([buffer], { type: 'image/png' });
+}
+
+async function rejectOversizedPng(file: File, existingHeader?: Uint8Array): Promise<void> {
+  const header = existingHeader ?? new Uint8Array(await file.slice(0, 33).arrayBuffer());
+  const dimensions = pngHeaderDimensions(header);
+  if (!dimensions) throw new Error('PNG image has an invalid IHDR');
+  const { width, height } = dimensions;
+  if (width * height > MAX_CREATABLE_DOCUMENT_PIXELS) {
+    throw new Error(
+      `PNG image is too large to open (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
+    );
+  }
+
+  let offset = 8;
+  let chunkCount = 0;
+  while (offset + 8 <= file.size && chunkCount < MAX_PNG_CHUNKS) {
+    const chunkHeader = new Uint8Array(await file.slice(offset, offset + 8).arrayBuffer());
+    if (chunkHeader.byteLength !== 8) throw new Error('PNG image has an invalid chunk sequence');
+    const view = new DataView(chunkHeader.buffer, chunkHeader.byteOffset, chunkHeader.byteLength);
+    const length = view.getUint32(0, false);
+    const type = asciiAt(chunkHeader, 4, 4);
+    if (type === 'acTL' || type === 'fcTL' || type === 'fdAT') {
+      throw new Error('Animated PNG images are not supported');
+    }
+    const chunkEnd = offset + 12 + length;
+    if (chunkEnd > file.size) throw new Error('PNG image has an invalid chunk sequence');
+    if (type === 'IEND') {
+      if (length !== 0) throw new Error('PNG image has an invalid IEND chunk');
+      return;
+    }
+    offset = chunkEnd;
+    chunkCount += 1;
+  }
+
+  throw new Error('PNG image has an invalid or excessive chunk sequence');
+}
+
+async function rejectOversizedSvg(file: File, mimeType: string): Promise<Blob | undefined> {
   if (file.size > MAX_SVG_SOURCE_BYTES) {
     throw new Error(`SVG source exceeds the ${MAX_SVG_SOURCE_BYTES} byte import limit`);
   }
@@ -431,7 +956,9 @@ async function rejectOversizedSvg(file: File, mimeType: string): Promise<void> {
   }
   const document = new DOMParser().parseFromString(text, 'image/svg+xml');
   const root = document.documentElement;
-  if (root.localName.toLowerCase() !== 'svg') throw new Error('SVG image has invalid XML dimensions');
+  if (root.localName.toLowerCase() !== 'svg' || (root.namespaceURI && root.namespaceURI !== SVG_NAMESPACE)) {
+    throw new Error('SVG image has invalid XML dimensions');
+  }
   const inlineStyle = root.getAttribute('style') ?? '';
   if (hasUnsupportedInlineSizing(inlineStyle)) {
     throw new Error('SVG image uses unsupported CSS sizing that cannot be safely preflighted');
@@ -446,7 +973,6 @@ async function rejectOversizedSvg(file: File, mimeType: string): Promise<void> {
   if (stylesheetSizing || externalStylesheet) {
     throw new Error('SVG image uses stylesheet sizing that cannot be safely preflighted');
   }
-
   const { width, height } = svgRootSizing(root);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     throw new Error('SVG image has invalid intrinsic dimensions');
@@ -456,6 +982,13 @@ async function rejectOversizedSvg(file: File, mimeType: string): Promise<void> {
       `SVG image is too large to open (${width}×${height}). Maximum is ${MAX_CREATABLE_DOCUMENT_PIXELS} pixels.`
     );
   }
+
+  const flattenedPng = flattenedPngFromSvg(root, width, height, text);
+  if (flattenedPng) return flattenedPng;
+  if (hasUnsafeSvgResources(document)) {
+    throw new Error('SVG image uses an embedded resource that cannot be safely preflighted');
+  }
+  return undefined;
 }
 
 function xmlDeclaredEncoding(
@@ -639,7 +1172,13 @@ export const loadImageFile = async (file: File, detectedMimeType?: string): Prom
   if (isGif) await rejectOversizedGif(file);
   const svgMimeType = detectedMimeType ?? file.type;
   const isSvg = mimeEssence(svgMimeType) === 'image/svg+xml' || /\.svg$/i.test(file.name);
-  if (isSvg) await rejectOversizedSvg(file, svgMimeType);
+  const flattenedPng = isSvg ? await rejectOversizedSvg(file, svgMimeType) : undefined;
+  if (!isSvg) {
+    const pngHeader = new Uint8Array(await file.slice(0, 33).arrayBuffer());
+    const hasPngSignature = PNG_SIGNATURE.every((byte, index) => pngHeader[index] === byte);
+    const isPng = mimeEssence(svgMimeType) === 'image/png' || /\.png$/i.test(file.name) || hasPngSignature;
+    if (isPng) await rejectOversizedPng(file, pngHeader);
+  }
 
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -661,7 +1200,8 @@ export const loadImageFile = async (file: File, detectedMimeType?: string): Prom
     reader.onerror = () => {
       reject(new Error('Failed to read file'));
     };
-    reader.readAsDataURL(detectedMimeType ? new Blob([file], { type: detectedMimeType }) : file);
+    const source = flattenedPng ?? (detectedMimeType ? new Blob([file], { type: detectedMimeType }) : file);
+    reader.readAsDataURL(source);
   });
 };
 

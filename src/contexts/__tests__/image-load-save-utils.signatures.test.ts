@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadDocumentFile, loadImageFile } from '../image-load-save-utils.ts';
+import { encodeSvg } from '../svg-utils.ts';
 
 const { loadAvifFile, loadBmpFile, loadIcoFile, loadPsd, loadTiffFile } = vi.hoisted(() => ({
   loadAvifFile: vi.fn(),
@@ -43,6 +44,63 @@ const gifHeader = (width: number, height: number) =>
     0,
     0
   );
+const pngCrc32 = (data: Uint8Array) => {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) === 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+const pngHeader = (width: number, height: number) => {
+  const data = new Uint8Array(33);
+  data.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const view = new DataView(data.buffer);
+  view.setUint32(8, 13, false);
+  data.set(ascii('IHDR'), 12);
+  view.setUint32(16, width, false);
+  view.setUint32(20, height, false);
+  data[24] = 8;
+  data[25] = 6;
+  view.setUint32(29, pngCrc32(data.subarray(12, 29)), false);
+  return data;
+};
+const pngChunk = (type: string, data: Uint8Array) => {
+  const chunk = new Uint8Array(data.length + 12);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length, false);
+  chunk.set(ascii(type), 4);
+  chunk.set(data, 8);
+  view.setUint32(data.length + 8, pngCrc32(chunk.subarray(4, data.length + 8)), false);
+  return chunk;
+};
+const concatenatePngChunks = (...chunks: Uint8Array[]) => {
+  const result = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+};
+const pngFileBytes = (width: number, height: number, extraChunks: Uint8Array[] = []) =>
+  concatenatePngChunks(
+    pngHeader(width, height),
+    ...extraChunks,
+    pngChunk('IDAT', Uint8Array.of(0)),
+    pngChunk('IEND', new Uint8Array())
+  );
+const pngDataUrl = (width: number, height: number, extraChunks: Uint8Array[] = []) =>
+  `data:image/png;base64,${btoa(String.fromCharCode(...pngFileBytes(width, height, extraChunks)))}`;
+const animatedPngDataUrl = (width: number, height: number) => {
+  return pngDataUrl(width, height, [pngChunk('acTL', Uint8Array.of(2, 0, 0, 0, 0, 0, 0, 0))]);
+};
+const tinyPngDataUrl =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const flattenedSvgFile = (width: number, height: number, dataUrl = tinyPngDataUrl, name = 'flat.svg') => {
+  const canvas = { width, height, toDataURL: () => dataUrl } as unknown as HTMLCanvasElement;
+  return new File([encodeSvg(canvas)], name, { type: 'image/svg+xml' });
+};
 
 type StubReader = {
   onload: ((event: { target: { result: string } }) => void) | null;
@@ -222,9 +280,12 @@ describe('format detection from byte signatures', () => {
   });
 
   it.each([
-    ['a byte order mark and leading whitespace', '\uFEFF\n  <svg xmlns="x"></svg>'],
-    ['an xml prologue ahead of the root element', '<?xml version="1.0"?>\n<svg xmlns="x"></svg>'],
-    ['an uppercase root element', '<SVG xmlns="x"></SVG>'],
+    ['a byte order mark and leading whitespace', '\uFEFF\n  <svg xmlns="http://www.w3.org/2000/svg"></svg>'],
+    [
+      'an xml prologue ahead of the root element',
+      '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    ],
+    ['an uppercase root element', '<SVG xmlns="http://www.w3.org/2000/svg"></SVG>'],
   ])('detects SVG content with %s', async (_label, content) => {
     const decoders = installBrowserDecoders();
     const file = new File([content], 'no-extension', { type: '' });
@@ -710,6 +771,267 @@ describe('loadImageFile rejection paths', () => {
     expect(decoders.reader).toBeDefined();
   });
 
+  it('imports an app-generated flattened SVG through its bounded PNG payload', async () => {
+    const decoders = installBrowserDecoders();
+    const file = flattenedSvgFile(1, 1);
+
+    const result = await loadDocumentFile(file);
+    expect(result).toMatchObject({ fileName: 'flat.svg', image: decoders.image });
+
+    expect(decoders.readerInput?.type).toBe('image/png');
+    expect(decoders.readerInput?.size).toBe(atob(tinyPngDataUrl.split(',')[1]).length);
+  });
+
+  it('uses the same bounded PNG path for direct SVG image loading', async () => {
+    const decoders = installBrowserDecoders();
+    const file = flattenedSvgFile(1, 1);
+
+    const image = await loadImageFile(file, 'image/svg+xml');
+    expect(image).toBe(decoders.image);
+
+    expect(decoders.readerInput?.type).toBe('image/png');
+  });
+
+  it('rejects an oversized embedded PNG before creating a FileReader', async () => {
+    const decoders = installBrowserDecoders();
+    const dataUrl = pngDataUrl(10_001, 10_000);
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    const atobSpy = vi.spyOn(globalThis, 'atob');
+    const file = flattenedSvgFile(1, 1, dataUrl);
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG embedded PNG is too large to open');
+
+    expect(atobSpy).toHaveBeenCalledTimes(1);
+    expect(atobSpy).toHaveBeenCalledWith(base64.slice(0, 44));
+    expect(decoders.reader).toBeUndefined();
+    atobSpy.mockRestore();
+  });
+
+  it('allows an embedded PNG at the document pixel ceiling', async () => {
+    const decoders = installBrowserDecoders();
+    const file = flattenedSvgFile(10_000, 10_000, pngDataUrl(10_000, 10_000));
+
+    const result = await loadDocumentFile(file);
+    expect(result).toMatchObject({ fileName: 'flat.svg', image: decoders.image });
+
+    expect(decoders.readerInput?.type).toBe('image/png');
+  });
+
+  it('rejects a directly opened oversized PNG before creating a FileReader', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File([pngHeader(10_001, 10_000)], 'oversized.png', { type: 'image/png' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('PNG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('preflights PNG bytes even when the file type and extension are mislabeled', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File([pngFileBytes(10_001, 10_000)], 'oversized.jpg', { type: 'image/jpeg' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('PNG image is too large to open');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('allows a directly opened PNG at the document pixel ceiling', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File([pngFileBytes(10_000, 10_000)], 'maximum.png', { type: 'image/png' });
+
+    const result = await loadDocumentFile(file);
+    expect(result).toMatchObject({ fileName: 'maximum.png', image: decoders.image });
+
+    expect(decoders.readerInput?.type).toBe('image/png');
+  });
+
+  it('rejects APNG animation chunks before opening a standalone PNG', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      [pngFileBytes(1, 1, [pngChunk('acTL', Uint8Array.of(2, 0, 0, 0, 0, 0, 0, 0))])],
+      'animated.png',
+      { type: 'image/png' }
+    );
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('Animated PNG images are not supported');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('rejects a flattened SVG whose embedded PNG header fails its CRC', async () => {
+    const decoders = installBrowserDecoders();
+    const png = pngHeader(1, 1);
+    png[32] ^= 1;
+    const invalidDataUrl = `data:image/png;base64,${btoa(String.fromCharCode(...png))}`;
+    const file = flattenedSvgFile(1, 1, invalidDataUrl);
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('rejects APNG frames in the flattened SVG path before creating a FileReader', async () => {
+    const decoders = installBrowserDecoders();
+    const file = flattenedSvgFile(1, 1, animatedPngDataUrl(1, 1));
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('complete, non-animated PNG');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('rejects a flattened PNG wrapper when root and PNG dimensions disagree', async () => {
+    const decoders = installBrowserDecoders();
+    const file = flattenedSvgFile(2, 1, pngDataUrl(1, 1));
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('SVG flattened PNG dimensions do not match the SVG canvas');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('rejects noncanonical PNG wrapper variants before creating a FileReader', async () => {
+    const decoders = installBrowserDecoders();
+    const svg = await encodeSvg({ width: 1, height: 1, toDataURL: () => tinyPngDataUrl } as HTMLCanvasElement).text();
+    const variants = [
+      svg.replace('<svg xmlns=', '<svg id="extra" xmlns='),
+      svg.replace('<image href=', '<image opacity="1" href='),
+      svg.replace('<image href=', '<title>extra</title><image href='),
+      `<?xml version="1.0"?>${svg}`,
+      `<!--extra-->${svg}`,
+    ];
+
+    for (const [index, malformedSvg] of variants.entries()) {
+      const file = new File([malformedSvg], `almost-flat-${index}.svg`, { type: 'image/svg+xml' });
+      await expect(loadDocumentFile(file)).rejects.toThrow();
+      expect(decoders.reader).toBeUndefined();
+    }
+  });
+
+  it.each([
+    ['an embedded data image', '<svg><image href="data:image/png;base64,AA=="/></svg>'],
+    ['an unsupported embedded JPEG', '<svg><image href="data:image/jpeg;base64,AA=="/></svg>'],
+    ['a percent-encoded embedded PNG', '<svg><image href="data:image/png,%89PNG%0D%0A%1A%0A"/></svg>'],
+    [
+      'an embedded legacy data image',
+      '<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="data:image/png;base64,AA=="/></svg>',
+    ],
+    ['a fragment image recursion', '<svg><image href="#self"/></svg>'],
+    ['an empty image href', '<svg><image href=""/></svg>'],
+    [
+      'a fragment legacy image recursion',
+      '<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="#self"/></svg>',
+    ],
+    ['a filter image resource', '<svg><filter id="f"><feImage href="data:image/png;base64,AA=="/></filter></svg>'],
+    ['an external use resource', '<svg><use href="data:image/svg+xml,%3Csvg/%3E"/></svg>'],
+    [
+      'a foreign object',
+      '<svg><foreignObject><div xmlns="http://www.w3.org/1999/xhtml">text</div></foreignObject></svg>',
+    ],
+    ['a CSS data resource', '<svg><style>rect { filter: url(data:image/svg+xml,%3Csvg/%3E) }</style><rect/></svg>'],
+    [
+      'a CSS image-set data resource',
+      '<svg><rect style="mask-image:image-set(\'data:image/png;base64,AA==\' 1x)"/></svg>',
+    ],
+    ['a CSS background fragment image resource', '<svg><rect style="background-image:url(#self)"/></svg>'],
+    ['a CSS image-set fragment resource', '<svg><rect style="background-image:image-set(\'#self\' 1x)"/></svg>'],
+    ['a CSS image() data resource', '<svg><rect style="mask-image:image(\'data:image/png;base64,AA==\')"/></svg>'],
+    ['an escaped CSS data resource', '<svg style="filter:url(\\64 ata:image/svg+xml,%3Csvg/%3E)"/>'],
+    ['a CSS-comment-obfuscated data resource', '<svg style="filter:url(data/**/:image/svg+xml,%3Csvg/%3E)"/>'],
+    ['a six-digit escaped CSS data resource', '<svg style="filter:\\75\\000072l(data:image/svg+xml,%3Csvg/%3E)"/>'],
+    ['a presentation-attribute data resource', '<svg><rect fill="url(data:image/svg+xml,%3Csvg/%3E)"/></svg>'],
+    ['an xml:base data resource', '<svg xml:base="data:image/png;base64,AA=="><use href="#local"/></svg>'],
+    [
+      'an animated fragment image recursion',
+      '<svg><image><set attributeName="href" begin="0s" to="#self"/></image></svg>',
+    ],
+    [
+      'an animated XLink alias resource',
+      '<svg xmlns:p="http://www.w3.org/1999/xlink"><image><set attributeName="p:href" begin="0s" to="data:image/png;base64,AA=="/></image></svg>',
+    ],
+    [
+      'a case-sensitive animated XLink alias resource',
+      '<svg xmlns:P="http://www.w3.org/1999/xlink"><image><set attributeName="P:href" begin="0s" to="data:image/png;base64,AA=="/></image></svg>',
+    ],
+    [
+      'an animated href on a fragment-targeted image',
+      '<svg><image id="target"/><set href="#target" attributeName="href" begin="0s" to="#self"/></svg>',
+    ],
+    [
+      'an animated image resource',
+      '<svg><image width="1" height="1"><set attributeName="href" begin="0s" to="data:image/png;base64,AA=="/></image></svg>',
+    ],
+    [
+      'an animated CSS resource',
+      '<svg><animate attributeName="filter" to="url(data:image/svg+xml,%3Csvg/%3E)"/></svg>',
+    ],
+    [
+      'an embedded HTML resource',
+      '<svg><html:img xmlns:html="http://www.w3.org/1999/xhtml" src="data:image/png;base64,AA=="/></svg>',
+    ],
+  ])('rejects SVGs with %s before creating a FileReader', async (_label, svg) => {
+    const decoders = installBrowserDecoders();
+    const file = new File([svg], 'nested-resource.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('allows same-document SVG resource references', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      [
+        '<svg><defs><linearGradient id="gradient"><stop offset="0"/></linearGradient><g id="mark"><rect width="1" height="1"/></g></defs><rect fill="url(#gradient)"/><use href="#mark"/></svg>',
+      ],
+      'fragments.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'fragments.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('allows non-resource SVG links', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg><a href="https://example.test"><rect width="1" height="1"/></a></svg>'],
+      'linked.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'linked.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('allows external image references that secure SVG image mode blocks', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      ['<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.test/image.png"/></svg>'],
+      'secure-reference.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'secure-reference.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it('allows namespace URLs and inert resource-named attributes', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:html="http://www.w3.org/1999/xhtml" xmlns:ext="https://example.test/ns" xml:base="https://example.test/base/"><style>@namespace svg url("http://www.w3.org/2000/svg");</style><rect href="data:image/png;base64,AA==" ext:href="data:image/png;base64,AA==" src="label" data="note"/><a href="data:image/png;base64,AA=="><rect/></a><html:foreignObject><html:div>inert text</html:div></html:foreignObject></svg>',
+      ],
+      'inert.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'inert.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
   it('allows an SVG at the shared document pixel ceiling', async () => {
     const decoders = installBrowserDecoders();
     const file = new File(['<svg width="10000px" height="10000px"/>'], 'maximum.svg', {
@@ -746,7 +1068,7 @@ describe('loadImageFile rejection paths', () => {
     const decoders = installBrowserDecoders();
     decoders.readerMode = 'error';
 
-    await expect(loadImageFile(new File(['data'], 'photo.png', { type: 'image/png' }))).rejects.toThrow(
+    await expect(loadImageFile(new File([pngFileBytes(1, 1)], 'photo.png', { type: 'image/png' }))).rejects.toThrow(
       'Failed to read file'
     );
   });
@@ -755,7 +1077,7 @@ describe('loadImageFile rejection paths', () => {
     const decoders = installBrowserDecoders();
     decoders.imageMode = 'error';
 
-    await expect(loadImageFile(new File(['not a png'], 'photo.png', { type: 'image/png' }))).rejects.toThrow(
+    await expect(loadImageFile(new File([pngFileBytes(1, 1)], 'photo.png', { type: 'image/png' }))).rejects.toThrow(
       'Failed to load image'
     );
   });
@@ -776,18 +1098,19 @@ describe('loadImageFile rejection paths', () => {
 
   it('rejects a native-decoded image whose dimensions are unavailable', async () => {
     const decoders = installBrowserDecoders({ width: 0, height: 0 });
-    const pending = loadImageFile(new File(['data'], 'photo.png', { type: 'image/png' }));
+    const pending = loadImageFile(new File([pngFileBytes(1, 1)], 'photo.png', { type: 'image/png' }));
+    const rejection = pending.catch((error: unknown) => error);
 
     await vi.waitFor(() => expect(decoders.image).not.toBeUndefined());
     decoders.image!.onload!.call(decoders.image!, new Event('load'));
 
-    await expect(pending).rejects.toThrow('Image has invalid dimensions to open');
+    await expect(rejection).resolves.toMatchObject({ message: 'Image has invalid dimensions to open' });
   });
 
   it('rejects a corrupt document that reached the native decoder through loadDocumentFile', async () => {
     const decoders = installBrowserDecoders();
     decoders.imageMode = 'error';
-    const file = new File(['not a png'], 'photo.png', { type: 'image/png' });
+    const file = new File([pngFileBytes(1, 1)], 'photo.png', { type: 'image/png' });
 
     await expect(loadDocumentFile(file)).rejects.toThrow('Failed to load image');
   });
@@ -796,7 +1119,12 @@ describe('loadImageFile rejection paths', () => {
     'accepts %s on its extension alone, with no media type',
     async (name) => {
       const decoders = installBrowserDecoders();
-      const file = new File([name.endsWith('.svg') ? '<svg/>' : 'data'], name, { type: '' });
+      const contents = name.endsWith('.svg')
+        ? '<svg/>'
+        : name.toLowerCase().endsWith('.png')
+          ? pngFileBytes(1, 1)
+          : 'data';
+      const file = new File([contents], name, { type: '' });
 
       const image = await loadImageFile(file);
 

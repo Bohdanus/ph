@@ -241,9 +241,20 @@ without changing any other codec ceiling.
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against,
 rather than an exception to it. SVG files are limited to 64 MiB before buffering, and intrinsic
 dimensions are checked against the document ceiling before data-URL creation and native image
-decoding. Unsupported relative units, sizing expressions, and stylesheets that could affect root
-dimensions are refused; decoded-image validation remains the final guard for auto/percentage
-dimensions resolved by the browser.
+decoding. The importer also has one bounded embedded-raster path matching this app's `encodeSvg()`
+output: a single direct PNG data image whose PNG signature, IHDR CRC, IHDR dimensions, root dimensions,
+and image viewport all agree. It extracts that PNG and loads it directly instead of asking the SVG
+renderer to decode a nested image. Other embedded resources are refused before `FileReader`: nested
+images/documents, `<feImage>`, `<foreignObject>`, `xml:base`, animated resource hrefs, and data URLs
+in CSS `url()`/`image()`/`image-set()` values. Image-element fragment references are refused because
+they can recurse through the complete SVG document; same-document `<use>` and paint-server references
+remain allowed. Unsupported relative units, sizing expressions, and stylesheets that could affect
+root dimensions are refused; decoded-image validation remains the final guard for auto/percentage
+dimensions resolved by the browser. This is intentionally narrower than the SVG format: embedded
+JPEG/other raster formats and foreign HTML content are not imported through this path.
+Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
+the flattened-SVG path also rejects APNG frame chunks before decoding. Standalone JPEG and WebP still
+rely on post-decode dimension validation and need separate format-specific preflight work.
 
 **The ICO loader ceiling is this build's rule, not the format's, and it narrows what opens.** A DIB
 entry declares its geometry in a header and a PNG entry only in the stream the browser decodes, so
