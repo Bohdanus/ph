@@ -928,8 +928,48 @@ describe('loadImageFile rejection paths', () => {
     ],
     ['a CSS data resource', '<svg><style>rect { filter: url(data:image/svg+xml,%3Csvg/%3E) }</style><rect/></svg>'],
     [
-      'an unused CSS custom-property data resource',
-      '<svg><style>svg { --unused: url(data:image/png;base64,AA==) }</style><rect/></svg>',
+      'a CSS custom-property data resource consumed by a sink',
+      '<svg><style>svg { --source: url(data:image/png;base64,AA==) } rect { background-image: var(--source) }</style><rect/></svg>',
+    ],
+    [
+      'a custom-property string URL consumed by image-set',
+      '<svg><style>svg { --source: "data:image/png;base64,AA==" }</style><rect style="background-image:image-set(var(--source) 1x)"/></svg>',
+    ],
+    [
+      'a data URL in a custom-property fallback',
+      '<svg><style>svg { --source: var(--missing, url(data:image/png;base64,AA==)) } rect { background-image: var(--source) }</style></svg>',
+    ],
+    [
+      'a custom-property alias across style elements and inline CSS',
+      '<svg><style>svg { --source: var(--payload) }</style><style>svg { --payload: url(data:image/png;base64,AA==) }</style><rect style="background-image:var(--source)"/></svg>',
+    ],
+    [
+      'a custom-property alias referenced only by a nested fallback',
+      '<svg><style>svg { --source: var(--missing, var(--payload)); --payload: url(data:image/png;base64,AA==) } rect { background-image: var(--source) }</style><rect/></svg>',
+    ],
+    [
+      'an escaped custom-property name and var() function',
+      '<svg><style>svg { --\\73 ource: url(data:image/png;base64,AA==) } rect { background-image: v\\61 r(--source) }</style><rect/></svg>',
+    ],
+    [
+      'a custom-property URL used by an unknown CSS property',
+      '<svg><style>svg { --source: url(data:image/png;base64,AA==) } rect { custom-resource: var(--source) }</style><rect/></svg>',
+    ],
+    [
+      'a reachable custom-property cycle',
+      '<svg><style>svg { --a: var(--b); --b: var(--a) } rect { background-image: var(--a) }</style><rect/></svg>',
+    ],
+    [
+      'a custom-property flow from an inactive media rule',
+      '<svg><style>@media not all { svg { --source: url(data:image/png;base64,AA==) } } rect { background-image: var(--source) }</style><rect/></svg>',
+    ],
+    [
+      'a custom-property flow from a nested scope rule',
+      '<svg><style>@scope (svg) { rect { --source: url(data:image/png;base64,AA==) } } rect { background-image: var(--source) }</style><rect/></svg>',
+    ],
+    [
+      'an unclosed var() function in a resource-capable property',
+      '<svg><rect style="background-image:var(--source"/></svg>',
     ],
     [
       'a CSS image-set data resource',
@@ -955,6 +995,11 @@ describe('loadImageFile rejection paths', () => {
     ['a six-digit escaped CSS data resource', '<svg style="filter:\\75\\000072l(data:image/svg+xml,%3Csvg/%3E)"/>'],
     ['a presentation-attribute data resource', '<svg><rect fill="url(data:image/svg+xml,%3Csvg/%3E)"/></svg>'],
     ['an xml:base data resource', '<svg xml:base="data:image/png;base64,AA=="><use href="#local"/></svg>'],
+    ['an href with a newline-obfuscated data scheme', '<svg><image href="da&#10;ta:image/png;base64,AA=="/></svg>'],
+    [
+      'an xml:base with a newline-obfuscated data scheme',
+      '<svg xml:base="da&#10;ta:image/png;base64,AA=="><use href="#local"/></svg>',
+    ],
     [
       'an animated fragment image recursion',
       '<svg><image><set attributeName="href" begin="0s" to="#self"/></image></svg>',
@@ -980,12 +1025,118 @@ describe('loadImageFile rejection paths', () => {
       '<svg><animate attributeName="filter" to="url(data:image/svg+xml,%3Csvg/%3E)"/></svg>',
     ],
     [
+      'a presentation-attribute custom-property flow',
+      '<svg><style>svg { --source: url(data:image/png;base64,AA==) }</style><rect fill="var(--source)"/></svg>',
+    ],
+    [
+      'an animated custom-property resource flow',
+      '<svg><style>rect { background-image: var(--source) }</style><rect><animate attributeName="--source" to="url(data:image/png;base64,AA==)"/></rect></svg>',
+    ],
+    [
+      'an animated unknown-property variable resource flow',
+      '<svg><style>svg { --source: url(data:image/png;base64,AA==) }</style><animate attributeName="custom-resource" to="var(--source)"/></svg>',
+    ],
+    [
+      'a data URL in a variable-backed font source',
+      '<svg><style>@font-face { --font-source: url(data:font/woff2;base64,AA==); src: var(--font-source) }</style></svg>',
+    ],
+    [
+      'a later data URL in a semicolon-separated SMIL values list',
+      '<svg><pattern id="p"><set attributeName="href" values="#local;data:image/svg+xml,%3Csvg/%3E#other"/></pattern></svg>',
+    ],
+    [
       'an embedded HTML resource',
       '<svg><html:img xmlns:html="http://www.w3.org/1999/xhtml" src="data:image/png;base64,AA=="/></svg>',
     ],
   ])('rejects SVGs with %s before creating a FileReader', async (_label, svg) => {
     const decoders = installBrowserDecoders();
     const file = new File([svg], 'nested-resource.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it.each([
+    [
+      'an unused stylesheet property and alias',
+      '<svg><style>svg { --unused: url(data:image/png;base64,AA==); --unused-string: "data:image/png;base64,AA=="; --alias: var(--unused) }</style><rect/></svg>',
+    ],
+    [
+      'an unused inline property and alias',
+      '<svg><rect style="--unused:url(data:image/png;base64,AA==);--unused-string:&quot;data:image/png;base64,AA==&quot;;--alias:var(--unused)"/></svg>',
+    ],
+    [
+      'a data-bearing value used only by inert properties',
+      '<svg><style>svg { --resource: url(data:image/png;base64,AA==); --alias: var(--resource) } rect { color: var(--alias); opacity: var(--alias); background-color: var(--alias); fill-opacity: var(--alias); fill-rule: var(--alias); stroke-width: var(--alias); stroke-dasharray: var(--alias); font-size: var(--alias); width: var(--alias); margin-left: var(--alias); display: var(--alias) }</style><rect/></svg>',
+    ],
+    [
+      'unrelated quoted text that is not a data URL',
+      '<svg><style>svg { --label: "label data:image/png;base64,AA=="; content: var(--label) }</style><rect/></svg>',
+    ],
+    [
+      'a same-document paint-server URL flowing through a custom property',
+      '<svg><defs><linearGradient id="g"/></defs><style>svg { --paint: url(#g) }</style><rect fill="var(--paint)"/></svg>',
+    ],
+    [
+      'a same-document motion path URL flowing through a custom property',
+      '<svg><path id="p" d="M0 0"/><style>svg { --path: url(#p) }</style><rect style="offset-path:var(--path)"/></svg>',
+    ],
+    [
+      'case-sensitive custom-property names',
+      '<svg><style>svg { --Source: url(data:image/png;base64,AA==) }</style><rect style="background-image:var(--source)"/></svg>',
+    ],
+  ])('allows %s', async (_label, svg) => {
+    const decoders = installBrowserDecoders();
+    const file = new File([svg], 'custom-properties.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'custom-properties.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
+  it.each([
+    ['background shorthand', 'background'],
+    ['border-image source', 'border-image-source'],
+    ['list-style shorthand', 'list-style'],
+    ['cursor', 'cursor'],
+    ['content', 'content'],
+    ['mask shorthand', 'mask'],
+    ['clip path', 'clip-path'],
+    ['shape outside', 'shape-outside'],
+    ['motion offset path', 'offset-path'],
+    ['SVG fill paint server', 'fill'],
+    ['SVG marker paint server', 'marker-start'],
+    ['vendor mask alias', '-webkit-mask-image'],
+    ['unknown resource property', 'custom-resource'],
+  ])('treats %s as a CSS resource sink', async (_label, property) => {
+    const decoders = installBrowserDecoders();
+    const svg = `<svg><style>svg { --source: url(data:image/png;base64,AA==) } rect { ${property}: var(--source) }</style><rect/></svg>`;
+    const file = new File([svg], 'resource-sink.svg', { type: 'image/svg+xml' });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('fails closed when CSS variable references exceed their bound', async () => {
+    const decoders = installBrowserDecoders();
+    const references = Array.from({ length: 50_001 }, () => 'var(--missing)').join(' ');
+    const file = new File([`<svg><rect style="background-image:${references}"/></svg>`], 'complex-vars.svg', {
+      type: 'image/svg+xml',
+    });
+
+    await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
+
+    expect(decoders.reader).toBeUndefined();
+  });
+
+  it('fails closed when CSS analysis exceeds its node bound', async () => {
+    const decoders = installBrowserDecoders();
+    const declarations = Array.from({ length: 20_001 }, (_, index) => `--unused-${index}:red`).join(';');
+    const file = new File([`<svg><style>svg { ${declarations} }</style></svg>`], 'complex-css.svg', {
+      type: 'image/svg+xml',
+    });
 
     await expect(loadDocumentFile(file)).rejects.toThrow('embedded resource that cannot be safely preflighted');
 
