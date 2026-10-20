@@ -1,5 +1,5 @@
 import { expect, type Page, test } from './fixtures/extended-test';
-import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
+import { drawLineFromDocument, getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { acceptDiscardPrompt } from './helpers/discard-prompt';
 import { SEARCH_TEST_TIMEOUT_MS } from './helpers/timeouts';
 
@@ -226,7 +226,7 @@ test.describe('Mobile shell', () => {
     const canvas = getWorkspaceCanvas(page);
     const box = await canvas.boundingBox();
     if (!box) throw new Error('The workspace canvas has no box on a phone');
-    await drawLine(page, box, 60, 100, 200, 100);
+    await drawLineFromDocument(page, box, 150, 150, 350, 150);
 
     await expect(undo, 'the stroke is a history entry the header can reach').toBeEnabled();
     await undo.click();
@@ -281,5 +281,56 @@ test.describe('Mobile shell', () => {
         return tileRight <= barRight + 1;
       })
       .toBe(true);
+  });
+
+  test('the export button is visible and opens the save dialog on a document with content', async ({ page }) => {
+    const exportButton = page.getByTestId('mobile-export-button');
+    await expect(exportButton, 'the export button lives in the mobile header').toBeVisible();
+
+    // `handleExport` bails when `commitDirtyTool` has nothing committed, so the draw
+    // must land as a real entry first — the same gesture the undo/redo test makes.
+    await bottomBar(page).getByRole('button', { name: 'Draw Tool' }).click();
+    const canvas = getWorkspaceCanvas(page);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('The workspace canvas has no box on a phone');
+    await drawLineFromDocument(page, box, 150, 150, 350, 150);
+    await expect(exportButton, 'enabled once the document carries committed content').toBeEnabled();
+
+    await exportButton.click();
+    await expect(
+      page.getByTestId('save-dialog'),
+      'the header export button opens the same save dialog the desktop path does'
+    ).toBeVisible();
+  });
+
+  test('the delete-layer button appears once there are two layers, and removes the active one', async ({ page }) => {
+    const toggle = page.getByTestId('mobile-layers-toggle-button');
+    await toggle.click();
+    const drawer = page.getByTestId('mobile-layers-drawer');
+    await expect(drawer).toBeVisible();
+    await page.getByTestId('mobile-tab-layers').click();
+    await expect(page.getByRole('list', { name: 'Layers' })).toBeVisible();
+
+    // The delete button renders only when `activeLayerId && sortedLayers.length > 1`
+    // (`MobileLayersDrawer.tsx`), so a single layer must not surface it.
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'absent with one layer').toHaveCount(0);
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'absent with one layer').toBeHidden();
+
+    // Adding a second layer surfaces the delete button — the same trigger the layers
+    // test above asserts for the badge count.
+    await page.getByTestId('mobile-add-layer-button').click();
+    await expect(toggle).toContainText('2');
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'present with two layers').toHaveCount(1);
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'present with two layers').toBeVisible();
+
+    // Clicking the button calls `removeLayer(activeLayerId)`, which drops the count
+    // back to one and retracts the button with no confirmation prompt — `removeLayer`
+    // has no guard (`useLayer.ts`).
+    await page.getByTestId('mobile-delete-layer-button').click();
+    await expect(toggle, 'the layer was removed, so the toggle no longer shows a multi-layer count').not.toContainText(
+      '2'
+    );
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'retracted after removal').toHaveCount(0);
+    await expect(page.getByTestId('mobile-delete-layer-button'), 'retracted after removal').toBeHidden();
   });
 });

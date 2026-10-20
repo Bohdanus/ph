@@ -1,8 +1,11 @@
 import { afterEach, describe, it, expect } from 'vitest';
 import {
+  ANTIALIASED_FLANGE_CSS_PX,
+  DRAW_HALF_WIDTH_DOC_PX,
   buildClip,
   canvasOffsetToDocument,
   containFit,
+  DEFAULT_DOCUMENT_SIZE,
   documentToCanvasOffset,
   dominantRed,
   getColorAtPoint,
@@ -16,6 +19,7 @@ import {
   screenshotBoundsToCss,
   STROKE_ANALYSIS,
   takeLineScreenshot,
+  toleranceFor,
   waitForCanvasPixels,
   type BoundingBox,
   type ClipOptions,
@@ -758,6 +762,58 @@ describe('getColorAtPoint edge cases', () => {
     setPixel(image, 0, 0, { red: 0, green: 0, blue: 0 });
     setPixel(image, 1, 0, { red: 1, green: 0, blue: 0 });
     expect(await getColorAtPoint(image, 0, 0, 1)).toEqual({ red: 1, green: 0, blue: 0 });
+  });
+});
+
+describe('toleranceFor', () => {
+  /**
+   * Pins `toleranceFor` to the formula its JSDoc commits to: the brush half-width
+   * (5 doc px) scaled by the contain fit, plus the antialiased fringe (2 CSS px).
+   * The scale is derived from `containFit(box, DEFAULT_DOCUMENT_SIZE)`, which is
+   * already covered by its own describe block above; these tests assert the
+   * WIRING — that toleranceFor multiplies and adds the right constants — at
+   * representative box sizes rather than trusting a single hand-computed value.
+   */
+
+  const CASES: { name: string; box: BoundingBox }[] = [
+    { name: 'box exactly the document size', box: { x: 0, y: 0, width: 800, height: 600 } },
+    { name: 'box half the document size', box: { x: 0, y: 0, width: 400, height: 300 } },
+    { name: 'wide canvas (width drives the fit)', box: { x: 0, y: 0, width: 1600, height: 600 } },
+    { name: 'tall canvas (height drives the fit)', box: { x: 0, y: 0, width: 800, height: 1200 } },
+    { name: 'narrow viewport-like canvas', box: { x: 98, y: 100, width: 974, height: 583 } },
+  ];
+
+  it.each(CASES)('equals DRAW_HALF_WIDTH_DOC_PX * scale + ANTIALIASED_FLANGE_CSS_PX for $name', ({ box }) => {
+    const scale = containFit(box, DEFAULT_DOCUMENT_SIZE).scale;
+    const expected = DRAW_HALF_WIDTH_DOC_PX * scale + ANTIALIASED_FLANGE_CSS_PX;
+    expect(toleranceFor(box)).toBeCloseTo(expected, 10);
+  });
+
+  it('grows with the box scale (wider viewport yields larger tolerance)', () => {
+    const small: BoundingBox = { x: 0, y: 0, width: 400, height: 300 };
+    const large: BoundingBox = { x: 0, y: 0, width: 1600, height: 1200 };
+    expect(toleranceFor(large)).toBeGreaterThan(toleranceFor(small));
+  });
+
+  it('is independent of the box origin (x and y must not affect the result)', () => {
+    const atOrigin: BoundingBox = { x: 0, y: 0, width: 600, height: 450 };
+    const offset: BoundingBox = { x: 100, y: 200, width: 600, height: 450 };
+    expect(toleranceFor(atOrigin)).toBeCloseTo(toleranceFor(offset), 10);
+  });
+
+  it('pins the documented constant values that the formula depends on', () => {
+    expect(DRAW_HALF_WIDTH_DOC_PX).toBe(5);
+    expect(ANTIALIASED_FLANGE_CSS_PX).toBe(2);
+  });
+
+  it('equals 7.0 for a 1:1 box (scale 1, the minimum non-letterboxed fit)', () => {
+    const box: BoundingBox = { x: 0, y: 0, width: 800, height: 600 };
+    expect(toleranceFor(box)).toBe(7.0);
+  });
+
+  it('equals 4.5 for a half-scale box', () => {
+    const box: BoundingBox = { x: 0, y: 0, width: 400, height: 300 };
+    expect(toleranceFor(box)).toBe(4.5);
   });
 });
 

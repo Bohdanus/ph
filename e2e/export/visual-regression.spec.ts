@@ -314,6 +314,10 @@ test.describe('Export visual regression', () => {
       const target = path.join(downloadDirectory, path.basename(download.suggestedFilename()));
       await download.saveAs(target);
       await expect(saveDialogTitle, `${label}: the Save dialog unmounted once the download completed`).toHaveCount(0);
+      await expect(
+        saveDialogTitle,
+        `${label}: and that heading is no longer on screen, the dialog fully gone`
+      ).toBeHidden();
 
       const bytes = await readFile(target);
       expect(bytes.byteLength, `${label}: the exported file should not be empty`).toBeGreaterThan(100);
