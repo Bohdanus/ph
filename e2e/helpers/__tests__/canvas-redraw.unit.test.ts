@@ -409,15 +409,15 @@ describe('waitForCanvasPixels', () => {
  * throws `Clipped area is either empty or outside the resulting image`. These pin what the
  * wait does about that — and, just as load-bearing, what it does when nothing is wrong.
  *
- * The geometry is the app's, measured: 1177px of page in a 720px window, and
- * `paint-options.spec.ts` reads its 60px stroke from 0.7 of the canvas box height, which
- * lands at page y=748 — 28px below the fold.
+ * The geometry is the test fixture's: 1177px of document height in a 720px viewport,
+ * and `BELOW_THE_FOLD` (y=748, height=160) lands 28px below the fold — the window can
+ * scroll to at most 457 (1177 - 720), which brings 748..908 into view as 291..451.
  */
 describe('waitForCanvasPixels on a region that is not in view', () => {
   const VIEWPORT_HEIGHT = 720;
   const DOCUMENT_HEIGHT = 1177;
 
-  /** The measured wide stroke: page y 748..908, inside a 720px window. */
+  /** The wide stroke fixture: page y 748..908, inside a 720px viewport window. */
   const BELOW_THE_FOLD: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
 
   function scrolledPage(overrides: Parameters<typeof createScrollablePage>[0] = {}) {

@@ -704,13 +704,17 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the only
- * export here that is read out of the live page rather than derived from a box.
+ * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the
+ * only export here that reads from the live page rather than deriving geometry from a
+ * box. (Note: `onScreenClip` in this file also calls `page.evaluate` for scroll, so the
+ * "only export" qualifier is scoped to the page-read of scroll state.)
  *
- * The one place in the helpers that reads page state rather than deriving geometry from a
- * box: a page function, read at the call site. Caching it would be wrong rather than merely
- * stale — `clickToolButton` scrolls the window by 440px in this build, so an offset read
- * once is wrong by a different amount before and after any tool click.
+ * Caching it would be wrong rather than merely stale — the scroll offset can change
+ * between captures, so an offset read once is wrong before and after any scroll-changing
+ * interaction. `clickToolButton` holds scroll steady via `preservingScroll`, but the
+ * offset itself originates from explicit scrolls (`onScreenClip`, test helpers like
+ * `scrollToTop`), not from the preserve/restore. See `e2e/OPEN_PROBLEMS.md` for why the
+ * app no longer scrolls at document level.
  */
 export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
