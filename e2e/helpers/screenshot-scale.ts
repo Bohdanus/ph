@@ -114,9 +114,10 @@ export interface ScrollOffset {
  *
  * DO NOT apply this to `page.screenshot({ clip })`. That one is the odd one out: Playwright
  * takes the clip in VIEWPORT coordinates and adds the scroll offset itself, so converting
- * there moves the clip the wrong way. Measured against a static marker at document
- * y=600 with the window scrolled, a viewport-relative clip captures the marker and a
- * page-relative one does not; for raw CDP the two answers are exactly reversed.
+ * there moves the clip the wrong way. For example, a marker at document y=600 with the
+ * window scrolled by 440px is at viewport y=160: Playwright needs y=160, while CDP needs
+ * y=600. Passing either coordinate space to the other capture API targets different
+ * pixels.
  *
  * The offset is a parameter rather than something read here, so the rule stays pure and
  * testable; it must be read at the call site, per capture, because the window can scroll
