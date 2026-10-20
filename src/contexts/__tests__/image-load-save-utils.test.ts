@@ -36,7 +36,7 @@ vi.mock('../bmp-utils.ts', () => ({ encodeBmp, loadBmpFile }));
 vi.mock('../gif-utils.ts', () => ({ encodeGif }));
 vi.mock('../avif-utils.ts', () => ({ encodeAvif, loadAvifFile }));
 vi.mock('../ico-utils.ts', () => ({ encodeIco, loadIcoFile }));
-vi.mock('../svg-utils.ts', () => ({ encodeSvg }));
+vi.mock('../svg-utils.ts', async (importOriginal) => ({ ...(await importOriginal()), encodeSvg }));
 
 describe('document file routing', () => {
   beforeEach(() => {

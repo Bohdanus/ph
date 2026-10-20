@@ -211,13 +211,13 @@ and a page nowhere near this figure can still exceed it.
 
 **Five ceilings exist and three are below what the dialog can create:**
 
-| ceiling                             | value       | where                                              |
-| ----------------------------------- | ----------- | -------------------------------------------------- |
-| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `tiff-utils.ts` |
-| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`       |
-| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                      |
-| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`               |
-| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`               |
+| ceiling                             | value       | where                                                |
+| ----------------------------------- | ----------- | ---------------------------------------------------- |
+| largest document the app can create | 100,000,000 | `MAX_CREATABLE_DOCUMENT_PIXELS` in `raster-utils.ts` |
+| affine transform                    | 67,108,864  | `MAX_AFFINE_PIXELS` in `affine-transform.ts`         |
+| PSD                                 | 67,108,864  | `maxPixels` in `psd-utils.ts`                        |
+| AVIF, open and save                 | 80,000,000  | `MAX_AVIF_PIXELS` in `avif-utils.ts`                 |
+| TIFF, open and save                 | 200,000,000 | `MAX_TIFF_PIXELS` in `tiff-utils.ts`                 |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
@@ -227,31 +227,35 @@ without changing any other codec ceiling.
 
 **The GIF and SVG loaders preflight intrinsic dimensions against the document ceiling.**
 
-| codec | loader budget          | encoder budget | check before the allocation it bounds?        |
-| ----- | ---------------------- | -------------- | --------------------------------------------- |
-| avif  | yes                    | yes            | yes                                           |
-| tiff  | yes                    | yes            | yes                                           |
-| bmp   | 100 MP                 | 100 MP         | yes — before pixel readback and allocation    |
-| gif   | 100 MP                 | 65535/axis     | yes — before data-URL encoding and decode     |
-| ico   | 256/axis               | 1..256/axis    | yes, on both                                  |
-| svg   | 100 MP / 64 MiB source | 100 MP         | yes — before data URL and native image decode |
-| psd   | yes                    | yes            | yes — the reference implementation            |
+| codec | loader budget          | encoder budget         | check before the allocation it bounds?        |
+| ----- | ---------------------- | ---------------------- | --------------------------------------------- |
+| avif  | yes                    | yes                    | yes                                           |
+| tiff  | yes                    | yes                    | yes                                           |
+| bmp   | 100 MP                 | 100 MP                 | yes — before pixel readback and allocation    |
+| gif   | 100 MP                 | 65535/axis             | yes — before data-URL encoding and decode     |
+| ico   | 256/axis               | 1..256/axis            | yes, on both                                  |
+| svg   | 100 MP / 64 MiB source | 100 MP / 64 MiB source | yes — before data URL and native image decode |
+| psd   | yes                    | yes                    | yes — the reference implementation            |
 
 `psd-utils.ts` — `validateSize()` runs ahead of the decoder, the same ordering `tiff-utils.ts` —
 `assertIfdWithinBudget()` has, so the PSD column is the shape the others were measured against,
 rather than an exception to it. SVG files are limited to 64 MiB before buffering, and intrinsic
 dimensions are checked against the document ceiling before data-URL creation and native image
-decoding. The importer also has one bounded embedded-raster path matching this app's `encodeSvg()`
-output: a single direct PNG data image whose PNG signature, IHDR CRC, IHDR dimensions, root dimensions,
-and image viewport all agree. It extracts that PNG and loads it directly instead of asking the SVG
-renderer to decode a nested image. Other embedded resources are refused before `FileReader`: nested
+decoding. `encodeSvg()` also refuses the browser's `data:,` canvas failure sentinel and exported SVG
+source strings over 64 MiB, so every successful flattened export fits the import source limit. The
+importer has one bounded embedded-raster path matching this app's `encodeSvg()` output: a single
+direct PNG data image whose PNG signature, IHDR CRC, IHDR dimensions, root dimensions, and image
+viewport all agree. It extracts that PNG and loads it directly instead of asking the SVG renderer to
+decode a nested image. Other embedded resources are refused before `FileReader`: nested
 images/documents, `<feImage>`, `<foreignObject>`, `xml:base`, animated resource hrefs, and data URLs
 in CSS `url()`/`image()`/`image-set()` values. Image-element fragment references are refused because
 they can recurse through the complete SVG document; same-document `<use>` and paint-server references
 remain allowed. Unsupported relative units, sizing expressions, and stylesheets that could affect
 root dimensions are refused; decoded-image validation remains the final guard for auto/percentage
 dimensions resolved by the browser. This is intentionally narrower than the SVG format: embedded
-JPEG/other raster formats and foreign HTML content are not imported through this path.
+JPEG/other raster formats and foreign HTML content are not imported through this path. The CSS
+resource scan does not evaluate custom-property expansion or inactive media queries, so it may refuse
+a data URL declaration even when the current rule would not fetch it.
 Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
 the flattened-SVG path also rejects APNG frame chunks before decoding. Standalone JPEG and WebP still
 rely on post-decode dimension validation and need separate format-specific preflight work.

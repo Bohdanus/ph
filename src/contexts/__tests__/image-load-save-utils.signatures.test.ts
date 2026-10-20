@@ -928,6 +928,10 @@ describe('loadImageFile rejection paths', () => {
     ],
     ['a CSS data resource', '<svg><style>rect { filter: url(data:image/svg+xml,%3Csvg/%3E) }</style><rect/></svg>'],
     [
+      'an unused CSS custom-property data resource',
+      '<svg><style>svg { --unused: url(data:image/png;base64,AA==) }</style><rect/></svg>',
+    ],
+    [
       'a CSS image-set data resource',
       '<svg><rect style="mask-image:image-set(\'data:image/png;base64,AA==\' 1x)"/></svg>',
     ],
@@ -991,6 +995,21 @@ describe('loadImageFile rejection paths', () => {
     expect(decoders.reader).toBeDefined();
   });
 
+  it('scopes data xml:base rejection to the elements whose references it can resolve', async () => {
+    const decoders = installBrowserDecoders();
+    const file = new File(
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg"><g xml:base="data:image/png;base64,AA=="><rect width="1" height="1"/></g><rect fill="url(#gradient)"/></svg>',
+      ],
+      'scoped-base.svg',
+      { type: 'image/svg+xml' }
+    );
+
+    await expect(loadDocumentFile(file)).resolves.toMatchObject({ fileName: 'scoped-base.svg' });
+
+    expect(decoders.reader).toBeDefined();
+  });
+
   it('allows non-resource SVG links', async () => {
     const decoders = installBrowserDecoders();
     const file = new File(
@@ -1021,7 +1040,7 @@ describe('loadImageFile rejection paths', () => {
     const decoders = installBrowserDecoders();
     const file = new File(
       [
-        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:html="http://www.w3.org/1999/xhtml" xmlns:ext="https://example.test/ns" xml:base="https://example.test/base/"><style>@namespace svg url("http://www.w3.org/2000/svg");</style><rect href="data:image/png;base64,AA==" ext:href="data:image/png;base64,AA==" src="label" data="note"/><a href="data:image/png;base64,AA=="><rect/></a><html:foreignObject><html:div>inert text</html:div></html:foreignObject></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:html="http://www.w3.org/1999/xhtml" xmlns:ext="https://example.test/ns" xml:base="https://example.test/base/"><style>@namespace svg url("http://www.w3.org/2000/svg");@namespace dataNs url("data:image/png;base64,AA==");</style><rect href="data:image/png;base64,AA==" ext:href="data:image/png;base64,AA==" src="label" data="note"/><a href="data:image/png;base64,AA=="><rect/></a><html:foreignObject><html:div>inert text</html:div></html:foreignObject></svg>',
       ],
       'inert.svg',
       { type: 'image/svg+xml' }

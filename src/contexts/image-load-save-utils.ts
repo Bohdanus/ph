@@ -1,6 +1,7 @@
 import type { ImageUploadResponse } from './useFile.tsx';
 import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
 import { MAX_CREATABLE_DOCUMENT_PIXELS } from './raster-utils.ts';
+import { MAX_SVG_SOURCE_BYTES } from './svg-utils.ts';
 
 const TIFF_MIME_TYPES = new Set(['image/tif', 'image/tiff', 'image/x-tiff']);
 const BMP_MIME_TYPES = new Set(['image/bmp', 'image/x-bmp', 'image/x-ms-bmp']);
@@ -9,7 +10,6 @@ const BROWSER_IMAGE_EXTENSIONS = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
 const GIF_HEADER_BYTES = 13;
 const SVG_DEFAULT_WIDTH = 300;
 const SVG_DEFAULT_HEIGHT = 150;
-const MAX_SVG_SOURCE_BYTES = 64 * 1024 * 1024;
 const MAX_PNG_CHUNKS = 65_536;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
@@ -243,7 +243,7 @@ function cssUrlTokenEnd(source: string, startAt: number): number | null {
   return opening === null ? null : cssFunctionEnd(source, opening);
 }
 
-function cssFunctionHasUnsafeImageString(source: string, opening: number, end: number): boolean {
+function cssFunctionUnsafeImageString(source: string, opening: number, end: number): string | undefined {
   let quote = '';
   let start = 0;
   for (let index = opening + 1; index < end; index += 1) {
@@ -253,19 +253,19 @@ function cssFunctionHasUnsafeImageString(source: string, opening: number, end: n
       if (character === '\\') index = cssEscapeEnd(source, index);
       else if (character === quote || /[\r\n\f]/.test(character ?? '')) {
         const value = decodeCssEscapes(source.slice(start, index)).trim();
-        if (character === quote && (/^data:/i.test(value) || value.startsWith('#'))) return true;
+        if (character === quote && (/^data:/i.test(value) || value.startsWith('#'))) return value;
         quote = '';
       }
     } else if (character === '/' && next === '*') {
       const commentEnd = source.indexOf('*/', index + 2);
-      if (commentEnd < 0) return false;
+      if (commentEnd < 0) return 'data:';
       index = commentEnd + 1;
     } else if (character === '"' || character === "'") {
       quote = character;
       start = index + 1;
     } else if (character === '\\') index = cssEscapeEnd(source, index);
   }
-  return false;
+  return undefined;
 }
 
 function cssPropertyAt(source: string, targetIndex: number): string | undefined {
@@ -312,6 +312,15 @@ function cssPropertyAt(source: string, targetIndex: number): string | undefined 
     .toLowerCase();
 }
 
+function cssUrlIsNamespaceDeclaration(source: string, targetIndex: number): boolean {
+  const boundary = Math.max(
+    source.lastIndexOf('{', targetIndex),
+    source.lastIndexOf('}', targetIndex),
+    source.lastIndexOf(';', targetIndex)
+  );
+  return /^@namespace(?:\s|$)/i.test(stripCssComments(source.slice(boundary + 1, targetIndex)).trim());
+}
+
 function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInScope = false): boolean {
   const imageStringFunctions = new Set(['image-set', '-webkit-image-set', 'image']);
   let quote = '';
@@ -344,10 +353,14 @@ function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInS
     const imageFunction = cssFunctionTokenStart(source, index, imageStringFunctions);
     if (imageFunction !== null) {
       const end = cssFunctionEnd(source, imageFunction);
+      if (end === null) return true;
+      const unsafeString = cssFunctionUnsafeImageString(source, imageFunction, end);
+      if (unsafeString) {
+        return true;
+      }
       if (
-        end === null ||
-        cssFunctionHasUnsafeImageString(source, imageFunction, end) ||
-        (dataBaseInScope && /^(?:image-set|-webkit-image-set|image)$/i.test(source.slice(index, imageFunction).trim()))
+        dataBaseInScope &&
+        /^(?:image-set|-webkit-image-set|image)$/i.test(source.slice(index, imageFunction).trim())
       ) {
         return true;
       }
@@ -369,6 +382,11 @@ function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInS
       reference = reference.slice(1, -1);
     }
     reference = decodeCssEscapes(stripCssComments(reference, '')).trim();
+    const property = propertyHint ?? cssPropertyAt(source, index);
+    if (/^data:/i.test(reference) && cssUrlIsNamespaceDeclaration(source, index)) {
+      index = end;
+      continue;
+    }
     if (
       !reference ||
       /^data:/i.test(reference) ||
@@ -378,7 +396,6 @@ function cssUrlReferencesData(source: string, propertyHint?: string, dataBaseInS
     }
     if (reference.startsWith('#')) {
       if (dataBaseInScope) return true;
-      const property = propertyHint ?? cssPropertyAt(source, index);
       if (property && !SVG_VECTOR_URL_PROPERTIES.has(property)) return true;
     }
     index = end;
@@ -626,11 +643,20 @@ function stylesheetSizesRoot(css: string, root: Element, inheritedRoot = false):
 
 function hasUnsafeSvgResources(document: Document): boolean {
   const unnamespacedSvg = !document.documentElement.namespaceURI;
-  const hasDataBase = [...document.querySelectorAll('*')].some((element) =>
-    /^data:/i.test((element.getAttributeNS(XML_NAMESPACE, 'base') ?? '').trim())
-  );
+  const dataBaseScopes = new WeakMap<Element, boolean>();
+  const pending: Array<{ element: Element; inherited: boolean }> = [
+    { element: document.documentElement, inherited: false },
+  ];
+  while (pending.length > 0) {
+    const { element, inherited } = pending.pop()!;
+    const inDataBaseScope = inherited || /^data:/i.test((element.getAttributeNS(XML_NAMESPACE, 'base') ?? '').trim());
+    dataBaseScopes.set(element, inDataBaseScope);
+    for (const child of element.children) pending.push({ element: child, inherited: inDataBaseScope });
+  }
+
   for (const element of document.querySelectorAll('*')) {
     const elementName = element.localName.toLowerCase();
+    const dataBaseInScope = dataBaseScopes.get(element) ?? false;
     const isSvgElement = element.namespaceURI === SVG_NAMESPACE || (unnamespacedSvg && element.namespaceURI === null);
     if (isSvgElement && elementName === 'foreignobject') return true;
     if (isSvgElement && elementName === 'feimage') return true;
@@ -650,7 +676,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
     }
 
     const inlineStyle = element.getAttribute('style');
-    if (inlineStyle && cssUrlReferencesData(inlineStyle, undefined, hasDataBase)) return true;
+    if (inlineStyle && cssUrlReferencesData(inlineStyle, undefined, dataBaseInScope)) return true;
 
     if (!isSvgElement) continue;
 
@@ -662,7 +688,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
           !value ||
           /^data:/i.test(value) ||
           (elementName === 'image' && value.startsWith('#')) ||
-          (hasDataBase && !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//'))
+          (dataBaseInScope && !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//'))
         ) {
           return true;
         }
@@ -672,7 +698,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
     for (const attribute of [...element.attributes]) {
       if (
         SVG_URL_PRESENTATION_ATTRIBUTES.has(attribute.localName.toLowerCase()) &&
-        cssUrlReferencesData(attribute.value, attribute.localName.toLowerCase(), hasDataBase)
+        cssUrlReferencesData(attribute.value, attribute.localName.toLowerCase(), dataBaseInScope)
       ) {
         return true;
       }
@@ -713,7 +739,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
         !targetPrefix &&
         (normalizedTargetLocalName === 'style' ||
           (normalizedTargetLocalName && SVG_URL_PRESENTATION_ATTRIBUTES.has(normalizedTargetLocalName))) &&
-        values.some((value) => cssUrlReferencesData(value, normalizedTargetLocalName, hasDataBase))
+        values.some((value) => cssUrlReferencesData(value, normalizedTargetLocalName, dataBaseInScope))
       ) {
         return true;
       }
@@ -721,7 +747,7 @@ function hasUnsafeSvgResources(document: Document): boolean {
   }
 
   return [...document.querySelectorAll('style')].some((style) =>
-    cssUrlReferencesData(style.textContent ?? '', undefined, hasDataBase)
+    cssUrlReferencesData(style.textContent ?? '', undefined, dataBaseScopes.get(style) ?? false)
   );
 }
 
