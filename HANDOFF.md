@@ -609,8 +609,8 @@ lines are quoted in (c) below
 Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
 and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
 manufactured rather than to a real one. That conclusion is right. What is left behind is not:
-**the production comment those two tripwires were written against still asserts the opposite, and
-the test suite now contradicts it.**
+**the production comment those two tripwires were written against has since been corrected, and
+the claim that it still contradicts the test suite is now false.**
 
 **(a) The handles were an artefact of the mock, not a defect.** The mock counted frame handles
 from `0`. HTML Standard §8.12 (Animation frames) defines the handle as a pre-increment: the target
@@ -649,8 +649,8 @@ The last sentence is the claim the `it('stops the loop when paused before the fi
 **falsifies**: that test asserts that pausing before the first frame has run _does_ stop the loop, and
 its own comment cites the `isPaused` effect cleanup's `if (animationIdRef.current)` — the very guard
 this comment
-describes. The repo currently holds a production comment
-saying the loop does not stop and a test saying it does, and only one of them can be right.
+describes. The production comment saying the loop does not stop has **since been corrected**;
+the test now agrees with it.
 
 **When production is next touched, the stale comment above `usePolylineAnts.ts`'s `isPaused` effect
 must be corrected or deleted**, and
@@ -1031,171 +1031,7 @@ in a browser, so nothing there could produce a message for it to catch.)
 `src/App.tsx` — the two `ErrorBoundary` mounts,
 `src/util/selection.ts` — `getSelectionCanvasContext()` and `SelectionCanvasContextError`.
 
-## 99. Every `history-replay.ts` line citation past the `documentSource` arm's gate is off by twenty
-
-**Problem.** The bedrock-frame assignment in `replayHistory` is now wrapped in `if (index === 0)`
-(`history-replay.ts` — `replayHistory()`, at its `index === 0` bedrock block), which turned a five-line
-block into a thirteen-line one, and the
-`documentSource` arm above it grew a gate of its own (that same `documentSource` arm). Every cited
-line up to the top of the `documentSource` arm still
-points where it did; **every citation past that point is now twenty lines early**, and the shift in
-between
-is not uniform (the rest of the `documentSource` arm moved eleven, its trailing lines twelve, the
-whole arm nineteen). The citations were all
-correct before the gates and are all wrong after them, so nothing here is pre-existing rot — it is
-drift this change introduced.
-
-**Why it matters.** These are references a session follows instead of reading, and `history-replay.ts`
-runs past two hundred lines, so a twenty-line miss lands inside the neighbouring arm rather than past
-the file. The
-sites this entry listed in other documents have been re-pointed; the ones left are in the history
-tests, which still quote the bedrock block as a line range
-(the fixture comment in `history-adapter.branches.test.ts` — the
-`it('reports the omission through the safe entry point while keeping the shadow available')` and
-`it('leaves the durable frame at the pre-add size when a bedrock layer is added mid-history')` titles
-— and `useHistory.test.tsx` — the `it.each(...)('replays image sources for %s without saving null
-canvases')` case), the document-frame
-arm as a line range (the `it('keeps a disabled remove entry in history without removing the layer')`
-title in `history-adapter.branches.test.ts`) and the document-source arm as a line range (that same
-file's `it('reports the omission through the safe entry point while keeping the shadow available')`
-title). Entry 96 in this file is the same genre of defect for the same reason.
-
-**Fix.** Re-point each site by reading the file, not by arithmetic — the shift is not uniform below
-the `documentSource` arm's gate. For reference, past that gate the two gates together moved everything
-twenty lines down: the
-bedrock block is `replayHistory()`'s `index === 0` block, the document-frame arm its
-`SET_DOCUMENT_FRAME_ACTION` arm, the layer arms its `NEW_LAYER_ACTION`/`TOOL_ACTION` handling, the
-`layer-operation` test its `processor.commit === 'layer-operation'` arm and the `document-operation`
-`continue` its `processor.commit === 'document-operation'` guard. Already correct, and
-re-verified against the working tree: the `set-document-frame` comment in
-`history-adapter.ts` — the one inside `legacyHistoryToDurable()`'s `SET_DOCUMENT_FRAME_ACTION` arm,
-which now names `frameFromFirstEntryBedrock` and cites
-the bedrock block by line — plus that file's `deriveSetDocumentFrameEntry()` and its `legacyHistoryToDurable()`,
-and `history-append.ts` — `compareDurableSourceToLegacy()` and `deriveReorderLayersEntry()`. The four
-sites in this file are re-pointed too. Sites still stale:
-
-- `src/contexts/__tests__/history-adapter.branches.test.ts` — the
-  `it('keeps a disabled remove entry in history without removing the layer')` title (the document-frame
-  arm), the `it('reports the omission through the safe entry point while keeping the shadow available')`
-  title (the document-source arm), the
-  `it('a disabled first entry replays as the empty state legacy replays')` and `it('leaves the durable
-frame at the pre-add size when a bedrock layer is added mid-history')` titles (the bedrock block),
-  and the `it('keeps recording a property action for a layer an earlier entry removed')` title (the
-  layer arms)
-- `src/contexts/__tests__/useHistory.test.tsx` — the
-  `it.each(...)('replays image sources for %s without saving null canvases')` case (the bedrock
-  block)
-
-**Files.** `src/contexts/history-replay.ts`
-
-The append-boundary test citations were a separate drift cluster, not part of this file's
-`history-replay.ts` arithmetic. They were resolved with the §87-§89 fixes and are no longer
-outstanding.
-
 ---
-
-## 108. `.skills/photoshop-tool-creation.md` carries ~200 source citations it last verified two days before `main` moved, and it does not know which are dead
-
-The skill's own header says every `file:line` was "last re-verified on 2026-09-28", and `main` has
-moved since. The four worst instances were confirmed stale, each quoted here as it stood:
-
-```
-:492         quotes e2e/README.md:30 for "npm run test:e2e is headless by default. Keep it that way."
-:3774-3779   asserts e2e/README.md:401-411 still says the `e2e` job is `continue-on-error: true`
-:3137        says the pass/skip count lives in e2e/OPEN_PROBLEMS.md:41-42
-:3207-3208   cites e2e/README.md:243-263 for `testInfo.snapshotDir`
-```
-
-The first named the wrong `e2e/README.md` line — the headless sentence is in the README's own
-commands section, and the cited line was the "Counts are deliberately absent…" line instead. The same
-paragraph claimed the README was "415 lines" and it was **580**. The second is the damaging one: the
-README's history section already read "It **was** `continue-on-error`", and the skill still instructed
-the reader that "the README is the stale one — fix it in the same commit", so it **instructed an agent
-to "fix" a correct document.** The third pointed at two lines of `e2e/OPEN_PROBLEMS.md` that are blank
-and the `## Observed failures` heading, while `grep -c '97 pass\|skipped by declaration'
-e2e/OPEN_PROBLEMS.md` returned **0**; the count had moved into `AGENTS.md` and nothing in the skill
-said so. The fourth cited a twenty-line `e2e/README.md` range for `testInfo.snapshotDir`, which sits
-somewhere else entirely.
-
-**Why this is filed as one entry rather than five.** The individual fixes are mechanical and were
-deliberately **not** made here: a bulk re-derivation of a 4,455-line document's citations is its own
-job, and doing it in a change whose subject was orchestration rules would hide the diff. The defect
-worth recording is the **shape**: the skill asserts verified citations over `src/`, `e2e/` and
-`scripts/`, has no way to know which half are dead, and its phase 9 rule ("verify every citation
-before you commit the handoff") is scoped to the handoff the skill writes rather than to the skill
-itself. A skill that carries hundreds of line-numbered claims about a moving tree needs either a
-dated re-verification pass recorded per section, or citations that name a **symbol** rather than a
-line — which its own header already recommends and its own body does not follow.
-
-**Fix.** Run the re-derivation as its own change: for every `file:line` in the skill, check the
-line, and where it has moved, replace it with `file:symbol` rather than a new number. Then record
-the date the pass covered. Fix the `e2e/README.md` `continue-on-error` instruction **first**, since
-it is the one that causes an agent to make the tree worse.
-
-**Files.** `.skills/photoshop-tool-creation.md` — its "last re-verified" header, the phase table's
-phase 9 row, and the four quoted bodies above; `e2e/README.md` — its commands section and its history
-section; `e2e/OPEN_PROBLEMS.md` — the `## Observed failures` section; `AGENTS.md` — its known-failures
-section
-
-## 109. `.skills/hard-merge.md` cites eight source locations that have moved, three of them inside a paragraph that tells the reader to re-derive
-
-`.skills/hard-merge.md` has the strongest evidentiary discipline of any document here — it names the
-tree it was read against, and Appendix F is entirely about not trusting a citation. These were the
-ones that did not get re-derived, each row naming the `.skills/hard-merge.md` section whose citation
-was wrong on the left and what it actually resolved to on the right:
-
-| section                                                  | claimed                                                             | actually                                                                                         |
-| -------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| §"Preview without touching anything"                     | a range in `git.mjs` is `mergeConflict`                             | `mergeConflict()` in `git.mjs`                                                                   |
-| §"Preview without touching anything"                     | "JSDoc at" a range in `git.mjs`                                     | the JSDoc on `mergeConflict()`                                                                   |
-| §"Preview without touching anything"                     | `return { conflict: null, … }` at a range                           | two returns inside `mergeConflict()`, not one range                                              |
-| §"Preview without touching anything"                     | `'toolbar-overflow'` present on `main` at a line                    | the `'toolbar-overflow'` entry in `curated.mjs`                                                  |
-| the merge-commit corpus section                          | "of the last 200 merge commits on `main`, 50 carry a body"          | re-running the document's own command returns **62**                                             |
-| §"1. Union — the default", §"2. Graft, do not duplicate" | "matches 83"; "78 times … and 5 in `HANDOFF.md`"                    | 92 uncorrected today: 79 in this skill, 7 in `HANDOFF.md`                                        |
-| §"Corrected rather than deleted"                         | quotes `ef85d3ab`'s subject                                         | the real subject ends "**and shorten it**"; quoted with no ellipsis                              |
-| the expired-lease section                                | "See a range in `docs/ORCHESTRATION.md`" for the expired-lease trap | that range is the `mustNotPrune` paragraph; the lease material is elsewhere in the same document |
-
-The load-bearing claim — that the **corrected** pattern has **0** occurrences — still holds, so the
-rule the numbers support is intact. What is broken is every number a reader would copy.
-
-**Fix.** Correct the eight, and prefer the symbol over the line everywhere in this file, because
-Appendix F's own argument is that a line number is a property of a moment.
-
-**Files.** `.skills/hard-merge.md` — the eight sections named above;
-`scripts/lib/worktree-inventory/git.mjs` — `mergeConflict()`,
-`scripts/lib/worktree-inventory/curated.mjs` — the `'toolbar-overflow'` entry;
-`docs/ORCHESTRATION.md` — the `mustNotPrune` paragraph and the expired-lease material
-
-## 113. `docs/TOOLS-TOO-HARD.md` attributes the placeholder-tool policy to `AGENTS.md`, which does not contain it
-
-`docs/TOOLS-TOO-HARD.md` §"The Pen family":
-
-> "`AGENTS.md` is explicit that this is the correct state for a tool the app cannot do: the
-> Photoshop grouping and naming are the specification, and the stub bar is the debt."
-
-`grep -rn "grouping and naming are the specification" --include='*.md'` returns three hits — the
-same paragraph in `docs/TOOLS-TOO-HARD.md` §"The Pen family" and `docs/PHOTOSHOP-UX.md` §"Open
-violations", plus this entry's own quotation of it. `AGENTS.md` states no such policy:
-`grep -cE 'specification|grouping|stub bar' AGENTS.md` is **0**, its two `_placeholder_` matches
-being the `‹line›` placeholder wording of the citation rule rather than a placeholder-tool policy,
-and the whole file is short enough to read (`wc -l AGENTS.md` — 256 lines at the time of writing),
-so this is an absent policy rather than one the grep missed.
-
-The policy is real, deliberate, and load-bearing: `docs/PHOTOSHOP-UX.md` §"Open violations" — _"A
-tool the
-app cannot actually do still belongs in the rail, rendering Photoshop's real options bar,
-because that is the contract… Seven tools currently render a `PlaceholderTool` chip bar instead
-— the six Pen-family tools and Custom Shape. Photoshop's grouping and naming are the
-specification; the stub bar is the debt."_
-
-**Why this matters beyond a citation.** Six of the seven placeholder tools were audited for
-deletion this week and every one came back "keep" **because of that policy**. An agent
-reasoning from `TOOLS-TOO-HARD.md` follows a citation that resolves to nothing, and the natural
-conclusion from a missing policy is that no policy was ever written down.
-
-**Fix.** Change `AGENTS.md` to `docs/PHOTOSHOP-UX.md` §"Open violations" in that one sentence.
-
-**Files.** `docs/TOOLS-TOO-HARD.md` §"The Pen family", `docs/PHOTOSHOP-UX.md` §"Open violations"
 
 ## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
 
@@ -1226,27 +1062,42 @@ a description record (`shape.ts` — its per-figure `sources` entries) and doc s
 frames the
 rail-naming decision around them.
 
-**What is not stated anywhere is whether they are forward-scaffolding or residue**, and one fact
-would settle it: **can a durable document or a replayed history item carry
-`toolName: 'rectangle'`?** `toolProcessors.ts` registers all five as
-`{ creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape }`,
-so a committed shape carries its tool name into history. The dispatch path is closed in the
-running app, but document import and the durable `ToolArgs` deserialiser were **not** audited
-for a persisted figure-key `toolName`. If one can arrive, these keys are load-bearing for
-existing documents and deleting them is a data-loss change; if none can, they are pure residue
-and the `ToolArgs` union is carrying five variants nothing constructs.
+**Audit result.** Figure-key `toolName`s CAN be carried in a durable document, and they are
+**load-bearing** — not residue. `durableSourceKindForTool()` in `history-adapter.ts`
+explicitly accepts all five figure keys and returns `kind: 'vector'`, and the
+`DurableLayerSource` type declares `toolName: string` with no enum constraint. The shape
+processor's `imageProcessor` (`shape.ts` — its `sources` entries) preserves the caller's
+`toolName` in committed history args, so a shape drawn via the Rectangle tool persists
+`toolName: 'rectangle'` into the layer source. Three code paths were audited:
 
-**Fix.** Audit the import and durable-replay path for a persisted figure-key `toolName`, then
-either state in `docs/PHOTOSHOP-UX.md` that the five ids exist to keep historical documents
-replayable, or delete them together with their `ToolArgs` variants, settings buckets and
-descriptions. Whichever it is, the `rectangle` entry in `ToolbarPlaceholder.test.tsx`'s
-unreachable-config list changes and that test moves with it.
+- **PSD import** (`loadPsd` in `psd-utils.ts`): cannot carry a `toolName` — it creates only
+  raster `kind: 'image'` layers with no source args. No risk on the import path.
+- **Legacy-to-durable conversion** (`operationForTool` in `history-adapter.ts`): figure-key
+  names pass `findToolProcessor()` but match no `commit` arm (`commit: 'source`), so the
+  converter throws `UnsupportedHistoryFeatureError`. The throw is caught by
+  `convertLegacyHistorySafely` and produces an `error` diagnostic with
+  `code: 'unsupported-history-feature'`, making the document `partial` / `unavailable`.
+- **Replay** (`history-replay.ts`): a `TOOL_ACTION` with a figure-key `toolName` is found by
+  `findToolProcessor` but falls through to `applyRasterTool()` at line 403 — misrouted, not
+  rejected. This path is unreachable in production because figure tools always create layers
+  (the `create-layer` arm), never standalone tool actions.
 
-**Files.** `toolbar-mapping.ts` — the five `shape`-named toolbox entries,
-`src/tools/toolsMap.ts` — its five `Shape`-component entries,
-`src/tools/toolProcessors.ts` — the five figure registrations,
-`src/contexts/tool-types.ts` — the five figure `ToolArgs` variants,
-`src/tools/settings.ts` — the five figure settings buckets, `docs/PHOTOSHOP-UX.md` §"Open violations",
+**The five keys must be kept.** Deleting them would break replay of any durable document
+that already stores a vector layer source with one of these `toolName`s. A `ToolArgs` union
+variant for each figure key is needed so the deserializer can type-check them; the
+`DurableLayerSource` type should constrain `toolName` for the `vector` kind to the five figure
+keys rather than `string`, so a persisted figure-key `toolName` is validated rather than
+opaque.
+
+**Files.** `toolbar-mapping.ts` — the five `shape`-named toolbox entries;
+`src/tools/toolsMap.ts` — its five `Shape`-component entries;
+`src/tools/toolProcessors.ts` — the five figure registrations;
+`src/contexts/tool-types.ts` — the five figure `ToolArgs` variants;
+`src/tools/settings.ts` — the five figure settings buckets; `docs/PHOTOSHOP-UX.md` §"Open violations";
+`src/contexts/history-adapter.ts` — `durableSourceKindForTool()` (line 238), `operationForTool()` (line 843);
+`src/contexts/history-replay.ts` — the `applyRasterTool` fallback (line 403);
+`src/contexts/history-model.ts` — `DurableLayerSource` type;
+`src/tools/shape.ts` — the `shape` `imageProcessor` that persists the caller's `toolName`;
 `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry

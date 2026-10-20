@@ -147,8 +147,8 @@ describe('useMarchingPath animation lifecycle', () => {
     // `++identifier` off a counter that "must initially be zero" (HTML Standard §8.12), so
     // the first is 1 and the guard is never wrong in a browser. This used to be an
     // `it.fails` claiming the guard skipped handle 0 — an input this mock manufactured and
-    // the spec excludes. The production comment at `usePolylineAnts.ts:134-136` still
-    // asserts the opposite; see HANDOFF.md.
+    // the spec excludes. The production comment at `usePolylineAnts.ts:134-136` asserted
+    // the opposite; it has since been corrected. See HANDOFF.md.
     const { rerender } = setup();
     expect([...rafMocks.frames.keys()]).toEqual([1]);
 

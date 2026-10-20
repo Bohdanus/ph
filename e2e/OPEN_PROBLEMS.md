@@ -236,25 +236,6 @@ exact triples to the cell geometry so the anti-aliased edges and the `#000` gaps
 covered too. Add a dark-theme case that pins the direction this depends on, so the
 latent wrong-pass has a tripwire of its own rather than resting on a config default.
 
-## P3 — 10 orphaned committed baselines (2.1 MB)
-
-`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
-
-The directory holds 17 files. Seven are read — the formats whose `verification` is
-`browser-pixels` in `e2e/export/helpers.ts`, each read through
-`baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
-
-- the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
-  `.avif`, and `drawing-icon.ico`) — no code writes or reads them any more, and
-  `drawing.bmp` alone is most of the 2.1 MB
-- `drawing-icon.ico.png` (256x256) — the ICO spec compares the export against the
-  source canvas in-browser via `CHANGED_CHANNEL_THRESHOLD_ICO` and never calls
-  `baselineFile()`
-- `source-baseline.png` (300x100, exactly `CANVAS_REDRAW_CLIP`)
-
-A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
-were left in place because deleting committed baselines was not authorized.
-
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
 
 `@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`

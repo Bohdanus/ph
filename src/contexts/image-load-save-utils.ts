@@ -460,7 +460,7 @@ function cssVariableReferences(source: string): { references: string[]; valid: b
     const fallbackValues: string[] = [];
     let invalidVar = false;
     try {
-      walkCss(valueAst, (node) => {
+      walkCss(valueAst, (node: any) => {
         if (node.type !== 'Function' || decodeCssEscapes(node.name).toLowerCase() !== 'var') return;
         const children = node.children.toArray();
         let name: string | undefined;
@@ -621,7 +621,7 @@ function collectCssSource(
 
   const stopWalk = Symbol('stop CSS resource walk');
   try {
-    walkCss(root, (node) => {
+    walkCss(root, (node: any) => {
       analysis.nodeCount += 1;
       if (analysis.nodeCount > MAX_CSS_ANALYSIS_NODES) throw stopWalk;
       if (node.type === 'Declaration') {
