@@ -10,7 +10,7 @@ For imports, retire numbered entries with an explicit list heading such as `### 
 A descriptive numbered heading ending in a status word is ambiguous and makes `swarm import`
 refuse the batch; remove the status word for a live entry.
 
-### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-231 — deleted
+### Items 0, 2-4, 5-10, 11-30, 33-44, 46-54, 56-62, 64-65, 67-73, 75, 77, 82, 84-85, 87-93, 96-97, 100-102, 104-106, 111-112, 114, 115, 117-118, 122, 125-134, 136-138, 141-142, 144-145, 149-150, 154-155, 157-158, 161, 165-166, 168, 170, 175-177, 180, 186-188, 190-192, 194-196, 198-200, 202-203, 204-208, 210-213, 220, 222, 224-227, 229-231 — deleted
 
 Numbers only, and that is deliberate. This heading is the machine-readable record that keeps the
 board from re-filing a number as new work
@@ -1032,73 +1032,6 @@ in a browser, so nothing there could produce a message for it to catch.)
 `src/util/selection.ts` — `getSelectionCanvasContext()` and `SelectionCanvasContextError`.
 
 ---
-
-## 114. `rectangle`, `ellipse`, `triangle`, `polygon` and `line` are `ToolName`s the rail can never select, and nothing states whether they are load-bearing
-
-`toolbar-mapping.ts` — its five `shape`-named toolbox entries — gives the toolbox entries
-`name: 'shape'` plus a `figure`, never the key:
-
-```ts
-{ label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
-{ label: 'Ellipse Tool',    name: 'shape', figure: 'oval' },
-{ label: 'Line Tool',       name: 'shape', figure: 'line' },
-{ label: 'Triangle Tool',   name: 'shape', figure: 'triangle' },
-{ label: 'Polygon Tool',    name: 'shape', figure: 'polygon' },
-```
-
-All four activation surfaces translate — the rail's own `selectTool` in `SidebarLeft.tsx`, the mobile
-equivalent in `Mobile/mobile-tools.ts`, the `Image`/`Edit` menu dispatch in `DesktopHeader.tsx`, and
-the keyboard map in `AppKeyboardShortcuts.tsx` — and `useApp.ts` holds the only `SET_TOOL_NAME` dispatch
-in `src`, so the enumeration is complete. `DesktopHeader.tsx` records that dispatching the
-key directly was a **bug they fixed**: it mounted the Shape panel where the
-`toolName !== 'shape'` guard in `Shape.tsx` suppressed the colour publish, so the well said
-red and the shape committed black.
-
-So the five keys are unreachable as a `toolName` but wired: each has a `ToolArgs` union variant
-(its `rectangle`, `ellipse`, `triangle`, `polygon` and `line` variants in `tool-types.ts`), a
-per-figure settings bucket (the five figure buckets in `settings.ts`),
-a description record (`shape.ts` — its per-figure `sources` entries) and doc sections.
-`docs/PHOTOSHOP-UX.md` §"Open violations" names them as _"registry ids the rail never names"_ and
-frames the
-rail-naming decision around them.
-
-**Audit result.** Figure-key `toolName`s CAN be carried in a durable document, and they are
-**load-bearing** — not residue. `durableSourceKindForTool()` in `history-adapter.ts`
-explicitly accepts all five figure keys and returns `kind: 'vector'`, and the
-`DurableLayerSource` type declares `toolName: string` with no enum constraint. The shape
-processor's `imageProcessor` (`shape.ts` — its `sources` entries) preserves the caller's
-`toolName` in committed history args, so a shape drawn via the Rectangle tool persists
-`toolName: 'rectangle'` into the layer source. Three code paths were audited:
-
-- **PSD import** (`loadPsd` in `psd-utils.ts`): cannot carry a `toolName` — it creates only
-  raster `kind: 'image'` layers with no source args. No risk on the import path.
-- **Legacy-to-durable conversion** (`operationForTool` in `history-adapter.ts`): figure-key
-  names pass `findToolProcessor()` but match no `commit` arm (`commit: 'source`), so the
-  converter throws `UnsupportedHistoryFeatureError`. The throw is caught by
-  `convertLegacyHistorySafely` and produces an `error` diagnostic with
-  `code: 'unsupported-history-feature'`, making the document `partial` / `unavailable`.
-- **Replay** (`history-replay.ts`): a `TOOL_ACTION` with a figure-key `toolName` is found by
-  `findToolProcessor` but falls through to `applyRasterTool()` at line 403 — misrouted, not
-  rejected. This path is unreachable in production because figure tools always create layers
-  (the `create-layer` arm), never standalone tool actions.
-
-**The five keys must be kept.** Deleting them would break replay of any durable document
-that already stores a vector layer source with one of these `toolName`s. A `ToolArgs` union
-variant for each figure key is needed so the deserializer can type-check them; the
-`DurableLayerSource` type should constrain `toolName` for the `vector` kind to the five figure
-keys rather than `string`, so a persisted figure-key `toolName` is validated rather than
-opaque.
-
-**Files.** `toolbar-mapping.ts` — the five `shape`-named toolbox entries;
-`src/tools/toolsMap.ts` — its five `Shape`-component entries;
-`src/tools/toolProcessors.ts` — the five figure registrations;
-`src/contexts/tool-types.ts` — the five figure `ToolArgs` variants;
-`src/tools/settings.ts` — the five figure settings buckets; `docs/PHOTOSHOP-UX.md` §"Open violations";
-`src/contexts/history-adapter.ts` — `durableSourceKindForTool()` (line 238), `operationForTool()` (line 843);
-`src/contexts/history-replay.ts` — the `applyRasterTool` fallback (line 403);
-`src/contexts/history-model.ts` — `DurableLayerSource` type;
-`src/tools/shape.ts` — the `shape` `imageProcessor` that persists the caller's `toolName`;
-`src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx` — the `it` title named in §112
 
 ## 116. Three of the six pen tools have no shortcut and no Tools-menu entry
 
