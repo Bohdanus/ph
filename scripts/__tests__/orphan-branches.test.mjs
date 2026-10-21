@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectOrphanBranches, report } from '../orphan-branches.mjs';
+import { collectOrphanBranches, main, report } from '../orphan-branches.mjs';
 
 vi.setConfig({ testTimeout: 20_000 });
 
@@ -91,6 +91,22 @@ describe('a branch nobody holds', () => {
 
   it('says so plainly when there is nothing to report', () => {
     expect(report([], { base: 'main' })).toMatch(/^orphan-branches: none\./);
+  });
+
+  it('prints valid JSON for the machine-readable report', () => {
+    const root = fixture();
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      expect(main(['--json', '--limit', '1'], { cwd: root })).toBe(0);
+      expect(JSON.parse(String(write.mock.calls[0][0]))).toMatchObject({
+        base: 'main',
+        count: 1,
+        branches: [{ name: 'orphan' }],
+      });
+    } finally {
+      write.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('states that it retires nothing', () => {

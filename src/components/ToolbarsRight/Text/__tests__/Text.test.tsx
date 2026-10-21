@@ -16,6 +16,7 @@ const storeState = vi.hoisted(() => ({
 const toolArgs = vi.hoisted(() => ({
   toolName: 'text',
   text: 'Hello',
+  angle: 0,
   fontSize: 64,
   lineHeight: 1.1,
   kind: 'point' as 'point' | 'paragraph',
@@ -98,6 +99,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
   Object.assign(toolArgs, {
     toolName: 'text',
     text: 'Hello',
+    angle: 0,
     fontSize: 64,
     lineHeight: 1.1,
     kind: 'point',
@@ -685,6 +687,20 @@ describe('Text toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
   });
 
+  it('resets only the active angle after Apply, keeping the committed angle and typography', () => {
+    resetToolArgs({ angle: 37, fontSize: 48, tracking: 120, color: '#123456' });
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+    expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
+      expect.objectContaining({ args: expect.objectContaining({ angle: 37, fontSize: 48, tracking: 120 }) })
+    );
+    expect(mockSetToolArgs).toHaveBeenCalledWith(
+      expect.objectContaining({ text: '', rect: null, angle: 0, fontSize: 48, tracking: 120, color: '#123456' })
+    );
+  });
+
   // The re-entrancy guard, and the order it is armed in. Armed BEFORE the create it poisoned itself:
   // a throw from `createLayerFromTool` left it set against a `toolArgs` identity nothing had changed,
   // so every later Apply returned immediately and the user's next try did nothing at all. The draft
@@ -697,6 +713,7 @@ describe('Text toolbar', () => {
     const swallow = (event: ErrorEvent) => event.preventDefault();
     window.addEventListener('error', swallow);
     try {
+      resetToolArgs({ angle: 37 });
       mockCreateLayerFromTool.mockImplementationOnce(() => {
         throw new Error('Layer width and height must be greater than 0');
       });
@@ -706,6 +723,7 @@ describe('Text toolbar', () => {
 
       // Nothing was cleared, and — this is the assertion — the failed attempt did NOT consume the guard.
       expect(mockSetToolArgs).not.toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      expect(toolArgs.angle).toBe(37);
 
       // The second click, with a create that works this time.
       mockCreateLayerFromTool.mockImplementation(() => undefined);
@@ -713,6 +731,7 @@ describe('Text toolbar', () => {
 
       expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(2);
       expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ angle: 0 }));
     } finally {
       window.removeEventListener('error', swallow);
     }
@@ -728,6 +747,7 @@ describe('Text toolbar', () => {
   });
 
   it('Cancel discards the draft without creating a layer', () => {
+    resetToolArgs({ angle: 37, fontSize: 48, tracking: 120 });
     renderWithProvider(<Text />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -737,8 +757,9 @@ describe('Text toolbar', () => {
     // would be a Commit under a different name, and the two buttons sit next to each other.
     expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ angle: 0, fontSize: 48, tracking: 120 }));
     // And nothing about the style travels with the discard, so the tool keeps its last settings.
-    expect(lastToolArgs()).toMatchObject({ fontFamily: 'Arial', fontSize: 64, color: '#000000' });
+    expect(lastToolArgs()).toMatchObject({ fontFamily: 'Arial', fontSize: 48, color: '#000000' });
   });
 
   describe('font family', () => {

@@ -25,7 +25,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A combo box showing every font available to Photoshop in a WYSIWYG list, each entry rendered in its own face so the list previews the fonts.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:292',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:293',
       },
       {
         control: 'Font Style',
@@ -38,21 +38,21 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The type size, entered in points by default and accepting a unit suffix. `TypeUnits` is `MILLIMETERS / PIXELS / POINTS`.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:315',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:316',
       },
       {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:397',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:398',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:409',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:410',
       },
       {
         control: 'Toggle the type on a path',
@@ -351,3 +351,6 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     ],
   },
 };
+
+typeCropDescriptions.crop.appNotes +=
+  ' After a committed frame crop, re-entering Crop starts from the current frame. With angle 0, extending an edge live-previews retained layer pixels outside that frame; applying reveals them at their original raster coordinates without resampling. The retained-pixel preview and letterbox overhang guides are angle-0 only because their frame subtraction is axis-aligned. This recovers only content still present in layer sources. OVR-1 concerns extension into areas with no retained pixels and does not block crop recovery. The explicit Delete Cropped Pixels control and Image > Reveal All command are still absent.';

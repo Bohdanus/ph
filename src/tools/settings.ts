@@ -3,7 +3,7 @@ import { cloneDeep } from 'lodash-es';
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
 import { PAINT_FLOW_DEFAULT } from '../util/brush-airbrush.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
-import { AUTO_LEADING } from './text.ts';
+import { AUTO_LEADING, NEUTRAL_TEXT_ANGLE } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
 import type { ColorsToolArgs } from './colors.ts';
@@ -126,6 +126,7 @@ export const defaultSettings = {
   } satisfies ShapeToolArgs,
   text: {
     text: '',
+    angle: NEUTRAL_TEXT_ANGLE,
     fontSize: 64,
     lineHeight: AUTO_LEADING,
     fontFamily: 'Arial',
