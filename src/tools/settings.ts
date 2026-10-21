@@ -126,6 +126,7 @@ export const defaultSettings = {
   } satisfies ShapeToolArgs,
   text: {
     text: '',
+    angle: 0,
     fontSize: 64,
     lineHeight: AUTO_LEADING,
     fontFamily: 'Arial',

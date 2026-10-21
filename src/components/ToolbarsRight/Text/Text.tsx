@@ -248,13 +248,13 @@ const Text: React.FC<{}> = () => {
       createLayerFromTool({ args: committedArgs });
     }
     appliedArgsRef.current = toolArgs;
-    onChange({ ...persistedArgs, text: '', rect: null });
+    onChange({ ...persistedArgs, text: '', rect: null, angle: 0 });
   };
 
   const clear = () => {
     if (toolArgs.editingLayerId) cancelLayerPreview(toolArgs.editingLayerId);
     const { editingLayerId: _editingLayerId, ...persistedArgs } = toolArgs;
-    onChange({ ...persistedArgs, text: '', rect: null });
+    onChange({ ...persistedArgs, text: '', rect: null, angle: 0 });
   };
 
   return (
