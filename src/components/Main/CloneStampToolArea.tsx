@@ -154,7 +154,7 @@ const drawCloneSourceMarker = (
  * readable at all.
  *
  * The processor is then called with the LAYER's own bitmap in that layer's space
- * (`src/contexts/useLayer.ts:730-734`), so the frame the processor addresses is
+ * (`src/contexts/useLayer.ts:1282`), so the frame the processor addresses is
  * layer-local [0, pos.width) x [0, pos.height) and carries no document origin. Every point
  * is therefore translated by `-activeLayer.pos` on the way into the processor — the same
  * rebase `buildArgs` in `GradientToolArea.tsx` does and for the same reason, and both now

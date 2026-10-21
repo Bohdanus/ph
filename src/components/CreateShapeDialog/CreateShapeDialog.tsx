@@ -23,7 +23,7 @@ import type { FigureType } from '../../tools/shape.ts';
  * - Width and Height — every documented figure.
  * - From Center — every documented figure.
  * - Corner Radius — the Rectangle and the Triangle per Adobe, but `drawShape` reads
- *   `args.cornerRadius` in its rectangle branch ONLY (`src/tools/shape.ts:240`), so the
+ *   `args.cornerRadius` in its rectangle branch ONLY (`src/tools/shape.ts:339`), so the
  *   field is gated to the rectangle. Offering it on a triangle would be a control that
  *   accepts a value and does nothing, which is the defect, not the feature.
  *
@@ -31,7 +31,7 @@ import type { FigureType } from '../../tools/shape.ts';
  * publishing: a January 2021 archive of `drawing-shapes.html` names Width & Height,
  * Symmetric, Number of Sides, Corner Radius, Star Ratio, Smooth Star Indents and From
  * Center, and a 2025 capture of the same URL does not contain it. The renderer hardcodes
- * five sides and reads no star or indent argument (`src/tools/shape.ts:210`), so those
+ * five sides and reads no star or indent argument (`src/tools/shape.ts:305`), so those
  * fields would all be inert; HANDOFF.md carries them as the gap rather than this dialog
  * pretending to offer them.
  *

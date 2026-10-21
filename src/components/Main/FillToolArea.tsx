@@ -28,7 +28,8 @@ const isFillToolName = (toolName: string): toolName is FillToolName =>
  * a tool that cannot read its own destination must fail LOUDLY and write NO history, because the
  * alternative — a commit that silently changed nothing — is a tool that looks alive and is not.
  *
- * `src/test/setup.ts:182-190` removes `getImageData` from the globally installed canvas context
+ * `src/test/setup.ts:327` documents that the global mock deliberately omits `getImageData` from the
+ * globally installed canvas context
  * precisely because production code branches on `typeof ctx.getImageData === 'function'`; that
  * guard is what these two names hang off.
  */
@@ -59,7 +60,7 @@ const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap'
 };
 
 /**
- * Reads the active layer back at its own size, the same read `src/tools/fill.ts:59-66` performs
+ * Reads the active layer back at its own size, the same read `src/tools/fill.ts:75` performs
  * inside the processor. Returns null when the environment cannot supply pixels, which is the
  * read-back refusal rather than an error: the caller turns null into a loud no-commit.
  */
