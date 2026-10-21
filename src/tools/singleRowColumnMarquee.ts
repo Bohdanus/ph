@@ -57,7 +57,7 @@ export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangul
  *
  * `Math.floor` rather than `Math.round` because a pixel is an interval, not a point: a
  * pointer at `y = 12.9` is inside row 12, and rounding would hand row 13 a press that
- * landed above it. `trimRect` (`src/util/rect.ts:32`) rounds edges for the same reason it
+ * landed above it. `trimRect` (`src/util/rect.ts:66`) rounds edges for the same reason it
  * rounds them — an edge is a boundary — but it rounds the RESULT of a drag, where the user
  * has already chosen a corner; here the user has chosen a location inside the document.
  *

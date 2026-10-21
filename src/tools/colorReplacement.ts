@@ -30,7 +30,7 @@ export type ColorReplacementSampling = 'current-layer' | 'all-layers';
 /**
  * Adobe's tolerance scale for this tool is 0-100 — NOT the 0-255 the bucket, the magic eraser
  * and the background eraser use (`FILL_TOLERANCE_MAX`) and NOT the wand's 0-100 measured against
- * a 4-channel distance (`src/util/magicWand.ts:58-69`). The two 0-100 scales are different
+ * a 4-channel distance (`src/util/floodFill.ts:58-69`). The two 0-100 scales are different
  * metrics, which is why the scale lives here and `createFloodFillMask` is handed a converted
  * value rather than this number.
  */
