@@ -1,14 +1,23 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { isEqual } from 'lodash-es';
 import { useRect } from '../../hooks/useRect.ts';
-import { useLayers } from '../../contexts/useLayer.ts';
+import { MAX_DOCUMENT_FRAME_AREA, MAX_DOCUMENT_FRAME_SIDE, useLayers } from '../../contexts/useLayer.ts';
 import { sortRoundRect } from '../../util/rect.ts';
-import { HANDLE_SIZE } from '../../util/constants.ts';
+import { HANDLE_SIZE, SET_DOCUMENT_FRAME_ACTION } from '../../util/constants.ts';
 import type { ContainDimensions } from '../../util/contain-fit.ts';
 import { CROP_OVERLAYS, type CropToolArgs, type CropOverlayType } from '../../tools/crop.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { Point, Pos, RectXYSorted, Size } from '../../contexts/general-types.ts';
+import {
+  canvasRectToDocumentFrame,
+  documentFrameFromSize,
+  documentFrameSize,
+  type DocumentFrame,
+} from '../../contexts/document-frame.ts';
+import { drawLayersToCanvas } from '../../contexts/layer-renderer.ts';
+import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
+import { useDevicePixelRatio } from '../../hooks/useDevicePixelRatio.ts';
 
 type cropToolAreaProps = {
   className?: string;
@@ -65,6 +74,32 @@ function subtractRect(base: Pos, cut: Pos): Pos[] {
   ];
 
   return pieces.filter((piece) => piece.width > 0 && piece.height > 0);
+}
+
+/** The smallest frame containing both the visible frame and the pending crop. */
+function getRecoveryPreviewFrame(rect: RectXYSorted | null, frame: DocumentFrame, angle: number): DocumentFrame | null {
+  if (!rect || angle !== 0) return null;
+
+  const cropFrame = canvasRectToDocumentFrame(sortRoundRect(rect), frame);
+  const x = Math.min(frame.x, cropFrame.x);
+  const y = Math.min(frame.y, cropFrame.y);
+  const right = Math.max(frame.x + frame.width, cropFrame.x + cropFrame.width);
+  const bottom = Math.max(frame.y + frame.height, cropFrame.y + cropFrame.height);
+  const previewFrame = { x, y, width: right - x, height: bottom - y };
+  if (![x, y, previewFrame.width, previewFrame.height].every(Number.isFinite)) return null;
+
+  const extendsFrame =
+    cropFrame.x < frame.x ||
+    cropFrame.y < frame.y ||
+    cropFrame.x + cropFrame.width > frame.x + frame.width ||
+    cropFrame.y + cropFrame.height > frame.y + frame.height;
+  if (!extendsFrame) return null;
+
+  const { width, height } = documentFrameSize(previewFrame);
+  if (width > MAX_DOCUMENT_FRAME_SIDE || height > MAX_DOCUMENT_FRAME_SIDE || width * height > MAX_DOCUMENT_FRAME_AREA)
+    return null;
+
+  return previewFrame;
 }
 
 /**
@@ -179,9 +214,11 @@ function cropOverhangPieces(rect: RectXYSorted, frameSize: Size, fit: ContainDim
 }
 
 export const CropToolArea = ({ className }: cropToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, canvasRef, totalSize }] = useStore();
+  const [{ containerRef, toolOverlayRef, canvasRef, totalSize, documentFrame, layers, history, historyIndex }] =
+    useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const { applyDocumentCrop } = useLayers();
+  const dpr = useDevicePixelRatio();
 
   const args = toolArgs as CropToolArgs;
   const {
@@ -193,6 +230,25 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     overlayVisibility = 'always',
     gridDivisions = 10,
   } = args;
+  const frameWidth = totalSize.width;
+  const frameHeight = totalSize.height;
+  const currentFrame = useMemo(
+    () => documentFrame ?? documentFrameFromSize({ width: frameWidth, height: frameHeight }),
+    [documentFrame, frameHeight, frameWidth]
+  );
+  const initialFrameRect = useMemo(
+    () => ({ x1: 0, y1: 0, x2: frameWidth, y2: frameHeight }),
+    [frameHeight, frameWidth]
+  );
+  const hasAppliedFrameChange = useMemo(
+    () =>
+      history
+        .slice(0, historyIndex + 1)
+        .some((item) => item.actionName === SET_DOCUMENT_FRAME_ACTION && !item.disabled),
+    [history, historyIndex]
+  );
+  const initialRect = rect ?? (hasAppliedFrameChange ? initialFrameRect : null);
+
   const clearDraft = () =>
     args.angle === undefined
       ? { ...args, rect: null, preRatioRect: null }
@@ -298,10 +354,46 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
    * second thing that can disagree with the canvas, and the whole point is that this cannot.
    */
   const [painted, setPainted] = useState<{ rect: RectXYSorted; fit: ContainDimensions } | null>(null);
+  const previousRectRef = useRef(rect);
+  useEffect(() => {
+    if (previousRectRef.current && !rect) setPainted(null);
+    previousRectRef.current = rect;
+  }, [rect]);
+
+  const recoveryPreviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const paintedRect = painted?.rect ?? null;
+  const recoveryPreviewFrame = useMemo(
+    () => (hasAppliedFrameChange ? getRecoveryPreviewFrame(paintedRect, currentFrame, angle) : null),
+    [angle, currentFrame, hasAppliedFrameChange, paintedRect]
+  );
+
+  useEffect(() => {
+    const canvas = recoveryPreviewCanvasRef.current;
+    if (!canvas || !recoveryPreviewFrame) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!drawLayersToCanvas(canvas, getSortedLayersArray(layers), recoveryPreviewFrame, undefined, dpr)) return;
+
+    const previewContext = canvas.getContext('2d');
+    if (!previewContext) return;
+    previewContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // The main canvas already shows this portion. Clear it so semi-transparent layers are not
+    // composited twice; only retained pixels beyond the current frame belong on this overlay.
+    previewContext.clearRect(
+      currentFrame.x - recoveryPreviewFrame.x,
+      currentFrame.y - recoveryPreviewFrame.y,
+      currentFrame.width,
+      currentFrame.height
+    );
+    previewContext.setTransform(1, 0, 0, 1, 0, 0);
+  }, [currentFrame, dpr, layers, recoveryPreviewFrame]);
 
   const { pointerHandlers, pointerState } = useRect({
     imageSize: totalSize,
-    initialRect: rect,
+    initialRect,
     containerRef,
     overlayRef: toolOverlayRef,
     aspectRatio,
@@ -356,14 +448,16 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     },
   });
 
-  // `painted` survives a clear — `drawMask` returns before `onRepaint` when there is no rect to
-  // paint — so the published rect is what says whether a frame is still there to be shown.
-  const overhangPieces = rect && painted ? cropOverhangPieces(painted.rect, totalSize, painted.fit) : [];
+  // `painted` tracks pointer motion before `onChangeEnd` publishes the draft rect, so the crop box
+  // and its retained-pixel preview can follow the pointer live. A committed/cancelled draft clears
+  // the last painted geometry when `rect` transitions back to null.
+  const overhangPieces = painted ? cropOverhangPieces(painted.rect, totalSize, painted.fit) : [];
   const dash = painted ? OUTLINE_DASH / painted.fit.scale : 0;
 
   return (
     <div className={`${className} cursor-crop`} data-rotation={angle} {...pointerHandlers}>
-      {overhangPieces.length > 0 && painted && (
+      {/* Overhang pieces subtract axis-aligned frames; suppress them until rotated clip geometry exists. */}
+      {overhangPieces.length > 0 && painted && angle === 0 && (
         /**
          * `pointer-events: none` is inherited, so this one declaration takes the whole subtree out
          * of hit testing and the three `useRect` handlers above stay reachable everywhere. The
@@ -393,6 +487,20 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
                   : `translate(${painted.fit.offsetX}px, ${painted.fit.offsetY}px) scale(${painted.fit.scale}) rotate(${angle}deg)`,
             }}
           >
+            {recoveryPreviewFrame && (
+              <canvas
+                ref={recoveryPreviewCanvasRef}
+                data-testid="crop-retained-pixels-preview"
+                aria-hidden="true"
+                className="pointer-events-none absolute"
+                style={{
+                  left: recoveryPreviewFrame.x - currentFrame.x,
+                  top: recoveryPreviewFrame.y - currentFrame.y,
+                  width: recoveryPreviewFrame.width,
+                  height: recoveryPreviewFrame.height,
+                }}
+              />
+            )}
             {overhangPieces.map((piece) => (
               <div
                 key={`${piece.kind}-${piece.x}-${piece.y}-${piece.width}-${piece.height}`}
