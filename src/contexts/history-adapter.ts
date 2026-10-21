@@ -506,14 +506,14 @@ function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerS
   if (kind === 'legacy-tool') {
     return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
   }
-  return Object.freeze({
-    kind,
-    toolName: source.args.toolName as VectorToolName,
-    args,
-    size,
-    sourcePos: Object.freeze({ ...layer.pos }),
-    isBedrock,
-  }) as DurableLayerSource;
+  const sourcePos = Object.freeze({ ...layer.pos });
+  if (kind === 'vector') {
+    return Object.freeze({ kind, toolName: source.args.toolName as VectorToolName, args, size, sourcePos, isBedrock });
+  }
+  if (kind === 'text') {
+    return Object.freeze({ kind, toolName: source.args.toolName, args, size, sourcePos, isBedrock });
+  }
+  return Object.freeze({ kind, toolName: source.args.toolName, args, size, sourcePos, isBedrock });
 }
 
 function convertSource(
