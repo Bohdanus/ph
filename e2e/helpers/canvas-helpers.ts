@@ -357,8 +357,8 @@ export function documentStrokeBoundaryMargin(
 
 /**
  * Half of the Draw tool's default `lineWidth`, which is 10 DOCUMENT pixels
- * (`src/tools/settings.ts:38`, `pen: { alpha: 0.9, lineWidth: 10 }`, spread into the `draw`
- * args at `:68-74`). A stroke's painted extent therefore runs half a stroke WIDER than the
+ * (`savedDrawPerPen.pen` in `src/tools/settings.ts`, spread into `defaultSettings.draw`).
+ * A stroke's painted extent therefore runs half a stroke WIDER than the
  * point that was asked for on each side, and `getDarkPixelBounds` reports the whole painted
  * extent rather than its centre line. That is the entire legitimate reason a stroke's edge
  * is not at the cursor, and it is why the bound below is a function of the fit scale rather
@@ -371,7 +371,7 @@ export const DRAW_HALF_WIDTH_DOC_PX = 5;
 /**
  * What is left after the geometric half-width: the faint antialiased fringe of the round
  * cap, and the one-image-pixel convention of `imageBoundsToCss`, which maps an inclusive
- * pixel index to the CENTRE of that pixel (see its JSDoc, `screenshot-scale.ts:153-176`) and
+ * pixel index to the CENTRE of that pixel (see `imageBoundsToCss` in `screenshot-scale.ts`) and
  * so under-reports a covered span by half a CSS pixel on a 1:1 capture. `getDarkPixelBounds`
  * also applies a DARK THRESHOLD, so it discards the faintest fringe pixels entirely, which
  * is why the measured deviation lands a little UNDER `DRAW_HALF_WIDTH_DOC_PX * scale` rather
@@ -704,17 +704,14 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * The window's scroll offset, read at the moment a caller needs it. `[PAGE]`, and the
- * only export here that reads from the live page rather than deriving geometry from a
- * box. (Note: `onScreenClip` in this file also calls `page.evaluate` for scroll, so the
- * "only export" qualifier is scoped to the page-read of scroll state.)
+ * Reads the window's scroll offset when a caller needs it. `onScreenClip` also reads,
+ * changes, and restores scroll internally; this export lets other helpers query the
+ * current offset.
  *
- * Caching it would be wrong rather than merely stale — the scroll offset can change
- * between captures, so an offset read once is wrong before and after any scroll-changing
- * interaction. `clickToolButton` holds scroll steady via `preservingScroll`, but the
- * offset itself originates from explicit scrolls (`onScreenClip`, test helpers like
- * `scrollToTop`), not from the preserve/restore. See `e2e/OPEN_PROBLEMS.md` for why the
- * app no longer scrolls at document level.
+ * Do not cache the value across operations: helpers such as `onScreenClip` can change
+ * the window position, and `preservingScroll` reads it before a tool click so it can
+ * restore that position afterward. The app shell no longer scrolls at document level;
+ * see `e2e/OPEN_PROBLEMS.md`.
  */
 export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
