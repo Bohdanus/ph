@@ -27,10 +27,10 @@ and the verification is `git log`, not this file.
 been deleted rather than left as an unimported coordination layer that a later surface could
 mount by accident. The two durable modules that remain:
 
-| module                            | non-test importing files                                              |
-| --------------------------------- | --------------------------------------------------------------------- |
-| `src/contexts/materialization.ts` | 1 — `durable-compositor.ts`                                           |
-| `src/contexts/durable-replay.ts`  | 3 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts` |
+| module                            | non-test importing files                                                                                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/contexts/materialization.ts` | 2 — `durable-compositor.ts`, `durable-render-projection.ts`                                                                                                                          |
+| `src/contexts/durable-replay.ts`  | 8 — `StoreContext.tsx`, `materialization.ts`, `durable-compositor.ts`, `useCurrentTool.tsx`, `useFile.tsx`, `export-canvas.ts`, `durable-render-projection.ts`, `DevStatusStrip.tsx` |
 
 Production still uses legacy `HistoryItem[]` → `replayHistory` (from `resetHistoryTo` in
 `useHistory.ts`) for logical navigation and compatibility state. `StoreContext.tsx` now composes
@@ -42,13 +42,20 @@ frame-changing commits remain legacy until their ownership or frame-parity gates
 legacy layers remain the logical replay record. `durableDocument`,
 `durableStatus` and `durableDiagnostics` are derived by `buildDurableDocument`
 (`StoreContext.tsx`) and projected onto the three `StoreData` fields at each call site, never
-inside that function. Two production components read the fields from `useStore()` —
-`DevStatusStripContents` in `DevStatusStrip.tsx` and `ErrorBoundaryFallback` in
-`ErrorBoundary.tsx` — so this entry's earlier claim that they are "read by nothing outside that
-file" was false and is withdrawn. Neither reader runs on a normal production load, so the
-conclusion below still stands: `DevStatusStrip` gates its body on `import.meta.env.DEV`, and
-`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback`, which renders only after
-a region has thrown (`ErrorBoundary.render`). The
+inside that function. Production readers of the durable fields from `useStore()`:
+
+- `useCurrentTool.tsx` — reads `durableDocument` and `durableStatus` in `CurrentToolProvider`;
+  this is a production reader on every load (the provider wraps the entire app) and uses them
+  to hydrate tool args for the active layer when `durableStatus === 'current'`.
+- `DevStatusStripContents` in `DevStatusStrip.tsx` — gates its body on `import.meta.env.DEV`.
+- `ErrorBoundaryFallback` in `ErrorBoundary.tsx` — renders only after a region has thrown (`ErrorBoundary.render`).
+
+The earlier claim that the fields are "read by nothing outside that file" was false and is
+withdrawn. The two DEV/thrown-gated readers remain non-production in practice; the
+`CurrentToolProvider` reader is live on every load but only consumes the document when
+`durableStatus === 'current'` (i.e. a durable plan already exists), so the migration remains
+staged: the legacy `replayHistory` is still the primary path and durable hydration is a
+conditional supplement. The
 `it('no longer exposes replayCoordinator, presentationMaterialization or getReplayRevisionToken')`
 case in `StoreContext.durable-boundary.test.tsx` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
