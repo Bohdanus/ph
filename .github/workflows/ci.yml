@@ -50,7 +50,7 @@ jobs:
 
       - name: Reject new line-number citations
         env:
-          CITATION_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'main' }}
+          CITATION_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: node scripts/check-new-line-citations.mjs --base "$CITATION_DIFF_BASE"
 
       - name: Lint
