@@ -47,9 +47,9 @@ const Transform: React.FC<{}> = () => {
   // listener on the bar is what turns a drag into one history entry instead of a
   // preview nobody commits.
   //
-  // `commitDirtyTool` consumes the pending preview (`useLayer.ts:488`) and is a
+  // `commitDirtyTool` consumes the pending preview (`useLayer.ts:790`) and is a
   // no-op when there is none, and `normalizeCommittedToolArgs` drops an identity
-  // transform before it reaches history (`useLayer.ts:484`) — so a release that
+  // transform before it reaches history (`useLayer.ts:256`) — so a release that
   // moved nothing writes nothing, and a second release cannot double-write.
   useEffect(() => {
     const bar = barRef.current;

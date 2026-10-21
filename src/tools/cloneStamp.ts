@@ -255,7 +255,7 @@ const cloneStroke = (
  * the tool has to carry: with no source there is nothing to copy FROM, so stamping is a
  * no-op and NOT a fill-everything. The source raster has already been drawn into the
  * returned canvas by the caller, so the no-op is the source unchanged rather than a blank
- * layer — `tempUpdateLayer` (`src/contexts/useLayer.ts:560`) assigns the result straight to
+ * layer — `tempUpdateLayer` (`src/contexts/useLayer.ts:1140`) assigns the result straight to
  * `layer.tmpCanvas`, so returning an un-drawn canvas would blank the preview.
  *
  * The returned canvas is always FULL DOCUMENT SIZE and always freshly allocated, even for

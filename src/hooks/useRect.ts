@@ -282,7 +282,7 @@ export function drawCropOverlay(
  * subtract `documentFrame.x`/`.y`: those are DOCUMENT coordinates, they are the only thing negative
  * about a grown frame, and folding them in here is an off-by-frame-origin bug that is invisible on
  * a zero-origin document. Document space is one `canvasRectToDocumentFrame` call away
- * (`src/contexts/document-frame.ts:48-55`), and making it is the consumer's job.
+ * (`src/contexts/document-frame.ts:52`), and making it is the consumer's job.
  */
 export function useRect({
   aspectRatio = null,

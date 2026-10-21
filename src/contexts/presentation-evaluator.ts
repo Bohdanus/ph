@@ -238,7 +238,7 @@ function assemblePresentation(
  *
  * `getAffineBounds` throws on a degenerate, non-finite, over-coordinate or over-area
  * transform, which is the right answer for all three: `materialization.ts:213` and
- * `useLayer.ts:150` size an allocated surface from `localBounds`, and `rasterizeBounds`
+ * `useLayer.ts:128` size an allocated surface from `localBounds`, and `rasterizeBounds`
  * (`affine-transform.ts:125`) refuses the same numbers a second time.
  */
 export function evaluatePresentation(input: PresentationEvaluationInput): PresentationEvaluation {

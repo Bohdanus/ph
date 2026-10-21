@@ -124,7 +124,7 @@ export function replayHistory(
       // A document replacement means to be a WHOLE new document, so it is honoured
       // only as the first entry, which is how one is ever written: the single
       // production producer is `REPLACE_DOCUMENT` with `history: [entry]`
-      // (`useApp.ts:120`, `useLayer.ts:195`). Carried mid-history it would replace
+      // (`useApp.ts:120`, `useLayer.ts:481`). Carried mid-history it would replace
       // the layer record and resize the canvas from anywhere in the timeline, which
       // is the same class of defect as the mid-history bedrock source below, so it is
       // refused — the durable converter already refuses it, reporting
@@ -332,7 +332,7 @@ export function replayHistory(
         try {
           requireCanvasFilter(toolArgs.toolName);
         } catch (error) {
-          // The commit gate at `useLayer.ts:356` refuses the same tool and logs it
+          // The commit gate at `useLayer.ts:1160` refuses the same tool and logs it
           // there, before any `TOOL_ACTION` exists, so this catch is a backstop for
           // a timeline that arrived some other way. It records rather than logs,
           // because replay repeats: see `ReplayDiagnostic`.
@@ -381,7 +381,7 @@ export function replayHistory(
         // one loses a real edit: `getTransformFromHistoryArgs` validates the affine
         // against `layer.pos` AS IT IS NOW, while it was validated at commit time
         // against the pos the layer had then (`normalizeCommittedToolArgs` at
-        // `useLayer.ts:74-79` writes the retained transform into the committed
+        // `useLayer.ts:256` writes the retained transform into the committed
         // args), so a transform valid when committed can fail a bounds check here
         // after the layer moved. Recorded, not logged — see `ReplayDiagnostic`.
         diagnostics.push({

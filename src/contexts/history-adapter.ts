@@ -360,7 +360,7 @@ function frameFromLegacy(
  * The frame an ENABLED first entry establishes when it is a bedrock source rather than a
  * document source — the shape `File > New` produces, where `createBlankLayer(params,
  * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
- * `{ isBedrock: true, size }` (`useLayer.ts:245-258`, `history-utils.ts:22-25`).
+ * `{ isBedrock: true, size }` (`useLayer.ts:564`, `history-utils.ts:22-25`).
  *
  * The baseline describes the document at cursor -1, and for that history the bedrock
  * size IS that document, so reading it here is what makes the shadow agree with the

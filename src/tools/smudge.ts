@@ -228,7 +228,7 @@ const smudgeStroke = (
  * name the same per-dab coverage.
  *
  * The returned canvas is always FULL DOCUMENT SIZE and always freshly allocated, even for an
- * empty path. `tempUpdateLayer` (`src/contexts/useLayer.ts:560`) assigns the result straight to
+ * empty path. `tempUpdateLayer` (`src/contexts/useLayer.ts:1140`) assigns the result straight to
  * `layer.tmpCanvas`, so handing back the source bitmap instead would leave the layer's
  * `tmpCanvas` holding the very object it already had, and the preview would show no edit at
  * all.

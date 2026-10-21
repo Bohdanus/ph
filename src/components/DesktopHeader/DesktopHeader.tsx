@@ -305,7 +305,7 @@ const DesktopHeader = () => {
     // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
     // OUTGOING tool (`useApp.ts:167`), and `patchToolArgs` writes straight into the
     // live `currentArgsRef` (`useCurrentTool.tsx:61`). Patching first would leave the
-    // text branch at `useLayer.ts:394` reading shape args — no `.text`, no `.rect` —
+    // text branch at `useLayer.ts:257` reading shape args — no `.text`, no `.rect` —
     // so it early-returns and an unapplied text layer is dropped with nothing to undo.
     // Selecting first lets that commit read the text args it is meant to read.
     if (figure !== undefined) {
