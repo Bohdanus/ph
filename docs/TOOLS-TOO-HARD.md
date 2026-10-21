@@ -155,8 +155,20 @@ from the marquee's bar.
 
 ### Regions with holes
 
-**What Photoshop does.** Selects a donut, a mug handle or a face correctly: the selection is the
-material inside the region, and the enclosed background inside it stays unselected.
+**What Photoshop does.** Adobe's UXP Selection reference describes selections as pixel-based
+"area or areas" with possible 8-bit transparency, and exposes replace, extend, subtract and
+intersect operations. That model can represent disconnected regions and holes. The specific
+donut/mug-handle Magic Wand example below is an inference from that pixel-region model and the
+Wand's contiguous color-region behavior, not a sentence Adobe states explicitly in the accessible
+reference. The HelpX Magic Wand page I tried to retrieve returned HTTP 403 during this research
+pass, so the exact gesture-level claim remains inferred rather than directly quoted.
+
+Sources: [Adobe UXP Selection](https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/),
+[Adobe Magic Wand tool](https://helpx.adobe.com/photoshop/using/tool-techniques/magic-wand-tool.html).
+
+For a contiguous Wand click on a region shaped like a donut or a mug handle, the inferred correct
+result is that the selected material remains selected and the enclosed background remains
+unselected. Clicking the surrounding background likewise should not select the enclosed object.
 
 **What this app does.** Refuses. The boundary tracer classifies loops and then rejects the whole
 region if any of them is a hole (`magicWand.ts` — `createMagicWandSelectionFromImageData()`):
@@ -186,14 +198,62 @@ if (polygon?.hasHoles) {
 }
 ```
 
-**Why it is too hard.** Refusing is the only correct answer a single-polygon model can give, and the
-comment says so. Supporting a hole means `Selection` becomes multi-polygon — the same type change the
-combination modes need — plus a rasteriser that honours outer-plus-holes rather than outer-only, on
-every path that turns a polygon into pixels.
+**Why it is too hard.** Refusing is the only safe answer a single-polygon model can give: committing
+only the outer contour would select pixels the Wand mask excluded. This refusal prevents a false
+selection, but it is not Photoshop-faithful behavior or an operator-approved override. Supporting
+holes requires one authoritative representation that preserves both disconnected components and
+enclosed exclusions, plus consistent rasterisation, clipping, hit-testing, outline display and
+history handling.
 
 **What the app does instead.** The stroke is dropped, the warning names the reason, and a selection
 is never wrong. It is missing, not silently degenerate: a user who draws a ring gets nothing rather
 than a filled disc.
+
+This is specifically the **hole refusal**, not the separate disconnected-region loss: the Wand
+also keeps only the largest outer contour when one click matches several disconnected components.
+That loss is tracked separately in `HANDOFF.md` §185. Quick Selection's tracer likewise returns
+only its largest outer contour; `hasHoles` reports enclosed exclusions, while `loopCount` records
+that the source mask may have more contours than the returned polygon.
+
+**Open-source implementation evidence.** Pinta's `DocumentSelection` is a vector precedent: it
+stores a collection of polygon contours and sets Cairo's even-odd fill rule when clipping the
+selection. Its source therefore supports sibling contours for disconnected regions and holes, but
+does not prove that the same representation will round-trip this app's traced masks exactly
+([Pinta `DocumentSelection.cs`](https://github.com/PintaProject/Pinta/blob/master/Pinta.Core/Classes/DocumentSelection.cs)).
+The MIT license is stated in that source file's header. The `magic-wand-js` implementation instead
+keeps the binary flood-fill mask and returns traced contours tagged `inner` for hole boundaries
+([source](https://github.com/Tamersoul/magic-wand-js/blob/master/src/MagicWand.js)).
+
+GIMP is the mask-first precedent: its contiguous-region operation produces a `Y float` mask, and
+its channel derives cached boundary segments from that mask rather than treating one polygon as the
+selection ([region fill source](https://github.com/GNOME/gimp/blob/master/app/core/gimppickable-contiguous-region.cc),
+[channel boundary source](https://github.com/GNOME/gimp/blob/master/app/core/gimpchannel.c)).
+fabric.js is a useful browser-rasterization reference, not a photo editor: its `Path` supports
+multiple `M`-started subpaths and its object renderer selects `ctx.fill('evenodd')`
+([Path](https://github.com/fabricjs/fabric.js/blob/master/packages/core/src/shapes/Path.ts),
+[renderer](https://github.com/fabricjs/fabric.js/blob/master/packages/core/src/shapes/Object/Object.ts)).
+
+**What the evidence does not decide.** For hard-edged contours, a multi-contour path with one
+consistent even-odd rule is a plausible, compact migration path; Pinta demonstrates that shape.
+A selection mask is closer to Photoshop's documented pixel model and avoids making traced geometry
+the authority, but storing masks in history introduces byte accounting, cloning, asset-lifetime and
+durable-replay contracts. Neither option is proven for this app. Any implementation proposal must
+round-trip the original Wand mask for disconnected regions, a ring, nested islands and diagonal
+contacts, and must preserve the same result through copy, fill, erase, clone, ants and undo/redo.
+
+The change cannot stop at the Wand tracer. `Selection` currently exposes one `points` path. That
+geometry is consumed by polygon and feathered copy/rasterization, point-in-selection hit testing,
+marching-ants `Path2D` construction, and selection snapshot cloning and validation. Selection
+snapshots are also carried by history and translated into durable `set-selection` operations. A
+mask representation must define how these consumers obtain coverage and outlines; a compound-path
+representation must update them all and preserve clone/equality/validation behavior.
+
+There is also a rasterization parity trap. The CPU fallback tests pixel centers with the existing
+single-polygon ray-crossing predicate, while the Canvas copy path clips with Canvas's default
+nonzero fill rule. A compound path must use equivalent membership rules in both implementations;
+using even-odd for the vector path but leaving the CPU path or Canvas clip on a different rule can
+make paint/copy results disagree with marching ants. Tests should compare resulting pixel masks,
+not only contour bounds or screenshots.
 
 ### The Pen family
 

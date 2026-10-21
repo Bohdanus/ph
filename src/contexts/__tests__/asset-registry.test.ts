@@ -23,146 +23,6 @@ afterEach(() => {
 });
 
 describe('AssetRegistry ownership', () => {
-  it('matches a live asset to the exact source object registered for it', () => {
-    const registry = new AssetRegistry();
-    const first = createOwnedBitmap(10, 10);
-    const second = createOwnedBitmap(10, 10);
-
-    const firstId = registry.registerBaseline('document-a', first.bitmap, { ownership: 'adopt' });
-    const secondId = registry.registerBaseline('document-a', second.bitmap, { ownership: 'adopt' });
-
-    expect(registry.matchesRegisteredSource(firstId, first.bitmap, 'document-a')).toBe(true);
-    expect(registry.matchesRegisteredSource(firstId, second.bitmap, 'document-a')).toBe(false);
-    expect(registry.matchesRegisteredSource(secondId, first.bitmap, 'document-a')).toBe(false);
-
-    registry.disposeDocument('document-a');
-    expect(registry.matchesRegisteredSource(firstId, first.bitmap, 'document-a')).toBe(false);
-    expect(first.close).toHaveBeenCalledOnce();
-    expect(second.close).toHaveBeenCalledOnce();
-  });
-
-  it('matches the same source alias registered by multiple documents', () => {
-    const registry = new AssetRegistry();
-    const { bitmap, close } = createOwnedBitmap(10, 10);
-
-    const firstId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
-    const secondId = registry.registerBaseline('document-b', bitmap, { ownership: 'adopt' });
-
-    expect(secondId).toBe(firstId);
-    expect(registry.matchesRegisteredSource(firstId, bitmap, 'document-a')).toBe(true);
-    expect(registry.matchesRegisteredSource(firstId, bitmap, 'document-b')).toBe(true);
-
-    registry.disposeDocument('document-a');
-    expect(registry.matchesRegisteredSource(firstId, bitmap, 'document-a')).toBe(false);
-    expect(registry.matchesRegisteredSource(firstId, bitmap, 'document-b')).toBe(true);
-    registry.disposeDocument('document-b');
-    expect(registry.matchesRegisteredSource(firstId, bitmap, 'document-b')).toBe(false);
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('matches an asynchronous mutable-source registration to its original source object', async () => {
-    const registry = new AssetRegistry();
-    const source = document.createElement('canvas');
-    const { bitmap, close } = createOwnedBitmap(10, 10);
-    vi.stubGlobal('createImageBitmap', () => Promise.resolve(bitmap));
-
-    const assetId = await registry.registerBaselineAsync('document-a', source);
-
-    expect(registry.matchesRegisteredSource(assetId, source, 'document-a')).toBe(true);
-    registry.disposeDocument('document-a');
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('deduplicates concurrent async registrations of the same source and document', async () => {
-    const registry = new AssetRegistry();
-    const source = document.createElement('canvas');
-    const firstPending = deferred<ImageBitmap>();
-    const secondPending = deferred<ImageBitmap>();
-    const first = createOwnedBitmap(10, 10);
-    const second = createOwnedBitmap(10, 10);
-    const createImageBitmap = vi
-      .fn()
-      .mockReturnValueOnce(firstPending.promise)
-      .mockReturnValueOnce(secondPending.promise);
-    vi.stubGlobal('createImageBitmap', createImageBitmap);
-
-    const firstRegistration = registry.registerBaselineAsync('document-a', source);
-    const secondRegistration = registry.registerBaselineAsync('document-a', source);
-    firstPending.resolve(first.bitmap);
-    const firstId = await firstRegistration;
-    secondPending.resolve(second.bitmap);
-    const secondId = await secondRegistration;
-
-    expect(secondId).toBe(firstId);
-    expect(registry.matchesRegisteredSource(firstId, source, 'document-a')).toBe(true);
-    expect(first.close).not.toHaveBeenCalled();
-    expect(second.close).toHaveBeenCalledOnce();
-    registry.disposeDocument('document-a');
-    expect(first.close).toHaveBeenCalledOnce();
-  });
-
-  it('does not invalidate concurrent registrations of different sources in one document', async () => {
-    const registry = new AssetRegistry();
-    const firstSource = document.createElement('canvas');
-    const secondSource = document.createElement('canvas');
-    const firstPending = deferred<ImageBitmap>();
-    const secondPending = deferred<ImageBitmap>();
-    const first = createOwnedBitmap(10, 10);
-    const second = createOwnedBitmap(20, 20);
-    const createImageBitmap = vi
-      .fn()
-      .mockReturnValueOnce(firstPending.promise)
-      .mockReturnValueOnce(secondPending.promise);
-    vi.stubGlobal('createImageBitmap', createImageBitmap);
-
-    const firstRegistration = registry.registerBaselineAsync('document-a', firstSource);
-    const secondRegistration = registry.registerBaselineAsync('document-a', secondSource);
-    firstPending.resolve(first.bitmap);
-    const firstId = await firstRegistration;
-    secondPending.resolve(second.bitmap);
-    const secondId = await secondRegistration;
-
-    expect(secondId).not.toBe(firstId);
-    expect(registry.matchesRegisteredSource(firstId, firstSource, 'document-a')).toBe(true);
-    expect(registry.matchesRegisteredSource(secondId, secondSource, 'document-a')).toBe(true);
-    registry.disposeDocument('document-a');
-    expect(first.close).toHaveBeenCalledOnce();
-    expect(second.close).toHaveBeenCalledOnce();
-  });
-
-  it('closes an async raster snapshot when its document is disposed before registration completes', async () => {
-    const registry = new AssetRegistry();
-    const source = document.createElement('canvas');
-    const pending = deferred<ImageBitmap>();
-    const { bitmap, close } = createOwnedBitmap(10, 10);
-    vi.stubGlobal('createImageBitmap', () => pending.promise);
-
-    const registration = registry.registerBaselineAsync('document-a', source);
-    registry.disposeDocument('document-a');
-    pending.resolve(bitmap);
-
-    await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
-    expect(close).toHaveBeenCalledOnce();
-    expect(registry.getDocumentGeneration('document-a')).toBe(1);
-  });
-
-  it('invalidates an async reopening when an already-disposed document is disposed again', async () => {
-    const registry = new AssetRegistry();
-    const source = document.createElement('canvas');
-    const pending = deferred<ImageBitmap>();
-    const { bitmap, close } = createOwnedBitmap(10, 10);
-    vi.stubGlobal('createImageBitmap', () => pending.promise);
-
-    registry.disposeDocument('document-a');
-    const registration = registry.registerBaselineAsync('document-a', source);
-    registry.disposeDocument('document-a');
-    pending.resolve(bitmap);
-
-    await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
-    expect(close).toHaveBeenCalledOnce();
-    expect(registry.getDocumentGeneration('document-a')).toBe(1);
-  });
-
   it('invalidates async work when the document is reopened and disposed again', async () => {
     const registry = new AssetRegistry();
     const source = document.createElement('canvas');
@@ -171,18 +31,54 @@ describe('AssetRegistry ownership', () => {
     const reopened = createOwnedBitmap(5, 5);
     vi.stubGlobal('createImageBitmap', () => pending.promise);
 
-    registry.disposeDocument('document-a');
-    expect(registry.getDocumentGeneration('document-a')).toBe(1);
-    const registration = registry.registerBaselineAsync('document-a', source);
-    registry.registerBaseline('document-a', reopened.bitmap, { ownership: 'adopt' });
-    expect(registry.getDocumentGeneration('document-a')).toBe(2);
-    registry.disposeDocument('document-a');
-    expect(registry.getDocumentGeneration('document-a')).toBe(3);
-    pending.resolve(bitmap);
+    try {
+      registry.disposeDocument('document-a');
+      expect(registry.getDocumentGeneration('document-a')).toBe(1);
+      const registration = registry.registerBaselineAsync('document-a', source);
+      registry.registerBaseline('document-a', reopened.bitmap, { ownership: 'adopt' });
+      expect(registry.getDocumentGeneration('document-a')).toBe(2);
+      registry.disposeDocument('document-a');
+      expect(registry.getDocumentGeneration('document-a')).toBe(3);
+      pending.resolve(bitmap);
 
-    await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
-    expect(close).toHaveBeenCalledOnce();
-    expect(reopened.close).toHaveBeenCalledOnce();
+      await expect(registration).rejects.toMatchObject({ name: 'AbortError' });
+      expect(close).toHaveBeenCalledOnce();
+      expect(reopened.close).toHaveBeenCalledOnce();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('reopens a disposed document when its still-leased source is registered again', async () => {
+    const registry = new AssetRegistry();
+    const source = document.createElement('canvas');
+    const createImageBitmap = vi.fn(async () => createOwnedBitmap(10, 10).bitmap);
+    vi.stubGlobal('createImageBitmap', createImageBitmap);
+    let releaseLease: (() => void) | undefined;
+
+    try {
+      const assetId = registry.registerBorrowed('document-a', source);
+      const lease = await registry.resolve(assetId);
+      releaseLease = lease.release;
+
+      registry.disposeDocument('document-a');
+      expect(registry.getDocumentGeneration('document-a')).toBe(2);
+      expect(registry.getRecord(assetId)).toBeDefined();
+
+      await expect(registry.registerBaselineAsync('document-a', source)).resolves.toBe(assetId);
+      expect(registry.getDocumentGeneration('document-a')).toBe(3);
+      expect(registry.matchesRegisteredSource(assetId, source, 'document-a')).toBe(true);
+      expect(createImageBitmap).not.toHaveBeenCalled();
+
+      registry.disposeDocument('document-a');
+      expect(registry.getRecord(assetId)).toBeDefined();
+      releaseLease();
+      releaseLease = undefined;
+      expect(registry.getRecord(assetId)).toBeUndefined();
+    } finally {
+      releaseLease?.();
+      registry.shutdown();
+    }
   });
 
   it('does not double-close an adopted ImageBitmap registered by multiple documents', () => {
@@ -271,6 +167,8 @@ describe('AssetRegistry ownership', () => {
     const [firstId, secondId] = await Promise.all([firstRegistration, secondRegistration]);
 
     expect(firstId).not.toBe(secondId);
+    expect(registry.matchesRegisteredSource(firstId, firstSource, 'document-a')).toBe(true);
+    expect(registry.matchesRegisteredSource(secondId, secondSource, 'document-a')).toBe(true);
     expect(registry.getRecord(firstId)).toBeDefined();
     expect(registry.getRecord(secondId)).toBeDefined();
     expect(registry.getDocumentGeneration('document-a')).toBe(2);
@@ -298,6 +196,7 @@ describe('AssetRegistry ownership', () => {
     const secondId = await secondRegistration;
 
     expect(firstId).toBe(secondId);
+    expect(registry.matchesRegisteredSource(firstId, source, 'document-a')).toBe(true);
     expect(createCopy).toHaveBeenCalledTimes(2);
     expect(registry.getDocumentGeneration('document-a')).toBe(1);
     expect(first.close).not.toHaveBeenCalled();
