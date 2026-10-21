@@ -98,7 +98,7 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
       // The preview goes through the same `draw` the stroke is committed with, so
       // what the bar shows is what the canvas gets. `toolName` is `'draw'` because
       // that is the only renderer; brush and pencil both force `penType` at
-      // `src/tools/toolProcessors.ts:169,182`.
+      // `src/tools/toolProcessors.ts:349,358`.
       const previewArgs: DrawToolArgs = {
         ...args,
         penType: 'pen',

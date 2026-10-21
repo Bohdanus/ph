@@ -144,7 +144,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     // size the clipped block CAN be non-empty while the centre pixel is outside it, which would index
     // a negative offset into the pixel array — `Uint8ClampedArray` returns `undefined` for negative
     // indices, so the alpha check would read the wrong byte and the average would include padding.
-    // `sampleColorAt` makes the same check (`src/tools/colorSampler.ts:146`).
+    // `sampleColorAt` makes the same check (`src/tools/colorSampler.ts:143`).
     const frameSize = documentFrameSize(documentFrame);
     if (centerX < 0 || centerY < 0 || centerX >= frameSize.width || centerY >= frameSize.height) return;
 

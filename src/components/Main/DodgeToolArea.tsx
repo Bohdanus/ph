@@ -32,7 +32,7 @@ type DodgeToolAreaProps = {
  * ACTIVE LAYER, it does not create one.
  *
  * The commit split is the whole file. `tempUpdateLayer` is the only writer of
- * `previewLayersRef` (`src/contexts/useLayer.ts:473`), so every move has to go through
+ * `previewLayersRef` (`src/contexts/useLayer.ts:1140`), so every move has to go through
  * it or `commitDirtyTool` takes its `PUBLISH_RUNTIME_PRESENTATION` branch, writes no
  * history item, and the dodge becomes silently and permanently un-undoable. Conversely
  * `updateLayerByTool` is the undo boundary and must be reached exactly ONCE per gesture

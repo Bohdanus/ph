@@ -187,7 +187,7 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     // rather than off a destructured copy for the same reason.
     //
     // `paint-bucket` ONLY. `magicEraser` subtracts alpha and never reads `color`
-    // (`src/tools/fill.ts:158-173`), so writing the foreground into its committed args would put a
+    // (`src/tools/fill.ts:175`), so writing the foreground into its committed args would put a
     // fill colour into a history entry describing an erase — a value the pixels could never honour.
     // `FillToolArgs.color` is carried for both names only so the pair shares one type, and it
     // travels unchanged for the eraser.

@@ -41,8 +41,8 @@ const clampPercent = (value: number, min: number, max: number, fallback: number)
  * Blur has one control and needs no base to merge onto, so the merge follows Levels.
  *
  * THE ROUTE IS THE WHOLE ARGUMENT FOR THIS BAR. `tempUpdateLayer`
- * (`src/contexts/useLayer.ts:473`) is the only writer of `previewLayersRef`, and
- * `commitDirtyTool` (`:323`) bakes that preview into a real layer plus a `TOOL_ACTION` entry —
+ * (`src/contexts/useLayer.ts:1140`) is the only writer of `previewLayersRef`, and
+ * `commitDirtyTool` (`:790`) bakes that preview into a real layer plus a `TOOL_ACTION` entry —
  * on tool switch, on export and in `mergeAllLayers`. A Sharpen that convolved into a canvas of
  * its own instead would produce pixels with no history entry at all, and `commitDirtyTool`
  * would then take its `PUBLISH_RUNTIME_PRESENTATION` branch and never warn: the sharpen would

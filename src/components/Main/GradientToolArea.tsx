@@ -46,7 +46,7 @@ type GradientEndpoints = { from: Point; to: Point };
  *
  * Every other tool area in this directory spells out
  * `documentFrame ?? documentFrameFromSize(totalSize)`, and this one deliberately does not:
- * `usePaintStroke` resolves the frame itself (`src/hooks/usePaintStroke.ts:141-145`) and
+ * `usePaintStroke` resolves the frame itself (`src/hooks/usePaintStroke.ts:146`) and
  * converts every pointer sample through it before any callback here runs. A second resolution
  * would be a second place for the crop offset to be got wrong, and it would be dead — the value
  * would never be read.
@@ -61,7 +61,7 @@ type GradientEndpoints = { from: Point; to: Point };
  * here rather than in the processor because this is the only place that knows the layer's `pos`,
  * and it is deterministic: the rebased numbers are what the history entry retains, and replay
  * feeds them back to this processor over the same layer-local buffer
- * (`src/contexts/useHistory.ts:169`), so a replay reproduces the same fill.
+ * (`src/contexts/useHistory.ts:187`), so a replay reproduces the same fill.
  * `src/util/layer-space.ts` states the two spaces; the stroke tools
  * that were missing this rebase are `EraserToolArea`, `SmudgeToolArea`, `DodgeToolArea` and
  * `BurnToolArea`.

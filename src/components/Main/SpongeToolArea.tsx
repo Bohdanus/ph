@@ -30,7 +30,7 @@ type SpongeToolAreaProps = {
  * the two reasons are load-bearing:
  *
  * - **`tempUpdateLayer` is the only writer of `previewLayersRef`**
- *   (`src/contexts/useLayer.ts:473`), so every move has to go through it or
+ *   (`src/contexts/useLayer.ts:1140`), so every move has to go through it or
  *   `commitDirtyTool` takes its `PUBLISH_RUNTIME_PRESENTATION` branch, writes no history
  *   item, and the sponge becomes silently and permanently un-undoable.
  * - **`updateLayerByTool` is the undo boundary and must be reached exactly ONCE per

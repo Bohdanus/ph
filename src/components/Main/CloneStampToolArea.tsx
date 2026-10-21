@@ -170,9 +170,9 @@ const drawCloneSourceMarker = (
  * ## The commit split is the whole file
  *
  * `tempUpdateLayer` is the only writer of `previewLayersRef`
- * (`src/contexts/useLayer.ts:473`), so every move goes through it or `commitDirtyTool` takes
+ * (`src/contexts/useLayer.ts:1140`), so every move goes through it or `commitDirtyTool` takes
  * its `PUBLISH_RUNTIME_PRESENTATION` branch, writes no history item, and the pixels are
- * silently and permanently un-undoable. `updateLayerByTool` (`:264`) is the undo boundary and
+ * silently and permanently un-undoable. `updateLayerByTool` (`:691`) is the undo boundary and
  * is reached exactly ONCE per gesture: `usePaintStroke` fires `onCommit` only on pointer-up,
  * so committing from `onMove` as well would put one `TOOL_ACTION` per pointer event on the
  * timeline.

@@ -77,7 +77,7 @@ const Tonal: React.FC<{}> = () => {
    * Coalesce a burst of slider writes into one store write carrying the last value.
    *
    * A drag emits a `change` per step and each one is a `setToolArgs`, which calls
-   * `saveLastSettings` (`src/contexts/useCurrentTool.tsx:62`) — so an unthrottled slider
+   * `saveLastSettings` (`src/contexts/useCurrentTool.tsx:100`) — so an unthrottled slider
    * persists settings on every frame of a drag. The pending payload is replaced
    * wholesale rather than merged, so a value the user never moved cannot survive in the
    * frame that flushes.

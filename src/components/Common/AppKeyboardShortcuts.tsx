@@ -558,7 +558,7 @@ export const AppKeyboardShortcuts = () => {
       if (!hasActiveSelection) return;
 
       // `layerViaCopy`'s null-snapshot exits are an in-band channel its callers are expected to
-      // report — `src/util/selection.ts:420-428` says so, and this was the only caller in the
+      // report — `src/util/selection.ts:390-393` says so, and this was the only caller in the
       // family that discarded the boolean. `await` rather than a `.catch`: the promise is not
       // swallowed, so a throw from the un-`try`-wrapped `copySelectionToCanvas` still reaches the
       // console with its stack, which a defensive catch that can never fire would destroy.

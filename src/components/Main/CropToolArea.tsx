@@ -73,7 +73,7 @@ function subtractRect(base: Pos, cut: Pos): Pos[] {
  * and `fit` from `containFit` over the same `totalSize` (`src/hooks/usePointerPosition.ts:137`), and
  * `totalSize` is `documentFrameSize(documentFrame)` — so neither of them carries `documentFrame.x`
  * and nothing here may subtract it. Document space is one call away, `canvasRectToDocumentFrame`
- * (`src/contexts/document-frame.ts:48-55`), and this layer sits BEFORE that call, not after it.
+ * (`src/contexts/document-frame.ts:52`), and this layer sits BEFORE that call, not after it.
  *
  * The part of a crop box that has left the frame, as CSS rectangles.
  *
@@ -202,7 +202,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
    * Photoshop commits a crop with Enter and abandons it with Escape, so the panel's Apply and Clear
    * are not the only two ways in. The listener lives here rather than in the shared keyboard table
    * because `Main` mounts this component only while the crop tool owns the gesture surface
-   * (`src/components/Main/Main.tsx:206`): the binding is scoped to the tool by construction, so no
+   * (`src/components/Main/Main.tsx:331`): the binding is scoped to the tool by construction, so no
    * table entry is added and no other tool can reach it.
    *
    * The two actions go through a ref rather than closing over the values because the crop args are

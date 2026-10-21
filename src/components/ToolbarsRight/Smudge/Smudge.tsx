@@ -28,7 +28,7 @@ const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gr
  * `strength` as the slider percentage it already is, clamped for display.
  *
  * `SmudgeToolArgs.strength` is Photoshop's `Strength`: a PERCENTAGE of the carried colour
- * blended per dab, seeded at 50 by `src/tools/settings.ts:162`. The brush engine takes the
+ * blended per dab, seeded at 50 by `src/tools/settings.ts:326`. The brush engine takes the
  * same quantity as a 0-1 `opacity`; `SMUDGE_STRENGTH_SCALE` is the divisor the processor uses
  * for that mapping, and the bar keeps the percentage so the number on screen is the number the
  * user picked in Photoshop. A non-finite value falls to the near end, for the reason

@@ -15,12 +15,12 @@ import { usePointerPosition } from './usePointerPosition.ts';
  *
  * Why the split is `onMove` + `onCommit` and not one callback: `onMove` is the
  * live preview and MUST reach the layer through `tempUpdateLayer`
- * (`src/contexts/useLayer.ts:473`), the only writer of `previewLayersRef`.
+ * (`src/contexts/useLayer.ts:1140`), the only writer of `previewLayersRef`.
  * `onCommit` is the undo boundary and MUST reach it through `updateLayerByTool`
- * (`src/contexts/useLayer.ts:264`), which dispatches the `TOOL_ACTION` history
+ * (`src/contexts/useLayer.ts:691`), which dispatches the `TOOL_ACTION` history
  * item. A tool that paints straight into its own canvas instead produces pixels
  * with zero history entries: the strokes are silently, permanently
- * un-undoable, and `commitDirtyTool` (`:323`) takes its
+ * un-undoable, and `commitDirtyTool` (`:790`) takes its
  * `PUBLISH_RUNTIME_PRESENTATION` branch and never warns, because from its point
  * of view nothing is missing. So the two callbacks are the entire surface a
  * tool touches, and the only thing this hook cannot do is touch a canvas.
@@ -47,7 +47,7 @@ export type PaintStrokeCallbacks = {
    * document space.
    *
    * This is the live preview: it must write through `tempUpdateLayer`
-   * (`src/contexts/useLayer.ts:473`) so the repainted pixels are recorded in
+   * (`src/contexts/useLayer.ts:1140`) so the repainted pixels are recorded in
    * `previewLayersRef` and `commitDirtyTool` can promote them with a history
    * entry. Painting into a private canvas here is the documented way to make a
    * stroke un-undoable.
@@ -63,7 +63,7 @@ export type PaintStrokeCallbacks = {
    *
    * This is the gesture's real end, and the only place a stroke is allowed to
    * become permanent: it must go through `updateLayerByTool`
-   * (`src/contexts/useLayer.ts:264`) so exactly one `TOOL_ACTION` history item
+   * (`src/contexts/useLayer.ts:691`) so exactly one `TOOL_ACTION` history item
    * is written per completed stroke. The same rule is what
    * `src/components/Main/RectangularSelectionToolArea.tsx:76-82` states for a
    * rectangle drag — the store is untouched by any intermediate move, so one
