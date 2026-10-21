@@ -111,7 +111,8 @@ pinned by tests, and nested `args.enabled` parity is explicit; previews still ne
 retiring the compatibility replay.
 
 **Files.** `src/contexts/materialization.ts`, `src/contexts/layer-renderer.ts`,
-`src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`
+`src/contexts/presentation-evaluator.ts`, `src/contexts/StoreContext.tsx`,
+`src/contexts/useCurrentTool.tsx`
 
 ---
 
