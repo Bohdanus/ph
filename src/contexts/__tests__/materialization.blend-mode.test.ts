@@ -146,7 +146,7 @@ function replay(layers: Record<string, DurableReplayLayer>): DurableReplayResult
 function request(registry: AssetRegistry): MaterializationRequest {
   return {
     documentId: 'blend-document',
-    baselineAssetGeneration: 0,
+    baselineAssetGeneration: registry.getDocumentGeneration('blend-document'),
     operationSetRevision: 0,
     assetRegistry: registry,
   };

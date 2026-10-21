@@ -844,6 +844,48 @@ describe('TextEditOverlay', () => {
   });
 
   describe("keydown — Enter breaks the line and the other three commit, which is Adobe's split", () => {
+    it('extends the selection by one word with Command+Shift+ArrowRight on macOS', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 0);
+
+      const notCancelled = fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+
+      expect(notCancelled).toBe(false);
+      expect(readSelection().string).toBe('Alpha');
+    });
+
+    it('extends the selection by one word with Control+Shift+ArrowLeft on Windows/Linux', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      placeCaret(el, 'Alpha beta'.length);
+
+      fireEvent.keyDown(el, { key: 'ArrowLeft', ctrlKey: true, shiftKey: true });
+
+      expect(readSelection().string).toBe('beta');
+    });
+
+    it('extends a reverse selection through its anchor and continues forward', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta' });
+      renderOverlay();
+      const el = overlay();
+      const node = el.firstChild as Text;
+      const selection = window.getSelection()!;
+      selection.setBaseAndExtent(node, 5, node, 0);
+
+      fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+      expect(selection.isCollapsed).toBe(true);
+      expect(selection.anchorOffset).toBe(5);
+      expect(selection.focusOffset).toBe(5);
+
+      fireEvent.keyDown(el, { key: 'ArrowRight', metaKey: true, shiftKey: true });
+      expect(selection.toString()).toBe(' beta');
+      expect(selection.anchorOffset).toBe(5);
+      expect(selection.focusOffset).toBe(10);
+    });
+
     it('inserts a single newline at the caret for a bare Enter, and does not commit', () => {
       renderOverlay();
       const el = overlay();
@@ -930,6 +972,18 @@ describe('TextEditOverlay', () => {
       expect(h.commitDirtyTool).not.toHaveBeenCalled();
       expect(h.setToolArgs).not.toHaveBeenCalled();
     });
+  });
+
+  it('selects all text on the fifth click in the editor', () => {
+    toolArgs = makeTextArgs({ text: 'Alpha beta' });
+    renderOverlay();
+    const el = overlay();
+    placeCaret(el, 2);
+
+    fireEvent.click(el, { detail: 5 });
+
+    expect(readSelection().string).toBe('Alpha beta');
+    expect(readSelection().collapsed).toBe(false);
   });
 
   describe('paste', () => {

@@ -772,6 +772,35 @@ test.describe('Text tool in-place editing', () => {
     expect(partial.caretIndex, 'the selection anchor did not stay at the end of the line').toBe(2);
   });
 
+  test('Command+Shift+Arrow selects the next word', async ({ page }) => {
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('Alpha beta');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Meta+Shift+ArrowRight');
+
+    const selected = await selectionState(page);
+    expect(selected.string, 'the shortcut did not select exactly one word').toBe('Alpha');
+    expect(selected.collapsed, 'word selection remained collapsed').toBe(false);
+  });
+
+  test('five clicks select all text in the editor', async ({ page }) => {
+    const box = await canvasBox(page);
+
+    await clickToPlace(page, box, CARET_CLICK);
+    await expect(overlay(page)).toBeVisible();
+    await page.keyboard.type('Alpha beta');
+    const bounds = await overlay(page).boundingBox();
+    if (!bounds) throw new Error('the text editor has no clickable bounds');
+    await page.mouse.click(bounds.x + 4, bounds.y + 4, { clickCount: 5 });
+
+    const selected = await selectionState(page);
+    expect(selected.string, 'five clicks did not select all text').toBe('Alpha beta');
+    expect(selected.collapsed, 'select-all left a collapsed caret').toBe(false);
+  });
+
   test('Escape commits the draft instead of discarding it', async ({ page }) => {
     const layerRows = page.getByTitle('Drag to reorder');
     const box = await canvasBox(page);

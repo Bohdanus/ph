@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { insertPlainTextAtCaret, selectAllIn } from '../contenteditable-text.ts';
+import { insertPlainTextAtCaret, selectAllIn, setTextSelectionOffsets, textOffsetAt } from '../contenteditable-text.ts';
 
 describe('insertPlainTextAtCaret', () => {
   let host: HTMLDivElement;
@@ -334,6 +334,55 @@ describe('selectAllIn', () => {
 
     selectAllIn(host);
     // Should return early without error
+  });
+});
+
+describe('contenteditable selection offsets', () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    host = document.createElement('div');
+    host.contentEditable = 'true';
+    host.innerHTML = '<span>Alpha </span><strong>beta</strong>';
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    host.remove();
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('reads offsets across nested text nodes in UTF-16 code units', () => {
+    const first = host.querySelector('span')!.firstChild!;
+    const second = host.querySelector('strong')!.firstChild!;
+
+    expect(textOffsetAt(host, first, 2)).toBe(2);
+    expect(textOffsetAt(host, second, 2)).toBe(8);
+    expect(textOffsetAt(host, host, 2)).toBe(10);
+    expect(textOffsetAt(host, document.body, 0)).toBeNull();
+  });
+
+  it('preserves reverse selection direction when setting flattened offsets', () => {
+    expect(setTextSelectionOffsets(host, 8, 2)).toBe(true);
+
+    const selection = host.ownerDocument.getSelection()!;
+    expect(textOffsetAt(host, selection.anchorNode, selection.anchorOffset)).toBe(8);
+    expect(textOffsetAt(host, selection.focusNode, selection.focusOffset)).toBe(2);
+    expect(selection.toString()).toBe('pha be');
+  });
+
+  it('preserves reverse direction with Selection.extend when setBaseAndExtent is unavailable', () => {
+    const selection = host.ownerDocument.getSelection()!;
+    Object.defineProperty(selection, 'setBaseAndExtent', { configurable: true, value: undefined });
+
+    try {
+      expect(setTextSelectionOffsets(host, 8, 2)).toBe(true);
+      expect(textOffsetAt(host, selection.anchorNode, selection.anchorOffset)).toBe(8);
+      expect(textOffsetAt(host, selection.focusNode, selection.focusOffset)).toBe(2);
+      expect(selection.toString()).toBe('pha be');
+    } finally {
+      Reflect.deleteProperty(selection, 'setBaseAndExtent');
+    }
   });
 });
 

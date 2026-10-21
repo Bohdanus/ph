@@ -50,6 +50,18 @@ const UNUSABLE_NEXT_STATES: readonly (readonly [string, unknown])[] = [
   ['a non-array selections value', { selections: { id: 'sel' }, activeSelectionId: 'sel' }],
   ['a string', 'selections'],
   ['a number', 7],
+  [
+    'an array with an extra own property',
+    (() => {
+      const selections = [...selectionState().selections];
+      Object.defineProperty(selections, 'audit', { enumerable: true, value: true });
+      return { selections, activeSelectionId: 'sel' };
+    })(),
+  ],
+  [
+    'array-shaped selection metadata',
+    { selections: [{ ...selectionState().selections[0], metadata: [] }], activeSelectionId: 'sel' },
+  ],
 ];
 
 function blankLayer(id = layerId) {
@@ -612,6 +624,21 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     });
   });
 
+  it('does not invoke an accessor-backed selection array entry during conversion', () => {
+    const registry = new AssetRegistry();
+    const selectionGetter = vi.fn(() => selectionState().selections[0]);
+    const selections = new Array(1);
+    Object.defineProperty(selections, '0', { configurable: true, enumerable: true, get: selectionGetter });
+    const next = { selections, activeSelectionId: 'sel' } as unknown as SelectionSnapshot;
+    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    expect(result.status).toBe('partial');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics[0]?.message).toMatch(/unusable nextSelectionState/);
+    expect(selectionGetter).not.toHaveBeenCalled();
+    registry.shutdown();
+  });
+
   it('names the offending entry id in the diagnostic message', () => {
     const registry = new AssetRegistry();
     const result = convertSafely(
@@ -637,6 +664,17 @@ describe('legacyHistoryToDurable selection fail-closed boundary', () => {
     const operation = result.document?.history[0]?.operation;
     expect(operation).toMatchObject({ kind: 'set-selection', after: { selections: [], activeSelectionId: null } });
     expect(operation?.kind === 'set-selection' && operation.before.selections[0]?.id).toBe('sel');
+  });
+
+  it('stays current for own undefined selection metadata', () => {
+    const registry = new AssetRegistry();
+    const selection = { ...selectionState().selections[0], metadata: undefined };
+    const next = { selections: [selection], activeSelectionId: 'sel' };
+    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    expect(result.status).toBe('current');
+    expect(result.diagnostics).toEqual([]);
+    registry.shutdown();
   });
 
   it('separates an absent next state, which clears, from an unreadable one, which only reports', () => {

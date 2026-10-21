@@ -63,7 +63,8 @@ text and vector source arguments from the durable navigation document while
 protecting pending text and active gestures; saved settings remain the fallback
 for unsupported sources. The affine-resampling divergence found by the pixel differential
 is fixed; the remaining differential obligations are listed under Sequencing.
-The pinned `args.enabled` divergence also remains open.
+Nested `args.enabled` remains action payload rather than a history gate; this
+legacy-compatible behavior is pinned by `history-adapter.branches.test.ts`.
 
 ### RQ-3: bounded replay with explicit permission
 
