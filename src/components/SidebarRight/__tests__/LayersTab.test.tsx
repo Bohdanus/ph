@@ -69,10 +69,12 @@ const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch }
 const currentToolState = vi.hoisted(() => ({
   toolArgs: { toolName: 'move' } as {
     toolName: string;
+    text?: string;
     rect?: { x1: number; y1: number; x2: number; y2: number } | null;
     editingLayerId?: string;
   },
   setToolArgs: vi.fn(),
+  requestTextEditFocus: vi.fn(),
 }));
 
 vi.mock('@/contexts/StoreContext.tsx', async () => {
@@ -397,6 +399,202 @@ describe('LayersTab', () => {
       editingLayerId: 'text',
       rect: { x1: 80, y1: 60, x2: 180, y2: 120 },
     });
+    expect(layerMocks.beginTextLayerEdit).toHaveBeenCalledWith('text');
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledWith({ kind: 'select-all', layerId: 'text' });
+  });
+
+  it('commits and focuses once during the real row double-click sequence, even when text is unchanged', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'same text',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    const currentLayer = createMockLayer({
+      id: 'current',
+      name: 'Current text',
+      order: 0,
+      source: { kind: 'tool', args } as ToolLayerSource,
+    });
+    const targetLayer = createMockLayer({
+      id: 'target',
+      name: 'Target text',
+      order: 1,
+      pos: { x: 120, y: 80, width: 100, height: 60 },
+      source: { kind: 'tool', args: { ...args, text: 'old target text' } } as ToolLayerSource,
+    });
+    const layers = { current: currentLayer, target: targetLayer };
+    const committedLayers = {
+      ...layers,
+      target: { ...targetLayer, source: { kind: 'tool', args } as ToolLayerSource },
+    };
+    const order: string[] = [];
+    currentToolState.toolArgs = { ...args, editingLayerId: 'current' };
+    seed(layers, 'target');
+    layerMocks.commitDirtyTool.mockImplementationOnce(() => {
+      order.push('commit');
+      return committedLayers;
+    });
+    layerMocks.setActiveLayer.mockImplementationOnce((id) => {
+      order.push('active');
+      updateStore((prev) => ({ ...prev, activeLayerId: id }));
+    });
+    layerMocks.beginTextLayerEdit.mockImplementationOnce(() => {
+      order.push('begin-edit');
+    });
+    currentToolState.setToolArgs.mockImplementationOnce((nextArgs) => {
+      order.push('hydrate');
+      Object.assign(currentToolState.toolArgs, nextArgs);
+    });
+    currentToolState.requestTextEditFocus.mockImplementationOnce(() => {
+      order.push('focus');
+    });
+
+    render(<LayersTab />);
+    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Target text');
+    act(() => {
+      fireEvent.click(row);
+      fireEvent.click(row);
+      fireEvent.doubleClick(row);
+    });
+
+    expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+      kind: 'select-all',
+      layerId: 'target',
+    });
+    expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'target', text: 'same text' });
+  });
+
+  it('uses the committed record when the direct text-layer entry handler switches layers', () => {
+    const currentArgs: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'current draft',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    const committedArgs: TextToolArgs = { ...currentArgs, text: 'committed target text' };
+    const currentLayer = createMockLayer({
+      id: 'current',
+      name: 'Current text',
+      order: 0,
+      source: { kind: 'tool', args: currentArgs } as ToolLayerSource,
+    });
+    const targetLayer = createMockLayer({
+      id: 'target',
+      name: 'Target text',
+      order: 1,
+      pos: { x: 120, y: 80, width: 100, height: 60 },
+      source: { kind: 'tool', args: { ...committedArgs, text: 'stale target text' } } as ToolLayerSource,
+    });
+    const layers = { current: currentLayer, target: targetLayer };
+    const committedLayers = {
+      ...layers,
+      target: { ...targetLayer, source: { kind: 'tool', args: committedArgs } as ToolLayerSource },
+    };
+    const order: string[] = [];
+    currentToolState.toolArgs = { ...currentArgs, editingLayerId: 'current' };
+    seed(layers, 'current');
+    layerMocks.commitDirtyTool.mockImplementationOnce(() => {
+      order.push('commit');
+      return committedLayers;
+    });
+    layerMocks.setActiveLayer.mockImplementationOnce((id) => {
+      order.push('active');
+      updateStore((prev) => ({ ...prev, activeLayerId: id }));
+    });
+    layerMocks.beginTextLayerEdit.mockImplementationOnce(() => {
+      order.push('begin-edit');
+    });
+    currentToolState.setToolArgs.mockImplementationOnce((nextArgs) => {
+      order.push('hydrate');
+      Object.assign(currentToolState.toolArgs, nextArgs);
+    });
+    currentToolState.requestTextEditFocus.mockImplementationOnce(() => {
+      order.push('focus');
+    });
+
+    render(<LayersTab />);
+    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Target text');
+    act(() => {
+      fireEvent.doubleClick(row);
+    });
+
+    expect(order).toEqual(['commit', 'active', 'begin-edit', 'hydrate', 'focus']);
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalledOnce();
+    expect(currentToolState.setToolArgs).toHaveBeenCalledWith(
+      expect.objectContaining({ editingLayerId: 'target', text: 'committed target text' })
+    );
+    expect(currentToolState.requestTextEditFocus).toHaveBeenCalledExactlyOnceWith({
+      kind: 'select-all',
+      layerId: 'target',
+    });
+  });
+
+  it('preserves the current edit when commit fails during a row double-click', () => {
+    const args: TextToolArgs = {
+      toolName: 'text',
+      align: 'left',
+      bold: false,
+      color: '#000000',
+      fontFamily: 'Arial',
+      fontSize: 16,
+      italic: false,
+      lineHeight: 1.2,
+      text: 'current draft',
+      rect: { x1: 0, y1: 0, x2: 100, y2: 60 },
+    };
+    seed(
+      {
+        current: createMockLayer({
+          id: 'current',
+          name: 'Current text',
+          order: 0,
+          source: { kind: 'tool', args } as ToolLayerSource,
+        }),
+        target: createMockLayer({
+          id: 'target',
+          name: 'Target text',
+          order: 1,
+          pos: { x: 120, y: 80, width: 100, height: 60 },
+          source: { kind: 'tool', args: { ...args, text: 'target text' } } as ToolLayerSource,
+        }),
+      },
+      'current'
+    );
+    currentToolState.toolArgs = { ...args, editingLayerId: 'current' };
+    layerMocks.commitDirtyTool.mockReturnValueOnce(null).mockReturnValueOnce(null).mockReturnValueOnce(null);
+    render(<LayersTab />);
+
+    const row = getListItemFor('Target text').querySelector<HTMLElement>('div[title="Drag to reorder"]');
+    if (!row) throw new Error('no row for Target text');
+    act(() => {
+      fireEvent.click(row);
+      fireEvent.click(row);
+      fireEvent.doubleClick(row);
+    });
+
+    expect(layerMocks.commitDirtyTool).toHaveBeenCalled();
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+    expect(layerMocks.beginTextLayerEdit).not.toHaveBeenCalled();
+    expect(currentToolState.setToolArgs).not.toHaveBeenCalled();
+    expect(currentToolState.requestTextEditFocus).not.toHaveBeenCalled();
+    expect(currentToolState.toolArgs).toMatchObject({ editingLayerId: 'current', text: 'current draft' });
   });
 
   it('removes layer on trash click', () => {

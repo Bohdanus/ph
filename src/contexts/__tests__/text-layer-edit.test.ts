@@ -74,7 +74,7 @@ function makeAffineLayer(
   });
 }
 
-function makeFilterLayer(id: string): Layer {
+function makeFilterLayer(id: string, enabled = true): Layer {
   const textArgs: TextToolArgs = {
     toolName: 'text',
     align: 'left',
@@ -88,7 +88,7 @@ function makeFilterLayer(id: string): Layer {
     rect: { x1: 0, y1: 0, x2: 100, y2: 50 },
   };
   return makeTextLayer(id, {
-    operations: [{ id: 'blur-1', kind: 'filter', args: { toolName: 'blur', radius: 4 }, enabled: true }],
+    operations: [{ id: 'blur-1', kind: 'filter', args: { toolName: 'blur', radius: 4 }, enabled }],
     source: { kind: 'tool', args: textArgs, pos: { x: 100, y: 100, width: 100, height: 50 } },
   });
 }
@@ -116,6 +116,26 @@ describe('textLayerEditTarget gate', () => {
   it('returns null for a text layer with a filter operation', () => {
     const layer = makeFilterLayer('layer-1');
     expect(textLayerEditTarget(layer, frame)).toBeNull();
+  });
+
+  it('returns non-null for a text layer with a disabled filter operation', () => {
+    const layer = makeFilterLayer('layer-1', false);
+    expect(textLayerEditTarget(layer, frame)).not.toBeNull();
+  });
+
+  it('returns null for a degenerate source rect or invalid layer position', () => {
+    const layer = makeTextLayer('layer-1');
+    if (layer.source?.kind !== 'tool' || layer.source.args.toolName !== 'text') {
+      throw new Error('created source was not a text layer');
+    }
+    const degenerateRect = {
+      ...layer,
+      source: { ...layer.source, args: { ...layer.source.args, rect: { x1: 0, y1: 0, x2: 0, y2: 50 } } },
+    };
+    const invalidPosition = makeTextLayer('layer-2', { pos: { x: 100, y: 100, width: 0, height: 50 } });
+
+    expect(textLayerEditTarget(degenerateRect, frame)).toBeNull();
+    expect(textLayerEditTarget(invalidPosition, frame)).toBeNull();
   });
 
   it('returns null for a text layer with mixed affine + filter operations', () => {

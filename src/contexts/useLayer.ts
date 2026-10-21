@@ -33,6 +33,8 @@ import {
 import { requireCanvasFilter } from '../util/canvas-filter.ts';
 import { calculateNewRect, reduceRect, sortRect, sortRoundRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
+import { isTextToolArgs } from '../util/typeGuards.ts';
+import { isValidTextLayerGeometry } from './text-layer-edit.ts';
 import {
   type ActionType,
   HIDE_LAYER_ACTION,
@@ -793,10 +795,39 @@ export const useLayers = () => {
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
-      // An emptied draft is an edit session with nothing in it. It cannot be committed — the Commit
-      // button is disabled and there is no ink to record — so the implicit path CLOSES it rather than
-      // returning early, which used to leave a box on the canvas that a tool switch reopened and that
-      // no key could end: Escape, Ctrl+Enter and Commit were all no-ops and only Cancel escaped.
+      // An empty existing edit is a source replacement, not a new empty layer. Keep its original
+      // geometry and position so deleting all characters does not shrink the raster origin.
+      if (!args.text && args.rect && args.editingLayerId) {
+        const activeLayer = layers[args.editingLayerId];
+        const activeTextArgs =
+          activeLayer?.source?.kind === 'tool' && isTextToolArgs(activeLayer.source.args)
+            ? activeLayer.source.args
+            : null;
+        const originalRect = activeTextArgs?.rect;
+        const originalPos = activeLayer?.pos;
+        if (!activeLayer || !activeTextArgs || !originalPos || !isValidTextLayerGeometry(originalRect, originalPos)) {
+          return null;
+        }
+
+        const replacementArgs = { ...args, text: '', rect: originalRect, placeholderUntouched: false };
+        delete replacementArgs.editingLayerId;
+        const replaced = replaceLayerSource(activeLayer.id, {
+          kind: 'tool',
+          args: replacementArgs,
+          pos: { ...originalPos },
+        });
+        if (!replaced) return null;
+
+        const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
+        const cleared = { ...persistedArgs, text: '', rect: null };
+        if (setToolArgs) setToolArgs(cleared);
+        else currentArgsRef.current = cleared;
+        clearOverlay();
+        return { ...layers, [activeLayer.id]: replaced };
+      }
+
+      // An emptied new draft has no source to replace. Close it on implicit commit rather than
+      // leaving an editor open that cannot create a valid raster.
       if (!args.text && args.rect) {
         const { editingLayerId: _editingLayerId, ...persistedArgs } = args;
         const closed = { ...persistedArgs, text: '', rect: null };

@@ -205,7 +205,7 @@ export default function LayersTab() {
     beginTextLayerEdit,
     commitDirtyTool,
   } = useLayers();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, requestTextEditFocus } = useCurrentTool();
   const textEditActive = toolArgs.toolName === 'text' && Boolean(toolArgs.rect);
   const textEditingLayerId = textEditActive && toolArgs.toolName === 'text' ? (toolArgs.editingLayerId ?? null) : null;
   const { goToTool } = useApp();
@@ -240,18 +240,23 @@ export default function LayersTab() {
   const [isExpanding, setIsExpanding] = useState(false);
 
   const selectLayer = (id: LayerId) => {
+    let layersAfterCommit = layers;
     if (textEditActive && toolArgs.toolName === 'text') {
-      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
-      if (commitDirtyTool() === null) return;
+      if (toolArgs.editingLayerId === id) return;
+      const committedLayers = commitDirtyTool();
+      if (committedLayers === null) return;
+      layersAfterCommit = committedLayers;
     }
     setActiveLayer(id);
-    const source = layers[id]?.source;
+    const selectedLayer = layersAfterCommit[id];
+    const source = selectedLayer?.source;
     if (source?.kind === 'tool' && source.args.toolName === toolArgs.toolName) {
       if (source.args.toolName === 'text') {
-        const target = textLayerEditTarget(layers[id], documentFrame ?? documentFrameFromSize(totalSize));
+        const target = textLayerEditTarget(selectedLayer, documentFrame ?? documentFrameFromSize(totalSize));
         if (target) {
           beginTextLayerEdit(target.layerId);
           setToolArgs(target.args);
+          requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
         }
       } else {
         setToolArgs(source.args);
@@ -262,17 +267,21 @@ export default function LayersTab() {
   const enterTextLayer = (id: LayerId) => {
     const layer = layers[id];
     if (!layer) return;
-    const target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
+    let target = textLayerEditTarget(layer, documentFrame ?? documentFrameFromSize(totalSize));
     if (!target) return;
     if (textEditActive && toolArgs.toolName === 'text') {
-      if (toolArgs.editingLayerId === id || activeLayerId === id) return;
-      if (commitDirtyTool() === null) return;
+      if (toolArgs.editingLayerId === id) return;
+      const committedLayers = commitDirtyTool();
+      if (committedLayers === null) return;
+      target = textLayerEditTarget(committedLayers[id], documentFrame ?? documentFrameFromSize(totalSize));
+      if (!target) return;
     } else if (toolArgs.toolName !== 'text' && goToTool('text') === false) {
       return;
     }
     setActiveLayer(id);
     beginTextLayerEdit(target.layerId);
     setToolArgs(target.args);
+    requestTextEditFocus({ kind: 'select-all', layerId: target.layerId });
   };
 
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});

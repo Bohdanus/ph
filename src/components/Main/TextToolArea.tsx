@@ -29,7 +29,7 @@ type TextToolAreaProps = {
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
   const [{ containerRef, toolOverlayRef, totalSize, layers, activeLayerId, documentFrame: currentFrame }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, requestTextEditFocus } = useCurrentTool();
   const { commitDirtyTool, setActiveLayer, beginTextLayerEdit } = useLayers();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
@@ -201,16 +201,28 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
             const hitLayerId = getLayerIdByPoint(layers, documentPoint);
             const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
             const activeTextLayer =
-              activeLayer && isTextLayerSource(activeLayer.source) && isPointInLayer(activeLayer, documentPoint)
+              activeLayer?.visible &&
+              isTextLayerSource(activeLayer.source) &&
+              isPointInLayer(activeLayer, documentPoint)
                 ? activeLayer
                 : undefined;
             const layer = activeTextLayer ?? (hitLayerId ? layers[hitLayerId] : undefined);
             if (layer) {
               const target = textLayerEditTarget(layer, documentFrame);
               if (target) {
+                // The pointer began on the canvas before the contenteditable existed. Suppress the
+                // browser's default focus/selection from that same mouse or touch press; the one-shot
+                // focus request below places the caret after the overlay mounts.
+                event.preventDefault();
                 setActiveLayer(target.layerId);
                 beginTextLayerEdit(target.layerId);
                 setToolArgs(target.args);
+                requestTextEditFocus({
+                  kind: 'point',
+                  layerId: target.layerId,
+                  clientX: event.clientX,
+                  clientY: event.clientY,
+                });
                 return;
               }
             }
@@ -232,6 +244,7 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
       getLocalCoords,
       layers,
       pointerHandlers,
+      requestTextEditFocus,
       setActiveLayer,
       setToolArgs,
     ]

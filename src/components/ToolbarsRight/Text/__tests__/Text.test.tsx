@@ -507,12 +507,98 @@ describe('Text toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ bold: true }));
   });
 
-  it('keeps the edit controls mounted for an empty draft box', () => {
+  it('keeps Commit disabled for an empty new draft box', () => {
     resetToolArgs({ text: '', rect: { x1: 0, y1: 0, x2: 100, y2: 50 } });
     renderWithProvider(<Text />);
 
     expect(screen.getByRole('button', { name: 'Commit' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('enables Commit for an empty edit of an existing text layer', () => {
+    const originalRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+    const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
+    const originalPos = { x: 100, y: 50, width: 100, height: 50 };
+    resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: originalPos,
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: originalRect } },
+        },
+      },
+    });
+    renderWithProvider(<Text />);
+
+    const commitButton = screen.getByRole('button', { name: 'Commit' });
+    expect(commitButton).toBeEnabled();
+    fireEvent.click(commitButton);
+
+    expect(mockReplaceLayerSource).toHaveBeenCalledWith(
+      'text-layer-1',
+      expect.objectContaining({
+        kind: 'tool',
+        args: expect.objectContaining({ text: '', rect: originalRect }),
+        pos: originalPos,
+      })
+    );
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    expect(mockSetToolArgs.mock.lastCall?.[0]).not.toHaveProperty('editingLayerId');
+  });
+
+  it('refuses an empty commit when the committed source geometry is invalid', () => {
+    const originalRect = { x1: 0, y1: 0, x2: 0, y2: 50 };
+    const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
+    resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: { x: 100, y: 50, width: 100, height: 50 },
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: originalRect } },
+        },
+      },
+    });
+    renderWithProvider(<Text />);
+
+    expect(screen.getByRole('button', { name: 'Commit' })).toBeDisabled();
+
+    expect(mockReplaceLayerSource).not.toHaveBeenCalled();
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(toolArgs.editingLayerId).toBe('text-layer-1');
+    expect(toolArgs.rect).toEqual(editRect);
+  });
+
+  it('keeps an empty existing edit open when replacement fails', () => {
+    const originalRect = { x1: 0, y1: 0, x2: 100, y2: 50 };
+    const editRect = { x1: 100, y1: 50, x2: 200, y2: 100 };
+    resetToolArgs({ text: '', rect: editRect, editingLayerId: 'text-layer-1' });
+    resetStoreState({
+      activeLayerId: 'text-layer-1',
+      layers: {
+        'text-layer-1': {
+          id: 'text-layer-1',
+          pos: { x: 100, y: 50, width: 100, height: 50 },
+          source: { kind: 'tool', args: { toolName: 'text', text: 'Original', rect: originalRect } },
+        },
+      },
+    });
+    mockReplaceLayerSource.mockReturnValueOnce(null);
+    renderWithProvider(<Text />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+
+    expect(mockReplaceLayerSource).toHaveBeenCalledOnce();
+    expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(toolArgs.text).toBe('');
+    expect(toolArgs.rect).toEqual(editRect);
+    expect(toolArgs.editingLayerId).toBe('text-layer-1');
   });
 
   it('does not show Commit and Cancel when the draft has no rect', () => {
