@@ -26,6 +26,107 @@ import {
   type AffineTransform,
 } from '../../contexts/affine-transform.ts';
 
+type CaretPositionDocument = Document & {
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+};
+
+/** Place the contenteditable caret at a viewport point, falling back to its end if the browser misses. */
+function placeCaretAtClientPoint(host: HTMLElement, clientX: number, clientY: number): void {
+  const caretDocument = document as CaretPositionDocument;
+  const position = caretDocument.caretPositionFromPoint?.(clientX, clientY);
+  let range: Range | null = null;
+
+  if (position && host.contains(position.offsetNode)) {
+    range = document.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    range.collapse(true);
+  } else {
+    const pointRange = caretDocument.caretRangeFromPoint?.(clientX, clientY);
+    if (pointRange && host.contains(pointRange.startContainer)) {
+      range = pointRange;
+      range.collapse(true);
+    }
+  }
+
+  if (!range) {
+    range = document.createRange();
+    range.selectNodeContents(host);
+    range.collapse(false);
+  }
+
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function textOffsetAtClientPoint(host: HTMLElement, clientX: number, clientY: number): number | null {
+  const caretDocument = document as CaretPositionDocument;
+  const position = caretDocument.caretPositionFromPoint?.(clientX, clientY);
+  if (position && host.contains(position.offsetNode)) return textOffsetAt(host, position.offsetNode, position.offset);
+
+  const range = caretDocument.caretRangeFromPoint?.(clientX, clientY);
+  if (range && host.contains(range.startContainer)) return textOffsetAt(host, range.startContainer, range.startOffset);
+  return null;
+}
+
+function textPointAtOffset(host: HTMLElement, offset: number): { node: Text; offset: number } | null {
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.textContent?.length ?? 0;
+    if (remaining < length && node instanceof Text) return { node, offset: remaining };
+    remaining -= length;
+    node = walker.nextNode();
+  }
+  return null;
+}
+
+/** Select the visual line under a triple-click, rather than Chromium's paragraph default. */
+function selectVisualLineAtClientY(host: HTMLElement, clientY: number): boolean {
+  const text = host.textContent ?? '';
+  const characters: { offset: number; top: number; centerY: number }[] = [];
+
+  for (let offset = 0; offset < text.length; offset += 1) {
+    if (text[offset] === '\n') continue;
+    const point = textPointAtOffset(host, offset);
+    if (!point) continue;
+    const range = document.createRange();
+    range.setStart(point.node, point.offset);
+    range.setEnd(point.node, point.offset + 1);
+    const rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) continue;
+    characters.push({ offset, top: Math.round(rect.top), centerY: rect.top + rect.height / 2 });
+  }
+
+  let targetTop: number | null = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+  for (const character of characters) {
+    const distance = Math.abs(character.centerY - clientY);
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      targetTop = character.top;
+    }
+  }
+  if (targetTop === null) return false;
+
+  const onLine = characters.filter((character) => character.top === targetTop).map((character) => character.offset);
+  if (onLine.length === 0) return false;
+  return setTextSelectionOffsets(host, Math.min(...onLine), Math.max(...onLine) + 1);
+}
+
+/** Select the hard-break paragraph under a quadruple-click; wrapped visual lines remain one paragraph. */
+function selectParagraphAtClientPoint(host: HTMLElement, clientX: number, clientY: number): boolean {
+  const text = host.textContent ?? '';
+  const caretOffset = textOffsetAtClientPoint(host, clientX, clientY);
+  if (!text || caretOffset === null) return false;
+  const start = text.lastIndexOf('\n', Math.max(0, caretOffset - 1)) + 1;
+  const breakAt = text.indexOf('\n', caretOffset);
+  const end = breakAt < 0 ? text.length : breakAt;
+  return end > start && setTextSelectionOffsets(host, start, end);
+}
+
 /**
  * Photoshop's in-place type editor: a transparent DOM element laid exactly over the type box.
  *
@@ -61,11 +162,12 @@ import {
  */
 export const TextEditOverlay = () => {
   const [{ containerRef, toolOverlayRef, totalSize, documentFrame, toolName, layers }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs, textEditFocusRequest, consumeTextEditFocusRequest } = useCurrentTool();
   const { commitDirtyTool } = useLayers();
 
   const hostRef = useRef<HTMLDivElement>(null);
   const caretOffsetRef = useRef<number | null>(null);
+  const handledFocusRequestIdRef = useRef(0);
 
   /**
    * The measuring context, in STATE rather than read from the ref during render.
@@ -213,6 +315,31 @@ export const TextEditOverlay = () => {
   }, [args?.text, editing]);
 
   /**
+   * A canvas press may open a committed layer before this contenteditable exists. Carry the press
+   * through context, then ask the browser for the caret in the newly mounted overlay. A layer-panel
+   * entry uses the same one-shot channel to select all even when its text is unchanged.
+   */
+  useEffect(() => {
+    const request = textEditFocusRequest;
+    const host = hostRef.current;
+    if (!editing || !host || !request || request.id === handledFocusRequestIdRef.current) return;
+
+    handledFocusRequestIdRef.current = request.id;
+    consumeTextEditFocusRequest(request.id);
+    if (args?.editingLayerId !== request.target.layerId) return;
+
+    host.focus();
+    if (request.target.kind === 'select-all') {
+      selectAllIn(host);
+      caretOffsetRef.current = null;
+      return;
+    }
+
+    placeCaretAtClientPoint(host, request.target.clientX, request.target.clientY);
+    caretOffsetRef.current = readCaretOffset(host);
+  }, [args?.editingLayerId, consumeTextEditFocusRequest, editing, readCaretOffset, textEditFocusRequest]);
+
+  /**
    * Take the caret back when it falls off the world, and only then.
    *
    * The editor is the app's only input while a draft is open, and a `mousedown` on a non-focusable
@@ -334,10 +461,21 @@ export const TextEditOverlay = () => {
   );
 
   const handleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
-    if (event.detail < 5) return;
-    event.preventDefault();
-    selectAllIn(event.currentTarget);
-    caretOffsetRef.current = null;
+    if (event.detail === 3 && selectVisualLineAtClientY(event.currentTarget, event.clientY)) {
+      event.preventDefault();
+      caretOffsetRef.current = null;
+      return;
+    }
+    if (event.detail === 4 && selectParagraphAtClientPoint(event.currentTarget, event.clientX, event.clientY)) {
+      event.preventDefault();
+      caretOffsetRef.current = null;
+      return;
+    }
+    if (event.detail >= 5) {
+      event.preventDefault();
+      selectAllIn(event.currentTarget);
+      caretOffsetRef.current = null;
+    }
   }, []);
 
   /**

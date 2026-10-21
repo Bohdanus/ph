@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextEditOverlay } from '../TextEditOverlay.tsx';
-import { insertPlainTextAtCaret, selectAllIn } from '../../../util/contenteditable-text.ts';
+import { insertPlainTextAtCaret, selectAllIn, textOffsetAt } from '../../../util/contenteditable-text.ts';
 import { calculateNewRect } from '../../../util/rect.ts';
 
 type Rect = { x1: number; y1: number; x2: number; y2: number };
@@ -34,6 +34,12 @@ const DOCUMENT_SIZE = { width: 100, height: 100 };
 
 const h = vi.hoisted(() => ({
   setToolArgs: vi.fn(),
+  consumeTextEditFocusRequest: vi.fn(),
+  textEditFocusRequest: null as null | {
+    id: number;
+    target:
+      { kind: 'select-all'; layerId: string } | { kind: 'point'; layerId: string; clientX: number; clientY: number };
+  },
   dispatch: vi.fn(),
   commitDirtyTool: vi.fn(),
   toolName: 'text' as string,
@@ -85,6 +91,12 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     },
     get setToolArgs() {
       return h.setToolArgs;
+    },
+    get textEditFocusRequest() {
+      return h.textEditFocusRequest;
+    },
+    get consumeTextEditFocusRequest() {
+      return h.consumeTextEditFocusRequest;
     },
   }),
 }));
@@ -250,6 +262,8 @@ const readSelection = (): SelectionReading => {
 describe('TextEditOverlay', () => {
   beforeEach(() => {
     h.setToolArgs.mockReset();
+    h.consumeTextEditFocusRequest.mockReset();
+    h.textEditFocusRequest = null;
     h.dispatch.mockReset();
     h.commitDirtyTool.mockReset();
     h.toolName = 'text';
@@ -295,6 +309,60 @@ describe('TextEditOverlay', () => {
   });
 
   describe('the element itself', () => {
+    it("triple-click selects the visual line instead of Chromium's paragraph default", () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta\nGamma delta' });
+      const original = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect');
+      Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+        configurable: true,
+        value: function (this: Range) {
+          const offset = textOffsetAt(overlay(), this.startContainer, this.startOffset) ?? 0;
+          const top = offset >= 11 ? 20 : 0;
+          return {
+            x: 0,
+            y: top,
+            left: 0,
+            right: 5,
+            top,
+            bottom: top + 10,
+            width: 5,
+            height: 10,
+            toJSON: () => ({}),
+          } as DOMRect;
+        },
+      });
+
+      try {
+        renderOverlay();
+        const cancelled = fireEvent.click(overlay(), { detail: 3, clientY: 25 });
+
+        expect(cancelled).toBe(false);
+        expect(readSelection()).toMatchObject({ string: 'Gamma delta', collapsed: false });
+      } finally {
+        if (original) Object.defineProperty(Range.prototype, 'getBoundingClientRect', original);
+        else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
+      }
+    });
+
+    it('quadruple-click selects the hard-break paragraph containing the click', () => {
+      toolArgs = makeTextArgs({ text: 'Alpha beta\nGamma delta\nLast line' });
+      const original = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+      Object.defineProperty(document, 'caretPositionFromPoint', {
+        configurable: true,
+        value: () => ({ offsetNode: overlay().firstChild!, offset: 13 }),
+      });
+
+      try {
+        renderOverlay();
+        const cancelled = fireEvent.click(overlay(), { detail: 4, clientX: 40, clientY: 25 });
+
+        expect(cancelled).toBe(false);
+        expect(readSelection()).toMatchObject({ string: 'Gamma delta', collapsed: false });
+      } finally {
+        if (original) Object.defineProperty(document, 'caretPositionFromPoint', original);
+        else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      }
+    });
+
     it('renders a contenteditable textbox carrying the test id and aria-multiline for a draft that has both halves', () => {
       const { container } = renderOverlay();
       const el = overlay();
@@ -544,6 +612,59 @@ describe('TextEditOverlay', () => {
   });
 
   describe('entry', () => {
+    it('places the caret at the browser hit-test position for a canvas re-entry request', () => {
+      toolArgs = makeTextArgs({ text: 'alpha beta', rect: RECT, editingLayerId: 'text-1' });
+      h.textEditFocusRequest = {
+        id: 1,
+        target: { kind: 'point', layerId: 'text-1', clientX: 43, clientY: 57 },
+      };
+      const original = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+      const caretPositionFromPoint = vi.fn(() => ({ offsetNode: overlay().firstChild!, offset: 6 }));
+      Object.defineProperty(document, 'caretPositionFromPoint', {
+        configurable: true,
+        value: caretPositionFromPoint,
+      });
+
+      try {
+        renderOverlay();
+
+        expect(caretPositionFromPoint).toHaveBeenCalledWith(43, 57);
+        expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 6, endOffset: 6 });
+        expect(document.activeElement).toBe(overlay());
+        expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+      } finally {
+        if (original) Object.defineProperty(document, 'caretPositionFromPoint', original);
+        else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      }
+    });
+
+    it('selects all on an explicit layer-panel request even when the text is unchanged', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-1' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: 'same text', collapsed: false });
+      expect(document.activeElement).toBe(el);
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
+    it('consumes but ignores a focus request for a different editing layer', () => {
+      toolArgs = makeTextArgs({ text: 'same text', rect: RECT, editingLayerId: 'text-1' });
+      const { rerender } = renderOverlay();
+      const el = overlay();
+      placeCaret(el, 2);
+      h.textEditFocusRequest = { id: 1, target: { kind: 'select-all', layerId: 'text-2' } };
+
+      rerender(<TextEditOverlay />);
+
+      expect(readSelection()).toMatchObject({ string: '', collapsed: true, startOffset: 2, endOffset: 2 });
+      expect(h.consumeTextEditFocusRequest).toHaveBeenCalledWith(1);
+    });
+
     it('seeds the element with the draft text and focuses it on entry', () => {
       renderOverlay();
       const el = overlay();

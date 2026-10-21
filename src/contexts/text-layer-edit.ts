@@ -16,16 +16,46 @@ export type TextLayerEditTarget = {
   affine: AffineTransform;
 };
 
+export function isValidTextRect(rect: TextToolArgs['rect']): rect is NonNullable<TextToolArgs['rect']> {
+  return Boolean(
+    rect &&
+    Number.isFinite(rect.x1) &&
+    Number.isFinite(rect.y1) &&
+    Number.isFinite(rect.x2) &&
+    Number.isFinite(rect.y2) &&
+    rect.x2 > rect.x1 &&
+    rect.y2 > rect.y1
+  );
+}
+
+function isValidTextPosition(pos: Pos): boolean {
+  return (
+    Number.isFinite(pos.x) &&
+    Number.isFinite(pos.y) &&
+    Number.isFinite(pos.width) &&
+    Number.isFinite(pos.height) &&
+    pos.width > 0 &&
+    pos.height > 0
+  );
+}
+
+export function isValidTextLayerGeometry(
+  rect: TextToolArgs['rect'],
+  pos: Pos
+): rect is NonNullable<TextToolArgs['rect']> {
+  return isValidTextRect(rect) && isValidTextPosition(pos);
+}
+
 /**
  * Whether a layer's operations include a filter (non-affine) operation.
  *
- * Only pure affine transforms (scale/rotate/skew/mirror) are allowed — they are
- * composable matrices applied at draw time, never baked. Any filter operation
- * makes the draft uneditable in-place, because those alter geometry or pixels
- * in ways that cannot be round-tripped through the DOM overlay.
+ * Pure affine transforms (scale/rotate/skew/mirror) are composable matrices
+ * applied at draw time, and disabled filters are ignored by the renderer. An
+ * enabled or unspecified filter alters pixels in ways that cannot be
+ * round-tripped through the DOM overlay.
  */
 function hasFilterOperation(operations: readonly LayerOperation[]): boolean {
-  return operations.some((op) => op.kind !== 'affine-transform');
+  return operations.some((op) => op.kind !== 'affine-transform' && op.enabled !== false);
 }
 
 /**
@@ -40,7 +70,12 @@ export function textLayerEditTarget(layer: Layer, frame: DocumentFrame): TextLay
   if (layer.locked) return null;
 
   const source = layer.source;
-  if (!source || source.kind !== 'tool' || source.args.toolName !== 'text' || !source.args.rect) {
+  if (
+    !source ||
+    source.kind !== 'tool' ||
+    source.args.toolName !== 'text' ||
+    !isValidTextLayerGeometry(source.args.rect, layer.pos)
+  ) {
     return null;
   }
 
