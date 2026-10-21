@@ -54,11 +54,12 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
       documentRevision,
       branchRevision = 0,
       historyIndex,
-     toolName,
-     color,
-     backgroundColor,
-     layers,
-   }] = useStore();
+      toolName,
+      color,
+      backgroundColor,
+      layers,
+    },
+  ] = useStore();
 
   const storeRef = useRef({
     hasImage,
@@ -75,7 +76,45 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
     backgroundColor,
     layers,
   });
-  storeRef.current = {
+
+  const { commitDirtyTool } = useLayers();
+  const commitDirtyToolRef = useRef(commitDirtyTool);
+
+  const { setImageFromUpload } = useApp();
+  const setImageFromUploadRef = useRef(setImageFromUpload);
+
+  const [autosaveMetadata, setAutosaveMetadata] = useState<AutosaveMetadata | null>(null);
+  const [pendingAutosave, setPendingAutosave] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedVersionRef = useRef<string | null>(null);
+  const lastSaveTimeRef = useRef(0);
+  const savingRef = useRef(false);
+  const recoveringRef = useRef(false);
+  const prevHasUnsavedChangesRef = useRef(hasUnsavedChanges);
+  const prevDocumentIdRef = useRef(documentId);
+  const performAutosaveRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    storeRef.current = {
+      hasImage,
+      hasUnsavedChanges,
+      fileName,
+      totalSize,
+      documentFrame,
+      documentId,
+      documentRevision,
+      branchRevision,
+      historyIndex,
+      toolName,
+      color,
+      backgroundColor,
+      layers,
+    };
+    commitDirtyToolRef.current = commitDirtyTool;
+    setImageFromUploadRef.current = setImageFromUpload;
+  }, [
     hasImage,
     hasUnsavedChanges,
     fileName,
@@ -89,27 +128,9 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
     color,
     backgroundColor,
     layers,
-  };
-
-  const { commitDirtyTool } = useLayers();
-  const commitDirtyToolRef = useRef(commitDirtyTool);
-  commitDirtyToolRef.current = commitDirtyTool;
-
-  const { setImageFromUpload } = useApp();
-  const setImageFromUploadRef = useRef(setImageFromUpload);
-  setImageFromUploadRef.current = setImageFromUpload;
-
-  const [autosaveMetadata, setAutosaveMetadata] = useState<AutosaveMetadata | null>(null);
-  const [pendingAutosave, setPendingAutosave] = useState(false);
-  const [recovering, setRecovering] = useState(false);
-
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedVersionRef = useRef<string | null>(null);
-  const lastSaveTimeRef = useRef(0);
-  const savingRef = useRef(false);
-  const recoveringRef = useRef(false);
-  const prevHasUnsavedChangesRef = useRef(hasUnsavedChanges);
-  const prevDocumentIdRef = useRef(documentId);
+    commitDirtyTool,
+    setImageFromUpload,
+  ]);
 
   useEffect(() => {
     if (!isAutosaveAvailable()) return;
@@ -195,7 +216,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
       setPendingAutosave(true);
       saveTimerRef.current = setTimeout(() => {
         saveTimerRef.current = null;
-        performAutosave();
+        performAutosaveRef.current?.();
       }, delay);
     };
 
@@ -204,7 +225,7 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
     } else {
       schedule(AUTOSAVE_DEBOUNCE_MS);
     }
-  }, [dirtyKey, hasImage, hasUnsavedChanges]);
+  }, [dirtyKey, hasImage, hasUnsavedChanges, autosaveMetadata, documentId]);
 
   const performAutosave = useCallback(() => {
     if (savingRef.current || recoveringRef.current) return;
@@ -243,6 +264,10 @@ export const AutoSaveProvider = ({ children }: PropsWithChildren) => {
         setPendingAutosave(false);
       });
   }, [dirtyKey]);
+
+  useEffect(() => {
+    performAutosaveRef.current = performAutosave;
+  }, [performAutosave]);
 
   const recoverFromAutosave = useCallback(async () => {
     if (!autosaveMetadata || recovering) return;
