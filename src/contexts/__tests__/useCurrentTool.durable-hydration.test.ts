@@ -111,7 +111,7 @@ describe('durableToolArgsForNavigation', () => {
             }
           : {
               kind: 'vector' as const,
-              toolName: 'shape',
+              toolName: 'shape' as const,
               args: { toolName: 'shape', figure: 'rectangle' },
               size: { width: 100, height: 80 },
               sourcePos: { x: 0, y: 0, width: 100, height: 80 },

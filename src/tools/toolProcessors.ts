@@ -145,7 +145,7 @@ const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: num
 const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = true) =>
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 
-/** The width `defaultSettings.pencil` seeds the pencil with (src/tools/settings.ts:126). */
+/** The width `defaultSettings.pencil.lineWidth` seeds the pencil with. */
 const DEFAULT_PENCIL_LINE_WIDTH = 3;
 
 const unimplemented = () => () => [null as never] as ToolResult;
@@ -240,7 +240,7 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   // The Photoshop focus family below, plus the tonal tools, are all `commit: 'raster'`
   // and therefore all get durable shadow support with no durable code of their own:
-  // `history-adapter.ts:416-424` converts ANY `commit: 'raster'` tool into an
+  // `history-adapter` converts ANY `commit: 'raster'` tool into an
   // `apply-raster-processor` operation keyed on `args.toolName`, with no allowlist to
   // extend. A new raster tool is replayable in the shadow document the day it is
   // registered here.
@@ -252,9 +252,9 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   },
   // The 1-pixel marquees are the Rectangular Marquee's processor verbatim: it is a
   // pass-through that returns the document bitmap untouched, because a selection is
-  // geometry in the store and no pixels at all (`rectangularSelection.ts:9`-`:13`).
+  // geometry in the store and no pixels at all (`rectangularSelection()`).
   // Two separate `replay(...)` calls rather than one shared result, because
-  // `tool-processors.test.ts:1036` requires a distinct frozen descriptor per tool.
+  // `tool-processors.test.ts` requires a distinct frozen descriptor per tool.
   'single-row-marquee': {
     commit: 'selection',
     replay: replay('selection', true),

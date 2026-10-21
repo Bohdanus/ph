@@ -242,11 +242,14 @@ entry — the same null-bitmap stub, and no gesture surface. The tool is in the 
 library itself, and the authoring and management surfaces. None of the format's structure is present,
 so drawing a built-in or imported Custom Shape is not implemented by adding a single preset.
 
-**What the app does instead.** A stub bar. The shape flyout carries six entries
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), with Custom Shape present and Star absent.
-Star is a separate parametric shape tool, not a Custom Shape preset; its separate implementation
-does not require the `.csh` parser or library described above. Its behavior and options are already
-researched in `src/tools/descriptions/shape.notes.md` and the generated shape documentation.
+**What the app does instead.** A stub bar. The shape flyout carries seven entries
+(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout): Rectangle, Ellipse, Line, Triangle,
+Polygon, Star and Custom Shape. Star is implemented — it renders via the shared `shape` processor
+with `figure: 'star'` (see `src/tools/descriptions/shape.notes.md`); only Custom Shape remains
+absent, behind the `commit: 'unimplemented'` stub. Star is a separate parametric shape tool, not a
+Custom Shape preset; its implementation did not require the `.csh` parser or library described
+above. Its behavior and options are researched in `src/tools/descriptions/shape.notes.md` and the
+generated shape documentation.
 
 ### Live type
 
@@ -839,13 +842,14 @@ map counts instead of adding historical totals.
 What follows is only why the absent tools follow from this file, not a restatement of the
 list itself.
 
-**Star is the strongest documented absent rail entry**, and it is a separate candidate from Custom
-Shape. The flyout carries Rectangle, Ellipse, Line, Triangle, Polygon and Custom Shape
-(`toolbar-mapping.ts` — `toolbarMap`'s shape flyout), while Adobe documents Star as a separate tool
-with its own points and inner/outer radii. The sourced behavior and app-side gap are in
-`src/tools/descriptions/shape.notes.md` and `docs/TOOLS-INVENTORY.md`. The `.csh` parser and preset
-library that block Custom Shape do not block Star; the Star geometry, controls and integration still
-need implementation and verification.
+**Custom Shape is now the only absent rail entry among the shape tools.** It is the strongest
+documented absent rail entry, and it is a separate candidate from Star. The flyout carries Rectangle,
+Ellipse, Line, Triangle, Polygon and Star (all implemented via the shared `shape` processor) plus
+Custom Shape (absent — `commit: 'unimplemented'`) (`toolbar-mapping.ts` — `toolbarMap`'s shape flyout),
+while Adobe documents Star as a separate tool with its own points and inner/outer radii. Star's
+sourced behavior and implementation are in `src/tools/descriptions/shape.notes.md`; the `.csh`
+parser and preset library that block Custom Shape do not block Star. The Star geometry, controls
+and integration are already implemented; only Custom Shape remains unimplemented.
 
 **The rest follow from this file.** The Pen family and Path Type are the work-path object that
 Path Selection and Direct Selection would edit. Object Selection needs an edge-following

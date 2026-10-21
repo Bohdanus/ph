@@ -370,7 +370,7 @@ export class SelectionCanvasContextError extends Error {
  *
  * `cloneBitmapToCanvas` returns a `ClipboardCanvas`, so there is no `null` to hand
  * back, and both production callers already wrap it in a `try`/`catch` that logs and
- * returns `false` (`src/contexts/useSelectionClipboard.ts:76-84` and `:96-105`). A
+ * returns `false` from the selection-copy helpers. A
  * named throw is therefore recoverable there, while returning a stand-in canvas would
  * paste a layer of silently wrong pixels.
  */
@@ -396,8 +396,8 @@ function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: strin
  * use it. Their return value is committed as a layer's `tmpCanvas` with no null check
  * anywhere on the way, so they throw. The throw is what carries the named error out of the
  * tool processor: the only caller of `copyPolygonToCanvas` is the polygon processor
- * (`src/tools/selection.ts:18`), reached solely from `tempUpdateLayer`, whose `catch`
- * (`src/contexts/useLayer.ts:606-608`) logs it and returns. Nothing else observes it, which
+ * (`polygonSelection`), reached solely from `tempUpdateLayer()`, whose `catch`
+ * inside `tempUpdateLayer()` logs it and returns. Nothing else observes it, which
  * is exactly why a stand-in canvas cannot be substituted here: a `null` would leave the
  * error with no in-band consumer at all. The outermost UI callers are a separate channel
  * and never reach these wrappers — they go through `copyActiveSelection`, whose `false`
