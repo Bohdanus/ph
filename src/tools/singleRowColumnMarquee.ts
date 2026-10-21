@@ -29,11 +29,11 @@ export type SingleRowOrColumnMarqueeToolArgs = SingleRowMarqueeToolArgs | Single
 /**
  * The `SelectionSourceTool` each tool commits under.
  *
- * `SelectionSourceTool` in `src/contexts/general-types.ts:17` does not carry these two
+ * `SelectionSourceTool` in `src/contexts/general-types.ts` does not carry these two
  * names, and this is the honest answer to what to do about that rather than the elliptical
- * tool's: the elliptical marquee commits under `'magic-wand'` (`ellipticalSelection.ts:50`)
+ * tool's: the elliptical marquee commits under `'magic-wand'` (`ellipticalSelection`)
  * because a borrowed member was the smaller change, and that lie buys it the two
- * `selection.ts` exclusions a tessellated ellipse wants anyway (`ellipticalSelection.ts:40`-`:43`).
+ * `selection.ts` exclusions a tessellated ellipse wants anyway (`ellipticalSelection`).
  * A 1-pixel band is a rectangle whose corners Photoshop does not decorate either, so the
  * truthful value here is the one the geometry actually is: `'rectangular-selection'`. The
  * alternative — widening `SelectionSourceTool` — is the real fix and it is a separate change,
@@ -57,7 +57,7 @@ export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangul
  *
  * `Math.floor` rather than `Math.round` because a pixel is an interval, not a point: a
  * pointer at `y = 12.9` is inside row 12, and rounding would hand row 13 a press that
- * landed above it. `trimRect` (`src/util/rect.ts:66`) rounds edges for the same reason it
+ * landed above it. `trimRect()` rounds edges for the same reason it
  * rounds them — an edge is a boundary — but it rounds the RESULT of a drag, where the user
  * has already chosen a corner; here the user has chosen a location inside the document.
  *
@@ -75,7 +75,7 @@ export const SINGLE_COLUMN_MARQUEE_SOURCE_TOOL: SelectionSourceTool = 'rectangul
  * aborted by its `onPointerLeave` before any further axis value is read, so the last row it
  * clamps to is the one under the pointer at the moment of leaving, and the gesture commits
  * nothing. That is house convention rather than a choice of these two tools —
- * `EllipticalSelectionToolArea.tsx:317`-`:318` wires the same pair, and the Rectangular
+ * `EllipticalSelectionToolArea` wires the same pair, and the Rectangular
  * Marquee wires `pointercancel` alone — but it does mean the two marquee families disagree
  * about what an out-of-document pointer does, and Photoshop keeps tracking instead of
  * dropping. Recorded in `HANDOFF.md` rather than fixed here, because narrowing the abort to

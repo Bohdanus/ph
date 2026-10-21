@@ -6,7 +6,7 @@ type sharpenToolAreaProps = {
    * Accepted for the mount contract and deliberately not read.
    *
    * Sharpen is a ONE-SHOT filter like Blur and Levels: the options bar previews it through
-   * `tempUpdateLayer` (`src/contexts/useLayer.ts:1140`) and `commitDirtyTool` (`:790`) bakes
+   * `tempUpdateLayer()` and `commitDirtyTool()` bake
    * it on tool switch, on export and in `mergeAllLayers`. There is no gesture on the canvas
    * for this area to own, so both contexts belong to the layer republish rather than to a tool
    * painting by hand — which is the un-undoable defect `usePaintStroke`'s JSDoc warns about,

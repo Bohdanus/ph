@@ -101,7 +101,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     }
 
     // The composited canvas is drawn in FRAME space: it is sized by `documentFrameSize` and each
-    // layer is stamped at `position.x - documentFrame.x` (`src/contexts/presentation-evaluator.ts:310`).
+    // layer is stamped at `position.x - documentFrame.x` by `evaluatePresentation()`.
     // So the canvas's own pixel (0,0) is the frame origin, and `getLocalCoords` is already the
     // index `getImageData` wants. Running it through `canvasToDocumentPoint` first would ADD the
     // frame origin a second time: after a crop that trims 100px off the left, a click on canvas
@@ -144,7 +144,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     // size the clipped block CAN be non-empty while the centre pixel is outside it, which would index
     // a negative offset into the pixel array — `Uint8ClampedArray` returns `undefined` for negative
     // indices, so the alpha check would read the wrong byte and the average would include padding.
-    // `sampleColorAt` makes the same check (`src/tools/colorSampler.ts:143`).
+    // `sampleColorAt()` makes the same check.
     const frameSize = documentFrameSize(documentFrame);
     if (centerX < 0 || centerY < 0 || centerX >= frameSize.width || centerY >= frameSize.height) return;
 

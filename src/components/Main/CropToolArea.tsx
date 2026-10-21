@@ -69,11 +69,11 @@ function subtractRect(base: Pos, cut: Pos): Pos[] {
 
 /**
  * CANVAS px, not document px: every number below is in the frame's own space, whose origin is the
- * frame origin. `onRepaint`'s rect comes from `getLocalCoords` (`src/hooks/usePointerPosition.ts:253`)
- * and `fit` from `containFit` over the same `totalSize` (`src/hooks/usePointerPosition.ts:137`), and
+ * frame origin. `onRepaint`'s rect comes from `getLocalCoords()`
+ * and `fit` from `containFit()` over the same `totalSize`, and
  * `totalSize` is `documentFrameSize(documentFrame)` — so neither of them carries `documentFrame.x`
  * and nothing here may subtract it. Document space is one call away, `canvasRectToDocumentFrame`
- * (`src/contexts/document-frame.ts:52`), and this layer sits BEFORE that call, not after it.
+ * (`canvasRectToDocumentFrame()`), and this layer sits BEFORE that call, not after it.
  *
  * The part of a crop box that has left the frame, as CSS rectangles.
  *
@@ -153,7 +153,7 @@ function cropOverhangPieces(rect: RectXYSorted, frameSize: Size, fit: ContainDim
   // where the user was being asked to click.
   //
   // The same numbers, not similar ones: `getEdgeAtPoint` hit-tests with `HANDLE_SIZE / scale / 2`
-  // for the same four corners (`src/hooks/useRect.ts:170`), which is this `inset`. So the painted
+  // for the same four corners (`drawCropOverlay()`), which is this `inset`. So the painted
   // square and the hit square are the same square, and drawing it adds nothing to the hit path — it
   // only makes the hit path visible. The centre is what is shared; the size is `drawMask`'s, and
   // both are `HANDLE_SIZE` over the same divisor.
@@ -202,7 +202,7 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
    * Photoshop commits a crop with Enter and abandons it with Escape, so the panel's Apply and Clear
    * are not the only two ways in. The listener lives here rather than in the shared keyboard table
    * because `Main` mounts this component only while the crop tool owns the gesture surface
-   * (`src/components/Main/Main.tsx:331`): the binding is scoped to the tool by construction, so no
+   * (the crop event handler is selected by interaction mode in `Main`): the binding is scoped to the tool by construction, so no
    * table entry is added and no other tool can reach it.
    *
    * The two actions go through a ref rather than closing over the values because the crop args are

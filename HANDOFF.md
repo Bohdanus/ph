@@ -2642,12 +2642,12 @@ The operator's own rule releases a chat's write ownership when its branch is mer
 this automatic on a landing — so the gap is a chat that finishes work it will never land: an
 abandoned feature, or one folded into another branch.
 
-## 218. The no-line-numbers gate covers three markdown documents, and 1,932 citations live outside it
+## 218. The no-line-numbers rule lacks permanent coverage for all maintained prose
 
-**Problem.** `scripts/__tests__/agents-citations.test.mjs` enumerates `git ls-files '*.md'`, and
-`LINE_NUMBER_GATED` names exactly three paths. Everything else is caught only while it is _dirty_,
-by the assertion that the maintained corpus carries no citation — which means **a migrated document
-can regress silently the moment it reaches zero**.
+**Problem.** `scripts/__tests__/agents-citations.test.mjs` enumerates `git ls-files '*.md'`, but
+`LINE_NUMBER_GATED` pins only a subset of maintained documents. Everything else is caught only while
+it is _dirty_, by the assertion that the maintained corpus carries no citation — which means **a
+migrated document can regress silently the moment it reaches zero**.
 
 Two verified consequences. **`docs/LAYERS-PANEL.md` was migrated by hand, is in the maintained
 corpus, and is not in `LINE_NUMBER_GATED`**, so it has zero citations today and nothing would report
@@ -2657,18 +2657,19 @@ a re-added one — the same state as `HANDOFF.md`, `docs/TESTING.md` and `TEST-F
 leg, whose mentions in such a document are all true. It is **wrong for the line-number leg**, where
 139 unswept coordinates are residue no assertion reports.
 
-Extending the gate to source files is **a 271-file migration, not a scope change**: 1,932 citations
-across 740 tracked non-markdown files, 459 of them in `e2e/*.spec.ts` and 42 in
-`scripts/__tests__/*.mjs`. Two thirds sit in `src/tools/descriptions/*.ts` and in e2e comments.
+Human-written source comments are prose and follow the same ban. The pre-commit gate rejects newly
+added numbered citations in code comments; existing comments remain legacy residue. Structured
+`implementationRefs` in tool-description data are separate machine-readable metadata and require a
+separate migration decision.
 
 **Affected.** `scripts/__tests__/agents-citations.test.mjs` — `trackedMarkdown()`,
 `LINE_NUMBER_GATED`, `DOCUMENTS_NOT_CHECKED`. `docs/README.md` — the point-in-time table.
 
-**What would close it.** Decide, and write the reason into the document either way: either widen
-`LINE_NUMBER_GATED` to every maintained document, so a clean one is pinned rather than merely quiet,
-or state that the gate is a migration's to-do list and not a permanent invariant. The source-file
-question is separate and larger, and the honest answer may be that comments in `.ts` are not prose
-and the rule should not reach them.
+**What would close it.** Widen `LINE_NUMBER_GATED` to every maintained document, so a clean one is
+pinned rather than merely quiet, and decide whether structured `implementationRefs` should migrate
+to symbol anchors. The operator has resolved the source-comment scope: comments are prose, and the
+ban applies to them. The pre-commit check prevents new comment citations while the old residue is
+retired.
 
 ## 219. Nothing stops a test from asserting on a path another process owns, and all three repairs are prose
 

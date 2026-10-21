@@ -24,7 +24,7 @@ type ColorReplacementToolAreaProps = {
 
 /**
  * Refusal reasons, named and exported so a test pins the exact string rather than "some console
- * error", on the same contract as `FillToolArea`'s two (`FillToolArea.tsx:21-32`): a tool that
+ * error", on the same contract as `FillToolArea`'s two readback checks: a tool that
  * cannot read its own destination must fail LOUDLY and write NO history, because a commit that
  * silently changed nothing is a tool that looks alive and is not.
  */
@@ -47,7 +47,7 @@ export const COLOR_REPLACEMENT_PRESENTATION_UNAVAILABLE = 'color-replacement-pre
  * layer's own local coordinates and no bounding-box crop happens, exactly as in the eraser.
  *
  * The replacement colour is read off the live store at the pointer-up, never mirrored into the
- * args by a bar or a context write. `FillToolArea.tsx:132-148` is the precedent and the reason is
+ * args by a bar or a context write. `FillToolArea` is the precedent and the reason is
  * specific: the user can change the foreground while this tool stays selected, and a value
  * captured when the bar mounted would replace with the colour that was current at the time.
  */
@@ -69,7 +69,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
   });
 
   // `isMouseDown` is READ, never written: `isPointerDownValid` sets it and `isPointerUpValid`
-  // clears it (`src/hooks/usePointerPosition.ts:191,180`), and the React compiler lint rules reject
+  // clears it in `usePointerPosition`, and the React compiler lint rules reject
   // writing through a destructured hook return. `EraserToolArea` and `DrawToolArea` only read it
   // for the same reason.
 

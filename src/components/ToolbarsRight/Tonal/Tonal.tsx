@@ -13,12 +13,12 @@ import {
 } from '../../../tools/dodgeBurn.ts';
 
 /**
- * Copied from `src/components/ToolbarsRight/Paint/Paint.tsx:23-26` rather than invented,
+ * Copied from `src/components/ToolbarsRight/Paint/Paint.tsx` rather than invented,
  * so the two options bars read as one surface.
  *
  * `../buttonStyles.ts` is the house home for shared styles, but it holds button and menu
  * classes only — it has nothing for a range input or a select, and the existing sliders
- * (`Levels.tsx:115`, `Paint.tsx:25`) each carry their own. These four are the strings the
+ * (`Levels.tsx`, `Paint.tsx`) each carry their own. These four are the strings the
  * paint bar already ships, reused verbatim.
  */
 const FIELD_CLASS = 'flex min-w-28 flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300';
@@ -39,7 +39,7 @@ const SELECT_CLASS = 'h-7 rounded border border-gray-300 bg-white px-2 text-xs d
  * `toolArgs.toolName`, because `getToolArgs` needs a concrete name to look one up and
  * the store is the authority on which tool is active; `getToolArgs` then returns `null`
  * for anything that is not dodge or burn, which is the same "render nothing when the
- * tool is not this one" contract `Paint.tsx:103` has.
+ * tool is not this one" contract `Paint.tsx` has.
  *
  * NOT rendered, and this is a real omission rather than an oversight:
  * **Protect Skin Tone**. Photoshop ships it on both bars and it is a boolean that
@@ -49,7 +49,7 @@ const SELECT_CLASS = 'h-7 rounded border border-gray-300 bg-white px-2 text-xs d
  * args type is owned outside this module.
  *
  * The value readouts sit OUTSIDE their `<label>` rather than inside it as
- * `Paint.tsx:154-155` does. A `<label>`'s text content IS the control's accessible
+ * `Paint.tsx` does. A `<label>`'s text content IS the control's accessible
  * name, so nesting "Size 40px" inside the label makes the range input's name "Size
  * 40px" and the name changes on every drag. Keeping the readout a sibling gives the
  * four controls the exact names Range, Exposure, Size and Hardness.
@@ -77,7 +77,7 @@ const Tonal: React.FC<{}> = () => {
    * Coalesce a burst of slider writes into one store write carrying the last value.
    *
    * A drag emits a `change` per step and each one is a `setToolArgs`, which calls
-   * `saveLastSettings` (`src/contexts/useCurrentTool.tsx:100`) — so an unthrottled slider
+   * `saveLastSettings()` — so an unthrottled slider
    * persists settings on every frame of a drag. The pending payload is replaced
    * wholesale rather than merged, so a value the user never moved cannot survive in the
    * frame that flushes.

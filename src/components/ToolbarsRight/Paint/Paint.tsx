@@ -61,7 +61,7 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
     // The store's foreground colour is what a paint stroke should use. Without this
     // the brush and pencil are frozen on their `#000000` default, because
     // `src/util/settings.ts` persists their args verbatim and nothing else carries
-    // the colour across. `Draw/Draw.tsx:29-33` does the same for the legacy pen.
+    // the colour across. `Draw/Draw.tsx` does the same for the legacy pen.
     useEffect(() => {
       if (!args || args.color === color) return;
       setToolArgs({ ...args, color });
@@ -98,7 +98,7 @@ export const createPaintToolbar = (toolName: PaintBarToolName): ToolbarRightComp
       // The preview goes through the same `draw` the stroke is committed with, so
       // what the bar shows is what the canvas gets. `toolName` is `'draw'` because
       // that is the only renderer; brush and pencil both force `penType` at
-      // `src/tools/toolProcessors.ts:349,358`.
+      // the `brush` and `pencil` entries in `toolProcessors`.
       const previewArgs: DrawToolArgs = {
         ...args,
         penType: 'pen',

@@ -35,12 +35,12 @@ type smudgeToolAreaProps = {
  * The two callbacks are the whole contract, and the split between them is the part that is
  * easy to get silently wrong:
  *
- * - `onMove` goes to `tempUpdateLayer` (`src/contexts/useLayer.ts:1140`), the only writer of
+ * - `onMove` goes to `tempUpdateLayer()`, the only writer of
  *   `previewLayersRef`. A tool that painted anywhere else would produce pixels with no history
- *   entry, and `commitDirtyTool` (`:790`) would then take its `PUBLISH_RUNTIME_PRESENTATION`
+ *   entry, and `commitDirtyTool()` would then take its `PUBLISH_RUNTIME_PRESENTATION`
  *   branch and never warn — the strokes would be un-undoable forever, with no error and no
  *   visible sign of it.
- * - `onCommit` goes to `updateLayerByTool` (`:264`), which writes the single `TOOL_ACTION`
+ * - `onCommit` goes to `updateLayerByTool()`, which writes the single `TOOL_ACTION`
  *   history item that makes the stroke undoable. It fires exactly once, on pointer-up, so
  *   calling it from a move handler would put one history entry per pointer event on the
  *   timeline.
@@ -72,7 +72,7 @@ export const SmudgeToolArea = ({ className }: smudgeToolAreaProps) => {
    * A raster edit to the BEDROCK layer is wrong, not merely surprising: bedrock is the
    * document's own backing image — the floor every other layer composites over — and the
    * Smudge drags pixels out of the document, so there would be no layer left to drag them
-   * from. `MoveToolArea.tsx:35` reads the same flag for the same reason.
+   * from. `MoveToolArea` reads the same flag for the same reason.
    *
    * `usePaintStroke` reads `enabled` at gesture boundaries only, so a layer that disappears
    * under the pointer abandons the gesture rather than half-committing it.

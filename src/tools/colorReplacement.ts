@@ -21,7 +21,7 @@ export type ColorReplacementLimits = 'contiguous' | 'discontinuous';
  * Only `current-layer` is live: the tool area has the ACTIVE layer's pixels, and `commit:
  * 'raster'` writes the result back to the active layer alone, so `all-layers` would need a
  * composite read that nothing in this path performs. It is kept in the type and rendered
- * `disabled` in the options bar, which is the precedent `Eyedropper.tsx:37-43` sets for
+ * `disabled` in the options bar, which follows the `Eyedropper` bar's precedent for
  * `sampleAllLayers` — a Photoshop control with a real value behind it, honestly inert rather
  * than absent, so turning it on is a rendering change and not a schema change.
  */
@@ -30,7 +30,7 @@ export type ColorReplacementSampling = 'current-layer' | 'all-layers';
 /**
  * Adobe's tolerance scale for this tool is 0-100 — NOT the 0-255 the bucket, the magic eraser
  * and the background eraser use (`FILL_TOLERANCE_MAX`) and NOT the wand's 0-100 measured against
- * a 4-channel distance (`src/util/floodFill.ts:58-69`). The two 0-100 scales are different
+ * a 4-channel distance in the flood-fill tolerance helpers. The two 0-100 scales are different
  * metrics, which is why the scale lives here and `createFloodFillMask` is handed a converted
  * value rather than this number.
  */
@@ -119,7 +119,7 @@ const luminance = (r: number, g: number, b: number): number =>
  * The factor that puts this tool's 0-100 Tolerance onto `createFloodFillMask`'s 0-255 argument.
  *
  * `getToleranceDistance` reads its argument as `(t / 255) * MAX_COLOR_DISTANCE`
- * (`src/util/floodFill.ts:70-74`, with `MAX_TOLERANCE = 255` at `:21`), while
+ * (`getToleranceDistance()` in `src/util/floodFill.ts`, with `MAX_TOLERANCE = 255`), while
  * `toleranceDistanceSquared` above reads this tool's as `(t / 100) * MAX_COLOR_DISTANCE` over an
  * identical `MAX_COLOR_DISTANCE`. Multiplying by `255 / 100` therefore makes the delegated flood
  * and the inline `matchMask` predicate above reject exactly the same pixels, which is what makes
@@ -417,7 +417,7 @@ export const createColorReplacementPlan = (
 };
 
 /**
- * Read `bitmap` back at `size`. The same read `src/tools/fill.ts:75` performs, and null when the
+ * Read `bitmap` back at `size`, like `readSourcePixels()` in `fill`. Return null when the
  * environment cannot supply pixels — which is the read-back refusal, not an error: a tool that
  * cannot read its own destination must change nothing rather than blank what it cannot see.
  */

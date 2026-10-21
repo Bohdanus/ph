@@ -454,7 +454,7 @@ export const AppKeyboardShortcuts = () => {
       // boolean read: `copySelection` returns `false` for a null snapshot instead of
       // throwing, so an unread result is a failed copy that leaves no trace anywhere. This
       // registration deliberately does NOT set `repeat`, which is what keeps the log to one
-      // line per press — `useKeyboardEvents.tsx:154` drops an `event.repeat` before
+      // line per press — `useKeyboardEvents` drops an `event.repeat` before
       // `onKeyDown` runs, so a held Meta+C is one intent and one line, not a scrub.
       if (!copyActiveSelection()) {
         console.error('Failed to copy selection');
@@ -542,8 +542,8 @@ export const AppKeyboardShortcuts = () => {
     mod: true,
     preventDefault: true,
     // `hasImage` alone, deliberately NOT `hasImage && hasActiveSelection`. `enabled` is
-    // resolved BEFORE `preventDefault` (`useKeyboardEvents.tsx:111` continues out of the loop
-    // body before :140 runs), so gating on the selection would hand the key back to the browser
+    // resolved BEFORE `preventDefault` (`matchesShortcut()` continues out of the loop body),
+    // so gating on the selection would hand the key back to the browser
     // — Ctrl+J is Downloads in Chrome on Windows and Linux — and replace a silent no-op with an
     // out-of-app page. `preventDefault: true` is what claims the key, so the registration stays
     // enabled and the empty case is answered where it belongs, in the handler. That is also what
@@ -553,12 +553,12 @@ export const AppKeyboardShortcuts = () => {
     enabled: hasImage,
     onKeyDown: async () => {
       // No selection is a state, not a failure: `layerViaCopy` would return `false` at
-      // `useSelectionClipboard.ts:90` before touching anything. Reporting it would put a failure
+      // in `useSelectionClipboard` before touching anything. Reporting it would put a failure
       // in the console for the ordinary state of a document the user has not selected in yet.
       if (!hasActiveSelection) return;
 
       // `layerViaCopy`'s null-snapshot exits are an in-band channel its callers are expected to
-      // report — `src/util/selection.ts:390-393` says so, and this was the only caller in the
+      // report — `copySelectionToCanvas()` says so, and this was the only caller in the
       // family that discarded the boolean. `await` rather than a `.catch`: the promise is not
       // swallowed, so a throw from the un-`try`-wrapped `copySelectionToCanvas` still reaches the
       // console with its stack, which a defensive catch that can never fire would destroy.
@@ -836,10 +836,10 @@ export const AppKeyboardShortcuts = () => {
    *
    * **They are registered after the tool selectors on purpose, and that position is load-bearing.**
    * `matchesShortcut` only compares a modifier the registration actually DECLARES
-   * (`src/hooks/useKeyboardEvents.tsx:70-77`), and the Clone Stamp's bare `s` at
+   * (`matchesShortcut()`), and the Clone Stamp's bare `s` at
    * `key: 's', mod: false` declares neither `shift` nor `alt` — so it matches `Alt+Shift+S`
-   * as readily as a bare `s`. Dispatch is last-registered-wins (`useKeyboardEvents.tsx:109`
-   * walks the registration array backwards), which is why a registration sitting earlier in
+   * as readily as a bare `s`. Dispatch is last-registered-wins in `useKeyboardEvents`, which is
+   * why a registration sitting earlier in
    * this function loses to one sitting later. Registered up here with the other tool
    * selectors, `Alt+Shift+S` reached the Clone Stamp instead of the Sponge and Adobe's
    * Saturate key was dead on arrival; `Alt+Shift+D` was unaffected because no registration

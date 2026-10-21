@@ -11,7 +11,7 @@ import { SMUDGE_STRENGTH_MAX, SMUDGE_STRENGTH_MIN } from '../../../tools/smudge.
 import type { ToolPatch } from '../../../contexts/tool-types.ts';
 
 /**
- * Layout copied from `Paint/Paint.tsx:23-26`, which is the house shape for a paint family's
+ * Layout copied from `Paint/Paint.tsx`, which is the house shape for a paint family's
  * options bar: a column per control, the label and its live readout in the same line, and the
  * slider underneath.
  *
@@ -28,7 +28,7 @@ const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gr
  * `strength` as the slider percentage it already is, clamped for display.
  *
  * `SmudgeToolArgs.strength` is Photoshop's `Strength`: a PERCENTAGE of the carried colour
- * blended per dab, seeded at 50 by `src/tools/settings.ts:326`. The brush engine takes the
+ * blended per dab, seeded at 50 by `defaultSettings.smudge`. The brush engine takes the
  * same quantity as a 0-1 `opacity`; `SMUDGE_STRENGTH_SCALE` is the divisor the processor uses
  * for that mapping, and the bar keeps the percentage so the number on screen is the number the
  * user picked in Photoshop. A non-finite value falls to the near end, for the reason

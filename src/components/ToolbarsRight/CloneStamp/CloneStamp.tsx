@@ -5,14 +5,14 @@ import type { ToolPatch } from '../../../contexts/tool-types.ts';
 import type { CloneStampToolArgs } from '../../../tools/cloneStamp.ts';
 
 /**
- * Copied from `src/components/ToolbarsRight/Tonal/Tonal.tsx:24-28` rather than invented, so
+ * Copied from `src/components/ToolbarsRight/Tonal/Tonal.tsx` rather than invented, so
  * the two options bars read as one surface, and those four in turn come from
- * `Paint.tsx:23-26`. They are duplicated here for the reason `Tonal.tsx:16-22` documents:
+ * `Paint.tsx`. They are duplicated here for the reason `Tonal.tsx` documents:
  * `../buttonStyles.ts` is the house home for shared styles but holds button and menu classes
  * only — it has nothing for a range input or a select, and every existing slider
- * (`Levels.tsx:115`, `Paint.tsx:25`, `Tonal.tsx:27`) carries its own.
+ * (`Levels.tsx`, `Paint.tsx`, `Tonal.tsx`) carries its own.
  *
- * `CHECKBOX_CLASS` is `Figures/Shape.tsx:207` verbatim, the bar's existing checkbox styling.
+ * `CHECKBOX_CLASS` is `Figures/Shape.tsx` verbatim, the bar's existing checkbox styling.
  */
 const FIELD_CLASS = 'flex min-w-28 flex-col text-[10px] font-medium text-gray-700 dark:text-gray-300';
 const CAPTION_CLASS = 'flex items-baseline justify-between gap-1';
@@ -28,17 +28,17 @@ const toPercent = (alpha: number): number => Math.round(alpha * 100);
  * The Photoshop Clone Stamp options bar: `Size`, `Hardness`, `Opacity`, `Aligned`.
  *
  * Read through `getToolArgs('clone-stamp')` and not `toolArgs`, so the bar renders nothing
- * at all while another tool is active — the same contract `Paint.tsx:103` and
- * `Tonal.tsx:100` have. `getToolArgs` needs a concrete tool name to look one up, which is
+ * at all while another tool is active — the same contract `Paint.tsx` and
+ * `Tonal.tsx` have. `getToolArgs` needs a concrete tool name to look one up, which is
  * why this is a single-tool bar rather than a shared one.
  *
  * ## The value readouts sit OUTSIDE their `<label>`
  *
  * A `<label>`'s text content IS the control's accessible name, so nesting "Size 40px" inside
- * the label — as `Paint.tsx:154-155` does — makes the range input's name "Size 40px", and the
+ * the label — as `Paint.tsx` does — makes the range input's name "Size 40px", and the
  * name then changes on every drag. Keeping each readout a sibling gives the four controls the
  * exact, stable names `Size`, `Hardness`, `Opacity` and `Aligned`, which is what a test can
- * locate by role and name and what a screen reader announces as the user drags. `Tonal.tsx:47-55`
+ * locate by role and name and what a screen reader announces as the user drags. `Tonal.tsx`
  * makes the same choice.
  *
  * ## NOT rendered, and these are real omissions rather than oversights
@@ -47,7 +47,7 @@ const toPercent = (alpha: number): number => Math.round(alpha * 100);
  * **`Sample: All Layers / Current & Below / Current Layer`** and **`Brush Preset Picker`**.
  * `CloneStampToolArgs` has no field for any of them, so a control for one would be a switch
  * that reads as set and is silently dropped on the next commit — strictly worse than its
- * absence, and the same reason `Tonal.tsx:44-49` refuses to render Protect Skin Tone. `Mode`
+ * absence, and the same reason `Tonal.tsx` refuses to render Protect Skin Tone. `Mode`
  * is the one that would change visible behaviour: the Clone Stamp is a `commit: 'raster'`
  * tool, so a blend mode is a composite against the layer beneath, and the processor's
  * `blendPixel` composite is `source-over` with no mode parameter. Adding any of the four
@@ -62,7 +62,7 @@ const toPercent = (alpha: number): number => Math.round(alpha * 100);
  * ## Sliders are throttled through one animation frame
  *
  * A drag emits a `change` per step and each write is a `patchToolArgs`, which calls
- * `saveLastSettings` (`src/contexts/useCurrentTool.tsx:100`) — so an unthrottled slider
+ * `saveLastSettings()` — so an unthrottled slider
  * persists settings on every frame of a drag. The pending PATCH is replaced wholesale rather
  * than merged with the args object, so a value the user never moved cannot survive in the
  * frame that flushes, and the `Aligned` checkbox deliberately does NOT go through here: it

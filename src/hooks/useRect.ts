@@ -282,7 +282,7 @@ export function drawCropOverlay(
  * subtract `documentFrame.x`/`.y`: those are DOCUMENT coordinates, they are the only thing negative
  * about a grown frame, and folding them in here is an off-by-frame-origin bug that is invisible on
  * a zero-origin document. Document space is one `canvasRectToDocumentFrame` call away
- * (`src/contexts/document-frame.ts:52`), and making it is the consumer's job.
+ * (`canvasRectToDocumentFrame()`), and making it is the consumer's job.
  */
 export function useRect({
   aspectRatio = null,
@@ -348,7 +348,7 @@ export function useRect({
    *     single decision and the border would outlive the pointer by one paint.
    *   - `pointerState.isMouseDown` answers this ref's question on every route this hook can see,
    *     and on one more it cannot: `usePointerPosition` flips it from its own `pointercancel`
-   *     listener (`usePointerPosition.ts:238`-`:242`), which runs no code of this hook's and cannot
+   *     listener (`onPointerCancel`), which runs no code of this hook's and cannot
    *     be reached from it. So the border is stroked while BOTH hold — a gesture of ours is open
    *     AND the pointer channel still tracks the primary press that opened it. The second term is
    *     what stops a cancel this hook never hears about from leaving the marquee's border painted on
@@ -405,10 +405,10 @@ export function useRect({
   }, [rotation]);
 
   /**
-   * The overlay canvas outlives this hook: `Main.tsx:239-284` renders both overlay canvases
+   * The overlay canvas outlives this hook: `Main` renders both overlay canvases
    * unconditionally and only toggles `display`, and toggling `display` never touches a backing
    * store. The effect above is the only other thing that clears it, and it cannot cover the AREA
-   * going away — `goToTool` (`src/hooks/useApp.ts:167-196`) appends the selection clear and
+   * going away — `goToTool()` appends the selection clear and
    * dispatches `SET_TOOL_NAME` from one function body, React batches them, and the marquee's
    * component unmounts in the same commit that nulls the selection. An unmounted component's
    * effects do not run, so `initialRect` is never observed going null and the four `#007bff`
@@ -416,7 +416,7 @@ export function useRect({
    * `borderMode` — the `#007bff` outline all survive the tool switch that deselected them,
    * sitting on the overlay the next tool previews into.
    *
-   * The shape is `MagicWandToolArea.tsx:105-113`'s, and each of the three constraints below is one
+   * The shape is `MagicWandToolArea`'s, and each of the three constraints below is one
    * a naive version of it gets wrong:
    *   - the frame is cancelled FIRST. A request still queued by `handlePointerMove` would
    *     otherwise repaint after this clear and resurrect the marquee.
@@ -446,7 +446,7 @@ export function useRect({
       // because nothing about an unmount looks like a gesture: the preview slot is a module-level
       // variable that outlives this mount, so an entry left behind would stand the ants down for
       // every later tool
-      // (`selection-drag-preview.ts:58`-`:63`). It runs before the canvas clear so the pixels that
+      // (`selection-drag-preview`). It runs before the canvas clear so the pixels that
       // are about to be wiped and the entry that is about to be dropped are one teardown.
       //
       // `borderMode` here is this effect's first-render value, which is the only one any consumer
@@ -722,7 +722,7 @@ export function useRect({
     // up in black and white, and two outlines of one selection is worse than either alone.
     // `'while-dragging'` keeps the stroke only while a gesture is in flight, which is the whole of
     // the time there is no committed selection for the ants to draw instead
-    // (`selection-drag-preview.ts:16`-`:17` for Adobe's own answer to the same two-outlines
+    // (`selection-drag-preview` for Adobe's own answer to the same two-outlines
     // problem, `Select > Transform Selection`). Both terms of that condition are explained on
     // `beginGesture` — they are read rather than passed in because all seven of this function's
     // call sites would otherwise have to be told which of the two questions they were answering,
@@ -1082,7 +1082,7 @@ export function useRect({
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     // Deliberately NOT `endGesture()` on this refusal. A release this hook does not own is not
     // the end of this gesture: a non-primary-button release shares the tracked pointer's id and is
-    // refused by the button check (`usePointerPosition.ts:228`), and the genuine primary release
+    // refused by `isPointerDownValid()`, and the genuine primary release
     // still arrives after it. Clearing here would bring the ants back for the rest of a drag that
     // is still running.
     if (!isPointerUpValid(event)) return;

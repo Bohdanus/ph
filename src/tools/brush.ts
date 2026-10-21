@@ -12,7 +12,7 @@ import type { Point } from '../contexts/general-types.ts';
  * different options bar. Sharing the union is what let its processor force a `'spray'`
  * `penType` onto `PaintToolArgs` and ignore every other control, which is how Tolerance and
  * Limits ended up with nowhere to live. A tool whose settings do not fit the paint bar must
- * not be in the paint bar's union — see `src/tools/draw.ts:47-61`.
+ * not be in the paint bar's union — see `PaintToolName` in `src/tools/draw.ts`.
  */
 export type PaintToolName = 'brush' | 'pencil';
 
@@ -79,7 +79,7 @@ export const isPaintBlendMode = (value: unknown): value is PaintBlendMode =>
 /**
  * Photoshop's brush Size range is 1-5000px, but this editor's strokes are
  * rasterized into a canvas padded by the full `lineWidth` on every side
- * (`pointsBoundingPos`, src/util/draw.ts:5-26) and committed as their own layer, so
+ * (`pointsBoundingPos()` in `src/util/draw.ts`) and committed as their own layer, so
  * a 5000px tip allocates a 10000px square for a single dot. 1-500 is the ceiling
  * the existing `Draw` bar already uses, and it keeps a stroke's layer proportional
  * to the canvas it was drawn on.
@@ -100,7 +100,7 @@ export const clampPaintSize = (value: number): number =>
  * rasterized from.
  *
  * `Smoothing` and `Mode` are optional on `DrawToolArgs` and required here, because
- * the legacy `draw` tool's per-pen presets (`src/tools/settings.ts:53`) predate
+ * the legacy `draw` tool's per-pen presets (`savedDrawPerPen`) predate
  * both and must keep rendering exactly as they do today.
  */
 export type PaintSettings = {
@@ -115,7 +115,7 @@ export type PaintSettings = {
  * than to a stamped tip.
  *
  * The stroke is one `ctx.stroke()` over the whole polyline
- * (`src/util/draw.ts:96-104`), so smoothing has to happen in point space: every
+ * (`draw()`), so smoothing has to happen in point space: every
  * interior sample is pulled toward the midpoint of its neighbours by `pull` of the
  * remaining distance. `pull` of 0 is the identity, so the legacy `draw` tool and
  * every unpinned stroke render byte-for-byte as before. `pull` of 1 snaps every

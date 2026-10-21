@@ -32,7 +32,7 @@ type DodgeToolAreaProps = {
  * ACTIVE LAYER, it does not create one.
  *
  * The commit split is the whole file. `tempUpdateLayer` is the only writer of
- * `previewLayersRef` (`src/contexts/useLayer.ts:1140`), so every move has to go through
+ * `previewLayersRef` through `tempUpdateLayer()`, so every move has to go through
  * it or `commitDirtyTool` takes its `PUBLISH_RUNTIME_PRESENTATION` branch, writes no
  * history item, and the dodge becomes silently and permanently un-undoable. Conversely
  * `updateLayerByTool` is the undo boundary and must be reached exactly ONCE per gesture
@@ -40,7 +40,7 @@ type DodgeToolAreaProps = {
  * from `onMove` as well would write one `TOOL_ACTION` per pointer event.
  *
  * The canvas-to-document conversion is `usePaintStroke`'s job
- * (`src/hooks/usePaintStroke.ts:25-31`), so `points` arrives in document space. The
+ * under `usePaintStroke()`'s contract, so `points` arrives in document space. The
  * layer-local conversion is this file's: the processor is handed a buffer in the PRESENTED
  * layer's own space, so the frame the processor addresses starts at that presentation's origin
  * and carries no document origin, and a document point has to become `point - origin` before
