@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, MouseEvent } from 'react';
 import { domOverlayStyle, resolveTextKind, resolveTextStyle } from '../../tools/text.ts';
 import { calculateNewRect } from '../../util/rect.ts';
 import { containFit, type ContainDimensions } from '../../util/contain-fit.ts';
@@ -10,7 +10,13 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { isTextToolArgs } from '../../util/typeGuards.ts';
-import { insertPlainTextAtCaret, selectAllIn } from '../../util/contenteditable-text.ts';
+import {
+  insertPlainTextAtCaret,
+  selectAllIn,
+  setTextSelectionOffsets,
+  textOffsetAt,
+} from '../../util/contenteditable-text.ts';
+import { wordBoundaryOffset } from '../../util/string.ts';
 import {
   getLayerAffineTransform,
   IDENTITY_AFFINE_TRANSFORM,
@@ -327,6 +333,13 @@ export const TextEditOverlay = () => {
     [publish, readCaretOffset]
   );
 
+  const handleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (event.detail < 5) return;
+    event.preventDefault();
+    selectAllIn(event.currentTarget);
+    caretOffsetRef.current = null;
+  }, []);
+
   /**
    * Enter breaks the line; the other three commit.
    *
@@ -350,6 +363,30 @@ export const TextEditOverlay = () => {
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.nativeEvent.isComposing) return;
+      const extendsOneWord =
+        event.shiftKey &&
+        event.metaKey !== event.ctrlKey &&
+        !event.altKey &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight');
+      if (extendsOneWord) {
+        const host = event.currentTarget;
+        const selection = window.getSelection();
+        if (!selection || !host.contains(selection.anchorNode) || !host.contains(selection.focusNode)) return;
+        const anchorOffset = textOffsetAt(host, selection.anchorNode, selection.anchorOffset);
+        const focusOffset = textOffsetAt(host, selection.focusNode, selection.focusOffset);
+        if (anchorOffset === null || focusOffset === null) return;
+
+        event.preventDefault();
+        const nextFocus = wordBoundaryOffset(
+          host.textContent ?? '',
+          focusOffset,
+          event.key === 'ArrowRight' ? 'forward' : 'backward'
+        );
+        if (nextFocus !== null && setTextSelectionOffsets(host, anchorOffset, nextFocus)) {
+          caretOffsetRef.current = null;
+        }
+        return;
+      }
       if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (event.nativeEvent.code === 'NumpadEnter') {
           event.preventDefault();
@@ -461,6 +498,7 @@ export const TextEditOverlay = () => {
       onPaste={handlePaste}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
+      onClick={handleClick}
       style={{
         pointerEvents: 'auto',
         position: 'absolute',

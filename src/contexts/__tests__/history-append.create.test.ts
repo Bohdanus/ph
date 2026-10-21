@@ -81,7 +81,7 @@ describe('history append source-backed create planning', () => {
       if (!entry || entry.operation.kind !== 'create-layer' || entry.operation.layer.source.kind !== 'raster') return;
       expect(registry.getRecord(entry.operation.layer.source.assetId)).toBeDefined();
       expect([...collectDurableAssetIds(durableDocument(entry))]).toEqual([entry.operation.layer.source.assetId]);
-      expect(validatePlannedDurableEntry(item, entry)).toBeNull();
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBeNull();
     } finally {
       registry.shutdown();
     }
@@ -163,7 +163,7 @@ describe('history append raster asset liveness', () => {
       const item = createItem('image-layer', imageSource());
       const entry = deriveCreateLayerEntry(item, context(registry))!;
 
-      expect(validatePlannedDurableEntry(item, entry, null, null, registry)).toBeNull();
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBeNull();
     } finally {
       registry.shutdown();
     }
@@ -175,7 +175,7 @@ describe('history append raster asset liveness', () => {
       const item = createItem('image-layer', imageSource());
       const entry = withAssetId(deriveCreateLayerEntry(item, context(registry))!, 'never-registered' as AssetId);
 
-      expect(validatePlannedDurableEntry(item, entry, null, null, registry)).toBe(
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBe(
         'the durable raster layer source names asset never-registered, which the asset registry cannot resolve'
       );
     } finally {
@@ -199,8 +199,26 @@ describe('history append raster asset liveness', () => {
       registry.disposeDocument(documentId);
 
       expect(registry.getRecord(assetId as AssetId)).toBeUndefined();
-      expect(validatePlannedDurableEntry(item, entry, null, null, registry)).toBe(
+      expect(validatePlannedDurableEntry(item, entry, null, null, registry, documentId)).toBe(
         `the durable raster layer source names asset ${assetId}, which the asset registry cannot resolve`
+      );
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('refuses a live asset registered from a different legacy bitmap', () => {
+    const registry = new AssetRegistry();
+    try {
+      const plannedItem = createItem('image-layer', imageSource());
+      const entry = deriveCreateLayerEntry(plannedItem, context(registry))!;
+      const differentSourceItem = createItem('image-layer', imageSource());
+      if (entry.operation.kind !== 'create-layer' || entry.operation.layer.source.kind !== 'raster') {
+        throw new Error('the plan under test is not a raster create');
+      }
+
+      expect(validatePlannedDurableEntry(differentSourceItem, entry, null, null, registry, documentId)).toBe(
+        `the durable raster layer source names asset ${entry.operation.layer.source.assetId}, which is not owned by this document and registered from the legacy source bitmap`
       );
     } finally {
       registry.shutdown();

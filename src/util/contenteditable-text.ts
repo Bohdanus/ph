@@ -72,3 +72,48 @@ export function selectAllIn(host: HTMLElement): void {
   selection.removeAllRanges();
   selection.addRange(range);
 }
+
+/** Read a DOM boundary as an offset into the host's flattened text, in UTF-16 code units. */
+export function textOffsetAt(host: HTMLElement, node: Node | null, offset: number): number | null {
+  if (!node || !host.contains(node)) return null;
+  const limit = node.nodeType === Node.TEXT_NODE ? (node.textContent?.length ?? 0) : node.childNodes.length;
+  if (!Number.isInteger(offset) || offset < 0 || offset > limit) return null;
+
+  const before = host.ownerDocument.createRange();
+  before.selectNodeContents(host);
+  before.setEnd(node, offset);
+  return before.toString().length;
+}
+
+/** Set selection endpoints from flattened UTF-16 offsets while preserving selection direction. */
+export function setTextSelectionOffsets(host: HTMLElement, anchorOffset: number, focusOffset: number): boolean {
+  const selection = host.ownerDocument.getSelection();
+  if (!selection) return false;
+
+  const positionAt = (rawOffset: number): { node: Node; offset: number } => {
+    let remaining = Math.max(0, Math.min(host.textContent?.length ?? 0, rawOffset));
+    const showText = host.ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? NodeFilter.SHOW_TEXT;
+    const walker = host.ownerDocument.createTreeWalker(host, showText);
+    let node = walker.nextNode();
+    while (node) {
+      const length = node.textContent?.length ?? 0;
+      if (remaining <= length) return { node, offset: remaining };
+      remaining -= length;
+      node = walker.nextNode();
+    }
+    return { node: host, offset: host.childNodes.length };
+  };
+
+  const anchor = positionAt(anchorOffset);
+  const focus = positionAt(focusOffset);
+  if (typeof selection.setBaseAndExtent === 'function') {
+    selection.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
+    return true;
+  }
+  if (typeof selection.extend !== 'function') return false;
+
+  selection.removeAllRanges();
+  selection.collapse(anchor.node, anchor.offset);
+  selection.extend(focus.node, focus.offset);
+  return true;
+}

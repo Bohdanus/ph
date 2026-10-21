@@ -1,6 +1,9 @@
 const segmenter = new Intl.Segmenter(undefined, {
   granularity: 'grapheme',
 });
+const wordSegmenter = new Intl.Segmenter(undefined, {
+  granularity: 'word',
+});
 
 export function charLength(str: string): number {
   return [...segmenter.segment(str)].length;
@@ -18,6 +21,26 @@ export function charLength(str: string): number {
  */
 export function graphemes(str: string): string[] {
   return [...segmenter.segment(str)].map((s) => s.segment);
+}
+
+/** Find the next or previous word edge using DOM-compatible UTF-16 offsets. */
+export function wordBoundaryOffset(text: string, offset: number, direction: 'forward' | 'backward'): number | null {
+  const safeOffset = Math.max(0, Math.min(text.length, offset));
+  const words = [...wordSegmenter.segment(text)].filter((part) => part.isWordLike);
+
+  if (direction === 'forward') {
+    for (const word of words) {
+      const end = word.index + word.segment.length;
+      if (end > safeOffset) return end;
+    }
+    return null;
+  }
+
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    const word = words[index];
+    if (word && word.index < safeOffset) return word.index;
+  }
+  return null;
 }
 
 export function deleteLastChar(str: string): [string, number] {
