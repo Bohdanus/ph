@@ -100,7 +100,7 @@ export const clampPaintSize = (value: number): number =>
  * rasterized from.
  *
  * `Smoothing` and `Mode` are optional on `DrawToolArgs` and required here, because
- * the legacy `draw` tool's per-pen presets (`src/tools/settings.ts:21-25`) predate
+ * the legacy `draw` tool's per-pen presets (`src/tools/settings.ts:53`) predate
  * both and must keep rendering exactly as they do today.
  */
 export type PaintSettings = {

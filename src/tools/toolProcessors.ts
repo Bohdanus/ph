@@ -145,7 +145,7 @@ const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: num
 const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = true) =>
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 
-/** The width `defaultSettings.pencil` seeds the pencil with (src/tools/settings.ts:126). */
+/** The width `defaultSettings.pencil` seeds the pencil with (src/tools/settings.ts:213). */
 const DEFAULT_PENCIL_LINE_WIDTH = 3;
 
 const unimplemented = () => () => [null as never] as ToolResult;

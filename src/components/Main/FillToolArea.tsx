@@ -85,7 +85,7 @@ const readLayerPixels = (bitmap: BitmapSource, size: Size): ImageData | null => 
  * the foreground colour at the mask, the magic eraser subtracts alpha at it — and both scale the
  * per-pixel alpha by `Opacity`, so `alpha < 1` is a partial fill and a partial erase rather than an
  * all-or-nothing one. None of that is re-implemented here: `updateLayerByTool` routes to
- * `paintBucket`/`magicEraser` (`src/tools/toolProcessors.ts:227-236`), which read the same bitmap at
+ * `paintBucket`/`magicEraser` (`src/tools/toolProcessors.ts:385-393`), which read the same bitmap at
  * the same size and composite from the mask.
  *
  * What this area does own is the decision to commit at all, and that decision cannot be delegated:
