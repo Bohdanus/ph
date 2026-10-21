@@ -25,7 +25,7 @@ concludes none exists is following this document's own index correctly and still
 **Read `docs/ORCHESTRATION.md` before your first edit**, and treat a rule you cannot find in either
 as a rule you do not know rather than one that does not apply.
 
-Every `file:line` here was last re-verified on 2026-10-20, when 15 citations were checked and 13 were re-pointed to their current locations. **Re-verify before you rely on one**,
+Every `file:line` here was last re-verified on 2026-10-21, when 15 citations were checked and 15 were re-pointed or confirmed. **Re-verify before you rely on one**,
 and name a symbol as well as a line wherever you can: a stale citation sends the next session
 after a bug that does not exist, and writing this skill corrected more than sixty of them.
 
@@ -577,7 +577,7 @@ must read the conventions, and three of its items are non-negotiable:
     explicitly.
 ```
 
-- **`e2e/README.md` quoted verbatim** (415 lines; the headless rule is under
+- **`e2e/README.md` quoted verbatim** (665 lines; the headless rule is under
   "Run it headless": _"`npm run test:e2e` is **headless by default. Keep it that way.**"_).
   A summary of the rules is not the rules. The verbatim quote is what stops the new spec from
   reintroducing `--headed`, a wrong `testDir`, or an unquarantined flake.
@@ -3968,12 +3968,7 @@ doc fixes it in the same commit.**
   `AGENTS.md` and `docs/TESTING.md` point readers to the record without duplicating its
   totals. A suite change can invalidate a count: rerun before updating the source record,
   and do not copy totals into another document.
-- **A claim about a gate is a real one.** `e2e/README.md` — the "It is a **blocking** gate" paragraph, which no longer says `continue-on-error: true` still says the `e2e` job "is
-  still marked `continue-on-error: true`" and leaves "flipping `continue-on-error` to `false`" as
-  the thing left to do. It is not: the job was promoted, and `.github/workflows/ci.yml` — the `e2e` job's "It was `continue-on-error: true`" comment
-  documents the promotion and why the old justification had stopped describing the suite.
-  `AGENTS.md` already carries the new claim. **The README is the stale one** — fix it in the same
-  commit that promotes the job, not three commits later.
+- **A claim about a gate is a real one.** `e2e/README.md` — the "It is a **blocking** gate" paragraph — was corrected to say the `e2e` job **was** `continue-on-error: true`, matching `.github/workflows/ci.yml` (line 210), which records the promotion to a blocking matrix gate and why the old justification had stopped describing the suite. Both documents are consistent; neither needs correcting. Promote a gate in the same commit as the justification that made it, and do not carry stale "fix the README" instructions into a new session.
 - **A claim about the number of orphans, of pins, of files** moves the same way.
 - **The trigger:** before committing any change, ask what it made untrue elsewhere — a promoted
   gate, a deleted entry, a removed helper, a changed test count. Then fix that too, in the same
