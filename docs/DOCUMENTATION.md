@@ -242,14 +242,15 @@ unit has not been located yet, and citing a line number is how that was hidden.
 **Why a name and not a number.** A number cannot be checked: a test that fails on a
 number having moved trains people to regenerate citations instead of re-deriving
 them, which is what produced the clusters. A name can be checked, and this
-repository checks it — `scripts/__tests__/agents-citations.test.mjs` reads every
-tracked markdown document and fails on a backticked call the program does not
-contain, a retired symbol named in any of them, a `§N` that is not a live
-`HANDOFF.md` heading, and a `file.ext:‹line›` citation anywhere outside a fence.
-This test runs in CI and blocks merges with tracked-document citation violations. Structured
+repository checks it — `scripts/__tests__/agents-citations.test.mjs` enumerates tracked Markdown,
+then checks every maintained document for a backticked call the program does not contain, a retired
+symbol, a `§N` that is not a live `HANDOFF.md` heading, or a `file.ext:‹line›` citation outside a
+fence. Generated and point-in-time documents are excluded from those maintained-document checks.
+This test runs in CI and blocks merges with maintained-document citation violations. Structured
 `implementationRefs` in tool-description data are machine-readable metadata, not prose; they remain
-separately governed until that data format is migrated. The pre-commit gate also rejects newly added
-line-number citations in source comments; existing legacy citations remain a migration backlog.
+separately governed until that data format is migrated. The pre-commit gate rejects newly added
+line-number citations in tracked Markdown prose and source comments, except generated `docs/TOOLS.md`;
+existing historical citations remain a migration backlog.
 
 **The one exemption is quotation.** A finding whose SUBJECT is a drifted line-number
 citation cannot be stated without one — "`history-replay.ts` cites 47 lines past its

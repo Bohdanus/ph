@@ -2642,34 +2642,30 @@ The operator's own rule releases a chat's write ownership when its branch is mer
 this automatic on a landing — so the gap is a chat that finishes work it will never land: an
 abandoned feature, or one folded into another branch.
 
-## 218. The no-line-numbers rule lacks permanent coverage for all maintained prose
+## 218. Point-in-time Markdown exclusions retain legacy line citations outside the maintained-doc scan
 
-**Problem.** `scripts/__tests__/agents-citations.test.mjs` enumerates `git ls-files '*.md'`, but
-`LINE_NUMBER_GATED` pins only a subset of maintained documents. Everything else is caught only while
-it is _dirty_, by the assertion that the maintained corpus carries no citation — which means **a
-migrated document can regress silently the moment it reaches zero**.
+**Problem.** The maintained-document scan is already permanent: `lineNumberCitationsByDocument`
+checks the named gated set, and `ungatedDocumentsWithLineNumbers(readMaintainedDocuments())` rejects
+citations in every other maintained document. The prior claim that a clean document could regress
+silently was incorrect.
 
-Two verified consequences. **`docs/LAYERS-PANEL.md` was migrated by hand, is in the maintained
-corpus, and is not in `LINE_NUMBER_GATED`**, so it has zero citations today and nothing would report
-a re-added one — the same state as `HANDOFF.md`, `docs/TESTING.md` and `TEST-FLAKES.md`. And
-**`MIGRATION_NEXT_STEPS_SUNDAY.md` carries 139 citations while being excluded outright**, because
-`docs/README.md` lists it as a point-in-time report. That exclusion is right for the retired-symbol
-leg, whose mentions in such a document are all true. It is **wrong for the line-number leg**, where
-139 unswept coordinates are residue no assertion reports.
+The actual remaining gap was **new prose in tracked Markdown excluded from the maintained-document
+scan**, notably point-in-time reports. `MIGRATION_NEXT_STEPS_SUNDAY.md` still has historical
+citations, and `docs/OVERRIDES.md` is operator-owned. A pre-commit guard now rejects new citations in
+tracked Markdown prose and source comments, while exempting generated `docs/TOOLS.md`; it does not
+migrate that existing historical residue.
 
-Human-written source comments are prose and follow the same ban. The pre-commit gate rejects newly
-added numbered citations in code comments; existing comments remain legacy residue. Structured
-`implementationRefs` in tool-description data are separate machine-readable metadata and require a
-separate migration decision.
+Human-written source comments follow the same ban. Structured `implementationRefs` in tool-description
+data are separate machine-readable metadata and require a separate migration decision.
 
-**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `trackedMarkdown()`,
-`LINE_NUMBER_GATED`, `DOCUMENTS_NOT_CHECKED`. `docs/README.md` — the point-in-time table.
+**Affected.** `scripts/__tests__/agents-citations.test.mjs` — `DOCUMENTS_NOT_CHECKED` and the
+maintained-document citation legs. `scripts/check-new-line-citations.mjs` — the pre-commit guard.
+`docs/README.md` — the point-in-time document index.
 
-**What would close it.** Widen `LINE_NUMBER_GATED` to every maintained document, so a clean one is
-pinned rather than merely quiet, and decide whether structured `implementationRefs` should migrate
-to symbol anchors. The operator has resolved the source-comment scope: comments are prose, and the
-ban applies to them. The pre-commit check prevents new comment citations while the old residue is
-retired.
+**What would close it.** Migrate the existing citations out of point-in-time reports that remain
+tracked and agent-editable. Leave operator-owned `docs/OVERRIDES.md` to its owner, and keep generated
+`docs/TOOLS.md` under its generator. Decide separately whether structured `implementationRefs`
+should migrate to symbol anchors.
 
 ## 219. Nothing stops a test from asserting on a path another process owns, and all three repairs are prose
 
