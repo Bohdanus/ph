@@ -96,13 +96,11 @@ async function scrollToTop(page: Page): Promise<void> {
 /**
  * The workspace canvas box, measured at a known scroll position.
  *
- * The app is taller than Playwright's 720px default window, so the WINDOW scrolls, and
- * `boundingBox()` is viewport-relative: every `fill()` on a colour or slider input scrolls
- * its element into view first, and the sidebar's colour pickers sit near the bottom of a
- * tall page. A box measured before such an interaction describes a point 440px above where
- * the canvas actually is, and a drag built from it lands on the header — silently, with no
- * error anywhere. Scrolling to a fixed position first makes the box a function of the layout
- * rather than of the interaction history, and every other measurement here assumes scroll 0.
+ * `boundingBox()` is viewport-relative. This helper resets document scroll to zero before
+ * measuring, so a prior interaction's scroll position cannot leak into the returned box.
+ * Measure again after layout changes, such as opening the options panel, because the
+ * canvas may have moved even when scroll is unchanged. The app shell no longer scrolls at
+ * document level (see `e2e/OPEN_PROBLEMS.md`).
  *
  * This is also the OPEN_PROBLEMS re-measure rule, for the same reason: the options panel
  * lands in the toolbar row and the canvas box is only valid after it has settled.
@@ -122,10 +120,10 @@ function inCanvas(box: BoundingBox, rect: PageRect): PageRect {
 /**
  * A capture clip, in absolute page pixels, around a canvas-relative rectangle.
  *
- * `page.screenshot({ clip })` only reliably covers what is inside the viewport, and the
- * workspace canvas is taller than the viewport in the default Playwright window, so a clip
- * spanning the whole canvas box would be reading outside the rendered page. Every clip here
- * is therefore built from a rectangle this spec chose to be in view, not from the box.
+ * `page.screenshot({ clip })` only covers the viewport intersection. When the workspace
+ * canvas box extends beyond the viewport, a clip spanning the whole box would include
+ * offscreen area. Every clip here is therefore built from a rectangle this spec chose to
+ * be in view, not from the whole box.
  */
 function clipAround(box: BoundingBox, rect: PageRect, margin: number): Required<ClipOptions> {
   const absolute = inCanvas(box, rect);
@@ -142,11 +140,11 @@ function clipAround(box: BoundingBox, rect: PageRect, margin: number): Required<
 /**
  * A capture clip over the whole VISIBLE part of the workspace canvas.
  *
- * The canvas is taller than Playwright's viewport, so a clip spanning the whole box reaches
- * past the rendered page; this truncates at the viewport instead. Both readings the quick
- * selection tests need — the painted band and the stroke to brush over it — come out of ONE
- * such capture, and it is wide enough that a region which grew out of the band is read at its
- * real size, rather than landing outside the capture entirely.
+ * When the canvas extends beyond Playwright's viewport, a clip spanning the whole box
+ * includes offscreen area; screenshot capture returns only the viewport intersection.
+ * Both readings needed by the quick selection tests — the painted band and the stroke to
+ * brush over it — come from ONE capture. It is wide enough that a region which grew out of
+ * the band is read at its real size, rather than landing outside the capture entirely.
  */
 async function visibleCanvasClip(page: Page, box: BoundingBox): Promise<Required<ClipOptions>> {
   const viewportHeight = await page.evaluate(() => window.innerHeight);

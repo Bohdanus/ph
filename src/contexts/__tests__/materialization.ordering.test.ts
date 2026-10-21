@@ -112,7 +112,7 @@ function makeReplay(layers: Record<string, DurableReplayLayer>): DurableReplayRe
 function makeRequest(registry: AssetRegistry, signal?: AbortSignal): MaterializationRequest {
   return {
     documentId: 'test-doc',
-    baselineAssetGeneration: 0,
+    baselineAssetGeneration: registry.getDocumentGeneration('test-doc'),
     operationSetRevision: 0,
     assetRegistry: registry,
     ...(signal ? { signal } : {}),
@@ -514,6 +514,98 @@ describe('materializeDocument safety (P0.3)', () => {
     registry.shutdown();
   });
 
+  it('stops a batch before later layers when document disposal advances its captured generation', async () => {
+    const registry = new AssetRegistry();
+    const request = makeRequest(registry);
+    const originalMaterialize = registry.materialize.bind(registry);
+    let disposed = false;
+    const materialize = vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      if (!disposed) {
+        disposed = true;
+        registry.disposeDocument(request.documentId);
+      }
+      return lease;
+    });
+
+    await expect(
+      materializeDocument(
+        makeReplay({
+          'layer-first': makeBlankLayer('layer-first', 40, 40),
+          'layer-late': makeBlankLayer('layer-late', 40, 50),
+        }),
+        request
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(disposed).toBe(true);
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(materialize.mock.calls[0]?.[0].expectedDocumentGeneration).toBe(request.baselineAssetGeneration);
+    registry.shutdown();
+  });
+
+  it('rejects a document disposed during the final cooperative yield', async () => {
+    const registry = new AssetRegistry();
+    const request = makeRequest(registry);
+    const originalMaterialize = registry.materialize.bind(registry);
+    const release = vi.fn();
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      registry.disposeDocument(request.documentId);
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+
+    await expect(
+      materializeDocument(makeReplay({ 'layer-final': makeBlankLayer('layer-final', 40, 40) }), request)
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(release).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('releases materialized layers when cancellation arrives during the final yield', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    const request = makeRequest(registry, controller.signal);
+    const originalMaterialize = registry.materialize.bind(registry);
+    const yieldScheduled = deferred<void>();
+    const originalSetTimeout = globalThis.setTimeout;
+    const release = vi.fn();
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+    vi.spyOn(globalThis, 'setTimeout').mockImplementationOnce((callback, delay, ...args) => {
+      const timer = originalSetTimeout(callback, delay, ...args);
+      yieldScheduled.resolve();
+      return timer;
+    });
+
+    const materialization = materializeDocument(
+      makeReplay({ 'layer-final': makeBlankLayer('layer-final', 40, 40) }),
+      request
+    );
+    await yieldScheduled.promise;
+    controller.abort();
+
+    await expect(materialization).rejects.toMatchObject({ name: 'AbortError' });
+    expect(release).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
   it('aborts early when the signal is aborted before processing layers', async () => {
     const registry = new AssetRegistry();
     const controller = new AbortController();
@@ -524,6 +616,53 @@ describe('materializeDocument safety (P0.3)', () => {
     });
 
     await expect(materializeDocument(replay, makeRequest(registry, controller.signal))).rejects.toThrow(/aborted/);
+  });
+
+  it('does not start a blank layer materialization for a pre-aborted signal', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    controller.abort();
+    const materialize = vi.spyOn(registry, 'materialize');
+
+    await expect(
+      materializeLayer(makeBlankLayer('layer-pre-aborted', 40, 40), makeRequest(registry, controller.signal))
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(materialize).not.toHaveBeenCalled();
+  });
+
+  it('releases a blank layer lease when cancellation arrives before materializeLayer returns', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    const originalMaterialize = registry.materialize.bind(registry);
+    const release = vi.fn();
+    vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
+      const lease = await originalMaterialize(input);
+      const releaseLease = lease.release;
+      controller.abort();
+      return {
+        ...lease,
+        release: () => {
+          release();
+          releaseLease();
+        },
+      };
+    });
+
+    await expect(
+      materializeLayer(makeBlankLayer('layer-cancelled', 40, 40), makeRequest(registry, controller.signal))
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(release).toHaveBeenCalledOnce();
+    registry.shutdown();
+  });
+
+  it('aborts an empty document when its signal is already aborted', async () => {
+    const registry = new AssetRegistry();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(materializeDocument(makeReplay({}), makeRequest(registry, controller.signal))).rejects.toMatchObject({
+      name: 'AbortError',
+    });
   });
 
   it('returns a release handle that releases all layer leases', async () => {

@@ -256,8 +256,18 @@ references are refused because they can recurse through the complete SVG documen
 and stylesheets that could affect root dimensions are refused; decoded-image validation remains the
 final guard for auto/percentage dimensions resolved by the browser. This is intentionally narrower
 than the SVG format: embedded JPEG/other raster formats and foreign HTML content are not imported
-through this path. The CSS resource scan does not evaluate custom-property expansion or inactive media
-queries, so it may refuse a data URL declaration even when the current rule would not fetch it.
+through this path. CSS custom-property values are analyzed as a bounded, global may-flow graph across
+stylesheets, inline styles, presentation attributes, and animation values. Unused and inert-only
+custom properties are allowed; resource-capable properties, `@import`, and unknown properties that
+use `var()` are sinks. Alias and fallback references are followed without resolving selectors,
+cascade, inheritance, `@scope`, or media conditions, so impossible flows can still be refused. Malformed
+CSS and analysis-limit exhaustion fail closed. This follows the dependency semantics in [CSS Variables
+Level 1 §2.3](https://www.w3.org/TR/css-variables-1/#cycles) (sourced), with conservative resource
+sinks grounded in [CSS Images Level 4](https://www.w3.org/TR/css-images-4/), [CSS Masking Level
+1](https://www.w3.org/TR/css-masking-1/), [Motion Path Level 1](https://www.w3.org/TR/motion-1/),
+and [SVG 2 painting](https://www.w3.org/TR/SVG2/painting.html) (sourced). URL scheme checks use the
+[WHATWG URL Standard](https://url.spec.whatwg.org/#concept-basic-url-parser) parser so ASCII tab and
+newline normalization occurs before classifying `data:` URLs (sourced).
 Standalone PNG imports validate the `IHDR` and enforce the same pixel ceiling before `FileReader`;
 APNG frame chunks are rejected before decode in both the standalone PNG and flattened-SVG paths.
 Standalone JPEG and WebP still rely on post-decode dimension validation and need separate

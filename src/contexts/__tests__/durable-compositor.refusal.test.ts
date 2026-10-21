@@ -133,7 +133,7 @@ function replay(layers: Record<string, DurableReplayLayer>): DurableReplayResult
 function request(registry: AssetRegistry): MaterializationRequest {
   return {
     documentId: 'test-document',
-    baselineAssetGeneration: 0,
+    baselineAssetGeneration: registry.getDocumentGeneration('test-document'),
     operationSetRevision: 0,
     assetRegistry: registry,
   };

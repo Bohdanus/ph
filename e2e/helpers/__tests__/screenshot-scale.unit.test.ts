@@ -510,10 +510,10 @@ describe('imagePointToCss and cssPointToImage are inverses', () => {
 });
 
 /**
- * The translation `captureCanvasScreenshot` needs, in the app's own numbers: the page is
- * 1177px tall in a 720px window, `clickToolButton` scrolls it 440px, and the workspace
- * canvas goes from `y: 100` to `y: -340`. Raw, that clip reaches a capture 440px away from
- * the region the caller measured — a wrong answer, not an error.
+ * This test pins coordinate arithmetic with synthetic values: a scroll of {x: 0, y: 440}
+ * and a viewport rect at y=-340 map to document y=100. It does not assert app layout or
+ * screenshot pixels; using the viewport y unchanged for a page-relative capture would
+ * target a region 440px away.
  */
 describe('viewportRectToPageRect', () => {
   const RECT: CssBox = { x: 56, y: -340, width: 320, height: 120 };

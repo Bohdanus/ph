@@ -585,10 +585,12 @@ describe('drawLine', () => {
  * same assertions whether the callback read `window.scrollX` or returned a constant. The
  * second case below is what distinguishes the two.
  *
- * Why it is read at the call site at all is the reason `clickToolButton` exists in the
- * production path: it scrolls the window by 440px in this build, so an offset read once is wrong
- * by a different amount before and after any tool click. `toolbar-helpers.ts:127`,
- * `cdp-helpers.ts:60` and `flyout-longpress-race.spec.ts:342,347` are the callers.
+ * The scroll is read live because the window offset can change between calls. This test
+ * uses a synthetic scroll model to pin that behavior; `clickToolButton` also uses
+ * `getPageScroll` to save and restore the window position around a tool click via
+ * `preservingScroll` (`toolbar-helpers.ts`). The normal app shell no longer scrolls at
+ * document level; the 440px value below is test data, not app geometry. Other callers
+ * include `cdp-helpers.ts` and `flyout-longpress-race.spec.ts`.
  */
 describe('getPageScroll', () => {
   it('reports the window scroll its own page function reads', async () => {
