@@ -143,7 +143,7 @@ type LayerSourceParams = {
  *
  * The layer is created before the stroke is rasterized, so the options bar's `Mode`
  * has to be resolved here rather than while drawing. Replay re-enters this function
- * with the same history entry's args (`src/contexts/useHistory.ts:97`), which is
+ * with the same history entry's args (`src/contexts/useHistory.ts:187`), which is
  * what keeps undo, redo and the durable shadow in agreement: the mode rides in
  * `layerSource.args`, so it is already carried by both
  * (`src/contexts/history-adapter.ts:181-187`).

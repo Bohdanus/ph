@@ -397,7 +397,7 @@ function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: strin
  * anywhere on the way, so they throw. The throw is what carries the named error out of the
  * tool processor: the only caller of `copyPolygonToCanvas` is the polygon processor
  * (`src/tools/selection.ts:18`), reached solely from `tempUpdateLayer`, whose `catch`
- * (`src/contexts/useLayer.ts:606-608`) logs it and returns. Nothing else observes it, which
+ * (`src/contexts/useLayer.ts:1301-1303`) logs it and returns. Nothing else observes it, which
  * is exactly why a stand-in canvas cannot be substituted here: a `null` would leave the
  * error with no in-band consumer at all. The outermost UI callers are a separate channel
  * and never reach these wrappers — they go through `copyActiveSelection`, whose `false`
