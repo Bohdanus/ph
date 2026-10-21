@@ -90,8 +90,7 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..');
 /**
  * A real board in a temp directory, for the tests that need the real CLI.
  *
- * `AGENT_BOARD_DIR` is what `resolveBoardDir` reads first
- * (scripts/lib/agent-board/db.mjs:250), so a test never touches the operator's board
+ * `AGENT_BOARD_DIR` is what `resolveBoardDir()` reads first, so a test never touches the operator's board
  * in the common git dir. The repository itself is NOT faked: path normalization is
  * lexical but the git home and worktree list are real.
  *
@@ -367,8 +366,8 @@ describe('e2e-run: the own-server guarantee', () => {
 
   it('leaves a caller-supplied --output alone in BOTH spellings', async () => {
     // `--output=dir` is the one an earlier version missed: `includes('--output')` on
-    // the bare token does not match it, and the bundled commander accepts both
-    // (playwright/lib/program.js:207 and the option parser it uses), so the caller's
+    // the bare token does not match it, but Playwright's parser accepts both
+    // spellings, so the caller's
     // choice was silently discarded and the log still named the wrapper's directory.
     for (const form of [['--output', 'test-results/mine'], ['--output=test-results/mine']]) {
       const suite = fakeSuite();
@@ -390,9 +389,8 @@ describe('e2e-run: the own-server guarantee', () => {
 
   it('pins --last-failed to a path the per-run output directory cannot move', async () => {
     // `--last-failed` reads `<outputDir>/.last-run.json` and silently runs the WHOLE
-    // suite when that file is not where it expects it
-    // (playwright/lib/runner/index.js:6608-6625 swallows the read error and applies
-    // no filter at all). A per-run outputDir moves that file every run, so without
+    // suite when that file is not where it expects it. The CLI silently applies no
+    // filter. A per-run outputDir moves that file every run, so without
     // this pin the flag quietly stops meaning anything after the first run — and an
     // agent that used it to re-check a fix would be told everything passed.
     const suite = fakeSuite();
@@ -748,8 +746,8 @@ describe('e2e-run: the queue is a queue, not a gate', () => {
   it('never reclaims a holder that this wrapper did not create', async () => {
     // The reclaim UNLOCKS as the holder it is reclaiming, so a wrong liveness answer
     // is not a wrong log line — it releases a real agent's queue slot. The board's
-    // default identity is the sanitized branch and `sanitize` preserves `/`
-    // (scripts/lib/agent-board/identity.mjs:28), so a holder on `fix/1234`, or anyone
+    // default identity uses `sanitize()`, which preserves `/`, so a holder on
+    // `fix/1234`, or anyone
     // who passed `--agent 2026`, has an identity whose last segment parses as a pid.
     // An earlier version of `isHolderAlive` probed it, found nothing, and stole it.
     for (const identity of ['fix/1234', '2026', 'somebody-else', 'e2e-run/branch/1234abc']) {
@@ -930,7 +928,7 @@ describe('e2e-run: ports and arguments', () => {
     // gap between them, and the port is released inside the gap, so that assertion is
     // also a claim about what every other process on the machine did during it — which
     // is the one promise this repository's own header refuses to make.
-    // `scripts/e2e-run.mjs:191-199` says so in the code that matters: the check "cannot
+    // the production comment for `reservePort()` says so in the code that matters: the check "cannot
     // close the gap between this returning and Vite calling bind", and `reservePort`
     // exists because one pick is not a guarantee. A test that asserted the one-shot
     // shape was therefore asserting a property of the machine, and it went red against

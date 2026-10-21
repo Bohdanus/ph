@@ -16,7 +16,7 @@ import { createMockCanvasContext } from '../../test/setup.ts';
 
 function createRafMocks() {
   const frames = new Map<number, FrameRequestCallback>();
-  let nextId = 0;
+  let nextId = 1;
 
   return {
     requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {

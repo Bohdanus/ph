@@ -345,7 +345,7 @@ const scalePaintedChroma = (
  * The one implementation the exported processor reaches.
  *
  * `points` are in the same space as `size` and the buffer: the registry hands a raster tool
- * the layer's own bitmap and extent (`src/contexts/useLayer.ts:730-734`), so a point is
+ * the layer's own bitmap and extent through `stageProcessorInput()`, so a point is
  * addressed against this buffer and not against the document.
  *
  * **There is no build-up.** Photoshop's Sponge compounds for as long as the button is held
@@ -370,7 +370,7 @@ const applySponge = (
   const source = previousCanvas ?? bitmap;
   ctx.drawImage(source, 0, 0);
 
-  // A reduced canvas environment has no read-back at all (`src/test/setup.ts:185`
+  // A reduced canvas environment has no read-back at all (the default test canvas mock
   // documents that the global mock deliberately omits it, and production guards on
   // exactly this). The drawn source is then the best answer available.
   if (typeof ctx.getImageData !== 'function' || typeof ctx.putImageData !== 'function') return [canvas];

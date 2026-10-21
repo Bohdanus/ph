@@ -36,7 +36,7 @@ import {
   type ToolLayerSource,
 } from './layer-types.ts';
 import type { BitmapSource, Size } from './general-types.ts';
-import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
+import type { NewBedrockSize, ToolArgs, VectorToolName } from './tool-types.ts';
 import { deriveSelectionBaseline, isValidSelectionSnapshot, selectionSnapshot } from './selection-baseline.ts';
 import {
   getTransformFromHistoryArgs,
@@ -506,14 +506,14 @@ function convertToolSource(source: ToolLayerSource, layer: Layer): DurableLayerS
   if (kind === 'legacy-tool') {
     return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
   }
-  return Object.freeze({
-    kind,
-    toolName: source.args.toolName,
-    args,
-    size,
-    sourcePos: Object.freeze({ ...layer.pos }),
-    isBedrock,
-  });
+  const sourcePos = Object.freeze({ ...layer.pos });
+  if (kind === 'vector') {
+    return Object.freeze({ kind, toolName: source.args.toolName as VectorToolName, args, size, sourcePos, isBedrock });
+  }
+  if (kind === 'text') {
+    return Object.freeze({ kind, toolName: source.args.toolName, args, size, sourcePos, isBedrock });
+  }
+  return Object.freeze({ kind, toolName: source.args.toolName, args, size, sourcePos, isBedrock });
 }
 
 function convertSource(
@@ -601,7 +601,7 @@ function frameFromLegacy(
  * The frame an ENABLED first entry establishes when it is a bedrock source rather than a
  * document source — the shape `File > New` produces, where `createBlankLayer(params,
  * true)` replaces the document and writes a single `NEW_LAYER` entry carrying
- * `{ isBedrock: true, size }` (`useLayer.ts:245-258`, `history-utils.ts:22-25`).
+ * `{ isBedrock: true, size }` from `createBlankLayer()`, interpreted by `history-utils`.
  *
  * The baseline describes the document at cursor -1, and for that history the bedrock
  * size IS that document, so reading it here is what makes the shadow agree with the
@@ -1181,7 +1181,7 @@ export function legacyHistoryToDurable(
   // Ids already claimed by an earlier legacy row. Two id-based resolvers exist
   // and both take the FIRST match, which is what a repeated id threatens:
   // `updateHistoryTimeline` finds the first entry in the LEGACY timeline
-  // (`history-timeline.ts:23-28`) and `toggleDurableEntry` finds the first in the
+  // (`history-timeline`); `toggleDurableEntry()` finds the first in the
   // durable document (`toggleDurableEntry` below). Publishing a repeat would give
   // the two lists different first matches for one key, so a History-panel toggle
   // would disable a different edit in each model. Skipping the repeat keeps them

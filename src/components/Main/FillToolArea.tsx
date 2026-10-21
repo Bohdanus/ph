@@ -28,7 +28,8 @@ const isFillToolName = (toolName: string): toolName is FillToolName =>
  * a tool that cannot read its own destination must fail LOUDLY and write NO history, because the
  * alternative — a commit that silently changed nothing — is a tool that looks alive and is not.
  *
- * `src/test/setup.ts:182-190` removes `getImageData` from the globally installed canvas context
+ * The default test canvas mock deliberately omits `getImageData` from the
+ * globally installed canvas context
  * precisely because production code branches on `typeof ctx.getImageData === 'function'`; that
  * guard is what these two names hang off.
  */
@@ -59,7 +60,7 @@ const stageLayerPresentation = (layer: Layer, bitmap: NonNullable<Layer['bitmap'
 };
 
 /**
- * Reads the active layer back at its own size, the same read `src/tools/fill.ts:59-66` performs
+ * Reads the active layer back at its own size, the same `readSourcePixels()` operation as `fill`
  * inside the processor. Returns null when the environment cannot supply pixels, which is the
  * read-back refusal rather than an error: the caller turns null into a loud no-commit.
  */
@@ -84,7 +85,7 @@ const readLayerPixels = (bitmap: BitmapSource, size: Size): ImageData | null => 
  * the foreground colour at the mask, the magic eraser subtracts alpha at it — and both scale the
  * per-pixel alpha by `Opacity`, so `alpha < 1` is a partial fill and a partial erase rather than an
  * all-or-nothing one. None of that is re-implemented here: `updateLayerByTool` routes to
- * `paintBucket`/`magicEraser` (`src/tools/toolProcessors.ts:227-236`), which read the same bitmap at
+ * the `'paint-bucket'` and `'magic-eraser'` processors, which read the same bitmap at
  * the same size and composite from the mask.
  *
  * What this area does own is the decision to commit at all, and that decision cannot be delegated:
@@ -137,7 +138,7 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
 
     // A raster edit to the BEDROCK layer is wrong: it is the document's own backing image and the
     // floor every other layer composites over, and there is nothing beneath it to fill from or
-    // restore. `MoveToolArea.tsx:35` refuses the same operation on the same flag, as do the other
+    // restore. `MoveToolArea` refuses the same operation on the same flag, as do the other
     // tools that commit a raster (`SmudgeToolArea`, `DodgeToolArea`, `CloneStampToolArea`).
     if (layer.isBedrock) return;
 
@@ -186,7 +187,7 @@ export const FillToolArea = ({ className }: FillToolAreaProps) => {
     // rather than off a destructured copy for the same reason.
     //
     // `paint-bucket` ONLY. `magicEraser` subtracts alpha and never reads `color`
-    // (`src/tools/fill.ts:158-173`), so writing the foreground into its committed args would put a
+    // in `magicEraser()`, so writing the foreground into its committed args would put a
     // fill colour into a history entry describing an erase — a value the pixels could never honour.
     // `FillToolArgs.color` is carried for both names only so the pair shares one type, and it
     // travels unchanged for the eraser.

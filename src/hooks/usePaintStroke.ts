@@ -14,13 +14,12 @@ import { usePointerPosition } from './usePointerPosition.ts';
  * sequence into `onStart` / `onMove` / `onCommit`.
  *
  * Why the split is `onMove` + `onCommit` and not one callback: `onMove` is the
- * live preview and MUST reach the layer through `tempUpdateLayer`
- * (`src/contexts/useLayer.ts:473`), the only writer of `previewLayersRef`.
- * `onCommit` is the undo boundary and MUST reach it through `updateLayerByTool`
- * (`src/contexts/useLayer.ts:264`), which dispatches the `TOOL_ACTION` history
+ * live preview and MUST reach the layer through `tempUpdateLayer()`, the only
+ * writer of `previewLayersRef`. `onCommit` is the undo boundary and MUST reach
+ * it through `updateLayerByTool()`, which dispatches the `TOOL_ACTION` history
  * item. A tool that paints straight into its own canvas instead produces pixels
  * with zero history entries: the strokes are silently, permanently
- * un-undoable, and `commitDirtyTool` (`:323`) takes its
+ * un-undoable, and `commitDirtyTool()` takes its
  * `PUBLISH_RUNTIME_PRESENTATION` branch and never warns, because from its point
  * of view nothing is missing. So the two callbacks are the entire surface a
  * tool touches, and the only thing this hook cannot do is touch a canvas.
@@ -47,7 +46,7 @@ export type PaintStrokeCallbacks = {
    * document space.
    *
    * This is the live preview: it must write through `tempUpdateLayer`
-   * (`src/contexts/useLayer.ts:473`) so the repainted pixels are recorded in
+   * through `tempUpdateLayer()` so the repainted pixels are recorded in
    * `previewLayersRef` and `commitDirtyTool` can promote them with a history
    * entry. Painting into a private canvas here is the documented way to make a
    * stroke un-undoable.
@@ -62,10 +61,9 @@ export type PaintStrokeCallbacks = {
    * when it differs from the last accumulated one.
    *
    * This is the gesture's real end, and the only place a stroke is allowed to
-   * become permanent: it must go through `updateLayerByTool`
-   * (`src/contexts/useLayer.ts:264`) so exactly one `TOOL_ACTION` history item
+   * become permanent: it must go through `updateLayerByTool()` so exactly one `TOOL_ACTION` history item
    * is written per completed stroke. The same rule is what
-   * `src/components/Main/RectangularSelectionToolArea.tsx:76-82` states for a
+   * `RectangularSelectionToolArea` states for a
    * rectangle drag — the store is untouched by any intermediate move, so one
    * call per completed gesture is the whole story, and it cannot be moved up
    * into the move handler without writing a history item per pointer event.
@@ -94,7 +92,7 @@ export type UsePaintStrokeOptions = {
    * Supplying it opts the tool into a re-render per pointer move: `points` is
    * mirrored into React state so a component can render the stroke. Without it
    * the state is only written at gesture boundaries, because the cheaper shape
-   * is the one `DrawToolArea.tsx:32-44` uses — repaint a canvas from the
+   * is the one `DrawToolArea` uses — repaint a canvas from the
    * callback on every move and never re-render. Across five tools that
    * difference is felt on every drag, so the default is the cheap one.
    */
@@ -143,7 +141,7 @@ export const usePaintStroke = (
 ): PaintStroke => {
   const [{ totalSize, documentFrame: currentFrame }] = useStore();
   // Before the first crop there is no frame, and the frame IS the canvas
-  // origin. Resolving it the way `DrawToolArea.tsx:19` does is what keeps the
+  // origin. Resolving it the way `DrawToolArea` does is what keeps the
   // fallback from silently disagreeing with the coordinate maths.
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
@@ -155,7 +153,7 @@ export const usePaintStroke = (
   // The accumulating array lives in a ref, not in state. A stroke produces a
   // pointer event per frame and every one of them would otherwise re-render the
   // tool; the reference implementation repaints a canvas from a ref on each
-  // move and never re-renders at all (`DrawToolArea.tsx:24,32-44`).
+  // move and never re-renders at all (`DrawToolArea`).
   const gesturePointsRef = useRef<Point[]>([]);
   // Authoritative "a gesture is in flight" flag, kept here rather than read
   // from `usePointerPosition`'s `isMouseDown` ref: that ref is also cleared by
@@ -238,7 +236,7 @@ export const usePaintStroke = (
     const gesture = gesturePointsRef.current;
     // A release that lands where the stroke already is adds nothing, and a
     // duplicated point doubles the width of a pressure- or size-varying tip.
-    // Same rule as `DrawToolArea.tsx:71-75`, applied in document space: the
+    // Same rule as `DrawToolArea`, applied in document space: the
     // frame offset is constant for the whole gesture, so it cannot turn two
     // different canvas points into one document point.
     const finalPoint = toDocumentPoint(event);
@@ -275,7 +273,7 @@ export const usePaintStroke = (
   // captured on the first render would be a render stale, and a tool that
   // mounts enabled and loses its active layer mid-stroke would still report an
   // abort for a gesture it has stopped tracking. Same pattern as the
-  // `drawMaskRef` in `useRect.ts:52-54`.
+  // `drawMaskRef` in `useRect`.
   const abortStateRef = useRef({ enabled, onCancel });
   useEffect(() => {
     abortStateRef.current = { enabled, onCancel };

@@ -117,6 +117,8 @@ export type ToolArgsByName = {
 
 export type ToolName = keyof ToolArgsByName;
 
+export type VectorToolName = Extract<ToolName, 'shape' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon' | 'line'>;
+
 export type ToolArgsFor<TName extends ToolName> = ToolArgsByName[TName];
 
 export type ToolArgs = ToolArgsByName[ToolName];
