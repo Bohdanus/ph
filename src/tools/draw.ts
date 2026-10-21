@@ -38,7 +38,7 @@ export type DrawToolArgs = {
   /**
    * Photoshop `Smoothing`, 0-100, applied to the sampled path by
    * `smoothStrokePoints`. Optional because the legacy `draw` tool's per-pen presets
-   * (`src/tools/settings.ts:21-25`) predate it; an absent value is no smoothing,
+   * (`src/tools/settings.ts:53`) predate it; an absent value is no smoothing,
    * which is exactly what those presets render today.
    */
   smoothing?: number;

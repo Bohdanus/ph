@@ -417,7 +417,7 @@ export const createColorReplacementPlan = (
 };
 
 /**
- * Read `bitmap` back at `size`. The same read `src/tools/fill.ts:59-66` performs, and null when the
+ * Read `bitmap` back at `size`. The same read `src/tools/fill.ts:75` performs, and null when the
  * environment cannot supply pixels — which is the read-back refusal, not an error: a tool that
  * cannot read its own destination must change nothing rather than blank what it cannot see.
  */
