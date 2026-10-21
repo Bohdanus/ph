@@ -1,5 +1,5 @@
 import { SELECTION_ACTION } from '../util/constants.ts';
-import type { Selection } from './general-types.ts';
+import type { Selection, SelectionMetadata } from './general-types.ts';
 import type { SelectionSnapshot } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
 
@@ -13,6 +13,123 @@ export type SelectionHistoryArgs = {
   previousSelectionState?: SelectionSnapshot;
   nextSelectionState?: SelectionSnapshot;
 };
+
+function hasOwnDataKeys(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = []
+): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    Reflect.ownKeys(value).every((key) => {
+      if (typeof key !== 'string' || !allowed.has(key)) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return !!descriptor?.enumerable && Object.hasOwn(descriptor, 'value');
+    })
+  );
+}
+
+function hasFiniteKeys(value: unknown, keys: readonly string[]): boolean {
+  return (
+    hasOwnDataKeys(value, keys) && keys.every((key) => typeof value[key] === 'number' && Number.isFinite(value[key]))
+  );
+}
+
+function hasDenseArray<T>(value: unknown, isItem: (item: unknown) => item is T): value is T[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return false;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || !keys.includes('length')) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value') || !isItem(descriptor.value)) return false;
+  }
+  return keys.every((key) => {
+    if (key === 'length') return true;
+    if (typeof key !== 'string' || !/^(0|[1-9]\d*)$/.test(key)) return false;
+    const index = Number(key);
+    return index < value.length && String(index) === key;
+  });
+}
+
+const SELECTION_SOURCE_TOOLS = [
+  'polygonal-lasso',
+  'freehand-lasso',
+  'feather-magnetic-lasso',
+  'magic-wand',
+  'rectangular-selection',
+] as const;
+
+function isCanonicalMetadata(value: unknown): value is SelectionMetadata {
+  if (
+    !hasOwnDataKeys(value, [], ['copiedAtVersion', 'movedAtVersion', 'featherRadius', 'magneticLasso', 'magicWand'])
+  ) {
+    return false;
+  }
+  for (const key of ['copiedAtVersion', 'movedAtVersion', 'featherRadius']) {
+    const field = value[key];
+    if (field !== undefined && (typeof field !== 'number' || !Number.isFinite(field))) return false;
+  }
+
+  if (Object.hasOwn(value, 'magneticLasso') && value.magneticLasso !== undefined) {
+    const settings = value.magneticLasso;
+    const numericKeys = ['width', 'contrast', 'frequency', 'snapStrength', 'smoothing', 'pathPointCount'];
+    if (
+      !hasOwnDataKeys(settings, [...numericKeys, 'antiAlias']) ||
+      !numericKeys.every((key) => typeof settings[key] === 'number' && Number.isFinite(settings[key])) ||
+      typeof settings.antiAlias !== 'boolean'
+    ) {
+      return false;
+    }
+  }
+
+  if (Object.hasOwn(value, 'magicWand') && value.magicWand !== undefined) {
+    const settings = value.magicWand;
+    const numericKeys = ['tolerance', 'smoothing', 'selectedPixelCount', 'boundaryPointCount'];
+    if (
+      !hasOwnDataKeys(settings, [...numericKeys, 'seed', 'sampleColor']) ||
+      !numericKeys.every((key) => typeof settings[key] === 'number' && Number.isFinite(settings[key])) ||
+      !hasFiniteKeys(settings.seed, ['x', 'y']) ||
+      !hasFiniteKeys(settings.sampleColor, ['r', 'g', 'b', 'a'])
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isCanonicalSelection(value: unknown): value is Selection {
+  if (
+    !hasOwnDataKeys(value, ['id', 'points', 'isActive', 'pos'], ['lifecycle', 'geometry', 'sourceTool', 'metadata'])
+  ) {
+    return false;
+  }
+  return (
+    typeof value.id === 'string' &&
+    typeof value.isActive === 'boolean' &&
+    (value.lifecycle === undefined || value.lifecycle === 'committed') &&
+    (value.geometry === undefined || value.geometry === 'polygon' || value.geometry === 'rectangle') &&
+    (value.sourceTool === undefined ||
+      (typeof value.sourceTool === 'string' && SELECTION_SOURCE_TOOLS.some((tool) => tool === value.sourceTool))) &&
+    hasDenseArray(value.points, (point): point is Selection['points'][number] => hasFiniteKeys(point, ['x', 'y'])) &&
+    hasFiniteKeys(value.pos, ['x', 'y', 'width', 'height']) &&
+    (value.metadata === undefined || isCanonicalMetadata(value.metadata))
+  );
+}
+
+export function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!hasOwnDataKeys(value, ['selections'], ['activeSelectionId'])) return false;
+  return (
+    (value.activeSelectionId === undefined ||
+      value.activeSelectionId === null ||
+      typeof value.activeSelectionId === 'string') &&
+    hasDenseArray(value.selections, isCanonicalSelection)
+  );
+}
 
 function cloneSelection(selection: Selection): Selection {
   return {
@@ -54,7 +171,24 @@ export function selectionSnapshot(
  * from the same unbounded lookup, so both branches agree at every cursor.
  */
 export function deriveSelectionBaseline(history: readonly HistoryItem[]): SelectionSnapshot {
-  const first = history.find((item) => item.actionName === SELECTION_ACTION && !item.disabled);
-  const previous = (first?.args as SelectionHistoryArgs | undefined)?.previousSelectionState;
-  return selectionSnapshot(previous?.selections, previous?.activeSelectionId ?? null);
+  const first = history.find((item) => {
+    const actionName = Object.getOwnPropertyDescriptor(item, 'actionName');
+    const disabled = Object.getOwnPropertyDescriptor(item, 'disabled');
+    return (
+      actionName?.enumerable &&
+      Object.hasOwn(actionName, 'value') &&
+      actionName.value === SELECTION_ACTION &&
+      (!disabled || (disabled.enumerable && Object.hasOwn(disabled, 'value') && !disabled.value))
+    );
+  });
+  const argsDescriptor = first ? Object.getOwnPropertyDescriptor(first, 'args') : undefined;
+  const args = argsDescriptor?.enumerable && Object.hasOwn(argsDescriptor, 'value') ? argsDescriptor.value : undefined;
+  const previousDescriptor = args ? Object.getOwnPropertyDescriptor(args, 'previousSelectionState') : undefined;
+  const previous =
+    previousDescriptor?.enumerable && Object.hasOwn(previousDescriptor, 'value') ? previousDescriptor.value : undefined;
+  if (previous === undefined || previous === null) return selectionSnapshot();
+  if (!isValidSelectionSnapshot(previous)) {
+    throw new Error('Legacy selection baseline is not a canonical selection snapshot.');
+  }
+  return selectionSnapshot(previous.selections, previous.activeSelectionId ?? null);
 }
