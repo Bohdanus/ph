@@ -726,9 +726,11 @@ The premise correction is already the app's behaviour: `src/tools/shape.ts` — 
 `figure === 'triangle' || figure === 'polygon'` branch — builds a
 regular n-gon inscribed in the drag box. Sides defaults to 5 in Photoshop
 (`www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "you can leave
-these options at their defaults (sides = 5, radius = 0 px)"), and the app hardcodes 5 in that same
-branch. The default matches; nothing else about the control does, because there
-is no control.
+these options at their defaults (sides = 5, radius = 0 px)"), and the app defaults to 5 via
+`polygonSides()` (`src/tools/shape.ts`), which reads `args.sides` and falls back to
+`DEFAULT_POLYGON_SIDES` only when the key is absent or non-finite. The Sides control is on the
+options bar for this figure, taking the integers 3 through 100 — Adobe's own floor and ceiling.
+The default matches; the control exists and takes a real value.
 
 **The star is not the Polygon tool's any more, and the data file no longer says it is.** The
 previous version of this file described the star as a ratio on the same shape — "lower the star
@@ -797,13 +799,11 @@ were, which was false.** The two `useKeyDownShortcut` registrations in `AppKeybo
 `repeat: true` so that holding one scrubs. They are gated on `tipSizeTool(toolName) !== null`, and
 `tipSizeField` in the same file names exactly eight tools: brush, pencil, eraser, color-replacement,
 smudge, dodge, burn, clone-stamp. No shape figure is in that map, so for this family the keys are
-**inert,
-not unbound**. What makes them unrecordable here is that they change a side count which does not
-exist at runtime: `src/tools/shape.ts` — `drawShape()`'s
-`figure === 'triangle' || figure === 'polygon'` branch — declares
-`const sides = figure === 'triangle' ? 3 : 5`, a literal — and a **two-branch** ternary, not the
-three-way one the data file's `appNotes` called it. The substance was right and the description was
-not, so `appNotes` now says "two-branch ternary" and quotes the declaration.
+**inert, not unbound**. The side count exists at runtime via `polygonSides(args.sides)`
+(`src/tools/shape.ts`) — `args.sides` arrives from the options bar, defaulting to
+`DEFAULT_POLYGON_SIDES` (5) when absent — so the bracket keys are inert not because the count is
+undrawable but because no shape figure is in the `tipSize` gate. The data file's `appNotes`
+records this gate as the reason the keys are unbound for this family.
 
 The Star tool arrived in this app and is recorded on the `shape` entry's `appNotes` rather than
 left to be inferred. The polygon's `appNotes` used to close with "the star is not this tool's to
@@ -813,9 +813,10 @@ that 26.10 moved the control and not for a note that this app cannot draw a star
 describes the Star as implemented through the shared shape processor. The Star entry is present
 in the app's seven-entry shapes fly-out (`toolbar-mapping.ts`); see the `shape` section above.
 
-App verdict: **partial**. The drag-defined model is right; the side count and the rotation are not
-there, and the Star's point/radius controls are the app's own implementation detail rather than
-a Photoshop gap.
+App verdict: **partial**. The drag-defined model is right; the side count is present (on the bar,
+3–100, defaulting to 5) and the Star's point/radius controls are the app's own implementation detail
+rather than a Photoshop gap. The bracket keys remain inert for this family because the `tipSize` gate
+excludes shape figures.
 
 Sources:
 
