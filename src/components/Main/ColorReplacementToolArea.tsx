@@ -69,7 +69,7 @@ export const ColorReplacementToolArea = ({ className }: ColorReplacementToolArea
   });
 
   // `isMouseDown` is READ, never written: `isPointerDownValid` sets it and `isPointerUpValid`
-  // clears it (`src/hooks/usePointerPosition.ts:128,154`), and the React compiler lint rules reject
+  // clears it (`src/hooks/usePointerPosition.ts:191,180`), and the React compiler lint rules reject
   // writing through a destructured hook return. `EraserToolArea` and `DrawToolArea` only read it
   // for the same reason.
 

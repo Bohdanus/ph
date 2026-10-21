@@ -35,9 +35,9 @@ type smudgeToolAreaProps = {
  * The two callbacks are the whole contract, and the split between them is the part that is
  * easy to get silently wrong:
  *
- * - `onMove` goes to `tempUpdateLayer` (`src/contexts/useLayer.ts:473`), the only writer of
+ * - `onMove` goes to `tempUpdateLayer` (`src/contexts/useLayer.ts:1140`), the only writer of
  *   `previewLayersRef`. A tool that painted anywhere else would produce pixels with no history
- *   entry, and `commitDirtyTool` (`:323`) would then take its `PUBLISH_RUNTIME_PRESENTATION`
+ *   entry, and `commitDirtyTool` (`:790`) would then take its `PUBLISH_RUNTIME_PRESENTATION`
  *   branch and never warn — the strokes would be un-undoable forever, with no error and no
  *   visible sign of it.
  * - `onCommit` goes to `updateLayerByTool` (`:264`), which writes the single `TOOL_ACTION`

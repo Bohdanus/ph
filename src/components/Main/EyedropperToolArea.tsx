@@ -101,7 +101,7 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     }
 
     // The composited canvas is drawn in FRAME space: it is sized by `documentFrameSize` and each
-    // layer is stamped at `position.x - documentFrame.x` (`src/contexts/layer-renderer.ts:78-79,119`).
+    // layer is stamped at `position.x - documentFrame.x` (`src/contexts/presentation-evaluator.ts:310`).
     // So the canvas's own pixel (0,0) is the frame origin, and `getLocalCoords` is already the
     // index `getImageData` wants. Running it through `canvasToDocumentPoint` first would ADD the
     // frame origin a second time: after a crop that trims 100px off the left, a click on canvas
