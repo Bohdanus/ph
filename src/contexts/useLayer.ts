@@ -396,8 +396,8 @@ function getIncrementalSpongeArgs(prevArgs: ToolArgs | undefined, currArgs: Tool
 //
 // Crop-local, and NOT a document-size limit: nothing else in the stack caps a frame, so a PSD
 // open or a canvas resize bypasses both ceilings here entirely.
-const MAX_DOCUMENT_FRAME_SIDE = 4096;
-const MAX_DOCUMENT_FRAME_AREA = 16777216;
+export const MAX_DOCUMENT_FRAME_SIDE = 4096;
+export const MAX_DOCUMENT_FRAME_AREA = 16777216;
 
 export type ArrangeLayerCommand = 'bring-to-front' | 'bring-forward' | 'send-backward' | 'send-to-back';
 
